@@ -153,6 +153,7 @@ aegisub_src = files(
     'visual_feature.cpp',
     'visual_tool.cpp',
     'visual_tool_clip.cpp',
+    'visual_tool_rectangle.cpp',
     'visual_tool_cross.cpp',
     'visual_tool_drag.cpp',
     'visual_tool_rotatexy.cpp',

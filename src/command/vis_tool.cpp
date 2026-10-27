@@ -21,6 +21,7 @@
 #include "../project.h"
 #include "../video_display.h"
 #include "../visual_tool_clip.h"
+#include "../visual_tool_rectangle.h"
 #include "../visual_tool_cross.h"
 #include "../visual_tool_drag.h"
 #include "../visual_tool_rotatexy.h"
@@ -107,6 +108,14 @@ namespace {
 		STR_HELP("Scale subtitles on X and Y axes")
 	};
 
+	struct visual_mode_rectangle final : public visual_tool_command<VisualToolRectangle> {
+		CMD_NAME("video/tool/rectangle")
+		CMD_ICON(visual_rectangle)
+		STR_MENU("Draw Rectangle")
+		STR_DISP("Draw Rectangle")
+		STR_HELP("Select a visible subtitle, then drag to create a rectangle behind it; Escape cancels")
+	};
+
 	struct visual_mode_clip final : public visual_tool_command<VisualToolClip> {
 		CMD_NAME("video/tool/clip")
 		CMD_ICON(visual_clip)
@@ -191,6 +200,7 @@ namespace cmd {
 		reg(std::make_unique<visual_mode_rotate_z>());
 		reg(std::make_unique<visual_mode_rotate_xy>());
 		reg(std::make_unique<visual_mode_scale>());
+		reg(std::make_unique<visual_mode_rectangle>());
 		reg(std::make_unique<visual_mode_clip>());
 		reg(std::make_unique<visual_mode_vector_clip>());
 

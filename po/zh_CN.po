@@ -7504,3 +7504,12 @@ msgstr "音视频"
 #: ../packages/desktop/aegisub.metainfo.xml.in.in:51
 msgid "Audio timing"
 msgstr "音频时轴"
+
+msgid "Draw Rectangle"
+msgstr "绘制矩形"
+
+msgid "Select a visible subtitle, then drag to create a rectangle behind it; Escape cancels"
+msgstr "选中当前画面可见的字幕，拖拽绘制底框；按 Esc 取消"
+
+msgid "draw rectangle"
+msgstr "绘制矩形"
