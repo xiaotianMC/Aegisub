@@ -151,6 +151,7 @@ class SubsEditBox final : public wxPanel {
 	void OnLineInitialTextChanged(std::string const& new_text);
 
 	void OnFrameTimeRadio(wxCommandEvent &event);
+	void UpdateStyleBox();
 	void OnStyleChange(wxCommandEvent &event);
 	void OnActorChange(wxCommandEvent &event);
 	void OnLayerEnter(wxCommandEvent &event);

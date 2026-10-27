@@ -57,6 +57,7 @@
 #include <libaegisub/character_count.h>
 #include <libaegisub/util.h>
 
+#include <algorithm>
 #include <functional>
 #include <unordered_set>
 
@@ -68,6 +69,11 @@
 #include <wx/settings.h>
 #include <wx/sizer.h>
 #include <wx/spinctrl.h>
+
+#ifdef __WXMSW__
+#include <wx/display.h>
+#include <wx/msw/wrapwin.h>
+#endif
 
 namespace {
 
@@ -120,6 +126,21 @@ SubsEditBox::SubsEditBox(wxWindow *parent, agi::Context *context)
 	top_sizer->Add(comment_box, 0, wxRIGHT | wxALIGN_CENTER, 5);
 
 	style_box = MakeComboBox("Default", wxCB_READONLY, &SubsEditBox::OnStyleChange, _("Style for this line"));
+#ifdef __WXMSW__
+	// Size the popup independently of the compact toolbar control, using its
+	// current font/DPI and current monitor whenever the list is opened.
+	style_box->Bind(wxEVT_COMBOBOX_DROPDOWN, [this](wxCommandEvent& event) {
+		int width = style_box->GetSize().GetWidth();
+		int padding = wxSystemSettings::GetMetric(wxSYS_VSCROLL_X, style_box) + style_box->FromDIP(16);
+		for (auto const& name : style_box->GetStrings())
+			width = std::max(width, style_box->GetTextExtent(name).GetWidth() + padding);
+		int display = wxDisplay::GetFromWindow(style_box);
+		if (display != wxNOT_FOUND)
+			width = std::min(width, wxDisplay(display).GetClientArea().GetWidth());
+		::SendMessageW((HWND)style_box->GetHandle(), CB_SETDROPPEDWIDTH, width, 0);
+		event.Skip();
+	});
+#endif
 
 	style_edit_button = new wxButton(this, -1, _("Edit"), wxDefaultPosition,
 		wxSize(GetTextExtent(_("Edit")).GetWidth() + 20, -1));
@@ -324,7 +345,7 @@ void SubsEditBox::OnCommit(int type) {
 		wxString style = style_box->GetValue();
 		style_box->Clear();
 		style_box->Append(to_wx(c->ass->GetStyles()));
-		style_box->Select(style_box->FindString(style));
+		style_box->Select(style_box->FindString(style, true));
 		active_style = line ? c->ass->GetStyle(line->Style) : nullptr;
 	}
 
@@ -334,7 +355,7 @@ void SubsEditBox::OnCommit(int type) {
 		return;
 	}
 	else if (type & AssFile::COMMIT_STYLES)
-		style_box->Select(style_box->FindString(to_wx(line->Style)));
+		UpdateStyleBox();
 
 	if (!(type ^ AssFile::COMMIT_ORDER)) return;
 
@@ -361,7 +382,7 @@ void SubsEditBox::UpdateFields(int type, bool repopulate_lists) {
 		for (size_t i = 0; i < margin.size(); ++i)
 			change_value(margin[i], std::to_wstring(line->Margin[i]));
 		comment_box->SetValue(line->Comment);
-		style_box->Select(style_box->FindString(to_wx(line->Style)));
+		UpdateStyleBox();
 		active_style = line ? c->ass->GetStyle(line->Style) : nullptr;
 		style_edit_button->Enable(active_style != nullptr);
 
@@ -601,9 +622,17 @@ void SubsEditBox::DoOnSplit(bool show_original) {
 	Thaw();
 }
 
+void SubsEditBox::UpdateStyleBox() {
+	if (!line) return;
+	wxString name = to_wx(line->Style);
+	style_box->Select(style_box->FindString(name, true));
+	style_box->SetToolTip(name);
+}
+
 void SubsEditBox::OnStyleChange(wxCommandEvent &evt) {
 	SetSelectedRows(&AssDialogue::Style, new_value(style_box, evt), _("style change"), AssFile::COMMIT_DIAG_META);
 	active_style = c->ass->GetStyle(line->Style);
+	UpdateStyleBox();
 }
 
 void SubsEditBox::OnActorChange(wxCommandEvent &evt) {

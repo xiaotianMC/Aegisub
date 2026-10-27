@@ -1,0 +1,23 @@
+[Script Info]
+Title: Style name display regression sample
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,10,10,10,1
+Style: [hidamari-group]Asumi-Pink-WhiteOutline-Dialogue-LongStyleName,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,10,10,10,1
+Style: [hidamari-group]NachocoChannel-Pink-Handwritten-Translation-ZH,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,10,10,10,1
+Style: [测试字幕组]中文样式名称-角色对白-粉色描边-完整名称显示测试,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,10,10,10,1
+Style: Main,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,10,10,10,1
+Style: main,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,10,10,10,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:01.00,0:00:03.00,[hidamari-group]Asumi-Pink-WhiteOutline-Dialogue-LongStyleName,,0,0,0,,长英文名称：展开列表应显示完整名称。
+Dialogue: 0,0:00:03.00,0:00:05.00,[测试字幕组]中文样式名称-角色对白-粉色描边-完整名称显示测试,,0,0,0,,中文名称：选中后悬停应显示完整名称。
+Dialogue: 0,0:00:05.00,0:00:07.00,Main,,0,0,0,,区分大小写的 Main。
+Dialogue: 0,0:00:07.00,0:00:09.00,main,,0,0,0,,区分大小写的 main。
