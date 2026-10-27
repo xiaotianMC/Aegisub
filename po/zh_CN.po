@@ -7566,3 +7566,6 @@ msgstr "交换此行 move 的起点和终点，保留原运动时间"
 
 msgid "reverse move path"
 msgstr "反向移动路径"
+
+msgid "Preferences..."
+msgstr "首选项…"

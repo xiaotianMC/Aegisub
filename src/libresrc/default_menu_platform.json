@@ -8,6 +8,7 @@
         { "submenu" : "main/audio",    "tlcontext" : "Menu bar", "text" : "&Audio" },
         { "special" : "automation",    "tlcontext" : "Menu bar", "text" : "A&utomation" },
         { "submenu" : "main/view",     "tlcontext" : "Menu bar", "text" : "Vie&w" },
+        { "submenu" : "main/preferences", "text" : "Preferences" },
         { "submenu" : "main/help",     "tlcontext" : "Menu bar", "text" : "&Help", "special" : "help" }
     ],
     "main/file" : [

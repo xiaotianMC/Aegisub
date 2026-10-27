@@ -130,7 +130,6 @@
     ],
     "main/view" : [
         { "command" : "app/language" },
-        { "command" : "app/options", "special" : "options" },
         {},
         { "command" : "app/display/subs" },
         { "command" : "app/display/video_subs" },
@@ -142,6 +141,9 @@
         { "command" : "grid/tags/hide" },
         {},
         { "command" : "app/toggle/toolbar" }
+    ],
+    "main/preferences" : [
+        { "command" : "app/options", "text" : "Preferences...", "special" : "options" }
     ],
     "main/help" : [
         { "command" : "help/contents" },
