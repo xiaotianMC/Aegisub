@@ -7569,3 +7569,21 @@ msgstr "反向移动路径"
 
 msgid "Preferences..."
 msgstr "首选项…"
+
+msgid "Bind Subtitles"
+msgstr "绑定字幕"
+
+msgid "Unbind Subtitles"
+msgstr "解除绑定"
+
+msgid "Bind selected subtitles to synchronize changes to their durations"
+msgstr "绑定所选字幕，同步增减持续时间"
+
+msgid "Remove the selected subtitles from their binding groups"
+msgstr "将所选字幕从绑定组中移除"
+
+msgid "bind subtitles"
+msgstr "绑定字幕"
+
+msgid "unbind subtitles"
+msgstr "解除字幕绑定"

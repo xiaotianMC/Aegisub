@@ -12,7 +12,8 @@ assert len(rows) == 2, 'Expected the original subtitle plus exactly one rectangl
 rectangle, original = rows
 assert original[9] == '测试字幕：绘制矩形后，原文和时间必须保持不变。', 'Original subtitle was overwritten'
 assert original[1:4] == ['0:00:00.00', '0:00:05.00', 'Default'], 'Original timing/style changed'
-assert rectangle[:4] == original[:4], 'Rectangle timing/style/layer must match its source'
+assert rectangle[:3] == original[:3], 'Rectangle timing/layer must match its source'
+assert rectangle[3] == '图形', 'Rectangle must use its dedicated graphics style'
 text = rectangle[9]
 for tag in (r'\an7', r'\fscx100', r'\fscy100', r'\bord0', r'\shad0', r'\p1', r'\p0'):
     assert tag in text, f'Missing drawing tag: {tag}'

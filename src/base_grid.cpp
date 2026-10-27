@@ -43,6 +43,7 @@
 #include "utils.h"
 #include "selection_controller.h"
 #include "subs_controller.h"
+#include "subtitle_binding.h"
 #include "video_controller.h"
 
 #include <libaegisub/util.h>
@@ -134,6 +135,16 @@ void BaseGrid::OnDPIChanged(wxDPIChangedEvent &e) {
 }
 
 void BaseGrid::OnSubtitlesCommit(int type) {
+	if (type == AssFile::COMMIT_NEW || (type & AssFile::COMMIT_EXTRADATA)) {
+		bool bound = std::any_of(context->ass->Events.begin(), context->ass->Events.end(), [&](auto const& line) {
+			return !GetSubtitleBinding(*context->ass, line).empty();
+		});
+		if (bound) {
+            columns[1]->SetVisible(true);
+            columns_visible.resize(columns.size(), true);
+            columns_visible[1] = true;
+        }
+	}
 	if (type == AssFile::COMMIT_NEW || type & AssFile::COMMIT_ORDER || type & AssFile::COMMIT_DIAG_ADDREM)
 		UpdateMaps();
 

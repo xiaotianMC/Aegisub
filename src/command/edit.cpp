@@ -47,6 +47,7 @@
 #include "../project.h"
 #include "../selection_controller.h"
 #include "../subs_controller.h"
+#include "../subtitle_binding.h"
 #include "../text_selection_controller.h"
 #include "../utils.h"
 #include "../video_controller.h"
@@ -1249,6 +1250,29 @@ struct edit_line_reverse_move final : public Command {
     }
 };
 
+struct edit_bind_subtitles final : public Command {
+    CMD_NAME("subtitle/bind")
+    CMD_TYPE(COMMAND_VALIDATE)
+    STR_MENU("Bind Subtitles")
+    STR_DISP("Bind Subtitles")
+    STR_HELP("Bind selected subtitles to synchronize changes to their durations")
+    bool Validate(const agi::Context *c) override { return c->selectionController->GetSelectedSet().size() >= 2; }
+    void operator()(agi::Context *c) override { BindSelectedSubtitles(c); }
+};
+
+struct edit_unbind_subtitles final : public Command {
+    CMD_NAME("subtitle/unbind")
+    CMD_TYPE(COMMAND_VALIDATE)
+    STR_MENU("Unbind Subtitles")
+    STR_DISP("Unbind Subtitles")
+    STR_HELP("Remove the selected subtitles from their binding groups")
+    bool Validate(const agi::Context *c) override {
+        auto const& selection = c->selectionController->GetSelectedSet();
+        return std::any_of(selection.begin(), selection.end(), [&](auto line) { return !GetSubtitleBinding(*c->ass, *line).empty(); });
+    }
+    void operator()(agi::Context *c) override { UnbindSelectedSubtitles(c); }
+};
+
 struct edit_revert final : public Command {
 	CMD_NAME("edit/revert")
 	STR_DISP("Revert")
@@ -1343,6 +1367,8 @@ namespace cmd {
 		reg(std::make_unique<edit_redo>());
 		reg(std::make_unique<edit_undo>());
 		reg(std::make_unique<edit_revert>());
+		reg(std::make_unique<edit_bind_subtitles>());
+		reg(std::make_unique<edit_unbind_subtitles>());
 		reg(std::make_unique<edit_line_reverse_move>());
 		reg(std::make_unique<edit_insert_original>());
 		reg(std::make_unique<edit_clear>());

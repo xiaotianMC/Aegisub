@@ -21,6 +21,7 @@
 #include "compat.h"
 #include "include/aegisub/context.h"
 #include "options.h"
+#include "subtitle_binding.h"
 #include "video_controller.h"
 
 #include <libaegisub/character_count.h>
@@ -150,13 +151,31 @@ struct GridColumnLayer final : GridColumn {
 	COLUMN_DESCRIPTION(_("Layer"))
 	bool Centered() const override { return true; }
 
-	wxString Value(const AssDialogue *d, const agi::Context *) const override {
-		return d->Layer ? wxString(std::to_wstring(d->Layer)) : wxString();
+	wxString Value(const AssDialogue *d, const agi::Context *c) const override {
+		return d->Layer || !GetSubtitleBinding(*c->ass, *d).empty() ? wxString(std::to_wstring(d->Layer)) : wxString();
+	}
+
+	void Paint(wxDC &dc, int x, int y, const AssDialogue *d, const agi::Context *c) const override {
+		auto group = GetSubtitleBinding(*c->ass, *d);
+		if (group.empty()) { GridColumn::Paint(dc, x, y, d, c); return; }
+		static const wxColour colors[] = {
+			{191, 219, 254}, {254, 215, 170}, {187, 247, 208}, {233, 213, 255},
+			{254, 202, 202}, {165, 243, 252}, {254, 240, 138}, {251, 207, 232}};
+		wxDCPenChanger pen(dc, *wxTRANSPARENT_PEN);
+		wxDCBrushChanger brush(dc, wxBrush(colors[SubtitleBindingColorIndex(group)]));
+		dc.DrawRectangle(x + 1, y + 1, width - 1, dc.GetCharHeight() + 3);
+		auto foreground = dc.GetTextForeground();
+		dc.SetTextForeground(*wxBLACK);
+		GridColumn::Paint(dc, x, y, d, c);
+		dc.SetTextForeground(foreground);
 	}
 
 	int Width(const agi::Context *c, WidthHelper &helper) const override {
 		int max_layer = max_value(&AssDialogue::Layer, c->ass->Events);
-		return max_layer == 0 ? 0 : helper(std::to_wstring(max_layer));
+		bool bound = std::any_of(c->ass->Events.begin(), c->ass->Events.end(), [&](auto const& line) {
+			return !GetSubtitleBinding(*c->ass, line).empty();
+		});
+		return max_layer == 0 && !bound ? 0 : helper(std::to_wstring(max_layer));
 	}
 };
 

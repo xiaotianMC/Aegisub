@@ -2,6 +2,8 @@
     "grid_context" : [
         { "command" : "edit/line/rectangle" },
         { "command" : "edit/line/reverse_move" },
+        { "command" : "subtitle/bind" },
+        { "command" : "subtitle/unbind" },
         {},
         { "command" : "subtitle/insert/before", "text" : "&Insert (before)" },
         { "command" : "subtitle/insert/after", "text" : "Insert (after)" },
