@@ -49,6 +49,7 @@
 
 #include <algorithm>
 
+#include <wx/tooltip.h>
 #include <wx/dcbuffer.h>
 #include <wx/menu.h>
 #include <wx/scrolbar.h>
@@ -449,6 +450,25 @@ void BaseGrid::OnMouseEvent(wxMouseEvent &event) {
 		row = mid(0, row, GetRows()-1);
 	AssDialogue *dlg = GetDialogue(row);
 	if (!dlg) row = 0;
+
+	bool over_number = dlg && event.GetY() >= lineHeight
+		&& event.GetX() >= 0 && event.GetX() < columns[0]->Width();
+	if (event.Moving() || event.Leaving()) {
+		wxString tip;
+		if (over_number && !event.Leaving())
+			tip = dlg->Comment ? _("Click to show this subtitle line") : _("Click to hide this subtitle line");
+		if (!GetToolTip() || GetToolTip()->GetTip() != tip)
+			SetToolTip(tip);
+		SetCursor(over_number && !event.Leaving() ? wxCURSOR_HAND : wxCURSOR_ARROW);
+	}
+
+	// The number cell is a per-row visibility switch. Modified clicks keep
+	// their normal selection behavior; a double click counts as a second click.
+	if ((click || dclick) && over_number && !holding && !shift && !ctrl && !alt) {
+		dlg->Comment = !dlg->Comment;
+		context->ass->Commit(_("comment change"), AssFile::COMMIT_DIAG_META, -1, dlg);
+		return;
+	}
 
 	if (event.ButtonDown() && OPT_GET("Subtitle/Grid/Focus Allow")->GetBool())
 		SetFocus();

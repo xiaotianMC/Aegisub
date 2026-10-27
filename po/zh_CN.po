@@ -7513,3 +7513,11 @@ msgstr "选中当前画面可见的字幕，拖拽绘制底框；按 Esc 取消"
 
 msgid "draw rectangle"
 msgstr "绘制矩形"
+
+#: ../src/base_grid.cpp
+msgid "Click to hide this subtitle line"
+msgstr "点击隐藏此行字幕"
+
+#: ../src/base_grid.cpp
+msgid "Click to show this subtitle line"
+msgstr "点击恢复显示此行字幕"

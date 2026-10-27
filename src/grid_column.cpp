@@ -111,9 +111,27 @@ struct GridColumnLineNumber final : GridColumn {
 	}
 
 	int Width(const agi::Context *c, WidthHelper &helper) const override {
-		if (c->ass->Events.empty())
-			return helper("1");
-		return helper(Value(&c->ass->Events.back()));
+		int number_width = c->ass->Events.empty() ? helper("1") : helper(Value(&c->ass->Events.back()));
+		return std::max(number_width, helper("00"));
+	}
+
+	void Paint(wxDC &dc, int x, int y, const AssDialogue *d, const agi::Context *c) const override {
+		if (!d->Comment) {
+			GridColumn::Paint(dc, x, y, d, c);
+			return;
+		}
+		// Draw a slashed eye at the grid's font size, without a font-glyph dependency.
+		int eye_width = std::min(width - 6, std::max(10, dc.GetCharHeight()));
+		int eye_height = std::max(6, eye_width / 2);
+		int cx = x + width / 2;
+		int cy = y + 2 + dc.GetCharHeight() / 2;
+		wxDCPenChanger pen(dc, wxPen(dc.GetTextForeground(), std::max(1, eye_width / 10)));
+		wxDCBrushChanger brush(dc, *wxTRANSPARENT_BRUSH);
+		dc.DrawEllipse(cx - eye_width / 2, cy - eye_height / 2, eye_width, eye_height);
+		dc.SetBrush(wxBrush(dc.GetTextForeground()));
+		dc.DrawCircle(cx, cy, std::max(1, eye_height / 4));
+		dc.DrawLine(cx - eye_width / 2, cy - eye_height / 2 - 2,
+			cx + eye_width / 2, cy + eye_height / 2 + 2);
 	}
 };
 
