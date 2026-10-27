@@ -5,6 +5,7 @@
 
 #include "ass_dialogue.h"
 #include "ass_file.h"
+#include "ass_style.h"
 #include "compat.h"
 #include "include/aegisub/context.h"
 #include "selection_controller.h"
@@ -72,10 +73,23 @@ void VisualToolRectangle::Finish() {
 	int height = last.Y() - first.Y();
 	if (width < 1 || height < 1) return;
 
+	bool added_style = false;
+	if (!c->ass->GetStyle("图形")) {
+		auto style = std::make_unique<AssStyle>();
+		style->name = "图形";
+		style->alignment = 7;
+		style->outline_w = 0;
+		style->shadow_w = 0;
+		style->primary = agi::Color(0, 0, 0, 64);
+		style->Margin = {0, 0, 0};
+		style->UpdateData();
+		c->ass->Styles.push_back(*style.release());
+		added_style = true;
+	}
 	auto rectangle = std::make_unique<AssDialogue>();
 	rectangle->Start = active_line->Start;
 	rectangle->End = active_line->End;
-	rectangle->Style = active_line->Style;
+	rectangle->Style = "图形";
 	rectangle->Layer = active_line->Layer;
 	rectangle->Text = agi::format(
 		"{\\an7\\pos(%s)\\fscx100\\fscy100\\frz0\\bord0\\shad0"
@@ -86,7 +100,7 @@ void VisualToolRectangle::Finish() {
 	auto added = rectangle.get();
 	c->ass->Events.insert(c->ass->iterator_to(*active_line), *added);
 	rectangle.release();
-	c->ass->Commit(_("draw rectangle"), AssFile::COMMIT_DIAG_ADDREM);
+	c->ass->Commit(_("draw rectangle"), AssFile::COMMIT_DIAG_ADDREM | (added_style ? AssFile::COMMIT_STYLES : 0));
 	c->selectionController->SetSelectionAndActive({added}, added);
 }
 
