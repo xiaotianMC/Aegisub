@@ -1,0 +1,167 @@
+// Copyright (c) 2026, Aegisub contributors
+// SPDX-License-Identifier: ISC
+
+#include "dialog_rectangle.h"
+#include "ass_dialogue.h"
+#include "ass_file.h"
+#include "ass_override.h"
+#include "ass_style.h"
+#include "colour_button.h"
+#include "include/aegisub/context.h"
+#include "rectangle_drawing.h"
+#include "selection_controller.h"
+
+#include <libaegisub/format.h>
+#include "utils.h"
+
+#include <algorithm>
+#include <wx/dialog.h>
+#include <wx/msgdlg.h>
+#include <wx/sizer.h>
+#include <wx/spinctrl.h>
+#include <wx/stattext.h>
+
+namespace {
+struct Rectangle {
+    std::vector<std::unique_ptr<AssDialogueBlock>> blocks;
+    AssDialogueBlockDrawing *drawing = nullptr;
+    AssDialogueBlockOverride *prefix = nullptr;
+    double x = 0, y = 0, width = 0, height = 0, scale_x = 100, scale_y = 100;
+    agi::Color color;
+};
+
+std::optional<Rectangle> ReadRectangle(const agi::Context *c) {
+    auto line = c->selectionController->GetActiveLine();
+    if (!line) return std::nullopt;
+    Rectangle rect;
+    rect.blocks = line->ParseTags();
+    auto style = c->ass->GetStyle(line->Style);
+    if (!style) return std::nullopt;
+    rect.color = style->primary;
+    rect.scale_x = style->scalex;
+    rect.scale_y = style->scaley;
+    int alpha = rect.color.a, alignment = style->alignment, positions = 0;
+    for (auto const& block : rect.blocks) {
+        if (block->GetType() == AssBlockType::PLAIN && !block->GetText().empty())
+            return std::nullopt;
+        if (block->GetType() == AssBlockType::DRAWING) {
+            if (rect.drawing) return std::nullopt;
+            rect.drawing = static_cast<AssDialogueBlockDrawing*>(block.get());
+            auto size = ParseRectangleDrawing(block->GetText());
+            if (!size || rect.drawing->Scale != 1 || !rect.prefix || positions != 1 || alignment != 7)
+                return std::nullopt;
+            rect.width = size->first * rect.scale_x / 100;
+            rect.height = size->second * rect.scale_y / 100;
+            rect.color.a = alpha;
+        }
+        if (block->GetType() != AssBlockType::OVERRIDE || rect.drawing) continue;
+        rect.prefix = static_cast<AssDialogueBlockOverride*>(block.get());
+        for (auto const& tag : rect.prefix->Tags) {
+            auto const& n = tag.Name;
+            // Animated position, transforms, and style resets need a richer editor.
+            if (n == "\\move" || n == "\\t" || n == "\\r" || n == "\\a") return std::nullopt;
+            if (n == "\\pos") {
+                if (tag.Params.size() != 2 || tag.Params[0].omitted || tag.Params[1].omitted)
+                    return std::nullopt;
+                rect.x = tag.Params[0].Get<double>();
+                rect.y = tag.Params[1].Get<double>();
+                ++positions;
+            }
+            else if (!tag.Params.empty() && !tag.Params[0].omitted) {
+                if (n == "\\an") alignment = tag.Params[0].Get<int>();
+                else if (n == "\\fscx") rect.scale_x = tag.Params[0].Get<double>();
+                else if (n == "\\fscy") rect.scale_y = tag.Params[0].Get<double>();
+                else if (n == "\\c" || n == "\\1c") rect.color = tag.Params[0].Get<agi::Color>();
+                else if (n == "\\alpha" || n == "\\1a") alpha = tag.Params[0].Get<int>();
+            }
+        }
+    }
+    if (!rect.drawing || !std::isfinite(rect.x) || !std::isfinite(rect.y)
+        || std::abs(rect.x) > 1000000 || std::abs(rect.y) > 1000000
+        || !std::isfinite(rect.scale_x) || !std::isfinite(rect.scale_y)
+        || rect.scale_x < 0.001 || rect.scale_y < 0.001 || rect.scale_x > 1000000 || rect.scale_y > 1000000
+        || !std::isfinite(rect.width) || !std::isfinite(rect.height)
+        || rect.width < 0.001 || rect.height < 0.001 || rect.width > 1000000 || rect.height > 1000000)
+        return std::nullopt;
+    return rect;
+}
+}
+
+bool CanEditRectangle(const agi::Context *c) {
+    return ReadRectangle(c).has_value();
+}
+
+void EditRectangle(agi::Context *c) {
+    auto parsed = ReadRectangle(c);
+    if (!parsed) return;
+    auto& rect = *parsed;
+    auto line = c->selectionController->GetActiveLine();
+    wxDialog dialog(c->parent, -1, _("Edit Rectangle"));
+    auto layout = new wxBoxSizer(wxVERTICAL);
+    auto fields = new wxFlexGridSizer(2, dialog.FromDIP(8), dialog.FromDIP(12));
+    fields->AddGrowableCol(1);
+    auto number = [&](wxString const& label, double value, double min, double max, int digits) {
+        fields->Add(new wxStaticText(&dialog, -1, label), 0, wxALIGN_CENTER_VERTICAL);
+        auto control = new wxSpinCtrlDouble(&dialog, -1, "", wxDefaultPosition,
+            dialog.FromDIP(wxSize(170, -1)), wxSP_ARROW_KEYS, min, max, value, 1);
+        control->SetDigits(digits);
+        fields->Add(control, 1, wxEXPAND);
+        return control;
+    };
+    auto width = number(_("Rectangle width"), rect.width, 0.001, std::min(1000000.0, rect.scale_x * 10000), 3);
+    auto height = number(_("Rectangle height"), rect.height, 0.001, std::min(1000000.0, rect.scale_y * 10000), 3);
+    auto x = number(_("Left position (X)"), rect.x, -1000000, 1000000, 3);
+    auto y = number(_("Top position (Y)"), rect.y, -1000000, 1000000, 3);
+    fields->Add(new wxStaticText(&dialog, -1, _("Fill color")), 0, wxALIGN_CENTER_VERTICAL);
+    auto color = new ColourButton(&dialog, dialog.FromDIP(wxSize(100, 20)), false, rect.color);
+    fields->Add(color, 1, wxEXPAND);
+    auto transparency = number(_("Transparency (%)"), rect.color.a * 100.0 / 255, 0, 100, 1);
+    layout->Add(fields, 0, wxALL | wxEXPAND, dialog.FromDIP(12));
+    layout->Add(new wxStaticText(&dialog, -1,
+        _("Sizes use script pixels before rotation. Transparency: 0% opaque, 100% invisible.")),
+        0, wxLEFT | wxRIGHT | wxBOTTOM, dialog.FromDIP(12));
+    layout->Add(dialog.CreateStdDialogButtonSizer(wxOK | wxCANCEL), 0,
+        wxALL | wxALIGN_RIGHT, dialog.FromDIP(12));
+    dialog.SetSizerAndFit(layout);
+    dialog.CentreOnParent();
+    dialog.Bind(wxEVT_BUTTON, [&](wxCommandEvent&) {
+        for (auto ctrl : {width, height, x, y, transparency}) {
+            double value;
+            if (!ctrl->GetTextValue().ToDouble(&value) || !std::isfinite(value)
+                || value < ctrl->GetMin() || value > ctrl->GetMax()) {
+                wxMessageBox(_("Enter a number within the allowed range."), _("Edit Rectangle"), wxOK | wxICON_WARNING, &dialog);
+                ctrl->SetFocus();
+                return;
+            }
+        }
+        dialog.EndModal(wxID_OK);
+    }, wxID_OK);
+    if (dialog.ShowModal() != wxID_OK) return;
+
+    auto new_color = color->GetColor();
+    new_color.a = std::lround(transparency->GetValue() * 255 / 100);
+    if (std::abs(width->GetValue() - rect.width) < 0.00051
+        && std::abs(height->GetValue() - rect.height) < 0.00051
+        && std::abs(x->GetValue() - rect.x) < 0.00051
+        && std::abs(y->GetValue() - rect.y) < 0.00051 && new_color == rect.color)
+        return;
+
+    // Preserve unrelated override tags, comments, timing, style and layer.
+    for (auto const& block : rect.blocks) {
+        if (block.get() == rect.drawing) break;
+        if (block->GetType() != AssBlockType::OVERRIDE) continue;
+        auto over = static_cast<AssDialogueBlockOverride*>(block.get());
+        std::erase_if(over->Tags, [](auto const& tag) {
+            return tag.Name == "\\pos" || tag.Name == "\\c" || tag.Name == "\\1c" || tag.Name == "\\1a";
+        });
+    }
+    rect.prefix->AddTag("\\pos(" + float_to_string(x->GetValue()) + ","
+        + float_to_string(y->GetValue()) + ")");
+    rect.prefix->AddTag("\\1c" + new_color.GetAssOverrideFormatted());
+    rect.prefix->AddTag(agi::format("\\1a&H%02X&", (int)new_color.a));
+    auto w = float_to_string(width->GetValue() * 100 / rect.scale_x, 9);
+    auto h = float_to_string(height->GetValue() * 100 / rect.scale_y, 9);
+    rect.drawing->text = "m 0 0 l " + w + " 0 " + w + " " + h + " 0 " + h;
+    line->UpdateText(rect.blocks);
+    c->ass->Commit(_("edit rectangle"), AssFile::COMMIT_DIAG_TEXT, -1, line);
+}

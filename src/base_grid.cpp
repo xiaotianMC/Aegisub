@@ -572,6 +572,16 @@ void BaseGrid::OnMouseEvent(wxMouseEvent &event) {
 void BaseGrid::OnContextMenu(wxContextMenuEvent &evt) {
 	wxPoint pos = evt.GetPosition();
 	if (pos == wxDefaultPosition || ScreenToClient(pos).y > lineHeight) {
+		// Context actions target the row under the pointer, including an unselected rectangle.
+		if (pos != wxDefaultPosition) {
+			int row = ScreenToClient(pos).y / lineHeight + yPos - 1;
+			if (auto line = GetDialogue(row)) {
+				if (context->selectionController->GetSelectedSet().count(line))
+					context->selectionController->SetActiveLine(line);
+				else
+					context->selectionController->SetSelectionAndActive({line}, line);
+			}
+		}
 		if (!context_menu) context_menu = menu::GetMenu("grid_context", (wxID_HIGHEST + 1) + 8000, context);
 		menu::OpenPopupMenu(context_menu.get(), this);
 	}

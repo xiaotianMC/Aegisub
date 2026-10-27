@@ -19,6 +19,7 @@
 #include "../include/aegisub/context.h"
 #include "../libresrc/libresrc.h"
 #include "../project.h"
+#include "../dialog_rectangle.h"
 #include "../video_display.h"
 #include "../visual_tool_clip.h"
 #include "../visual_tool_rectangle.h"
@@ -116,6 +117,17 @@ namespace {
 		STR_HELP("Select a visible subtitle, then drag to create a rectangle behind it; Escape cancels")
 	};
 
+	struct edit_rectangle final : public Command {
+		CMD_NAME("edit/line/rectangle")
+		CMD_ICON(visual_rectangle)
+		CMD_TYPE(COMMAND_VALIDATE)
+		STR_MENU("Edit Rectangle...")
+		STR_DISP("Edit Rectangle")
+		STR_HELP("Adjust the rectangle's width, height, position, fill color and transparency")
+		bool Validate(const agi::Context *c) override { return CanEditRectangle(c); }
+		void operator()(agi::Context *c) override { EditRectangle(c); }
+	};
+
 	struct visual_mode_clip final : public visual_tool_command<VisualToolClip> {
 		CMD_NAME("video/tool/clip")
 		CMD_ICON(visual_clip)
@@ -201,6 +213,7 @@ namespace cmd {
 		reg(std::make_unique<visual_mode_rotate_xy>());
 		reg(std::make_unique<visual_mode_scale>());
 		reg(std::make_unique<visual_mode_rectangle>());
+		reg(std::make_unique<edit_rectangle>());
 		reg(std::make_unique<visual_mode_clip>());
 		reg(std::make_unique<visual_mode_vector_clip>());
 

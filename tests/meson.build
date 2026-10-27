@@ -43,6 +43,7 @@ tests_src = [
     'tests/syntax_highlight.cpp',
     'tests/thesaurus.cpp',
     'tests/time.cpp',
+    'tests/rectangle_drawing.cpp',
     'tests/type_name.cpp',
     'tests/unicode.cpp',
     'tests/util.cpp',

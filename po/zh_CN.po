@@ -7521,3 +7521,39 @@ msgstr "点击隐藏此行字幕"
 #: ../src/base_grid.cpp
 msgid "Click to show this subtitle line"
 msgstr "点击恢复显示此行字幕"
+
+msgid "Edit Rectangle..."
+msgstr "编辑矩形…"
+
+msgid "Edit Rectangle"
+msgstr "编辑矩形"
+
+msgid "Adjust the rectangle's width, height, position, fill color and transparency"
+msgstr "调整矩形的宽、高、位置、填充颜色和透明度"
+
+msgid "Rectangle width"
+msgstr "宽度"
+
+msgid "Rectangle height"
+msgstr "高度"
+
+msgid "Left position (X)"
+msgstr "左侧位置（X）"
+
+msgid "Top position (Y)"
+msgstr "顶部位置（Y）"
+
+msgid "Fill color"
+msgstr "填充颜色"
+
+msgid "Transparency (%)"
+msgstr "透明度（%）"
+
+msgid "Sizes use script pixels before rotation. Transparency: 0% opaque, 100% invisible."
+msgstr "尺寸按旋转前的字幕坐标计算。透明度：0% 不透明，100% 完全透明。"
+
+msgid "Enter a number within the allowed range."
+msgstr "请输入允许范围内的数字。"
+
+msgid "edit rectangle"
+msgstr "编辑矩形"

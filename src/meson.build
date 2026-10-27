@@ -71,6 +71,7 @@ aegisub_src = files(
     'dialog_progress.cpp',
     'dialog_properties.cpp',
     'dialog_resample.cpp',
+    'dialog_rectangle.cpp',
     'dialog_search_replace.cpp',
     'dialog_selected_choices.cpp',
     'dialog_selection.cpp',
