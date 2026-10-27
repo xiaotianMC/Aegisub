@@ -7557,3 +7557,12 @@ msgstr "请输入允许范围内的数字。"
 
 msgid "edit rectangle"
 msgstr "编辑矩形"
+
+msgid "Reverse Move Path"
+msgstr "反向移动路径"
+
+msgid "Swap the active line's move start and end positions, keeping its movement times"
+msgstr "交换此行 move 的起点和终点，保留原运动时间"
+
+msgid "reverse move path"
+msgstr "反向移动路径"

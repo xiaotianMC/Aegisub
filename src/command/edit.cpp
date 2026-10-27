@@ -34,6 +34,7 @@
 #include "../ass_dialogue.h"
 #include "../ass_file.h"
 #include "../ass_karaoke.h"
+#include "../ass_override.h"
 #include "../ass_style.h"
 #include "../compat.h"
 #include "../dialog_search_replace.h"
@@ -1205,6 +1206,49 @@ struct edit_undo final : public Command {
 	}
 };
 
+
+// Swap parameter objects to retain the exact coordinate strings and move times.
+bool reverse_move_paths(AssDialogue *line, bool apply) {
+    if (!line) return false;
+    auto blocks = line->ParseTags();
+    bool found = false;
+    for (auto const& block : blocks) {
+        if (block->GetType() != AssBlockType::OVERRIDE) continue;
+        auto over = static_cast<AssDialogueBlockOverride*>(block.get());
+        for (auto& tag : over->Tags) {
+            if (tag.Name != "\\move" || tag.Params.size() != 6
+                || std::any_of(tag.Params.begin(), tag.Params.begin() + 4,
+                    [](auto const& p) { return p.omitted; })
+                || tag.Params[4].omitted != tag.Params[5].omitted)
+                continue;
+            if (!apply) return true;
+            std::swap(tag.Params[0], tag.Params[2]);
+            std::swap(tag.Params[1], tag.Params[3]);
+            found = true;
+        }
+    }
+    if (!found) return false;
+    auto original = line->Text;
+    line->UpdateText(blocks);
+    return line->Text != original;
+}
+
+struct edit_line_reverse_move final : public Command {
+    CMD_NAME("edit/line/reverse_move")
+    CMD_TYPE(COMMAND_VALIDATE)
+    STR_MENU("Reverse Move Path")
+    STR_DISP("Reverse Move Path")
+    STR_HELP("Swap the active line's move start and end positions, keeping its movement times")
+    bool Validate(const agi::Context *c) override {
+        return reverse_move_paths(c->selectionController->GetActiveLine(), false);
+    }
+    void operator()(agi::Context *c) override {
+        auto line = c->selectionController->GetActiveLine();
+        if (reverse_move_paths(line, true))
+            c->ass->Commit(_("reverse move path"), AssFile::COMMIT_DIAG_TEXT, -1, line);
+    }
+};
+
 struct edit_revert final : public Command {
 	CMD_NAME("edit/revert")
 	STR_DISP("Revert")
@@ -1299,6 +1343,7 @@ namespace cmd {
 		reg(std::make_unique<edit_redo>());
 		reg(std::make_unique<edit_undo>());
 		reg(std::make_unique<edit_revert>());
+		reg(std::make_unique<edit_line_reverse_move>());
 		reg(std::make_unique<edit_insert_original>());
 		reg(std::make_unique<edit_clear>());
 		reg(std::make_unique<edit_clear_text>());
