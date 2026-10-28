@@ -160,6 +160,10 @@ VideoDisplay::VideoDisplay(wxToolBar *toolbar, bool freeSize, wxComboBox *zoomBo
 	});
 
 	SetCursor(wxNullCursor);
+	// The GL canvas paints the whole client area itself; letting Windows erase
+	// the background shows a white frame when zooming or resizing the preview.
+	SetBackgroundStyle(wxBG_STYLE_PAINT);
+	Bind(wxEVT_ERASE_BACKGROUND, [](wxEraseEvent&) { });
 
 	c->videoDisplay = this;
 
@@ -237,9 +241,17 @@ void VideoDisplay::Render() try {
 	wxSize client_size = GetClientSize();
 	client_size = wxSize(std::max(1, client_size.GetWidth()), std::max(1, client_size.GetHeight()));
 
+	// The viewport must match the current client size before the frame is drawn;
+	// doing it afterwards shows one frame with the previous viewport when the
+	// canvas is resized by a zoom.
+	E(glViewport(0, 0, client_size.GetWidth() * scale_factor, client_size.GetHeight() * scale_factor));
+	// Clear the back buffer every frame so a resize or content zoom never
+	// exposes stale pixels outside the video rectangle.
+	E(glClearColor(0, 0, 0, 0));
+	E(glClear(GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT));
+
 	videoOut->Render(client_size.GetWidth() * scale_factor, client_size.GetHeight() * scale_factor,
 		content_left, content_bottom, content_width, content_height);
-	E(glViewport(0, 0, client_size.GetWidth() * scale_factor, client_size.GetHeight() * scale_factor));
 
 	E(glMatrixMode(GL_PROJECTION));
 	E(glLoadIdentity());
@@ -421,8 +433,10 @@ void VideoDisplay::FitClientSizeToVideo() {
 		SetClientSize(cs + top->GetSize() - oldSize);
 	}
 	else {
-		SetMinClientSize(newViewportSize / scale_factor);
+		// Shrink the maximum before growing the minimum so zooming in does not
+		// resize the window to an intermediate size first.
 		SetMaxClientSize(newViewportSize / scale_factor);
+		SetMinClientSize(newViewportSize / scale_factor);
 
 		GetGrandParent()->Layout();
 	}
