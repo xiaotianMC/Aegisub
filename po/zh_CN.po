@@ -7198,6 +7198,10 @@ msgctxt "Menu bar"
 msgid "&Help"
 msgstr "帮助(&H)"
 
+msgctxt "Menu bar"
+msgid "Preferences (&O)"
+msgstr "首选项(&O)"
+
 #: default_menu.json:0
 msgid "&Insert Lines"
 msgstr "插入行(&I)"
