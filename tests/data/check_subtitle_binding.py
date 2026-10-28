@@ -34,7 +34,7 @@ if __name__ == '__main__':
         if line.startswith('Data: '):
             number, key, value = line[6:].split(',', 2)
             if key == 'aegisub.enhanced.subtitle-binding':
-                data[int(number)] = value
+                data[int(number)] = re.sub(r'#([0-9A-Fa-f]{2})', lambda m: chr(int(m[1], 16)), value)
     if bound:
         group_ids = ids[0] & ids[1] & data.keys()
         assert len(group_ids) == 1 and not (ids[2] & data.keys()), 'Wrong binding membership'
