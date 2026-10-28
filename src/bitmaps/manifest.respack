@@ -521,6 +521,11 @@ button/visual_move_conv_pos_24.png
 button/visual_move_conv_pos_32.png
 button/visual_move_conv_pos_48.png
 button/visual_move_conv_pos_64.png
+button/visual_pan_16.png
+button/visual_pan_24.png
+button/visual_pan_32.png
+button/visual_pan_48.png
+button/visual_pan_64.png
 button/visual_rotatexy_16.png
 button/visual_rotatexy_24.png
 button/visual_rotatexy_32.png

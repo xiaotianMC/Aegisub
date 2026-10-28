@@ -4,6 +4,7 @@
 #include "main.h"
 #include "ass_dialogue.h"
 #include "ass_file.h"
+#include "base_grid.h"
 #include "command/command.h"
 #include "dialog_rectangle.h"
 #include "include/aegisub/context.h"
@@ -111,30 +112,63 @@ int main(int argc, char **argv) {
         synced();
         require(!c.subsController->IsModified(), "undo did not restore saved state");
 
+        // Double-clicking a drawing row remains an entry point to the shape panel.
+        auto grid = c.subsGrid;
+        require(grid, "subtitle grid missing");
+        grid->SetClientSize(wxSize(600, 400));
+        wxSizeEvent grid_resize(grid->GetClientSize());
+        grid->ProcessWindowEvent(grid_resize);
+        wxYield();
+        bool dialog_opened = false;
+        wxTheApp->CallAfter([&] {
+            for (auto window : wxTopLevelWindows) {
+                auto dialog = dynamic_cast<wxDialog*>(window);
+                if (dialog && dialog->IsModal()) {
+                    dialog_opened = true;
+                    dialog->EndModal(wxID_CANCEL);
+                }
+            }
+        });
+        auto grid_click = [&](wxEventType type) {
+            wxMouseEvent event(type);
+            event.SetPosition({200, 30});
+            event.SetEventObject(grid);
+            if (type == wxEVT_LEFT_DOWN)
+                event.SetLeftDown(true);
+            grid->ProcessWindowEvent(event);
+        };
+        grid_click(wxEVT_LEFT_DOWN);
+        grid_click(wxEVT_LEFT_UP);
+        grid_click(wxEVT_LEFT_DCLICK);
+        wxYield();
+        require(dialog_opened, "double click on a drawing row did not open the shape panel");
+
         c.project->LoadVideo("?dummy:24:120:640:360:48:160:240:");
         auto display = c.videoDisplay;
         cmd::call("video/tool/cross", &c);
         display->SetWindowZoom(5);
         wxYield();
+        // The default tool no longer hijacks the left button just because the
+        // preview is cropped; panning is an explicit sidebar mode.
         mouse(*display, wxEVT_LEFT_DOWN, {100, 70}, true);
-        require(display->HasCapture(), "large window zoom did not start panning");
+        require(!display->HasCapture(), "default tool still captured the left button");
         mouse(*display, wxEVT_LEFT_UP, {100, 70}, false);
-        display->SetWindowZoom(.5);
-        display->SetMinClientSize(wxSize(32, 32));
-        display->SetClientSize(wxSize(200, 120));
-        wxSizeEvent resize(display->GetClientSize());
-        display->ProcessWindowEvent(resize);
+
+        cmd::call("video/tool/pan", &c);
+        require(display->IsPanMode(), "pan command did not enable pan mode");
         const auto unchanged = line->Text;
         mouse(*display, wxEVT_LEFT_DOWN, {100, 70}, true);
         const auto anchor = display->GetMousePosition();
-        require(display->HasCapture(), "cropped video did not start panning");
+        require(display->HasCapture(), "pan mode did not capture the left button");
         mouse(*display, wxEVT_MOTION, {60, 45}, true);
-        require(display->IsContentZoomActive(), "video did not pan");
+        require(display->IsContentZoomActive(), "pan mode did not pan the video");
         require(display->HasCapture(), "visual tool released panning capture");
         require((display->GetMousePosition() - anchor).Len() < .01, "panning moved the video in the wrong direction");
         mouse(*display, wxEVT_LEFT_UP, {60, 45}, false);
         require(!display->HasCapture(), "panning did not release capture");
+        require(display->IsPanMode(), "releasing the button left pan mode");
         require(line->Text == unchanged, "panning changed subtitle position");
+
         mouse(*display, wxEVT_LEFT_DOWN, {60, 45}, true);
         display->ReleaseMouse();
         wxMouseCaptureLostEvent lost(display->GetId());
@@ -142,7 +176,15 @@ int main(int argc, char **argv) {
         mouse(*display, wxEVT_MOTION, {80, 60}, true);
         require(!display->HasCapture(), "lost capture resumed a stale drag");
         mouse(*display, wxEVT_LEFT_UP, {80, 60}, false);
+
+        // Leaving pan mode restores the original fitted size and centering.
+        cmd::call("video/tool/pan", &c);
+        require(!display->IsPanMode(), "pan command did not disable pan mode");
+        require(!display->IsContentZoomActive(), "leaving pan mode did not restore the original size");
+
+        // Middle-button panning remains available in every tool.
         cmd::call("video/tool/rectangle", &c);
+        require(!display->IsPanMode(), "selecting another tool kept pan mode");
         wxMouseEvent middle_down(wxEVT_MIDDLE_DOWN);
         middle_down.SetPosition({100, 70});
         middle_down.SetMiddleDown(true);
@@ -159,11 +201,12 @@ int main(int argc, char **argv) {
         cmd::call("video/tool/cross", &c);
         display->ResetContentZoom();
         display->SetClientSize(wxSize(320, 180));
+        wxSizeEvent resize(display->GetClientSize());
         display->ProcessWindowEvent(resize);
         mouse(*display, wxEVT_LEFT_DOWN, {100, 70}, true);
         require(!display->HasCapture(), "fitting video still intercepted the left button");
         mouse(*display, wxEVT_LEFT_UP, {100, 70}, false);
-        std::puts("PASS: live synchronization, cancel, invalid input, single undo, cropped-video panning, capture release and fitting video");
+        std::puts("PASS: live synchronization, cancel, invalid input, single undo, explicit pan mode, capture release and size restore");
     }
     catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());

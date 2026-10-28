@@ -115,6 +115,7 @@ VideoDisplay::VideoDisplay(wxToolBar *toolbar, bool freeSize, wxComboBox *zoomBo
 	con->videoController->Bind(EVT_FRAME_READY, &VideoDisplay::UploadFrameData, this);
 	connections = agi::signal::make_vector({
 		con->project->AddVideoProviderListener([this] (AsyncVideoProvider *provider) {
+			if (pan_mode) SetPanMode(false);
 			StopPanning();
 			if (provider && render_failed) {
 				Unload();
@@ -260,7 +261,7 @@ void VideoDisplay::Render() try {
 	}
 
 	if ((mouse_pos || !autohideTools->GetBool()) && tool
-		&& pan_button == wxMOUSE_BTN_NONE && !CanPanWithLeft())
+		&& pan_button == wxMOUSE_BTN_NONE && !pan_mode)
 		tool->Draw();
 
 	SwapBuffers();
@@ -449,15 +450,15 @@ void VideoDisplay::OnMouseEvent(wxMouseEvent& event) {
 		return;
 	}
 
-	if (!HasCapture() && (event.MiddleDown() || (event.LeftDown() && CanPanWithLeft()))) {
+	if (!HasCapture() && (event.MiddleDown() || (event.LeftDown() && pan_mode))) {
 		pan_button = event.MiddleDown() ? wxMOUSE_BTN_MIDDLE : wxMOUSE_BTN_LEFT;
 		CaptureMouse();
 		UpdateVideoCursor();
 		return;
 	}
 
-	// In the default preview tool, a cropped video is a draggable canvas.
-	if (CanPanWithLeft()) return;
+	// The sidebar pan button owns the left button while it is active.
+	if (pan_mode) return;
 
 	if (tool)
 		tool->OnMouseEvent(event);
@@ -551,15 +552,8 @@ void VideoDisplay::Pan(Vector2D delta) {
 	PositionVideo();
 }
 
-bool VideoDisplay::CanPanWithLeft() const {
-	auto client = GetClientSize() * scale_factor;
-	return con->project->VideoProvider() && ToolIsType(typeid(VisualToolCross))
-		&& client.GetWidth() > 0 && client.GetHeight() > 0
-		&& (content_width > client.GetWidth() || content_height > client.GetHeight());
-}
-
 void VideoDisplay::UpdateVideoCursor() {
-	if (pan_button != wxMOUSE_BTN_NONE || CanPanWithLeft())
+	if (pan_button != wxMOUSE_BTN_NONE || pan_mode)
 		SetCursor(wxCursor(wxCURSOR_HAND));
 	else if (ToolIsType(typeid(VisualToolCross)))
 		SetCursor(wxCursor(wxCURSOR_BLANK));
@@ -572,6 +566,26 @@ void VideoDisplay::StopPanning() {
 	pan_button = wxMOUSE_BTN_NONE;
 	if (HasCapture()) ReleaseMouse();
 	UpdateVideoCursor();
+}
+
+void VideoDisplay::SetPanMode(bool enabled) {
+	if (pan_mode == enabled) {
+		UpdateVideoCursor();
+		return;
+	}
+	pan_mode = enabled;
+	if (enabled) {
+		UpdateVideoCursor();
+		Render();
+		return;
+	}
+	StopPanning();
+	// Leaving the mode always restores the original fitted size and centering.
+	ResetContentZoom();
+}
+
+void VideoDisplay::TogglePanMode() {
+	SetPanMode(!pan_mode);
 }
 
 void VideoDisplay::OnContextMenu(wxContextMenuEvent&) {
@@ -661,6 +675,8 @@ void VideoDisplay::SetWindowZoomFromBoxText(wxCommandEvent &) {
 }
 
 void VideoDisplay::SetTool(std::unique_ptr<VisualToolBase> new_tool) {
+	// Picking another tool is a request to leave the preview pan mode.
+	if (pan_mode) SetPanMode(false);
 	StopPanning();
 	// Set the tool first to prevent repeated initialization from VideoDisplay::Render
 	tool = std::move(new_tool);
@@ -690,6 +706,8 @@ Vector2D VideoDisplay::GetMousePosition() const {
 }
 
 void VideoDisplay::Unload() {
+	pan_mode = false;
+	StopPanning();
 	if (glContext) {
 		SetCurrent(*glContext);
 	}

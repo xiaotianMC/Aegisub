@@ -76,6 +76,7 @@
         "video/tool/rectangle",
         "video/tool/clip",
         "video/tool/vector_clip",
+        "video/tool/pan",
         "",
         "help/video"
     ]

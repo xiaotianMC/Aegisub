@@ -7607,6 +7607,12 @@ msgstr "调整图形的宽度、高度、位置、填充颜色和透明度"
 msgid "Size uses the drawing control-point bounds before rotation. Position is the alignment anchor. Transparency: 0% opaque, 100% invisible."
 msgstr "宽高按旋转前的绘图控制点边界计算，位置为对齐锚点。透明度：0% 不透明，100% 完全透明。"
 
+msgid "Pan Preview"
+msgstr "拖动预览"
+
+msgid "Drag the enlarged preview to view other parts; turning it off restores the original size"
+msgstr "按住左键拖动放大的预览查看其他位置；退出后恢复原大小"
+
 msgid "Reverse Move Path"
 msgstr "反向移动路径"
 
