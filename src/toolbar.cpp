@@ -23,6 +23,9 @@
 #include "include/aegisub/hotkey.h"
 #include "libresrc/libresrc.h"
 #include "options.h"
+#include "include/aegisub/context.h"
+#include "video_display.h"
+#include "visual_tool_rectangle.h"
 
 #include <libaegisub/hotkey.h>
 #include <libaegisub/json.h>
@@ -34,7 +37,10 @@
 #include <vector>
 
 #include <wx/frame.h>
+#include <wx/menu.h>
+#include <wx/timer.h>
 #include <wx/toolbar.h>
+#include <wx/utils.h>
 
 namespace {
 	json::Object const& get_root() {
@@ -61,6 +67,79 @@ namespace {
 
 		/// Current icon size
 		int icon_size;
+		int shape_tool_id = wxID_NONE;
+		DrawingShape drawing_shape = DrawingShape::Rectangle;
+		wxTimer shape_timer{this};
+		bool shape_pressed = false;
+		wxPoint shape_menu_position;
+
+		void SelectShape() {
+			auto display = context->videoDisplay;
+			if (!display || !cmd::get("video/tool/rectangle")->Validate(context)) return;
+			if (!display->ToolIsType(typeid(VisualToolRectangle)))
+				(*cmd::get("video/tool/rectangle"))(context);
+			display->SetSubTool(static_cast<int>(drawing_shape));
+			UpdateShapeButton();
+		}
+
+		void UpdateShapeButton() {
+			if (shape_tool_id == wxID_NONE) return;
+			SetToolNormalBitmap(shape_tool_id, DrawingShapeIcon(drawing_shape, icon_size));
+			SetToolShortHelp(shape_tool_id, DrawingShapeLabel(drawing_shape) + " — " +
+				_("Hold left mouse button for shapes; Shift constrains proportions"));
+		}
+
+		void ShowShapeMenu() {
+			shape_timer.Stop();
+			shape_pressed = false;
+			if (HasCapture()) ReleaseMouse();
+			wxMenu menu;
+			for (int i = 0; i <= static_cast<int>(DrawingShape::Polygon); ++i) {
+				auto shape = static_cast<DrawingShape>(i);
+				auto item = menu.AppendCheckItem(wxID_HIGHEST + 200 + i, DrawingShapeLabel(shape));
+				item->Check(shape == drawing_shape);
+				item->SetBitmap(DrawingShapeIcon(shape, icon_size));
+			}
+			menu.Bind(wxEVT_MENU, [this](wxCommandEvent& event) {
+				drawing_shape = static_cast<DrawingShape>(event.GetId() - wxID_HIGHEST - 200);
+				SelectShape();
+			});
+			PopupMenu(&menu, shape_menu_position);
+		}
+
+		void BindShapeEvents() {
+			Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent& event) {
+				auto tool = FindToolForPosition(event.GetX(), event.GetY());
+				if (!tool || tool->GetId() != shape_tool_id || !tool->IsEnabled()) {
+					event.Skip();
+					return;
+				}
+				shape_pressed = true;
+				shape_menu_position = wxPoint(GetClientSize().x, event.GetY());
+				CaptureMouse();
+				shape_timer.StartOnce(400);
+			});
+			Bind(wxEVT_LEFT_UP, [this](wxMouseEvent& event) {
+				if (!shape_pressed) { event.Skip(); return; }
+				shape_pressed = false;
+				bool short_click = shape_timer.IsRunning();
+				shape_timer.Stop();
+				if (HasCapture()) ReleaseMouse();
+				auto tool = FindToolForPosition(event.GetX(), event.GetY());
+				if (short_click && tool && tool->GetId() == shape_tool_id) SelectShape();
+			});
+			Bind(wxEVT_TIMER, [this](wxTimerEvent&) { ShowShapeMenu(); }, shape_timer.GetId());
+			Bind(wxEVT_MOUSE_CAPTURE_LOST, [this](wxMouseCaptureLostEvent&) {
+				shape_timer.Stop();
+				shape_pressed = false;
+			});
+			// Also expose the flyout without a timed gesture.
+			Bind(wxEVT_TOOL_RCLICKED, [this](wxCommandEvent& event) {
+				if (event.GetId() != shape_tool_id) { event.Skip(); return; }
+				shape_menu_position = wxPoint(GetClientSize().x, ScreenToClient(wxGetMousePosition()).y);
+				ShowShapeMenu();
+			});
+		}
 
 		/// Listener for icon size change signal
 		agi::signal::Connection icon_size_slot;
@@ -70,6 +149,11 @@ namespace {
 
 		/// Enable/disable the toolbar buttons
 		void OnIdle(wxIdleEvent &) {
+			if (shape_tool_id != wxID_NONE && context->videoDisplay &&
+				context->videoDisplay->ToolIsType(typeid(VisualToolRectangle))) {
+				auto shape = static_cast<DrawingShape>(context->videoDisplay->GetSubTool());
+				if (shape != drawing_shape) { drawing_shape = shape; UpdateShapeButton(); }
+			}
 			for (size_t i = 0; i < commands.size(); ++i) {
 				if (commands[i]->Type() & cmd::COMMAND_VALIDATE)
 					EnableTool(TOOL_ID_BASE + i, commands[i]->Validate(context));
@@ -80,6 +164,7 @@ namespace {
 
 		/// Toolbar button click handler
 		void OnClick(wxCommandEvent &evt) {
+			if (evt.GetId() == shape_tool_id) { SelectShape(); return; }
 			(*commands[evt.GetId() - TOOL_ID_BASE])(context);
 		}
 
@@ -91,6 +176,10 @@ namespace {
 
 		/// Clear the toolbar and recreate it
 		void RegenerateToolbar() {
+			shape_timer.Stop();
+			shape_pressed = false;
+			if (HasCapture()) ReleaseMouse();
+			shape_tool_id = wxID_NONE;
 			Unbind(wxEVT_IDLE, &Toolbar::OnIdle, this);
 			ClearTools();
 			commands.clear();
@@ -137,6 +226,10 @@ namespace {
 					wxITEM_NORMAL;
 
 				AddTool(TOOL_ID_BASE + commands.size(), command->StrDisplay(context), command->Icon(icon_size, GetLayoutDirection()), command->GetTooltip(ht_context), kind);
+				if (command_name == "video/tool/rectangle") {
+					shape_tool_id = TOOL_ID_BASE + commands.size();
+					UpdateShapeButton();
+				}
 
 				commands.push_back(command);
 				needs_onidle = needs_onidle || flags != cmd::COMMAND_NORMAL;
@@ -161,6 +254,7 @@ namespace {
 		, hotkeys_changed_slot(hotkey::inst->AddHotkeyChangeListener(&Toolbar::RegenerateToolbar, this))
 		{
 			Populate();
+			BindShapeEvents();
 			Bind(wxEVT_TOOL, &Toolbar::OnClick, this);
 			Bind(wxEVT_DPI_CHANGED, [this] (wxDPIChangedEvent &e) { RegenerateToolbar(); e.Skip(); });
 		}
@@ -180,6 +274,7 @@ namespace {
 		{
 			parent->SetToolBar(this);
 			Populate();
+			BindShapeEvents();
 			Bind(wxEVT_TOOL, &Toolbar::OnClick, this);
 			Bind(wxEVT_DPI_CHANGED, [this] (wxDPIChangedEvent &e) { RegenerateToolbar(); e.Skip(); });
 		}

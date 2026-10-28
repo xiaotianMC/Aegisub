@@ -114,7 +114,7 @@ namespace {
 		CMD_ICON(visual_rectangle)
 		STR_MENU("Draw Rectangle")
 		STR_DISP("Draw Rectangle")
-		STR_HELP("Select a visible subtitle, then drag to create a rectangle behind it; Escape cancels")
+		STR_HELP("Draw shapes behind a visible subtitle; hold the toolbar button to choose a shape, Shift constrains proportions, Escape cancels")
 	};
 
 	struct edit_rectangle final : public Command {

@@ -7518,6 +7518,24 @@ msgstr "选中当前画面可见的字幕，拖拽绘制底框；按 Esc 取消"
 msgid "draw rectangle"
 msgstr "绘制矩形"
 
+msgid "Draw Ellipse / Circle"
+msgstr "绘制椭圆 / 圆形"
+
+msgid "Draw Triangle"
+msgstr "绘制三角形"
+
+msgid "Draw Polygon"
+msgstr "绘制任意多边形"
+
+msgid "draw shape"
+msgstr "绘制图形"
+
+msgid "Hold left mouse button for shapes; Shift constrains proportions"
+msgstr "长按左键展开形状菜单；Shift 约束比例"
+
+msgid "Draw shapes behind a visible subtitle; hold the toolbar button to choose a shape, Shift constrains proportions, Escape cancels"
+msgstr "在可见字幕后绘制图形；长按工具按钮选择形状，Shift 约束比例，Esc 取消"
+
 #: ../src/base_grid.cpp
 msgid "Click to hide this subtitle line"
 msgstr "点击隐藏此行字幕"
