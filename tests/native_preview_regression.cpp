@@ -4,12 +4,15 @@
 #include "main.h"
 #include "ass_dialogue.h"
 #include "ass_file.h"
+#include "command/command.h"
 #include "dialog_rectangle.h"
 #include "include/aegisub/context.h"
 #include "project.h"
 #include "selection_controller.h"
 #include "subs_controller.h"
 #include "subs_edit_ctrl.h"
+#include "video_display.h"
+#include "visual_tool.h"
 
 #include <cstdio>
 #include <stdexcept>
@@ -56,6 +59,14 @@ static void set_width(wxSpinCtrlDouble& field, const wxString& value) {
     field.ProcessWindowEvent(changed);
 }
 
+static void mouse(VideoDisplay& display, wxEventType type, wxPoint position, bool left) {
+    wxMouseEvent event(type);
+    event.SetPosition(position);
+    event.SetLeftDown(left);
+    event.SetEventObject(&display);
+    display.ProcessWindowEvent(event);
+}
+
 int main(int argc, char **argv) {
     if (!wxEntryStart(argc, argv) || !wxTheApp->CallOnInit()) return 2;
     int result = 0;
@@ -100,7 +111,59 @@ int main(int argc, char **argv) {
         synced();
         require(!c.subsController->IsModified(), "undo did not restore saved state");
 
-        std::puts("PASS: live synchronization, cancel, invalid input and single undo");
+        c.project->LoadVideo("?dummy:24:120:640:360:48:160:240:");
+        auto display = c.videoDisplay;
+        cmd::call("video/tool/cross", &c);
+        display->SetWindowZoom(5);
+        wxYield();
+        mouse(*display, wxEVT_LEFT_DOWN, {100, 70}, true);
+        require(display->HasCapture(), "large window zoom did not start panning");
+        mouse(*display, wxEVT_LEFT_UP, {100, 70}, false);
+        display->SetWindowZoom(.5);
+        display->SetMinClientSize(wxSize(32, 32));
+        display->SetClientSize(wxSize(200, 120));
+        wxSizeEvent resize(display->GetClientSize());
+        display->ProcessWindowEvent(resize);
+        const auto unchanged = line->Text;
+        mouse(*display, wxEVT_LEFT_DOWN, {100, 70}, true);
+        const auto anchor = display->GetMousePosition();
+        require(display->HasCapture(), "cropped video did not start panning");
+        mouse(*display, wxEVT_MOTION, {60, 45}, true);
+        require(display->IsContentZoomActive(), "video did not pan");
+        require(display->HasCapture(), "visual tool released panning capture");
+        require((display->GetMousePosition() - anchor).Len() < .01, "panning moved the video in the wrong direction");
+        mouse(*display, wxEVT_LEFT_UP, {60, 45}, false);
+        require(!display->HasCapture(), "panning did not release capture");
+        require(line->Text == unchanged, "panning changed subtitle position");
+        mouse(*display, wxEVT_LEFT_DOWN, {60, 45}, true);
+        display->ReleaseMouse();
+        wxMouseCaptureLostEvent lost(display->GetId());
+        display->ProcessWindowEvent(lost);
+        mouse(*display, wxEVT_MOTION, {80, 60}, true);
+        require(!display->HasCapture(), "lost capture resumed a stale drag");
+        mouse(*display, wxEVT_LEFT_UP, {80, 60}, false);
+        cmd::call("video/tool/rectangle", &c);
+        wxMouseEvent middle_down(wxEVT_MIDDLE_DOWN);
+        middle_down.SetPosition({100, 70});
+        middle_down.SetMiddleDown(true);
+        display->ProcessWindowEvent(middle_down);
+        wxMouseEvent middle_drag(wxEVT_MOTION);
+        middle_drag.SetPosition({80, 60});
+        middle_drag.SetMiddleDown(true);
+        display->ProcessWindowEvent(middle_drag);
+        require(display->HasCapture(), "drawing tool released middle-button pan capture");
+        wxMouseEvent middle_up(wxEVT_MIDDLE_UP);
+        middle_up.SetPosition({80, 60});
+        display->ProcessWindowEvent(middle_up);
+        require(!display->HasCapture(), "middle-button pan did not release capture");
+        cmd::call("video/tool/cross", &c);
+        display->ResetContentZoom();
+        display->SetClientSize(wxSize(320, 180));
+        display->ProcessWindowEvent(resize);
+        mouse(*display, wxEVT_LEFT_DOWN, {100, 70}, true);
+        require(!display->HasCapture(), "fitting video still intercepted the left button");
+        mouse(*display, wxEVT_LEFT_UP, {100, 70}, false);
+        std::puts("PASS: live synchronization, cancel, invalid input, single undo, cropped-video panning, capture release and fitting video");
     }
     catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());

@@ -51,6 +51,7 @@
 #include "video_out_gl.h"
 #include "video_controller.h"
 #include "visual_tool.h"
+#include "visual_tool_cross.h"
 
 
 #include <algorithm>
@@ -114,6 +115,7 @@ VideoDisplay::VideoDisplay(wxToolBar *toolbar, bool freeSize, wxComboBox *zoomBo
 	con->videoController->Bind(EVT_FRAME_READY, &VideoDisplay::UploadFrameData, this);
 	connections = agi::signal::make_vector({
 		con->project->AddVideoProviderListener([this] (AsyncVideoProvider *provider) {
+			StopPanning();
 			if (provider && render_failed) {
 				Unload();
 				render_failed = false;
@@ -142,6 +144,11 @@ VideoDisplay::VideoDisplay(wxToolBar *toolbar, bool freeSize, wxComboBox *zoomBo
 	Bind(wxEVT_MOTION, &VideoDisplay::OnMouseEvent, this);
 	Bind(wxEVT_MOUSEWHEEL, &VideoDisplay::OnMouseWheel, this);
 	Bind(wxEVT_GESTURE_ZOOM, &VideoDisplay::OnGestureZoom, this);
+	Bind(wxEVT_MOUSE_CAPTURE_LOST, [this](wxMouseCaptureLostEvent& event) {
+		pan_button = wxMOUSE_BTN_NONE;
+		UpdateVideoCursor();
+		event.Skip();
+	});
 
 	Bind(wxEVT_DPI_CHANGED, [this] (wxDPIChangedEvent &e) {
 		double new_zoom = windowZoomValue * GetContentScaleFactor() / scale_factor;
@@ -162,6 +169,7 @@ VideoDisplay::VideoDisplay(wxToolBar *toolbar, bool freeSize, wxComboBox *zoomBo
 }
 
 VideoDisplay::~VideoDisplay () {
+	StopPanning();
 	Unload();
 	con->videoController->Unbind(EVT_FRAME_READY, &VideoDisplay::UploadFrameData, this);
 }
@@ -251,7 +259,8 @@ void VideoDisplay::Render() try {
 		}
 	}
 
-	if ((mouse_pos || !autohideTools->GetBool()) && tool)
+	if ((mouse_pos || !autohideTools->GetBool()) && tool
+		&& pan_button == wxMOUSE_BTN_NONE && !CanPanWithLeft())
 		tool->Draw();
 
 	SwapBuffers();
@@ -385,6 +394,7 @@ void VideoDisplay::PositionVideo(bool preserveContentSize) {
 		                     content_width / scale_factor, content_height / scale_factor);
 	}
 
+	UpdateVideoCursor();
 	Render();
 }
 
@@ -429,11 +439,25 @@ void VideoDisplay::OnMouseEvent(wxMouseEvent& event) {
 	if (event.ButtonDown())
 		SetFocus();
 
-	if (event.Dragging() && event.MiddleIsDown()) {
-		Pan(Vector2D(event.GetPosition()) - last_mouse_pos);
+	auto delta = Vector2D(event.GetPosition()) - last_mouse_pos;
+	last_mouse_pos = mouse_pos = event.GetPosition();
+	if (pan_button != wxMOUSE_BTN_NONE) {
+		if (!event.ButtonIsDown(pan_button))
+			StopPanning();
+		else if (event.Dragging())
+			Pan(delta);
+		return;
 	}
 
-	last_mouse_pos = mouse_pos = event.GetPosition();
+	if (!HasCapture() && (event.MiddleDown() || (event.LeftDown() && CanPanWithLeft()))) {
+		pan_button = event.MiddleDown() ? wxMOUSE_BTN_MIDDLE : wxMOUSE_BTN_LEFT;
+		CaptureMouse();
+		UpdateVideoCursor();
+		return;
+	}
+
+	// In the default preview tool, a cropped video is a draggable canvas.
+	if (CanPanWithLeft()) return;
 
 	if (tool)
 		tool->OnMouseEvent(event);
@@ -527,10 +551,34 @@ void VideoDisplay::Pan(Vector2D delta) {
 	PositionVideo();
 }
 
+bool VideoDisplay::CanPanWithLeft() const {
+	auto client = GetClientSize() * scale_factor;
+	return con->project->VideoProvider() && ToolIsType(typeid(VisualToolCross))
+		&& client.GetWidth() > 0 && client.GetHeight() > 0
+		&& (content_width > client.GetWidth() || content_height > client.GetHeight());
+}
+
+void VideoDisplay::UpdateVideoCursor() {
+	if (pan_button != wxMOUSE_BTN_NONE || CanPanWithLeft())
+		SetCursor(wxCursor(wxCURSOR_HAND));
+	else if (ToolIsType(typeid(VisualToolCross)))
+		SetCursor(wxCursor(wxCURSOR_BLANK));
+	else
+		SetCursor(wxNullCursor);
+}
+
+void VideoDisplay::StopPanning() {
+	if (pan_button == wxMOUSE_BTN_NONE) return;
+	pan_button = wxMOUSE_BTN_NONE;
+	if (HasCapture()) ReleaseMouse();
+	UpdateVideoCursor();
+}
+
 void VideoDisplay::OnContextMenu(wxContextMenuEvent&) {
 	if (!context_menu) context_menu = menu::GetMenu("video_context", (wxID_HIGHEST + 1) + 9000, con);
 	SetCursor(wxNullCursor);
 	menu::OpenPopupMenu(context_menu.get(), this);
+	UpdateVideoCursor();
 }
 
 void VideoDisplay::OnKeyDown(wxKeyEvent &event) {
@@ -613,6 +661,7 @@ void VideoDisplay::SetWindowZoomFromBoxText(wxCommandEvent &) {
 }
 
 void VideoDisplay::SetTool(std::unique_ptr<VisualToolBase> new_tool) {
+	StopPanning();
 	// Set the tool first to prevent repeated initialization from VideoDisplay::Render
 	tool = std::move(new_tool);
 

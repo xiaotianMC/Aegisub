@@ -54,6 +54,10 @@ VisualToolBase::VisualToolBase(VideoDisplay *parent, agi::Context *context)
 	parent->Bind(wxEVT_MOUSE_CAPTURE_LOST, &VisualToolBase::OnMouseCaptureLost, this);
 }
 
+VisualToolBase::~VisualToolBase() {
+	parent->Unbind(wxEVT_MOUSE_CAPTURE_LOST, &VisualToolBase::OnMouseCaptureLost, this);
+}
+
 void VisualToolBase::SetResolutions() {
 	int script_w, script_h, layout_w, layout_h;
 	c->ass->GetResolution(script_w, script_h);
@@ -91,9 +95,10 @@ void VisualToolBase::OnSeek(int new_frame) {
 	}
 }
 
-void VisualToolBase::OnMouseCaptureLost(wxMouseCaptureLostEvent &) {
+void VisualToolBase::OnMouseCaptureLost(wxMouseCaptureLostEvent &event) {
 	holding = false;
 	dragging = false;
+	event.Skip();
 }
 
 void VisualToolBase::OnActiveLineChanged(AssDialogue *new_line) {
@@ -143,10 +148,10 @@ void VisualToolBase::SetDisplayArea(int x, int y, int w, int h) {
 	video_pos = Vector2D(x, y);
 	video_size = Vector2D(w, h);
 
+	if ((holding || dragging) && parent->HasCapture())
+		parent->ReleaseMouse();
 	holding = false;
 	dragging = false;
-	if (parent->HasCapture())
-		parent->ReleaseMouse();
 	OnCoordinateSystemsChanged();
 }
 

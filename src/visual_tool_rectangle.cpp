@@ -81,9 +81,9 @@ Vector2D VisualToolRectangle::ClampToVideo(Vector2D point) const {
 }
 
 void VisualToolRectangle::Cancel() {
+	if (holding && parent->HasCapture()) parent->ReleaseMouse();
 	holding = false;
 	vertices.clear();
-	if (parent->HasCapture()) parent->ReleaseMouse();
 }
 
 Vector2D VisualToolRectangle::DrawingEnd() const {

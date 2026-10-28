@@ -150,7 +150,7 @@ public:
 	virtual void SetToolbar(wxToolBar *) { }
 	virtual void SetSubTool([[maybe_unused]] int subtool) { }
 	virtual int GetSubTool() { return 0; }
-	virtual ~VisualToolBase() = default;
+	virtual ~VisualToolBase();
 };
 
 /// Visual tool base class containing all common feature-related functionality

@@ -111,6 +111,7 @@ class VideoDisplay final : public wxGLCanvas {
 	/// @see viewportSize
 	double pan_x = 0;
 	double pan_y = 0;
+	wxMouseButton pan_button = wxMOUSE_BTN_NONE;
 
 	/// The video renderer
 	std::unique_ptr<VideoOutGL> videoOut;
@@ -185,6 +186,9 @@ class VideoDisplay final : public wxGLCanvas {
 	/// @brief Pan the video by delta
 	/// @param delta Delta in logical pixels
 	void Pan(Vector2D delta);
+	bool CanPanWithLeft() const;
+	void UpdateVideoCursor();
+	void StopPanning();
 
 	/// @brief Transforms a client position into a zoom anchor point
 	///
