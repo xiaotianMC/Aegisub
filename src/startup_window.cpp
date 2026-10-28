@@ -154,6 +154,8 @@ class StartupWindow final : public wxFrame {
     }
 
 public:
+    void OpenDashboard() { ShowBoard(true); }
+
     StartupWindow()
     : wxFrame(nullptr, wxID_ANY, "Aegisub Native",
         wxDefaultPosition, wxDefaultSize,
@@ -226,7 +228,7 @@ public:
             _("Open the familiar editor and\nstart working right away."), _("Open editor"));
         home_focus = projects;
         projects->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { ShowBoard(true); });
-        editor->Bind(wxEVT_BUTTON, [](wxCommandEvent&) { wxGetApp().NewProjectContext(); });
+        editor->Bind(wxEVT_BUTTON, [](wxCommandEvent&) { wxGetApp().OpenEditor(); });
         choices->Add(projects, 1, wxEXPAND);
         choices->AddSpacer(FromDIP(24));
         choices->Add(editor, 1, wxEXPAND);
@@ -250,7 +252,7 @@ public:
         dashboard->Add(Label(board, _("Your projects will appear here."), 15, muted), 0, wxALIGN_CENTER_HORIZONTAL);
         dashboard->AddSpacer(FromDIP(28));
         auto open = new FluentButton(board, ButtonKind::Open, _("Open subtitle editor"), wxSize(184, 42));
-        open->Bind(wxEVT_BUTTON, [](wxCommandEvent&) { wxGetApp().NewProjectContext(); });
+        open->Bind(wxEVT_BUTTON, [](wxCommandEvent&) { wxGetApp().OpenEditor(); });
         dashboard->Add(open, 0, wxALIGN_CENTER_HORIZONTAL);
         dashboard->AddStretchSpacer(3);
         board->SetSizer(dashboard);
@@ -271,3 +273,4 @@ public:
 }
 
 wxFrame *CreateStartupWindow() { return new StartupWindow; }
+void ShowStartupDashboard(wxFrame *window) { static_cast<StartupWindow *>(window)->OpenDashboard(); }

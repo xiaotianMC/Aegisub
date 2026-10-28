@@ -364,7 +364,12 @@ int AegisubApp::OnExit() {
 }
 
 void AegisubApp::ShowStartup() {
-	if (startup_window) { startup_window->Raise(); return; }
+	if (startup_window) {
+		startup_window->Iconize(false);
+		startup_window->Show();
+		startup_window->Raise();
+		return;
+	}
 	auto window = CreateStartupWindow();
 	startup_window = window;
 	window->Bind(wxEVT_DESTROY, [this, window](wxWindowDestroyEvent& event) {
@@ -373,6 +378,28 @@ void AegisubApp::ShowStartup() {
 	});
 	SetTopWindow(window);
 	window->Show();
+}
+
+void AegisubApp::DismissStartup() {
+	if (!startup_window) return;
+	auto window = startup_window;
+	startup_window = nullptr;
+	window->Destroy();
+}
+
+void AegisubApp::ShowProjectDashboard() {
+	ShowStartup();
+	ShowStartupDashboard(startup_window);
+}
+
+void AegisubApp::OpenEditor() {
+	if (frames.empty()) { NewProjectContext(); return; }
+	auto frame = frames.back();
+	frame->Iconize(false);
+	frame->Show();
+	frame->Raise();
+	SetTopWindow(frame);
+	DismissStartup();
 }
 
 agi::Context& AegisubApp::NewProjectContext() {
@@ -390,11 +417,7 @@ agi::Context& AegisubApp::NewProjectContext() {
 	});
 	frames.push_back(frame);
 	SetTopWindow(frame);
-	if (startup_window) {
-		auto window = startup_window;
-		startup_window = nullptr;
-		window->Destroy();
-	}
+	DismissStartup();
 	return *frame->context;
 }
 

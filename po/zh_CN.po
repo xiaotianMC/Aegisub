@@ -7681,3 +7681,12 @@ msgstr "你的字幕项目将显示在这里。"
 
 msgid "Open subtitle editor"
 msgstr "打开字幕编辑器"
+
+msgid "Project Management..."
+msgstr "项目管理…"
+
+msgid "Project Management"
+msgstr "项目管理"
+
+msgid "Open the project dashboard"
+msgstr "打开项目看板"

@@ -131,8 +131,6 @@
         { "command" : "audio/open/noise" }
     ],
     "main/view" : [
-        { "command" : "app/language" },
-        {},
         { "command" : "app/display/subs" },
         { "command" : "app/display/video_subs" },
         { "command" : "app/display/audio_subs" },
@@ -145,6 +143,8 @@
         { "command" : "app/toggle/toolbar" }
     ],
     "main/preferences" : [
+        { "command" : "app/language" },
+        {},
         { "command" : "app/options", "text" : "Preferences...", "special" : "options" }
     ],
     "main/help" : [

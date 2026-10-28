@@ -12,6 +12,8 @@
         { "submenu" : "main/help",     "tlcontext" : "Menu bar", "text" : "&Help", "special" : "help" }
     ],
     "main/file" : [
+        { "command" : "app/project_manager" },
+        {},
         { "command" : "subtitle/new" },
         { "command" : "subtitle/open" },
         { "command" : "subtitle/open/charset" },

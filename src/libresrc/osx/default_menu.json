@@ -9,9 +9,12 @@
         { "submenu" : "main/audio",    "tlcontext": "Menu bar", "text" : "&Audio" },
         { "special" : "automation",    "tlcontext": "Menu bar", "text" : "A&utomation" },
         { "submenu" : "main/window",   "tlcontext": "Menu bar", "text" : "Window" },
+        { "submenu" : "main/preferences", "tlcontext": "Menu bar", "text" : "Preferences (&O)" },
         { "submenu" : "main/help",     "tlcontext": "Menu bar", "text" : "&Help", "special" : "help" }
     ],
     "main/file" : [
+        { "command" : "app/project_manager" },
+        {},
         { "command" : "subtitle/new", "text" : "New" },
         { "command" : "subtitle/open", "text" : "Open..." },
         { "command" : "subtitle/open/charset" },

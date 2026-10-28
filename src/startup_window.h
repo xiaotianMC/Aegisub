@@ -4,3 +4,4 @@
 
 class wxFrame;
 wxFrame *CreateStartupWindow();
+void ShowStartupDashboard(wxFrame *window);

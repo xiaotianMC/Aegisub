@@ -214,6 +214,18 @@ struct app_options final : public Command {
 	}
 };
 
+struct app_project_manager final : public Command {
+	CMD_NAME("app/project_manager")
+	CMD_ICON(new_window_menu)
+	STR_MENU("Project Management...")
+	STR_DISP("Project Management")
+	STR_HELP("Open the project dashboard")
+
+	void operator()(agi::Context *) override {
+		wxGetApp().ShowProjectDashboard();
+	}
+};
+
 struct app_toggle_global_hotkeys final : public Command {
 	CMD_NAME("app/toggle/global_hotkeys")
 	CMD_ICON(toggle_audio_medusa)
@@ -346,6 +358,7 @@ namespace cmd {
 		reg(std::make_unique<app_log>());
 		reg(std::make_unique<app_new_window>());
 		reg(std::make_unique<app_options>());
+		reg(std::make_unique<app_project_manager>());
 		reg(std::make_unique<app_toggle_global_hotkeys>());
 		reg(std::make_unique<app_toggle_toolbar>());
 #ifdef __WXMAC__
