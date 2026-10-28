@@ -83,7 +83,9 @@ int main(int argc, char **argv) {
         };
         edit(c, [&](wxDialog& dialog, wxSpinCtrlDouble& width) {
             set_width(width, "180");
-            require(line->Text.get().find("\\fscx150") != std::string::npos, "width did not update while dialog was open");
+            require(line->Text.get().find("l 180 0 180 60 0 60") != std::string::npos, "width did not scale the path while dialog was open");
+            require(line->Text.get().find("\\fscx") == std::string::npos && line->Text.get().find("\\fscy") == std::string::npos,
+                "resizing still left fscx/fscy tags");
             synced();
             require(!c.subsController->IsModified(), "preview changed saved state");
             require(c.subsController->GetUndoDescription().empty(), "preview added undo history");

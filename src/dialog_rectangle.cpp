@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <array>
+#include <utility>
 #include <wx/dialog.h>
 #include <wx/msgdlg.h>
 #include <wx/sizer.h>
@@ -171,21 +172,41 @@ void EditDrawing(agi::Context *c) {
         bool alpha = new_color.a != rect.color.a;
         AssDialogue result(original);
         if (resize_x || resize_y || position || fill || alpha) {
+            // Change the drawing coordinates themselves instead of adding
+            // \\fscx/\\fscy. Any existing scale tags on both axes are baked
+            // into the path, so the visible size stays exact and the code no
+            // longer needs scale tags.
+            if (resize_x || resize_y) {
+                double base_x = 100, base_y = 100;
+                if (auto style = c->ass->GetStyle(original.Style)) {
+                    base_x = style->scalex;
+                    base_y = style->scaley;
+                }
+                double scale_x = (resize_x ? values[0] : rect.width) * rect.scale_x / (rect.width * base_x);
+                double scale_y = (resize_y ? values[1] : rect.height) * rect.scale_y / (rect.height * base_y);
+                auto path = ScaleDrawingPath(rect.drawing->text, scale_x, scale_y);
+                if (path.empty()) {
+                    if (show_error)
+                        wxMessageBox(_("The drawing path could not be resized."), _("Edit Shape"), wxOK | wxICON_WARNING, &dialog);
+                    return false;
+                }
+                rect.drawing->text = std::move(path);
+            }
+
             // Preserve unrelated override tags, comments, timing, style and layer.
             for (auto const& block : rect.blocks) {
                 if (block.get() == rect.drawing) break;
                 if (block->GetType() != AssBlockType::OVERRIDE) continue;
                 auto over = static_cast<AssDialogueBlockOverride*>(block.get());
                 std::erase_if(over->Tags, [&](auto const& tag) {
-                    return (position && tag.Name == "\\pos") || (resize_x && tag.Name == "\\fscx")
-                        || (resize_y && tag.Name == "\\fscy") || (fill && (tag.Name == "\\c" || tag.Name == "\\1c"))
+                    return (position && tag.Name == "\\pos")
+                        || ((resize_x || resize_y) && (tag.Name == "\\fscx" || tag.Name == "\\fscy"))
+                        || (fill && (tag.Name == "\\c" || tag.Name == "\\1c"))
                         || (alpha && tag.Name == "\\1a");
                 });
             }
             if (position) rect.prefix->AddTag("\\pos(" + float_to_string(values[2]) + ","
                 + float_to_string(values[3]) + ")");
-            if (resize_x) rect.prefix->AddTag("\\fscx" + float_to_string(rect.scale_x * values[0] / rect.width, 9));
-            if (resize_y) rect.prefix->AddTag("\\fscy" + float_to_string(rect.scale_y * values[1] / rect.height, 9));
             if (fill) rect.prefix->AddTag("\\1c" + new_color.GetAssOverrideFormatted());
             if (alpha) rect.prefix->AddTag(agi::format("\\1a&H%02X&", (int)new_color.a));
             result.UpdateText(rect.blocks);

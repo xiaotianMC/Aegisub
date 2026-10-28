@@ -7577,6 +7577,9 @@ msgstr "尺寸按旋转前的字幕坐标计算。透明度：0% 不透明，100
 msgid "Enter a number within the allowed range."
 msgstr "请输入允许范围内的数字。"
 
+msgid "The drawing path could not be resized."
+msgstr "无法调整此图形的绘图路径。"
+
 msgid "edit rectangle"
 msgstr "编辑矩形"
 

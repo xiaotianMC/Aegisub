@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <locale>
 #include <optional>
 #include <sstream>
@@ -21,7 +22,8 @@ struct DrawingBounds {
 };
 
 // ASS layout uses the control-point box, including Bezier and B-spline controls.
-// Keep the original commands intact: resizing is applied with fscx/fscy tags.
+// Resizing rewrites these control points so the drawing itself changes size and
+// no extra fscx/fscy tag is needed.
 inline std::optional<DrawingBounds> ParseDrawingBounds(std::string const& text) {
     std::istringstream input(text);
     input.imbue(std::locale::classic());
@@ -65,6 +67,69 @@ inline std::optional<DrawingBounds> ParseDrawingBounds(std::string const& text) 
     if (!drawn || !bounds || bounds->Width() <= 0 || bounds->Height() <= 0)
         return std::nullopt;
     return bounds;
+}
+
+inline std::string FormatDrawingCoordinate(double value) {
+    char buffer[64];
+    std::snprintf(buffer, sizeof buffer, "%.6f", value);
+    std::string text(buffer);
+    auto dot = text.find('.');
+    if (dot != std::string::npos) {
+        auto last = text.find_last_not_of('0');
+        if (last == dot) --last;
+        text.erase(last + 1);
+    }
+    if (text == "-0") return "0";
+    return text;
+}
+
+// Scale every control point of an ASS drawing path. The path stays in the same
+// command order and keeps multiple subpaths, Bezier/B-spline controls and \p
+// drawing levels; only its coordinates change.
+inline std::string ScaleDrawingPath(std::string const& text, double scale_x, double scale_y) {
+    if (!std::isfinite(scale_x) || !std::isfinite(scale_y) || scale_x <= 0 || scale_y <= 0)
+        return {};
+
+    std::istringstream input(text);
+    input.imbue(std::locale::classic());
+    std::ostringstream output;
+    output.imbue(std::locale::classic());
+    bool moved = false, drawn = false, spline = false;
+    bool first_command = true;
+    while (input >> std::ws && !input.eof()) {
+        char command;
+        if (!(input >> command) || std::string("mnlbspc").find(command) == std::string::npos)
+            return {};
+        if (!moved && command != 'm') return {};
+        if (!first_command) output << ' ';
+        first_command = false;
+        if (command == 'c') {
+            if (!spline) return {};
+            spline = false;
+            output << "c";
+            continue;
+        }
+        if (command == 'p' && !spline) return {};
+        output << command;
+        size_t count = 0;
+        while (input >> std::ws && !input.eof()) {
+            if (std::string("mnlbspc").find(static_cast<char>(input.peek())) != std::string::npos)
+                break;
+            double x, y;
+            if (!(input >> x >> y) || !std::isfinite(x) || !std::isfinite(y))
+                return {};
+            output << ' ' << FormatDrawingCoordinate(x * scale_x)
+                   << ' ' << FormatDrawingCoordinate(y * scale_y);
+            ++count;
+        }
+        if (!count || (command == 'b' && count % 3) || (command == 's' && count < 3))
+            return {};
+        moved = true;
+        if (command != 'm' && command != 'n') drawn = true;
+        if (command == 's') spline = true;
+        else if (command != 'p') spline = false;
+    }
+    return drawn ? output.str() : std::string();
 }
 
 // Work in script coordinates so Shift remains correct at any preview aspect ratio.
