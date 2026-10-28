@@ -19,13 +19,16 @@
 #include "ass_dialogue.h"
 #include "ass_file.h"
 #include "include/aegisub/context.h"
+#include "subtitle_binding.h"
 #include "subs_controller.h"
 
 #include <algorithm>
 
 SelectionController::SelectionController(agi::Context *c) : context(c) { }
 
-void SelectionController::SetSelectedSet(Selection new_selection) {
+void SelectionController::SetSelectedSet(Selection new_selection, bool expand_bound_groups) {
+	if (expand_bound_groups && context->ass)
+		new_selection = ExpandBoundSelection(*context->ass, new_selection);
 	selection = std::move(new_selection);
 	AnnounceSelectedSetChanged();
 }
@@ -39,8 +42,10 @@ void SelectionController::SetActiveLine(AssDialogue *new_line) {
 	}
 }
 
-void SelectionController::SetSelectionAndActive(Selection new_selection, AssDialogue *new_line) {
+void SelectionController::SetSelectionAndActive(Selection new_selection, AssDialogue *new_line, bool expand_bound_groups) {
 	bool active_line_changed = new_line != active_line;
+	if (expand_bound_groups && context->ass)
+		new_selection = ExpandBoundSelection(*context->ass, new_selection);
 	selection = std::move(new_selection);
 	active_line = new_line;
 	if (active_line)

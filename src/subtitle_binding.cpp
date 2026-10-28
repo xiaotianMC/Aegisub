@@ -7,12 +7,14 @@
 #include "include/aegisub/context.h"
 #include "selection_controller.h"
 
+#include <algorithm>
 #include <array>
-#include <random>
-#include <sstream>
 #include <iomanip>
-#include <set>
+#include <map>
 #include <optional>
+#include <random>
+#include <set>
+#include <sstream>
 #include <wx/intl.h>
 
 namespace {
@@ -40,8 +42,24 @@ int SubtitleBindingColorIndex(std::string const& group) {
     return group.size() > 1 && group[0] >= '0' && group[0] <= '7' && group[1] == ':' ? group[0] - '0' : 0;
 }
 
+Selection ExpandBoundSelection(AssFile& file, Selection const& selection) {
+    std::set<std::string> groups;
+    for (auto line : selection) {
+        auto group = GetSubtitleBinding(file, *line);
+        if (!group.empty()) groups.insert(std::move(group));
+    }
+    if (groups.empty()) return selection;
+
+    Selection expanded = selection;
+    for (auto& line : file.Events) {
+        if (groups.count(GetSubtitleBinding(file, line)))
+            expanded.insert(&line);
+    }
+    return expanded;
+}
+
 void BindSelectedSubtitles(agi::Context *c) {
-    auto const& selection = c->selectionController->GetSelectedSet();
+    auto selection = c->selectionController->GetSelectedSet();
     if (selection.size() < 2) return;
     auto& file = *c->ass;
     std::set<std::string> merging;
@@ -51,24 +69,28 @@ void BindSelectedSubtitles(agi::Context *c) {
         auto group = GetSubtitleBinding(file, line);
         if (group.empty()) continue;
         if (all_groups.insert(group).second) ++colors[SubtitleBindingColorIndex(group)];
-        if (selection.count(&line)) merging.insert(group);
+        if (selection.count(&line)) merging.insert(std::move(group));
     }
     if (merging.size() == 1 && std::all_of(selection.begin(), selection.end(), [&](auto line) {
         return GetSubtitleBinding(file, *line) == *merging.begin();
     })) return;
+
     int color = merging.empty() ? int(std::min_element(colors.begin(), colors.end()) - colors.begin())
         : SubtitleBindingColorIndex(*merging.begin());
     std::random_device random;
     std::ostringstream token;
     token << color << ':' << std::hex << std::setfill('0');
     for (int i = 0; i < 4; ++i) token << std::setw(8) << random();
-    auto group = token.str();
-    auto id = file.AddExtradata(key, group);
+    auto id = file.AddExtradata(key, token.str());
     for (auto& line : file.Events) {
         if (selection.count(&line) || merging.count(GetSubtitleBinding(file, line)))
             SetBinding(file, line, id);
     }
     file.Commit(_("bind subtitles"), AssFile::COMMIT_EXTRADATA | AssFile::COMMIT_DIAG_META);
+
+    // Selecting one member of the new group should now select all of them.
+    auto expanded = ExpandBoundSelection(file, selection);
+    c->selectionController->SetSelectedSet(std::move(expanded));
 }
 
 void UnbindSelectedSubtitles(agi::Context *c) {
@@ -90,28 +112,4 @@ void UnbindSelectedSubtitles(agi::Context *c) {
     for (auto const& [group, members] : groups)
         if (members.size() == 1) SetBinding(file, *members.front(), std::nullopt);
     file.Commit(_("unbind subtitles"), AssFile::COMMIT_EXTRADATA | AssFile::COMMIT_DIAG_META);
-}
-
-bool AssFile::SynchronizeBoundDurations(int type, AssDialogue *preferred) {
-    if (type != COMMIT_NEW && !(type & (COMMIT_DIAG_TIME | COMMIT_DIAG_ADDREM | COMMIT_EXTRADATA)))
-        return false;
-    std::vector<BoundSubtitleTiming> times;
-    std::vector<AssDialogue*> lines;
-    for (auto& line : Events) {
-        auto group = GetSubtitleBinding(*this, line);
-        if (group.empty()) continue;
-        int duration = int(line.End) - int(line.Start);
-        auto previous = bound_durations.find(line.Id);
-        times.push_back({std::move(group), previous == bound_durations.end() ? duration : previous->second,
-            int(line.Start), int(line.End), &line == preferred});
-        lines.push_back(&line);
-    }
-    bool changed = type != COMMIT_NEW && (type & COMMIT_DIAG_TIME)
-        && SynchronizeBoundSubtitleDurations(times);
-    bound_durations.clear();
-    for (size_t i = 0; i < lines.size(); ++i) {
-        if (changed) lines[i]->End = times[i].end;
-        bound_durations[lines[i]->Id] = int(lines[i]->End) - int(lines[i]->Start);
-    }
-    return changed;
 }

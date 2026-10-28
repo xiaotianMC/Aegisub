@@ -1255,8 +1255,19 @@ struct edit_bind_subtitles final : public Command {
     CMD_TYPE(COMMAND_VALIDATE)
     STR_MENU("Bind Subtitles")
     STR_DISP("Bind Subtitles")
-    STR_HELP("Bind selected subtitles to synchronize changes to their durations")
-    bool Validate(const agi::Context *c) override { return c->selectionController->GetSelectedSet().size() >= 2; }
+    STR_HELP("Bind selected subtitles into a persistent multi-selection group")
+    bool Validate(const agi::Context *c) override {
+        auto const& selection = c->selectionController->GetSelectedSet();
+        if (selection.size() < 2) return false;
+        std::string group;
+        for (auto line : selection) {
+            auto current = GetSubtitleBinding(*c->ass, *line);
+            if (current.empty()) return true;
+            if (group.empty()) group = std::move(current);
+            else if (group != current) return true;
+        }
+        return false;
+    }
     void operator()(agi::Context *c) override { BindSelectedSubtitles(c); }
 };
 

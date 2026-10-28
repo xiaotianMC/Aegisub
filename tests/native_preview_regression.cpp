@@ -11,7 +11,10 @@
 #include "project.h"
 #include "selection_controller.h"
 #include "subs_controller.h"
+#include "subs_edit_box.h"
 #include "subs_edit_ctrl.h"
+#include "subtitle_binding.h"
+#include "timeedit_ctrl.h"
 #include "video_display.h"
 #include "visual_tool.h"
 
@@ -29,6 +32,11 @@ template<class T> static T *find_child(wxWindow *parent) {
     for (auto child : parent->GetChildren())
         if (auto result = find_child<T>(child)) return result;
     return nullptr;
+}
+
+template<class T> static void find_children(wxWindow *parent, std::vector<T*>& result) {
+    if (auto child = dynamic_cast<T*>(parent)) result.push_back(child);
+    for (auto child : parent->GetChildren()) find_children<T>(child, result);
 }
 
 static void edit(agi::Context& c, const std::function<void(wxDialog&, wxSpinCtrlDouble&)>& action) {
@@ -144,6 +152,60 @@ int main(int argc, char **argv) {
         grid_click(wxEVT_LEFT_DCLICK);
         wxYield();
         require(dialog_opened, "double click on a drawing row did not open the shape panel");
+
+        // Binding turns a group into a persistent multi-selection; Ctrl/Alt-style
+        // callers can still select a single member for a temporary edit.
+        auto first = &*c.ass->Events.begin();
+        auto second = &*std::next(c.ass->Events.begin());
+        c.selectionController->SetSelectionAndActive({first, second}, first);
+        cmd::call("subtitle/bind", &c);
+        require(!GetSubtitleBinding(*c.ass, *first).empty(), "binding was not created");
+        c.selectionController->SetSelectedSet({first});
+        require(c.selectionController->GetSelectedSet().size() == 2, "binding group did not expand the selection");
+        c.selectionController->SetSelectedSet({first}, false);
+        require(c.selectionController->GetSelectedSet().size() == 1, "single-line selection bypass did not work");
+
+        // A duration edit through the normal multi-line editor must apply once
+        // to the whole group, without the old custom duration-sync path.
+        auto edit_box = find_child<SubsEditBox>(c.parent);
+        require(edit_box, "subtitle edit box missing");
+        std::vector<TimeEdit*> time_edits;
+        find_children(edit_box, time_edits);
+        require(time_edits.size() >= 3, "time editors missing");
+        auto start_first = first->Start;
+        auto start_second = second->Start;
+        c.selectionController->SetSelectionAndActive({first, second}, first);
+        auto duration = time_edits[2];
+        duration->SetTime(agi::Time(3000));
+        wxCommandEvent time_changed(wxEVT_TEXT, duration->GetId());
+        time_changed.SetEventObject(duration);
+        duration->ProcessWindowEvent(time_changed);
+        require(int(first->End) - int(first->Start) == 3000, "group duration was not applied to the first member");
+        require(int(second->End) - int(second->Start) == 3000, "group duration was not applied to the second member");
+        require(first->Start == start_first && second->Start == start_second, "group duration changed member starts");
+
+        // Ctrl+click on a bound row is the single-line escape hatch; a normal
+        // click afterwards expands the group again.
+        wxMouseEvent ctrl_down(wxEVT_LEFT_DOWN);
+        ctrl_down.SetPosition({200, 30});
+        ctrl_down.SetControlDown(true);
+        ctrl_down.SetLeftDown(true);
+        ctrl_down.SetEventObject(grid);
+        grid->ProcessWindowEvent(ctrl_down);
+        wxMouseEvent ctrl_up(wxEVT_LEFT_UP);
+        ctrl_up.SetPosition({200, 30});
+        ctrl_up.SetEventObject(grid);
+        grid->ProcessWindowEvent(ctrl_up);
+        require(c.selectionController->GetSelectedSet().size() == 1, "Ctrl+click did not select a single bound row");
+        grid_click(wxEVT_LEFT_DOWN);
+        grid_click(wxEVT_LEFT_UP);
+        require(c.selectionController->GetSelectedSet().size() == 2, "normal click did not expand the bound group");
+
+        c.selectionController->SetSelectionAndActive({first, second}, first);
+        cmd::call("subtitle/unbind", &c);
+        require(GetSubtitleBinding(*c.ass, *first).empty() && GetSubtitleBinding(*c.ass, *second).empty(),
+            "unbind did not clear the binding");
+        c.selectionController->SetSelectionAndActive({line}, line);
 
         c.project->LoadVideo("?dummy:24:120:640:360:48:160:240:");
         auto display = c.videoDisplay;

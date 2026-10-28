@@ -141,10 +141,10 @@ void BaseGrid::OnSubtitlesCommit(int type) {
 			return !GetSubtitleBinding(*context->ass, line).empty();
 		});
 		if (bound) {
-            columns[1]->SetVisible(true);
-            columns_visible.resize(columns.size(), true);
-            columns_visible[1] = true;
-        }
+			columns[1]->SetVisible(true);
+			columns_visible.resize(columns.size(), true);
+			columns_visible[1] = true;
+		}
 	}
 	if (type == AssFile::COMMIT_NEW || type & AssFile::COMMIT_ORDER || type & AssFile::COMMIT_DIAG_ADDREM)
 		UpdateMaps();
@@ -526,6 +526,12 @@ void BaseGrid::OnMouseEvent(wxMouseEvent &event) {
 
 		// Toggle selected
 		if (click && ctrl && !shift && !alt) {
+			// Ctrl+click on a bound row is the temporary single-line edit
+			// escape hatch; do not expand the binding group.
+			if (!GetSubtitleBinding(*context->ass, *dlg).empty()) {
+				context->selectionController->SetSelectionAndActive({dlg}, dlg, false);
+				return;
+			}
 			bool isSel = !!selection.count(dlg);
 			if (isSel && selection.size() == 1) return;
 			SelectRow(row, true, !isSel);
@@ -546,9 +552,12 @@ void BaseGrid::OnMouseEvent(wxMouseEvent &event) {
 			return;
 		}
 
-		// Change active line only
-		if (click && !shift && !ctrl && alt)
+		// Alt+click on a bound row also edits only that member.
+		if (click && !shift && !ctrl && alt) {
+			if (!GetSubtitleBinding(*context->ass, *dlg).empty())
+				context->selectionController->SetSelectionAndActive({dlg}, dlg, false);
 			return;
+		}
 
 		// Block select
 		if ((click && shift && !alt) || holding) {

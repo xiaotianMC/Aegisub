@@ -39,7 +39,6 @@
 #include <map>
 #include <set>
 #include <vector>
-#include <unordered_map>
 
 class AssAttachment;
 class AssDialogue;
@@ -87,8 +86,6 @@ class AssFile {
 	/// A set of changes has been committed to the file (AssFile::COMMITType)
 	agi::signal::Signal<int, const AssDialogue*> AnnounceCommit;
 	agi::signal::Signal<AssFileCommit> PushState;
-	std::unordered_map<int, int> bound_durations;
-	bool SynchronizeBoundDurations(int type, AssDialogue *preferred);
 public:
 	/// The lines in the file
 	std::vector<AssInfo> Info;

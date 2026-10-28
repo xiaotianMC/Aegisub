@@ -44,7 +44,6 @@ tests_src = [
     'tests/thesaurus.cpp',
     'tests/time.cpp',
     'tests/rectangle_drawing.cpp',
-    'tests/subtitle_binding.cpp',
     'tests/type_name.cpp',
     'tests/unicode.cpp',
     'tests/util.cpp',

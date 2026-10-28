@@ -69,6 +69,8 @@ public:
 
 	/// @brief Change the selected set
 	/// @param new_selection The set of subtitle lines to become the new selected set
+	/// @param expand_bound_groups Add all members of any binding group touched by
+	///        the selection. Pass false for a temporary single-line edit.
 	///
 	/// Implementations must either completely change the selected set to the new
 	/// set provided, or not change the selected set at all. Partial changes are
@@ -77,7 +79,7 @@ public:
 	/// If no change happens to the selected set, whether because it was refused or
 	/// because the new set was identical to the old set, no change notification may
 	/// be sent.
-	void SetSelectedSet(Selection new_selection);
+	void SetSelectedSet(Selection new_selection, bool expand_bound_groups = true);
 
 	/// @brief Obtain the selected set
 	/// @return The selected set
@@ -89,11 +91,13 @@ public:
 	/// @brief Set both the selected set and active line
 	/// @param new_line Subtitle line to become the new active line
 	/// @param new_selection The set of subtitle lines to become the new selected set
+	/// @param expand_bound_groups Add all members of any binding group touched by
+	///        the selection. Pass false for a temporary single-line edit.
 	///
 	/// This sets both the active line and selected set before announcing the
 	/// change to either of them, and is guaranteed to announce the active line
 	/// change before the selection change.
-	void SetSelectionAndActive(Selection new_selection, AssDialogue *new_line);
+	void SetSelectionAndActive(Selection new_selection, AssDialogue *new_line, bool expand_bound_groups = true);
 
 	/// @brief Change the active line to the next in sequence
 	///

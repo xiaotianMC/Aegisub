@@ -65,8 +65,7 @@ void AssFile::LoadDefault(bool include_dialogue_line, std::string const& style_c
 }
 
 AssFile::AssFile(const AssFile &from)
-: bound_durations(from.bound_durations)
-, Info(from.Info)
+: Info(from.Info)
 , Attachments(from.Attachments)
 , Extradata(from.Extradata)
 , next_extradata_id(from.next_extradata_id)
@@ -81,7 +80,6 @@ AssFile::AssFile(const AssFile &from)
 
 void AssFile::swap(AssFile& from) throw() {
 	Info.swap(from.Info);
-	bound_durations.swap(from.bound_durations);
 	Styles.swap(from.Styles);
 	Events.swap(from.Events);
 	Attachments.swap(from.Attachments);
@@ -199,8 +197,6 @@ int AssFile::Commit(wxString const& desc, int type, int amend_id, AssDialogue *s
 			event.Row = i++;
 	}
 
-	if (SynchronizeBoundDurations(type, single_line))
-		single_line = nullptr; // Undo and video refresh must include every linked line.
 	PushState({desc, &amend_id, single_line});
 
 	AnnounceCommit(type, single_line);

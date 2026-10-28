@@ -544,7 +544,6 @@ void SubsEditBox::CommitTimes(TimeField field) {
 	file_changed_slot.Block();
 	commit_id = c->ass->Commit(_("modify times"), AssFile::COMMIT_DIAG_TIME, commit_id, sel.size() == 1 ? *sel.begin() : nullptr);
 	file_changed_slot.Unblock();
-	// Binding may clamp a shortening operation to keep every member valid.
 	wxEventBlocker blocker(this);
 	start_time->SetTime(line->Start);
 	end_time->SetTime(line->End);
