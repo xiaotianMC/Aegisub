@@ -358,6 +358,12 @@ void SubsTextEditCtrl::SetTextTo(std::string const& text) {
 
 	SetEvtHandlerEnabled(true);
 	Thaw();
+
+	// The text was replaced with event handling disabled, so Scintilla may not
+	// have requested a restyle. Reparse explicitly to keep the syntax layer in
+	// step with the code shown in the box (shape property edits, undo, etc.).
+	line_text = text;
+	UpdateStyle();
 }
 
 void SubsTextEditCtrl::Paste() {
