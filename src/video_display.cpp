@@ -52,6 +52,7 @@
 #include "video_controller.h"
 #include "visual_tool.h"
 #include "visual_tool_cross.h"
+#include "visual_tool_scale.h"
 
 
 #include <algorithm>
@@ -473,6 +474,18 @@ void VideoDisplay::OnMouseLeave(wxMouseEvent& event) {
 void VideoDisplay::OnMouseWheel(wxMouseEvent& event) {
 	if (int wheel = event.GetWheelRotation()) {
 		if (ForwardMouseWheelEvent(this, event)) {
+			wxPoint scaled_position = event.GetPosition() * scale_factor;
+			// In the preview pan mode and the scale tool a plain wheel zooms the
+			// picture inside the preview without changing the window zoom or
+			// the video's share of the workspace. Ctrl and Shift keep their
+			// configured scroll actions.
+			if (!event.CmdDown() && !event.ShiftDown()
+				&& (pan_mode || ToolIsType(typeid(VisualToolScale)))) {
+				double factor = 1 + 0.125 * wheel / event.GetWheelDelta();
+				ZoomAndPan(contentZoomValue * factor, GetZoomAnchorPoint(scaled_position), scaled_position);
+				return;
+			}
+
 			const char *opt = "Scroll Action";
 			if (event.CmdDown() && event.ShiftDown()) {
 				return;
@@ -499,7 +512,6 @@ void VideoDisplay::OnMouseWheel(wxMouseEvent& event) {
 				case ZOOM_VIDEO:
 					{
 						double newZoomValue = contentZoomValue * (1 + dir * 0.125 * wheel / event.GetWheelDelta());
-						wxPoint scaled_position = event.GetPosition() * scale_factor;
 						ZoomAndPan(newZoomValue, GetZoomAnchorPoint(scaled_position), scaled_position);
 					}
 					break;
