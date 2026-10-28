@@ -15,6 +15,7 @@
 #include "utils.h"
 
 #include <algorithm>
+#include <array>
 #include <wx/dialog.h>
 #include <wx/msgdlg.h>
 #include <wx/sizer.h>
@@ -30,8 +31,7 @@ struct Drawing {
     agi::Color color;
 };
 
-std::optional<Drawing> ReadDrawing(const agi::Context *c) {
-    auto line = c->selectionController->GetActiveLine();
+std::optional<Drawing> ReadDrawing(const agi::Context *c, const AssDialogue *line) {
     if (!line) return std::nullopt;
     Drawing rect;
     rect.blocks = line->ParseTags();
@@ -103,14 +103,15 @@ std::optional<Drawing> ReadDrawing(const agi::Context *c) {
 }
 
 bool CanEditDrawing(const agi::Context *c) {
-    return ReadDrawing(c).has_value();
+    return ReadDrawing(c, c->selectionController->GetActiveLine()).has_value();
 }
 
 void EditDrawing(agi::Context *c) {
-    auto parsed = ReadDrawing(c);
+    auto line = c->selectionController->GetActiveLine();
+    auto parsed = ReadDrawing(c, line);
     if (!parsed) return;
     auto& rect = *parsed;
-    auto line = c->selectionController->GetActiveLine();
+    const AssDialogue original(*line);
     wxDialog dialog(c->parent, -1, _("Edit Shape"));
     auto layout = new wxBoxSizer(wxVERTICAL);
     auto fields = new wxFlexGridSizer(2, dialog.FromDIP(8), dialog.FromDIP(12));
@@ -142,46 +143,75 @@ void EditDrawing(agi::Context *c) {
         wxALL | wxALIGN_RIGHT, dialog.FromDIP(12));
     dialog.SetSizerAndFit(layout);
     dialog.CentreOnParent();
-    dialog.Bind(wxEVT_BUTTON, [&](wxCommandEvent&) {
-        for (auto ctrl : {width, height, x, y, transparency}) {
-            double value;
-            if (!ctrl->GetTextValue().ToDouble(&value) || !std::isfinite(value)
-                || value < ctrl->GetMin() || value > ctrl->GetMax()) {
-                wxMessageBox(_("Enter a number within the allowed range."), _("Edit Shape"), wxOK | wxICON_WARNING, &dialog);
-                ctrl->SetFocus();
-                return;
+    const std::array controls{width, height, x, y, transparency};
+    auto update = [&](bool show_error) {
+        std::array<double, 5> values;
+        for (size_t i = 0; i < controls.size(); ++i) {
+            auto ctrl = controls[i];
+            if (!ctrl->GetTextValue().ToDouble(&values[i]) || !std::isfinite(values[i])
+                || values[i] < ctrl->GetMin() || values[i] > ctrl->GetMax()) {
+                if (show_error) {
+                    wxMessageBox(_("Enter a number within the allowed range."), _("Edit Shape"), wxOK | wxICON_WARNING, &dialog);
+                    ctrl->SetFocus();
+                }
+                return false;
             }
         }
-        dialog.EndModal(wxID_OK);
-    }, wxID_OK);
-    if (dialog.ShowModal() != wxID_OK) return;
 
-    auto new_color = color->GetColor();
-    new_color.a = std::lround(transparency->GetValue() * 255 / 100);
-    bool resize_x = std::abs(width->GetValue() - rect.width) >= 0.00051;
-    bool resize_y = std::abs(height->GetValue() - rect.height) >= 0.00051;
-    bool position = std::abs(x->GetValue() - rect.x) >= 0.00051 || std::abs(y->GetValue() - rect.y) >= 0.00051;
-    bool fill = new_color.r != rect.color.r || new_color.g != rect.color.g || new_color.b != rect.color.b;
-    bool alpha = new_color.a != rect.color.a;
-    if (!resize_x && !resize_y && !position && !fill && !alpha) return;
-
-    // Preserve unrelated override tags, comments, timing, style and layer.
-    for (auto const& block : rect.blocks) {
-        if (block.get() == rect.drawing) break;
-        if (block->GetType() != AssBlockType::OVERRIDE) continue;
-        auto over = static_cast<AssDialogueBlockOverride*>(block.get());
-        std::erase_if(over->Tags, [&](auto const& tag) {
-            return (position && tag.Name == "\\pos") || (resize_x && tag.Name == "\\fscx")
-                || (resize_y && tag.Name == "\\fscy") || (fill && (tag.Name == "\\c" || tag.Name == "\\1c"))
-                || (alpha && tag.Name == "\\1a");
-        });
+        // Rebuild from the original so returning a field to its initial value
+        // also removes its preview tag without accumulating rounding errors.
+        auto edited = ReadDrawing(c, &original);
+        auto& rect = *edited;
+        auto new_color = color->GetColor();
+        new_color.a = std::lround(values[4] * 255 / 100);
+        bool resize_x = std::abs(values[0] - rect.width) >= 0.00051;
+        bool resize_y = std::abs(values[1] - rect.height) >= 0.00051;
+        bool position = std::abs(values[2] - rect.x) >= 0.00051 || std::abs(values[3] - rect.y) >= 0.00051;
+        bool fill = new_color.r != rect.color.r || new_color.g != rect.color.g || new_color.b != rect.color.b;
+        bool alpha = new_color.a != rect.color.a;
+        AssDialogue result(original);
+        if (resize_x || resize_y || position || fill || alpha) {
+            // Preserve unrelated override tags, comments, timing, style and layer.
+            for (auto const& block : rect.blocks) {
+                if (block.get() == rect.drawing) break;
+                if (block->GetType() != AssBlockType::OVERRIDE) continue;
+                auto over = static_cast<AssDialogueBlockOverride*>(block.get());
+                std::erase_if(over->Tags, [&](auto const& tag) {
+                    return (position && tag.Name == "\\pos") || (resize_x && tag.Name == "\\fscx")
+                        || (resize_y && tag.Name == "\\fscy") || (fill && (tag.Name == "\\c" || tag.Name == "\\1c"))
+                        || (alpha && tag.Name == "\\1a");
+                });
+            }
+            if (position) rect.prefix->AddTag("\\pos(" + float_to_string(values[2]) + ","
+                + float_to_string(values[3]) + ")");
+            if (resize_x) rect.prefix->AddTag("\\fscx" + float_to_string(rect.scale_x * values[0] / rect.width, 9));
+            if (resize_y) rect.prefix->AddTag("\\fscy" + float_to_string(rect.scale_y * values[1] / rect.height, 9));
+            if (fill) rect.prefix->AddTag("\\1c" + new_color.GetAssOverrideFormatted());
+            if (alpha) rect.prefix->AddTag(agi::format("\\1a&H%02X&", (int)new_color.a));
+            result.UpdateText(rect.blocks);
+        }
+        if (line->Text != result.Text) {
+            line->Text = result.Text;
+            // An empty description refreshes all views without adding undo history.
+            c->ass->Commit("", AssFile::COMMIT_DIAG_TEXT, -1, line);
+        }
+        return true;
+    };
+    for (auto ctrl : controls) {
+        ctrl->Bind(wxEVT_TEXT, [&](wxCommandEvent&) { update(false); });
+        ctrl->Bind(wxEVT_SPINCTRLDOUBLE, [&](wxSpinDoubleEvent&) { update(false); });
     }
-    if (position) rect.prefix->AddTag("\\pos(" + float_to_string(x->GetValue()) + ","
-        + float_to_string(y->GetValue()) + ")");
-    if (resize_x) rect.prefix->AddTag("\\fscx" + float_to_string(rect.scale_x * width->GetValue() / rect.width, 9));
-    if (resize_y) rect.prefix->AddTag("\\fscy" + float_to_string(rect.scale_y * height->GetValue() / rect.height, 9));
-    if (fill) rect.prefix->AddTag("\\1c" + new_color.GetAssOverrideFormatted());
-    if (alpha) rect.prefix->AddTag(agi::format("\\1a&H%02X&", (int)new_color.a));
-    line->UpdateText(rect.blocks);
-    c->ass->Commit(_("edit shape"), AssFile::COMMIT_DIAG_TEXT, -1, line);
+    color->Bind(EVT_COLOR, [&](ValueEvent<agi::Color>&) { update(false); });
+    dialog.Bind(wxEVT_BUTTON, [&](wxCommandEvent&) {
+        if (update(true)) dialog.EndModal(wxID_OK);
+    }, wxID_OK);
+    if (dialog.ShowModal() != wxID_OK) {
+        if (line->Text != original.Text) {
+            line->Text = original.Text;
+            c->ass->Commit("", AssFile::COMMIT_DIAG_TEXT, -1, line);
+        }
+        return;
+    }
+    if (line->Text != original.Text)
+        c->ass->Commit(_("edit shape"), AssFile::COMMIT_DIAG_TEXT, -1, line);
 }
