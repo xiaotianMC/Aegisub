@@ -117,15 +117,15 @@ namespace {
 		STR_HELP("Draw shapes behind a visible subtitle; hold the toolbar button to choose a shape, Shift constrains proportions, Escape cancels")
 	};
 
-	struct edit_rectangle final : public Command {
+	struct edit_shape final : public Command {
 		CMD_NAME("edit/line/rectangle")
 		CMD_ICON(visual_rectangle)
 		CMD_TYPE(COMMAND_VALIDATE)
-		STR_MENU("Edit Rectangle...")
-		STR_DISP("Edit Rectangle")
-		STR_HELP("Adjust the rectangle's width, height, position, fill color and transparency")
-		bool Validate(const agi::Context *c) override { return CanEditRectangle(c); }
-		void operator()(agi::Context *c) override { EditRectangle(c); }
+		STR_MENU("Edit Shape...")
+		STR_DISP("Edit Shape")
+		STR_HELP("Adjust the shape's width, height, position, fill color and transparency")
+		bool Validate(const agi::Context *c) override { return CanEditDrawing(c); }
+		void operator()(agi::Context *c) override { EditDrawing(c); }
 	};
 
 	struct visual_mode_clip final : public visual_tool_command<VisualToolClip> {
@@ -213,7 +213,7 @@ namespace cmd {
 		reg(std::make_unique<visual_mode_rotate_xy>());
 		reg(std::make_unique<visual_mode_scale>());
 		reg(std::make_unique<visual_mode_rectangle>());
-		reg(std::make_unique<edit_rectangle>());
+		reg(std::make_unique<edit_shape>());
 		reg(std::make_unique<visual_mode_clip>());
 		reg(std::make_unique<visual_mode_vector_clip>());
 

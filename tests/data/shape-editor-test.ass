@@ -1,0 +1,30 @@
+[Script Info]
+Title: General shape editor regression
+ScriptType: v4.00+
+PlayResX: 640
+PlayResY: 360
+LayoutResX: 640
+LayoutResY: 360
+YCbCr Matrix: TV.601
+ScaledBorderAndShadow: yes
+
+[Aegisub Project Garbage]
+Video File: ?dummy:24:120:640:360:48:160:240:
+Video Zoom Percent: 0.750000
+Active Line: 0
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Arial,28,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,10,10,20,1
+Style: 图形,Arial,28,&H40000000,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:05.00,图形,矩形,0,0,0,,{\an7\pos(30,30)\fscx100\fscy100\p1}m 0 0 l 120 0 120 60 0 60{\p0}
+Dialogue: 0,0:00:00.00,0:00:05.00,图形,三角形,0,0,0,,{\an7\pos(180,30)\fscx100\fscy100\p1}m 60 0 l 120 60 0 60{\p0}
+Dialogue: 0,0:00:00.00,0:00:05.00,图形,椭圆,0,0,0,,{\an7\pos(330,30)\fscx100\fscy100\p1}m 60 0 b 93.1371 0 120 13.4315 120 30 120 46.5685 93.1371 60 60 60 26.8629 60 0 46.5685 0 30 0 13.4315 26.8629 0 60 0{\p0}
+Dialogue: 0,0:00:00.00,0:00:05.00,图形,凹多边形,0,0,0,,{\an7\pos(30,130)\fscx100\fscy100\p1}m 0 0 l 120 0 60 30 120 60 0 60{\p0}
+Dialogue: 0,0:00:00.00,0:00:05.00,图形,复合曲线,0,0,0,,{\an7\pos(180,130)\fscx100\fscy100\frz15\p1}m -20 -10 l 100 0 40 50 m 0 0 b 10 -20 20 80 70 40{\p0}
+Dialogue: 0,0:00:00.00,0:00:05.00,图形,B样条,0,0,0,,{\an7\pos(330,130)\p1}m 0 0 s 40 0 60 60 100 0 p 120 60 c{\p0}
+Dialogue: 0,0:00:00.00,0:00:05.00,Default,二级绘图默认锚点,0,0,0,,{\bord0\p2}m -20 -20 l 180 -20 80 100{\p0}
+Dialogue: 0,0:00:00.00,0:00:05.00,Default,普通文字,0,0,0,,文本字幕右键菜单不应包含编辑图形，双击保留原有跳转行为。

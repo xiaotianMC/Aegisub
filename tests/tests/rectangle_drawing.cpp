@@ -63,3 +63,24 @@ TEST(shape_drawing, shift_preserves_proportions_and_video_bounds_in_all_directio
     auto horizontal = ConstrainDrawingPoint({100, 100}, {200, 105}, {640, 360}, DrawingShape::Polygon);
     EXPECT_NEAR(100, horizontal.y, 1e-8);
 }
+
+TEST(shape_drawing, reads_arbitrary_drawing_control_bounds_without_rewriting_paths) {
+    for (auto shape : {DrawingShape::Rectangle, DrawingShape::Ellipse, DrawingShape::Triangle}) {
+        auto bounds = ParseDrawingBounds(ShapeDrawingPath(shape, 120, 60));
+        ASSERT_TRUE(bounds);
+        EXPECT_DOUBLE_EQ(120, bounds->Width());
+        EXPECT_DOUBLE_EQ(60, bounds->Height());
+    }
+    auto compound = ParseDrawingBounds("m -20 -10 l 100 0 40 50 m 0 0 b 10 -20 20 80 70 40");
+    ASSERT_TRUE(compound);
+    EXPECT_DOUBLE_EQ(-20, compound->left);
+    EXPECT_DOUBLE_EQ(-20, compound->top);
+    EXPECT_DOUBLE_EQ(120, compound->Width());
+    EXPECT_DOUBLE_EQ(100, compound->Height());
+    EXPECT_TRUE(ParseDrawingBounds("m0 0 s 10 0 20 20 30 0 p 40 20 c"));
+    EXPECT_TRUE(ParseDrawingBounds("m 0 0 l 20 20 n 30 30 l 50 0"));
+    for (auto invalid : {"", "text", "m 0 0", "m 0 0 l 10", "m 0 0 l 10 0",
+        "m 0 0 b 10 10", "m 0 0 s 10 10", "m 0 0 p 10 10", "m 0 0 c",
+        "l 0 0 10 10", "m 0 0 l 10 20 garbage", "m 0 0 l 1e999 20", "m 0 0 l 1000001 20"})
+        EXPECT_FALSE(ParseDrawingBounds(invalid)) << invalid;
+}

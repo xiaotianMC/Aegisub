@@ -8,7 +8,7 @@
 #include "ass_style.h"
 #include "colour_button.h"
 #include "include/aegisub/context.h"
-#include "rectangle_drawing.h"
+#include "shape_drawing.h"
 #include "selection_controller.h"
 
 #include <libaegisub/format.h>
@@ -22,7 +22,7 @@
 #include <wx/stattext.h>
 
 namespace {
-struct Rectangle {
+struct Drawing {
     std::vector<std::unique_ptr<AssDialogueBlock>> blocks;
     AssDialogueBlockDrawing *drawing = nullptr;
     AssDialogueBlockOverride *prefix = nullptr;
@@ -30,10 +30,10 @@ struct Rectangle {
     agi::Color color;
 };
 
-std::optional<Rectangle> ReadRectangle(const agi::Context *c) {
+std::optional<Drawing> ReadDrawing(const agi::Context *c) {
     auto line = c->selectionController->GetActiveLine();
     if (!line) return std::nullopt;
-    Rectangle rect;
+    Drawing rect;
     rect.blocks = line->ParseTags();
     auto style = c->ass->GetStyle(line->Style);
     if (!style) return std::nullopt;
@@ -47,11 +47,12 @@ std::optional<Rectangle> ReadRectangle(const agi::Context *c) {
         if (block->GetType() == AssBlockType::DRAWING) {
             if (rect.drawing) return std::nullopt;
             rect.drawing = static_cast<AssDialogueBlockDrawing*>(block.get());
-            auto size = ParseRectangleDrawing(block->GetText());
-            if (!size || rect.drawing->Scale != 1 || !rect.prefix || positions != 1 || alignment != 7)
+            auto bounds = ParseDrawingBounds(block->GetText());
+            if (!bounds || rect.drawing->Scale < 1 || rect.drawing->Scale > 30 || !rect.prefix)
                 return std::nullopt;
-            rect.width = size->first * rect.scale_x / 100;
-            rect.height = size->second * rect.scale_y / 100;
+            double unit = std::ldexp(1.0, rect.drawing->Scale - 1);
+            rect.width = bounds->Width() / unit * rect.scale_x / 100;
+            rect.height = bounds->Height() / unit * rect.scale_y / 100;
             rect.color.a = alpha;
         }
         if (block->GetType() != AssBlockType::OVERRIDE || rect.drawing) continue;
@@ -59,7 +60,7 @@ std::optional<Rectangle> ReadRectangle(const agi::Context *c) {
         for (auto const& tag : rect.prefix->Tags) {
             auto const& n = tag.Name;
             // Animated position, transforms, and style resets need a richer editor.
-            if (n == "\\move" || n == "\\t" || n == "\\r" || n == "\\a") return std::nullopt;
+            if (n == "\\move" || n == "\\t" || n == "\\r") return std::nullopt;
             if (n == "\\pos") {
                 if (tag.Params.size() != 2 || tag.Params[0].omitted || tag.Params[1].omitted)
                     return std::nullopt;
@@ -69,12 +70,26 @@ std::optional<Rectangle> ReadRectangle(const agi::Context *c) {
             }
             else if (!tag.Params.empty() && !tag.Params[0].omitted) {
                 if (n == "\\an") alignment = tag.Params[0].Get<int>();
+                else if (n == "\\a") alignment = AssStyle::SsaToAss(tag.Params[0].Get<int>());
                 else if (n == "\\fscx") rect.scale_x = tag.Params[0].Get<double>();
                 else if (n == "\\fscy") rect.scale_y = tag.Params[0].Get<double>();
                 else if (n == "\\c" || n == "\\1c") rect.color = tag.Params[0].Get<agi::Color>();
                 else if (n == "\\alpha" || n == "\\1a") alpha = tag.Params[0].Get<int>();
             }
         }
+    }
+    if (positions > 1 || alignment < 1 || alignment > 9) return std::nullopt;
+    if (!positions) {
+        auto margins = line->Margin;
+        for (size_t i = 0; i < margins.size(); ++i)
+            if (!margins[i]) margins[i] = style->Margin[i];
+        int script_width, script_height;
+        c->ass->GetResolution(script_width, script_height);
+        int horizontal = (alignment - 1) % 3, vertical = (alignment - 1) / 3;
+        rect.x = horizontal == 0 ? margins[0] : horizontal == 2 ? script_width - margins[1]
+            : (script_width + margins[0] - margins[1]) / 2;
+        rect.y = vertical == 0 ? script_height - margins[2] : vertical == 2 ? margins[2]
+            : script_height / 2;
     }
     if (!rect.drawing || !std::isfinite(rect.x) || !std::isfinite(rect.y)
         || std::abs(rect.x) > 1000000 || std::abs(rect.y) > 1000000
@@ -87,16 +102,16 @@ std::optional<Rectangle> ReadRectangle(const agi::Context *c) {
 }
 }
 
-bool CanEditRectangle(const agi::Context *c) {
-    return ReadRectangle(c).has_value();
+bool CanEditDrawing(const agi::Context *c) {
+    return ReadDrawing(c).has_value();
 }
 
-void EditRectangle(agi::Context *c) {
-    auto parsed = ReadRectangle(c);
+void EditDrawing(agi::Context *c) {
+    auto parsed = ReadDrawing(c);
     if (!parsed) return;
     auto& rect = *parsed;
     auto line = c->selectionController->GetActiveLine();
-    wxDialog dialog(c->parent, -1, _("Edit Rectangle"));
+    wxDialog dialog(c->parent, -1, _("Edit Shape"));
     auto layout = new wxBoxSizer(wxVERTICAL);
     auto fields = new wxFlexGridSizer(2, dialog.FromDIP(8), dialog.FromDIP(12));
     fields->AddGrowableCol(1);
@@ -108,18 +123,21 @@ void EditRectangle(agi::Context *c) {
         fields->Add(control, 1, wxEXPAND);
         return control;
     };
-    auto width = number(_("Rectangle width"), rect.width, 0.001, std::min(1000000.0, rect.scale_x * 10000), 3);
-    auto height = number(_("Rectangle height"), rect.height, 0.001, std::min(1000000.0, rect.scale_y * 10000), 3);
-    auto x = number(_("Left position (X)"), rect.x, -1000000, 1000000, 3);
-    auto y = number(_("Top position (Y)"), rect.y, -1000000, 1000000, 3);
+    auto width = number(_("Shape width"), rect.width, std::max(0.001, rect.width * 0.001 / rect.scale_x),
+        std::min(1000000.0, rect.width * 1000000 / rect.scale_x), 3);
+    auto height = number(_("Shape height"), rect.height, std::max(0.001, rect.height * 0.001 / rect.scale_y),
+        std::min(1000000.0, rect.height * 1000000 / rect.scale_y), 3);
+    auto x = number(_("Position X"), rect.x, -1000000, 1000000, 3);
+    auto y = number(_("Position Y"), rect.y, -1000000, 1000000, 3);
     fields->Add(new wxStaticText(&dialog, -1, _("Fill color")), 0, wxALIGN_CENTER_VERTICAL);
     auto color = new ColourButton(&dialog, dialog.FromDIP(wxSize(100, 20)), false, rect.color);
     fields->Add(color, 1, wxEXPAND);
     auto transparency = number(_("Transparency (%)"), rect.color.a * 100.0 / 255, 0, 100, 1);
     layout->Add(fields, 0, wxALL | wxEXPAND, dialog.FromDIP(12));
-    layout->Add(new wxStaticText(&dialog, -1,
-        _("Sizes use script pixels before rotation. Transparency: 0% opaque, 100% invisible.")),
-        0, wxLEFT | wxRIGHT | wxBOTTOM, dialog.FromDIP(12));
+    auto hint = new wxStaticText(&dialog, -1,
+        _("Size uses the drawing control-point bounds before rotation. Position is the alignment anchor. Transparency: 0% opaque, 100% invisible."));
+    hint->Wrap(dialog.FromDIP(400));
+    layout->Add(hint, 0, wxLEFT | wxRIGHT | wxBOTTOM, dialog.FromDIP(12));
     layout->Add(dialog.CreateStdDialogButtonSizer(wxOK | wxCANCEL), 0,
         wxALL | wxALIGN_RIGHT, dialog.FromDIP(12));
     dialog.SetSizerAndFit(layout);
@@ -129,7 +147,7 @@ void EditRectangle(agi::Context *c) {
             double value;
             if (!ctrl->GetTextValue().ToDouble(&value) || !std::isfinite(value)
                 || value < ctrl->GetMin() || value > ctrl->GetMax()) {
-                wxMessageBox(_("Enter a number within the allowed range."), _("Edit Rectangle"), wxOK | wxICON_WARNING, &dialog);
+                wxMessageBox(_("Enter a number within the allowed range."), _("Edit Shape"), wxOK | wxICON_WARNING, &dialog);
                 ctrl->SetFocus();
                 return;
             }
@@ -140,28 +158,30 @@ void EditRectangle(agi::Context *c) {
 
     auto new_color = color->GetColor();
     new_color.a = std::lround(transparency->GetValue() * 255 / 100);
-    if (std::abs(width->GetValue() - rect.width) < 0.00051
-        && std::abs(height->GetValue() - rect.height) < 0.00051
-        && std::abs(x->GetValue() - rect.x) < 0.00051
-        && std::abs(y->GetValue() - rect.y) < 0.00051 && new_color == rect.color)
-        return;
+    bool resize_x = std::abs(width->GetValue() - rect.width) >= 0.00051;
+    bool resize_y = std::abs(height->GetValue() - rect.height) >= 0.00051;
+    bool position = std::abs(x->GetValue() - rect.x) >= 0.00051 || std::abs(y->GetValue() - rect.y) >= 0.00051;
+    bool fill = new_color.r != rect.color.r || new_color.g != rect.color.g || new_color.b != rect.color.b;
+    bool alpha = new_color.a != rect.color.a;
+    if (!resize_x && !resize_y && !position && !fill && !alpha) return;
 
     // Preserve unrelated override tags, comments, timing, style and layer.
     for (auto const& block : rect.blocks) {
         if (block.get() == rect.drawing) break;
         if (block->GetType() != AssBlockType::OVERRIDE) continue;
         auto over = static_cast<AssDialogueBlockOverride*>(block.get());
-        std::erase_if(over->Tags, [](auto const& tag) {
-            return tag.Name == "\\pos" || tag.Name == "\\c" || tag.Name == "\\1c" || tag.Name == "\\1a";
+        std::erase_if(over->Tags, [&](auto const& tag) {
+            return (position && tag.Name == "\\pos") || (resize_x && tag.Name == "\\fscx")
+                || (resize_y && tag.Name == "\\fscy") || (fill && (tag.Name == "\\c" || tag.Name == "\\1c"))
+                || (alpha && tag.Name == "\\1a");
         });
     }
-    rect.prefix->AddTag("\\pos(" + float_to_string(x->GetValue()) + ","
+    if (position) rect.prefix->AddTag("\\pos(" + float_to_string(x->GetValue()) + ","
         + float_to_string(y->GetValue()) + ")");
-    rect.prefix->AddTag("\\1c" + new_color.GetAssOverrideFormatted());
-    rect.prefix->AddTag(agi::format("\\1a&H%02X&", (int)new_color.a));
-    auto w = float_to_string(width->GetValue() * 100 / rect.scale_x, 9);
-    auto h = float_to_string(height->GetValue() * 100 / rect.scale_y, 9);
-    rect.drawing->text = "m 0 0 l " + w + " 0 " + w + " " + h + " 0 " + h;
+    if (resize_x) rect.prefix->AddTag("\\fscx" + float_to_string(rect.scale_x * width->GetValue() / rect.width, 9));
+    if (resize_y) rect.prefix->AddTag("\\fscy" + float_to_string(rect.scale_y * height->GetValue() / rect.height, 9));
+    if (fill) rect.prefix->AddTag("\\1c" + new_color.GetAssOverrideFormatted());
+    if (alpha) rect.prefix->AddTag(agi::format("\\1a&H%02X&", (int)new_color.a));
     line->UpdateText(rect.blocks);
-    c->ass->Commit(_("edit rectangle"), AssFile::COMMIT_DIAG_TEXT, -1, line);
+    c->ass->Commit(_("edit shape"), AssFile::COMMIT_DIAG_TEXT, -1, line);
 }

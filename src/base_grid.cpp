@@ -37,6 +37,7 @@
 #include "ass_file.h"
 #include "audio_box.h"
 #include "compat.h"
+#include "dialog_rectangle.h"
 #include "grid_column.h"
 #include "options.h"
 #include "project.h"
@@ -533,11 +534,15 @@ void BaseGrid::OnMouseEvent(wxMouseEvent &event) {
 
 		// Normal click
 		if ((click || dclick) && !shift && !ctrl && !alt) {
+			SelectRow(row, false);
 			if (dclick) {
+				if (CanEditDrawing(context)) {
+					EditDrawing(context);
+					return;
+				}
 				context->audioBox->ScrollToActiveLine();
 				context->videoController->JumpToTime(dlg->Start);
 			}
-			SelectRow(row, false);
 			return;
 		}
 
@@ -593,7 +598,7 @@ void BaseGrid::OnContextMenu(wxContextMenuEvent &evt) {
 					context->selectionController->SetSelectionAndActive({line}, line);
 			}
 		}
-		if (!context_menu) context_menu = menu::GetMenu("grid_context", (wxID_HIGHEST + 1) + 8000, context);
+		context_menu = menu::GetMenu("grid_context", (wxID_HIGHEST + 1) + 8000, context);
 		menu::OpenPopupMenu(context_menu.get(), this);
 	}
 	else {
@@ -678,6 +683,11 @@ bool BaseGrid::IsDisplayed(const AssDialogue *line) const {
 }
 
 void BaseGrid::OnCharHook(wxKeyEvent &event) {
+	if ((event.GetKeyCode() == WXK_RETURN || event.GetKeyCode() == WXK_NUMPAD_ENTER)
+		&& !event.HasAnyModifiers() && CanEditDrawing(context)) {
+		EditDrawing(context);
+		return;
+	}
 	if (hotkey::check("Subtitle Grid", context, event))
 		return;
 

@@ -93,7 +93,7 @@ class BaseGrid final : public wxWindow {
 	/// blocked if the relevant option is disabled
 	agi::signal::Connection seek_listener;
 
-	/// Cached grid body context menu
+	/// Grid body context menu, rebuilt for the target row's available actions.
 	std::unique_ptr<wxMenu> context_menu;
 
 	void OnDPIChanged(wxDPIChangedEvent &e);

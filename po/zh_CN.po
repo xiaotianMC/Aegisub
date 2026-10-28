@@ -7580,6 +7580,33 @@ msgstr "请输入允许范围内的数字。"
 msgid "edit rectangle"
 msgstr "编辑矩形"
 
+msgid "Edit Shape..."
+msgstr "编辑图形…"
+
+msgid "Edit Shape"
+msgstr "编辑图形"
+
+msgid "edit shape"
+msgstr "编辑图形"
+
+msgid "Shape width"
+msgstr "图形宽度"
+
+msgid "Shape height"
+msgstr "图形高度"
+
+msgid "Position X"
+msgstr "位置 X"
+
+msgid "Position Y"
+msgstr "位置 Y"
+
+msgid "Adjust the shape's width, height, position, fill color and transparency"
+msgstr "调整图形的宽度、高度、位置、填充颜色和透明度"
+
+msgid "Size uses the drawing control-point bounds before rotation. Position is the alignment anchor. Transparency: 0% opaque, 100% invisible."
+msgstr "宽高按旋转前的绘图控制点边界计算，位置为对齐锚点。透明度：0% 不透明，100% 完全透明。"
+
 msgid "Reverse Move Path"
 msgstr "反向移动路径"
 

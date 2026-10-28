@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <locale>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -12,6 +13,59 @@
 enum class DrawingShape { Rectangle, Ellipse, Triangle, Polygon };
 
 struct DrawingPoint { double x, y; };
+
+struct DrawingBounds {
+    double left, top, right, bottom;
+    double Width() const { return right - left; }
+    double Height() const { return bottom - top; }
+};
+
+// ASS layout uses the control-point box, including Bezier and B-spline controls.
+// Keep the original commands intact: resizing is applied with fscx/fscy tags.
+inline std::optional<DrawingBounds> ParseDrawingBounds(std::string const& text) {
+    std::istringstream input(text);
+    input.imbue(std::locale::classic());
+    std::optional<DrawingBounds> bounds;
+    bool moved = false, drawn = false, spline = false;
+    while (input >> std::ws && !input.eof()) {
+        char command;
+        if (!(input >> command) || std::string("mnlbspc").find(command) == std::string::npos)
+            return std::nullopt;
+        if (!moved && command != 'm') return std::nullopt;
+        if (command == 'c') {
+            if (!spline) return std::nullopt;
+            spline = false;
+            continue;
+        }
+        if (command == 'p' && !spline) return std::nullopt;
+        size_t count = 0;
+        while (input >> std::ws && !input.eof()) {
+            if (std::string("mnlbspc").find(static_cast<char>(input.peek())) != std::string::npos)
+                break;
+            double x, y;
+            if (!(input >> x >> y) || !std::isfinite(x) || !std::isfinite(y)
+                || std::abs(x) > 1000000 || std::abs(y) > 1000000)
+                return std::nullopt;
+            if (!bounds) bounds = DrawingBounds{x, y, x, y};
+            else {
+                bounds->left = std::min(bounds->left, x);
+                bounds->top = std::min(bounds->top, y);
+                bounds->right = std::max(bounds->right, x);
+                bounds->bottom = std::max(bounds->bottom, y);
+            }
+            ++count;
+        }
+        if (!count || (command == 'b' && count % 3) || (command == 's' && count < 3))
+            return std::nullopt;
+        moved = true;
+        if (command != 'm' && command != 'n') drawn = true;
+        if (command == 's') spline = true;
+        else if (command != 'p') spline = false;
+    }
+    if (!drawn || !bounds || bounds->Width() <= 0 || bounds->Height() <= 0)
+        return std::nullopt;
+    return bounds;
+}
 
 // Work in script coordinates so Shift remains correct at any preview aspect ratio.
 inline DrawingPoint ConstrainDrawingPoint(DrawingPoint start, DrawingPoint end,
