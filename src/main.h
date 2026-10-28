@@ -40,6 +40,7 @@
 #endif
 
 class FrameMain;
+class wxFrame;
 namespace agi {
 	struct Context;
 }
@@ -60,6 +61,8 @@ class AegisubApp : public wxApp {
 	void UnhandledException(bool);
 
 	void OpenFiles(wxArrayStringsAdapter filenames);
+	void ShowStartup();
+	wxFrame *startup_window = nullptr;
 
 	std::vector<FrameMain *> frames;
 public:

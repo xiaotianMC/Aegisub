@@ -7636,3 +7636,48 @@ msgstr "绑定字幕"
 
 msgid "unbind subtitles"
 msgstr "解除字幕绑定"
+
+msgid "Maximize / Restore"
+msgstr "最大化 / 还原"
+
+msgid "Your subtitle workspace"
+msgstr "开始你的字幕工作"
+
+msgid "Organize your projects, or jump straight into editing."
+msgstr "按项目组织工作，或直接开始编辑。"
+
+msgid "Project dashboard"
+msgstr "项目看板"
+
+msgid "Subtitle editor"
+msgstr "字幕编辑器"
+
+msgid "A dedicated space for your\nsubtitle projects."
+msgstr "为字幕项目准备的独立空间，\n让每一份工作都有清晰的起点。"
+
+msgid "Open the familiar editor and\nstart working right away."
+msgstr "进入熟悉的字幕编辑环境，\n打开字幕，立即开始工作。"
+
+msgid "Go to dashboard"
+msgstr "进入项目看板"
+
+msgid "Open editor"
+msgstr "直接进入软件"
+
+msgid "You can also open subtitle files directly from Windows."
+msgstr "也可以在 Windows 中直接双击字幕文件打开。"
+
+msgid "Back to start"
+msgstr "返回启动页"
+
+msgid "A place for your subtitle projects."
+msgstr "集中查看你的字幕项目。"
+
+msgid "No projects yet"
+msgstr "还没有项目"
+
+msgid "Your projects will appear here."
+msgstr "你的字幕项目将显示在这里。"
+
+msgid "Open subtitle editor"
+msgstr "打开字幕编辑器"

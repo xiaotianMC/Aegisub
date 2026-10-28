@@ -113,6 +113,7 @@ aegisub_src = files(
     'spellchecker.cpp',
     'spline.cpp',
     'spline_curve.cpp',
+    'startup_window.cpp',
     'subs_controller.cpp',
     'subtitle_binding.cpp',
     'subs_edit_box.cpp',

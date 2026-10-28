@@ -51,6 +51,7 @@
 #include "options.h"
 #include "project.h"
 #include "subs_controller.h"
+#include "startup_window.h"
 #include "subtitles_provider_libass.h"
 #include "utils.h"
 #include "value_event.h"
@@ -283,10 +284,6 @@ bool AegisubApp::OnInit() {
 		StartupLog("Install PNG handler");
 		wxImage::AddHandler(new wxPNGHandler);
 
-		// Open main frame
-		StartupLog("Create main window");
-		NewProjectContext();
-
 		// Version checker
 		StartupLog("Possibly perform automatic updates check");
 		if (OPT_GET("App/First Start")->GetBool()) {
@@ -310,8 +307,11 @@ bool AegisubApp::OnInit() {
 		// Get parameter subs
 		StartupLog("Parse command line");
 		auto const& args = argv.GetArguments();
-		if (args.size() > 1)
+		if (args.size() > 1) {
+			NewProjectContext();
 			OpenFiles(wxArrayStringsAdapter(args.size() - 1, &args[1]));
+		}
+		else if (frames.empty()) ShowStartup();
 	}
 	catch (agi::Exception const& e) {
 		wxMessageBox(to_wx(e.GetMessage()), _("Fatal error while initializing"));
@@ -363,6 +363,18 @@ int AegisubApp::OnExit() {
 	return wxApp::OnExit();
 }
 
+void AegisubApp::ShowStartup() {
+	if (startup_window) { startup_window->Raise(); return; }
+	auto window = CreateStartupWindow();
+	startup_window = window;
+	window->Bind(wxEVT_DESTROY, [this, window](wxWindowDestroyEvent& event) {
+		if (event.GetWindow() == window && startup_window == window) startup_window = nullptr;
+		event.Skip();
+	});
+	SetTopWindow(window);
+	window->Show();
+}
+
 agi::Context& AegisubApp::NewProjectContext() {
 	auto frame = new FrameMain;
 	frame->Bind(wxEVT_DESTROY, [=, this](wxWindowDestroyEvent& evt) {
@@ -372,15 +384,22 @@ agi::Context& AegisubApp::NewProjectContext() {
 		}
 
 		frames.erase(remove(begin(frames), end(frames), frame), end(frames));
-		if (frames.empty()) {
+		if (frames.empty() && !startup_window) {
 			ExitMainLoop();
 		}
 	});
 	frames.push_back(frame);
+	SetTopWindow(frame);
+	if (startup_window) {
+		auto window = startup_window;
+		startup_window = nullptr;
+		window->Destroy();
+	}
 	return *frame->context;
 }
 
 void AegisubApp::CloseAll() {
+	if (startup_window) startup_window->Close();
 	for (auto frame : frames) {
 		if (!frame->Close())
 			break;
@@ -476,6 +495,8 @@ void AegisubApp::OpenFiles(wxArrayStringsAdapter filenames) {
 	std::vector<agi::fs::path> files;
 	for (size_t i = 0; i < filenames.GetCount(); ++i)
 		files.push_back(from_wx(filenames[i]));
-	if (!files.empty())
+	if (!files.empty()) {
+		if (frames.empty()) NewProjectContext();
 		frames[0]->context->project->LoadList(files);
+	}
 }
