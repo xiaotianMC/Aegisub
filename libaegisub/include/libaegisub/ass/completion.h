@@ -11,6 +11,7 @@ struct CompletionItem {
 	std::string label;
 	std::string text;
 	size_t caret;
+	std::string description;
 };
 
 struct Completion {

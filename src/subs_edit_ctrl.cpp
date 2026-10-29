@@ -52,6 +52,7 @@
 #include <functional>
 
 #include <wx/clipbrd.h>
+#include <wx/fontenum.h>
 #include <wx/intl.h>
 #include <wx/menu.h>
 #include <wx/settings.h>
@@ -222,7 +223,7 @@ WXLRESULT SubsTextEditCtrl::MSWWindowProc(WXUINT message, WXWPARAM wParam, WXLPA
 }
 #endif
 
-bool SubsTextEditCtrl::IsComposing() const {
+bool SubsTextEditCtrl::IsComposing() {
 	if (ime_composing) return true;
 	int pos = GetCurrentPos();
 	// Scintilla uses these indicators for inline IME preedit text.
@@ -240,7 +241,13 @@ void SubsTextEditCtrl::ShowCompletion(bool manual) {
 	std::string text = GetTextRaw().data();
 	auto diag = context ? context->selectionController->GetActiveLine() : nullptr;
 	bool is_template = diag && diag->Comment && boost::istarts_with(diag->Effect.get(), "template");
-	completion = agi::ass::GetCompletion(text, GetCurrentPos(), is_template);
+	auto styles = context ? context->ass->GetStyles() : std::vector<std::string>{};
+	completion = agi::ass::GetCompletion(text, GetCurrentPos(), is_template, styles, completion_fonts);
+	if (completion.font && !completion_fonts_loaded) {
+		for (auto const& name : wxFontEnumerator::GetFacenames()) completion_fonts.push_back(from_wx(name));
+		completion_fonts_loaded = true;
+		completion = agi::ass::GetCompletion(text, GetCurrentPos(), is_template, styles, completion_fonts);
+	}
 	if (completion.items.empty()) {
 		AutoCompCancel();
 		return;
@@ -248,12 +255,20 @@ void SubsTextEditCtrl::ShowCompletion(bool manual) {
 	completion_source = std::move(text);
 	completion_pos = GetCurrentPos();
 	wxString list;
-	for (auto const& item : completion.items) {
+	for (auto& item : completion.items) {
+		if (!item.description.empty()) item.label += "  " + from_wx(wxGetTranslation(wxString::FromUTF8(item.description)));
+		// wxSTC estimates popup width by character count. Pad wide glyphs so
+		// translated labels are not clipped by the ASCII-width estimate.
+		auto label = wxString::FromUTF8(item.label);
+		int average = std::max(1, GetTextExtent("n").GetWidth());
+		int columns = (GetTextExtent(label).GetWidth() + average - 1) / average;
+		item.label.append(std::max(0, columns - static_cast<int>(label.length())) + 2, ' ');
 		if (!list.empty()) list += '\n';
 		list += wxString::FromUTF8(item.label);
 	}
 	CallTipCancel();
 	cursor_pos = -1;
+	AutoCompSetIgnoreCase(completion.font);
 	AutoCompShow(completion_pos - completion.start, list);
 }
 
@@ -278,6 +293,12 @@ void SubsTextEditCtrl::AcceptCompletion(wxStyledTextEvent &event) {
 	cursor_pos = -1;
 	line_text = GetTextRaw().data();
 	UpdateStyle();
+	if (!item.text.empty() && item.text.front() == '\\') {
+		CallAfter([this] {
+			auto next = agi::ass::GetCompletion(GetTextRaw().data(), GetCurrentPos());
+			if (next.start == static_cast<size_t>(GetCurrentPos())) ShowCompletion(false);
+		});
+	}
 }
 
 bool SubsTextEditCtrl::HandleCompletionKey(wxKeyEvent &event) {
@@ -382,6 +403,7 @@ void SubsTextEditCtrl::SetStyles() {
 
 	SetCaretForeground(StyleGetForeground(ss::NORMAL));
 	StyleSetBackground(wxSTC_STYLE_DEFAULT, default_background);
+	StyleSetFont(wxSTC_STYLE_DEFAULT, font);
 
 	// Misspelling indicator
 	IndicatorSetStyle(0,wxSTC_INDIC_SQUIGGLE);
@@ -435,6 +457,13 @@ void SubsTextEditCtrl::UpdateCallTip() {
 	cursor_pos = pos;
 
 	agi::Calltip new_calltip = agi::GetCalltip(tokenized_line, line_text, pos);
+	if (!new_calltip.text && completion_calltip) {
+		auto open = line_text.rfind('{', pos);
+		if (open != std::string::npos && line_text.find('}', open) == std::string::npos) {
+			auto closed = line_text + "}";
+			new_calltip = agi::GetCalltip(agi::ass::TokenizeDialogueBody(closed), closed, pos);
+		}
+	}
 
 	if (!new_calltip.text) {
 		completion_calltip = false;

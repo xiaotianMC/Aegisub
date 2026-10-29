@@ -87,10 +87,12 @@ class SubsTextEditCtrl final : public wxStyledTextCtrl, private agi::signal::Con
 	agi::ass::Completion completion;
 	std::string completion_source;
 	int completion_pos = 0;
+	std::vector<std::string> completion_fonts;
+	bool completion_fonts_loaded = false;
 	bool ime_composing = false;
 	bool completion_calltip = false;
 	void AcceptCompletion(wxStyledTextEvent &event);
-	bool IsComposing() const;
+	bool IsComposing();
 #ifdef __WXMSW__
 	WXLRESULT MSWWindowProc(WXUINT message, WXWPARAM wParam, WXLPARAM lParam) override;
 #endif

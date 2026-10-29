@@ -7708,3 +7708,234 @@ msgstr "补全 ASS 标签"
 
 msgid "Show ASS tag and parameter completions at the cursor"
 msgstr "在光标处显示 ASS 标签和参数补全"
+
+msgid "Position"
+msgstr "位置"
+
+msgid "Movement"
+msgstr "移动"
+
+msgid "Rotation origin"
+msgstr "旋转原点"
+
+msgid "Clipping"
+msgstr "裁剪"
+
+msgid "Inverse clipping"
+msgstr "反向裁剪"
+
+msgid "Animated transform"
+msgstr "渐变变换"
+
+msgid "Font name"
+msgstr "字体名称"
+
+msgid "Increase font size"
+msgstr "增大字号"
+
+msgid "Decrease font size"
+msgstr "减小字号"
+
+msgid "Horizontal scale"
+msgstr "水平缩放"
+
+msgid "Vertical scale"
+msgstr "垂直缩放"
+
+msgid "Character spacing"
+msgstr "字间距"
+
+msgid "Legacy alignment"
+msgstr "旧式对齐方式"
+
+msgid "Reset to style"
+msgstr "重置为样式"
+
+msgid "Bold / font weight"
+msgstr "粗体／字重"
+
+msgid "Italic"
+msgstr "斜体"
+
+msgid "Underline"
+msgstr "下划线"
+
+msgid "Strikeout"
+msgstr "删除线"
+
+msgid "Border width"
+msgstr "边框宽度"
+
+msgid "Horizontal border"
+msgstr "水平边框"
+
+msgid "Vertical border"
+msgstr "垂直边框"
+
+msgid "Shadow depth"
+msgstr "阴影距离"
+
+msgid "Horizontal shadow"
+msgstr "水平阴影"
+
+msgid "Vertical shadow"
+msgstr "垂直阴影"
+
+msgid "Gaussian blur"
+msgstr "高斯模糊"
+
+msgid "Edge blur"
+msgstr "边缘模糊"
+
+msgid "Z rotation"
+msgstr "Z 轴旋转"
+
+msgid "X rotation"
+msgstr "X 轴旋转"
+
+msgid "Y rotation"
+msgstr "Y 轴旋转"
+
+msgid "Horizontal shear"
+msgstr "水平倾斜"
+
+msgid "Vertical shear"
+msgstr "垂直倾斜"
+
+msgid "Primary color (BBGGRR)"
+msgstr "主颜色（BBGGRR）"
+
+msgid "Secondary color (BBGGRR)"
+msgstr "次颜色（BBGGRR）"
+
+msgid "Outline color (BBGGRR)"
+msgstr "边框颜色（BBGGRR）"
+
+msgid "Shadow color (BBGGRR)"
+msgstr "阴影颜色（BBGGRR）"
+
+msgid "Transparency (00 opaque, FF invisible)"
+msgstr "透明度（00 不透明，FF 全透明）"
+
+msgid "Primary transparency"
+msgstr "主颜色透明度"
+
+msgid "Secondary transparency"
+msgstr "次颜色透明度"
+
+msgid "Outline transparency"
+msgstr "边框透明度"
+
+msgid "Shadow transparency"
+msgstr "阴影透明度"
+
+msgid "Fade in / out (ms)"
+msgstr "淡入／淡出（毫秒）"
+
+msgid "Complex fade (ms)"
+msgstr "复杂淡入淡出（毫秒）"
+
+msgid "Karaoke duration (centiseconds)"
+msgstr "卡拉 OK 时长（厘秒）"
+
+msgid "Karaoke fill (centiseconds)"
+msgstr "卡拉 OK 填充（厘秒）"
+
+msgid "Karaoke outline (centiseconds)"
+msgstr "卡拉 OK 边框（厘秒）"
+
+msgid "Wrap style"
+msgstr "换行方式"
+
+msgid "Drawing mode"
+msgstr "绘图模式"
+
+msgid "Drawing baseline offset"
+msgstr "绘图基线偏移"
+
+msgid "Font encoding"
+msgstr "字体编码"
+
+msgid "Bottom left"
+msgstr "左下"
+
+msgid "Bottom center"
+msgstr "中下"
+
+msgid "Bottom right"
+msgstr "右下"
+
+msgid "Middle left"
+msgstr "左中"
+
+msgid "Middle center"
+msgstr "居中"
+
+msgid "Middle right"
+msgstr "右中"
+
+msgid "Top left"
+msgstr "左上"
+
+msgid "Top center"
+msgstr "中上"
+
+msgid "Top right"
+msgstr "右上"
+
+msgid "Off"
+msgstr "关闭"
+
+msgid "On"
+msgstr "开启"
+
+msgid "Normal weight"
+msgstr "常规字重"
+
+msgid "Bold weight"
+msgstr "粗体字重"
+
+msgid "Smart wrap, wider top line"
+msgstr "智能换行，上行较宽"
+
+msgid "End-of-line wrap"
+msgstr "行尾换行"
+
+msgid "No automatic wrapping"
+msgstr "不自动换行"
+
+msgid "Smart wrap, wider bottom line"
+msgstr "智能换行，下行较宽"
+
+msgid "Text mode"
+msgstr "文本模式"
+
+msgid "White"
+msgstr "白色"
+
+msgid "Black"
+msgstr "黑色"
+
+msgid "Red"
+msgstr "红色"
+
+msgid "Green"
+msgstr "绿色"
+
+msgid "Blue"
+msgstr "蓝色"
+
+msgid "Opaque"
+msgstr "不透明"
+
+msgid "25% transparent"
+msgstr "约 25% 透明"
+
+msgid "50% transparent"
+msgstr "约 50% 透明"
+
+msgid "75% transparent"
+msgstr "约 75% 透明"
+
+msgid "Invisible"
+msgstr "全透明"
