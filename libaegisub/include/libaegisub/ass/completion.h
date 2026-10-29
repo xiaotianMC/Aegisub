@@ -6,6 +6,8 @@
 #include <string_view>
 #include <vector>
 
+namespace agi { struct Calltip; }
+
 namespace agi::ass {
 struct CompletionItem {
 	std::string label;
@@ -24,4 +26,6 @@ struct Completion {
 /// Positions and caret offsets are UTF-8 byte offsets, as in Scintilla.
 Completion GetCompletion(std::string_view text, size_t pos, bool template_line = false,
 	std::vector<std::string> const& styles = {}, std::vector<std::string> const& fonts = {});
+
+agi::Calltip GetDrawingCalltip(std::string_view text, size_t pos, bool template_line = false);
 }

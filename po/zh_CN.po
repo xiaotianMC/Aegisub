@@ -7939,3 +7939,24 @@ msgstr "约 75% 透明"
 
 msgid "Invisible"
 msgstr "全透明"
+
+msgid "Move (close previous shape)"
+msgstr "移动起点（闭合前一图形）"
+
+msgid "Move (leave previous shape open)"
+msgstr "移动起点（不闭合前一图形）"
+
+msgid "Straight line"
+msgstr "直线"
+
+msgid "Cubic Bezier curve"
+msgstr "三次贝塞尔曲线"
+
+msgid "B-spline (at least 3 points)"
+msgstr "B 样条（至少三个点）"
+
+msgid "Extend B-spline"
+msgstr "延伸 B 样条"
+
+msgid "Close B-spline"
+msgstr "闭合 B 样条"

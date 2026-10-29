@@ -1,10 +1,12 @@
 // Copyright (c) 2026, Aegisub contributors
 // SPDX-License-Identifier: ISC
 #include <libaegisub/ass/completion.h>
+#include <libaegisub/ass/dialogue_parser.h>
 #include <libaegisub/calltip_provider.h>
 
 #include <algorithm>
 #include <cctype>
+#include <optional>
 
 namespace agi::ass {
 namespace {
@@ -16,6 +18,109 @@ std::string_view tag_at(std::string_view text) {
 	for (auto const& tag : GetAssTagCatalog())
 		if (tag.name.size() > name.size() && starts(text, tag.name)) name = tag.name;
 	return name;
+}
+
+std::vector<std::string_view> parents(std::string_view text, size_t start, size_t end) {
+	std::vector<std::string_view> result;
+	std::string_view owner;
+	for (size_t i = start; i < end; ++i) {
+		if (text[i] == '\\') owner = tag_at(text.substr(i + 1));
+		else if (text[i] == '(') { result.push_back(owner); owner = {}; }
+		else if (text[i] == ')' && !result.empty()) result.pop_back();
+	}
+	return result;
+}
+
+bool in_expression(std::string_view text, size_t pos, bool template_line) {
+	if (!template_line) return false;
+	return std::count(text.begin(), text.begin() + pos, '!') % 2;
+}
+
+struct DrawingCommand {
+	char name;
+	const char *signature;
+	const char *description;
+	size_t coordinates;
+};
+const DrawingCommand commands[] = {
+	{'m', "m x y", "Move (close previous shape)", 2},
+	{'n', "n x y", "Move (leave previous shape open)", 2},
+	{'l', "l x y", "Straight line", 2},
+	{'b', "b x1 y1 x2 y2 x3 y3", "Cubic Bezier curve", 6},
+	{'s', "s x1 y1 x2 y2 x3 y3 xN yN ...", "B-spline (at least 3 points)", 8},
+	{'p', "p x y", "Extend B-spline", 2},
+	{'c', "c", "Close B-spline", 0}
+};
+
+std::optional<std::pair<size_t, size_t>> drawing_body(std::string_view text, size_t pos) {
+	auto before = text.substr(0, pos);
+	auto open = before.rfind('{'), close = before.rfind('}');
+	bool in_block = open != text.npos && (close == text.npos || open > close);
+	if (in_block) {
+		auto slash = before.rfind('\\');
+		if (slash == text.npos || slash < open) return {};
+		auto tag = tag_at(text.substr(slash + 1));
+		if (tag != "clip" && tag != "iclip") return {};
+		auto enclosing = parents(text, open + 1, slash);
+		if (std::find(enclosing.begin(), enclosing.end(), "t") != enclosing.end()) return {};
+		size_t start = slash + 1 + tag.size();
+		if (start >= text.size() || text[start] != '(' || pos <= start) return {};
+		++start;
+		auto end = text.find_first_of(")}\\", start);
+		if (end == text.npos) end = text.size();
+		if (pos > end) return {};
+		auto comma = text.find(',', start);
+		if (comma < pos) {
+			if (text.substr(start, comma - start).find_first_not_of("0123456789 \t") != text.npos) return {};
+			start = comma + 1;
+			if (text.find(',', start) < pos) return {};
+		}
+		auto first = text.find_first_not_of(" \t", start);
+		if (first < pos && text[first] != 'm') return {};
+		return std::pair{start, end};
+	}
+	// Reuse the syntax highlighter's drawing-mode detection. The probe gives
+	// an empty drawing at the caret a token without changing the document.
+	std::string probe(text);
+	probe.insert(pos, "m");
+	auto tokens = TokenizeDialogueBody(probe);
+	MarkDrawings(probe, tokens);
+	size_t offset = 0;
+	for (auto const& token : tokens) {
+		if (token.type == DialogueTokenType::DRAWING_FULL && offset <= pos && pos < offset + token.length)
+			return std::pair{offset, offset + token.length - 1};
+		offset += token.length;
+	}
+	return {};
+}
+
+Completion drawing_completion(std::string_view text, size_t pos, std::pair<size_t, size_t> body) {
+	Completion result;
+	result.start = pos;
+	while (result.start > body.first && !std::isspace(static_cast<unsigned char>(text[result.start - 1]))) --result.start;
+	result.end = pos;
+	while (result.end < body.second && letter(text[result.end])) ++result.end;
+	auto prefix = text.substr(result.start, pos - result.start);
+	if (prefix.size() > 1 || (!prefix.empty() && !letter(prefix[0]))) return result;
+	bool has_move = false, spline = false;
+	for (size_t i = body.first; i < result.start; ++i) {
+		if (letter(text[i])) {
+			has_move |= text[i] == 'm';
+			spline = text[i] == 's' || text[i] == 'p';
+		}
+	}
+	for (auto const& command : commands) {
+		if ((!prefix.empty() && prefix[0] != command.name) || (!has_move && command.name != 'm')) continue;
+		if ((command.name == 'p' || command.name == 'c') && !spline) continue;
+		std::string value(1, command.name);
+		size_t caret = 1;
+		if (command.coordinates) {
+			if (result.end == text.size() || !std::isspace(static_cast<unsigned char>(text[result.end]))) value += ' ';
+			++caret;
+		}
+		result.items.push_back({command.signature, value, caret, command.description});
+	}
+	return result;
 }
 
 bool animatable(std::string_view tag) {
@@ -57,12 +162,8 @@ Completion GetCompletion(std::string_view text, size_t pos, bool template_line,
 	Completion result;
 	if (pos > text.size()) return result;
 	// Template expressions have their own language; never treat their slashes as ASS.
-	if (template_line) {
-		bool expression = false;
-		for (size_t i = 0; i < pos; ++i)
-			if (text[i] == '!') expression = !expression;
-		if (expression) return result;
-	}
+	if (in_expression(text, pos, template_line)) return result;
+	if (auto body = drawing_body(text, pos)) return drawing_completion(text, pos, *body);
 	const auto before = text.substr(0, pos);
 	auto open = before.rfind('{'), close = before.rfind('}');
 	bool in_block = open != text.npos && (close == text.npos || open > close);
@@ -82,13 +183,7 @@ Completion GetCompletion(std::string_view text, size_t pos, bool template_line,
 		return result;
 	}
 
-	std::vector<std::string_view> parentheses;
-	std::string_view owner;
-	for (size_t i = open + 1; i < slash; ++i) {
-		if (text[i] == '\\') owner = tag_at(text.substr(i + 1));
-		else if (text[i] == '(') { parentheses.push_back(owner); owner = {}; }
-		else if (text[i] == ')' && !parentheses.empty()) parentheses.pop_back();
-	}
+	auto parentheses = parents(text, open + 1, slash);
 	bool transform = std::find(parentheses.begin(), parentheses.end(), "t") != parentheses.end();
 	// A slash inside numeric/vector parameters is not a nested ASS tag.
 	if (!parentheses.empty() && parentheses.back() != "t") return result;
@@ -182,5 +277,36 @@ Completion GetCompletion(std::string_view text, size_t pos, bool template_line,
 		result.items.push_back({tag.signature, value, caret, description(tag.name)});
 	}
 	return result;
+}
+
+agi::Calltip GetDrawingCalltip(std::string_view text, size_t pos, bool template_line) {
+	agi::Calltip none{nullptr, 0, 0, 0};
+	if (pos > text.size() || in_expression(text, pos, template_line)) return none;
+	auto body = drawing_body(text, pos);
+	if (!body) return none;
+	DrawingCommand const* current = nullptr;
+	size_t command_pos = 0, coordinate = 0;
+	for (size_t i = body->first; i < pos;) {
+		if (std::isspace(static_cast<unsigned char>(text[i]))) { ++i; continue; }
+		size_t start = i;
+		while (i < pos && !std::isspace(static_cast<unsigned char>(text[i]))) ++i;
+		if (i - start == 1 && letter(text[start])) {
+			current = nullptr;
+			for (auto const& command : commands)
+				if (command.name == text[start]) current = &command;
+			command_pos = start;
+			coordinate = 0;
+		}
+		else if (i < pos) ++coordinate;
+	}
+	if (!current) return none;
+	if (!current->coordinates) return {current->signature, 0, 0, command_pos};
+	if (current->name == 's' && coordinate >= 6) coordinate = 6 + coordinate % 2;
+	else coordinate %= current->coordinates;
+	std::string_view signature = current->signature;
+	size_t start = 2;
+	for (size_t i = 0; i < coordinate; ++i) start = signature.find(' ', start) + 1;
+	auto end = signature.find(' ', start);
+	return {current->signature, start, end == signature.npos ? signature.size() : end, command_pos};
 }
 }

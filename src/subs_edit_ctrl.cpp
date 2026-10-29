@@ -108,7 +108,12 @@ SubsTextEditCtrl::SubsTextEditCtrl(wxWindow* parent, wxSize wsize, long style, a
 	Bind(wxEVT_STC_AUTOCOMP_CHAR_DELETED, [this](wxStyledTextEvent&) {
 		CallAfter([this] { ShowCompletion(false); });
 	});
-	BindConnection(OPT_SUB("Subtitle/Edit Box/Auto Completion", [this] { AutoCompCancel(); }));
+	BindConnection(OPT_SUB("Subtitle/Edit Box/Auto Completion", [this] {
+		AutoCompCancel();
+		CallTipCancel();
+		completion_calltip = false;
+		cursor_pos = -1;
+	}));
 
 	// Set hotkeys
 	CmdKeyClear(wxSTC_KEY_RETURN,wxSTC_KEYMOD_CTRL);
@@ -240,6 +245,10 @@ void SubsTextEditCtrl::ShowCompletion(bool manual) {
 	}
 	std::string text = GetTextRaw().data();
 	auto diag = context ? context->selectionController->GetActiveLine() : nullptr;
+	if (diag && diag->Comment && boost::istarts_with(diag->Effect.get(), "code")) {
+		AutoCompCancel();
+		return;
+	}
 	bool is_template = diag && diag->Comment && boost::istarts_with(diag->Effect.get(), "template");
 	auto styles = context ? context->ass->GetStyles() : std::vector<std::string>{};
 	completion = agi::ass::GetCompletion(text, GetCurrentPos(), is_template, styles, completion_fonts);
@@ -450,13 +459,17 @@ void SubsTextEditCtrl::UpdateStyle() {
 
 void SubsTextEditCtrl::UpdateCallTip() {
 	if (AutoCompActive() || IsComposing()) return;
-	if (!OPT_GET("App/Call Tips")->GetBool() && !completion_calltip) return;
 
 	int pos = GetCurrentPos();
 	if (pos == cursor_pos) return;
+	auto diag = context ? context->selectionController->GetActiveLine() : nullptr;
+	bool is_template = diag && diag->Comment && boost::istarts_with(diag->Effect.get(), "template");
+	auto drawing_tip = agi::ass::GetDrawingCalltip(line_text, pos, is_template);
+	if (!OPT_GET("App/Call Tips")->GetBool() && !completion_calltip
+		&& !(drawing_tip.text && OPT_GET("Subtitle/Edit Box/Auto Completion")->GetBool())) return;
 	cursor_pos = pos;
 
-	agi::Calltip new_calltip = agi::GetCalltip(tokenized_line, line_text, pos);
+	agi::Calltip new_calltip = drawing_tip.text ? drawing_tip : agi::GetCalltip(tokenized_line, line_text, pos);
 	if (!new_calltip.text && completion_calltip) {
 		auto open = line_text.rfind('{', pos);
 		if (open != std::string::npos && line_text.find('}', open) == std::string::npos) {

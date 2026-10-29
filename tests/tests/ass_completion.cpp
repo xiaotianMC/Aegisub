@@ -1,6 +1,7 @@
 // Copyright (c) 2026, Aegisub contributors
 // SPDX-License-Identifier: ISC
 #include <libaegisub/ass/completion.h>
+#include <libaegisub/calltip_provider.h>
 #include <main.h>
 #include <algorithm>
 
@@ -87,4 +88,41 @@ TEST(ass_completion, transform_restricts_candidates) {
 	auto clipping = complete("{\\t(\\cl|)}");
 	ASSERT_EQ(1u, clipping.items.size());
 	EXPECT_NE(std::string::npos, clipping.items[0].label.find("X1"));
+}
+
+TEST(ass_completion, drawing_commands_follow_mode_and_spline_state) {
+	EXPECT_TRUE(has(complete("{\\p1}|"), "m "));
+	EXPECT_FALSE(has(complete("{\\p1}|"), "l "));
+	EXPECT_TRUE(has(complete("{\\p2}m 0 0 |"), "b "));
+	EXPECT_FALSE(has(complete("{\\p2}m 0 0 |"), "p "));
+	EXPECT_TRUE(has(complete("{\\p1}m 0 0 s 0 0 10 10 20 20 |"), "p "));
+	EXPECT_TRUE(has(complete("{\\p1}m 0 0 s 0 0 10 10 20 20 |"), "c"));
+	EXPECT_TRUE(complete("{\\p1}m 0 0{\\p0}|").items.empty());
+	EXPECT_TRUE(complete("{\\p1}m 0 0{\\r}|").items.empty());
+	EXPECT_TRUE(has(complete("{\\p1}m 0 0{\\bo|}"), "\\bord"));
+	EXPECT_EQ("{\\p1}m 0 0 b  10 10", accept("{\\p1}m 0 0 b|  10 10", "b"));
+}
+
+TEST(ass_completion, vector_clips_and_rectangles) {
+	EXPECT_TRUE(has(complete("{\\clip(|)}"), "m "));
+	EXPECT_TRUE(has(complete("{\\clip(2,m 0 0 |"), "l "));
+	EXPECT_TRUE(has(complete("{\\iclip(m 0 0 |)}"), "b "));
+	EXPECT_TRUE(complete("{\\clip(0,0,|100,100)}").items.empty());
+	EXPECT_TRUE(complete("{\\clip(0,20|)}").items.empty());
+	EXPECT_TRUE(complete("{\\t(\\clip(|))}").items.empty());
+	EXPECT_TRUE(complete("!{\\p1}m |!", true).items.empty());
+}
+
+TEST(ass_completion, drawing_parameter_highlights) {
+	std::string text = "{\\p1}m 0 0 b 1 2 ";
+	auto tip = agi::ass::GetDrawingCalltip(text, text.size());
+	ASSERT_NE(nullptr, tip.text);
+	EXPECT_STREQ("b x1 y1 x2 y2 x3 y3", tip.text);
+	EXPECT_EQ("x2", std::string(tip.text).substr(tip.highlight_start, tip.highlight_end - tip.highlight_start));
+	text = "{\\clip(m 10 ";
+	tip = agi::ass::GetDrawingCalltip(text, text.size());
+	ASSERT_NE(nullptr, tip.text);
+	EXPECT_EQ("y", std::string(tip.text).substr(tip.highlight_start, tip.highlight_end - tip.highlight_start));
+	EXPECT_EQ(nullptr, agi::ass::GetDrawingCalltip("text", 4).text);
+	EXPECT_EQ(nullptr, agi::ass::GetDrawingCalltip("{\\p0}text", 9).text);
 }

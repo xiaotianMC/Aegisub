@@ -76,7 +76,7 @@ class SubsTextEditCtrl final : public wxStyledTextCtrl, private agi::signal::Con
 	size_t calltip_position = 0;
 
 	/// Cursor position which the current calltip is for
-	int cursor_pos;
+	int cursor_pos = -1;
 
 	/// The last seen line text, used to avoid reparsing the line for syntax
 	/// highlighting when possible
