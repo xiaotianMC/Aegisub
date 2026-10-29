@@ -126,3 +126,23 @@ TEST(ass_completion, drawing_parameter_highlights) {
 	EXPECT_EQ(nullptr, agi::ass::GetDrawingCalltip("text", 4).text);
 	EXPECT_EQ(nullptr, agi::ass::GetDrawingCalltip("{\\p0}text", 9).text);
 }
+
+TEST(ass_completion, resume_parameters_from_manually_entered_text) {
+	for (std::string marked : {"{\\pos(100,|", "{\\pos(100,|}", "{\\pos(100,|200)}中文"}) {
+		auto pos = marked.find('|');
+		marked.erase(pos, 1);
+		for (int resume = 0; resume < 2; ++resume) {
+			auto tip = agi::ass::GetEditingCalltip(marked, pos);
+			ASSERT_NE(nullptr, tip.text);
+			EXPECT_STREQ("\\pos(X,Y)", tip.text);
+			EXPECT_EQ("Y", std::string(tip.text).substr(tip.highlight_start, tip.highlight_end - tip.highlight_start));
+		}
+	}
+}
+
+TEST(ass_completion, resumed_assistance_respects_context) {
+	EXPECT_TRUE(has(complete("中文{\\po|}"), "\\pos()"));
+	EXPECT_EQ(nullptr, agi::ass::GetEditingCalltip("{\\pos(1,2)}正文", std::string("{\\pos(1,2)}正文").size()).text);
+	std::string expression = "!{\\pos(1,";
+	EXPECT_EQ(nullptr, agi::ass::GetEditingCalltip(expression, expression.size(), true).text);
+}

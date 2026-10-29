@@ -93,6 +93,7 @@ class SubsTextEditCtrl final : public wxStyledTextCtrl, private agi::signal::Con
 	bool completion_calltip = false;
 	void AcceptCompletion(wxStyledTextEvent &event);
 	bool IsComposing();
+	void ResumeAssistance();
 #ifdef __WXMSW__
 	WXLRESULT MSWWindowProc(WXUINT message, WXWPARAM wParam, WXLPARAM lParam) override;
 #endif

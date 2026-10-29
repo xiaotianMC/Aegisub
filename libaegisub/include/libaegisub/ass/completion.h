@@ -28,4 +28,7 @@ Completion GetCompletion(std::string_view text, size_t pos, bool template_line =
 	std::vector<std::string> const& styles = {}, std::vector<std::string> const& fonts = {});
 
 agi::Calltip GetDrawingCalltip(std::string_view text, size_t pos, bool template_line = false);
+
+/// Get the parameter tip from the current text, including unfinished override blocks.
+agi::Calltip GetEditingCalltip(std::string const& text, size_t pos, bool template_line = false);
 }

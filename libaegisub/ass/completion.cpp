@@ -279,6 +279,21 @@ Completion GetCompletion(std::string_view text, size_t pos, bool template_line,
 	return result;
 }
 
+agi::Calltip GetEditingCalltip(std::string const& text, size_t pos, bool template_line) {
+	if (pos > text.size() || in_expression(text, pos, template_line)) return {nullptr, 0, 0, 0};
+	auto drawing = GetDrawingCalltip(text, pos, template_line);
+	if (drawing.text) return drawing;
+	auto tip = agi::GetCalltip(TokenizeDialogueBody(text, template_line), text, pos);
+	if (!tip.text) {
+		auto open = text.rfind('{', pos);
+		if (open != text.npos && text.find('}', open) == text.npos) {
+			auto closed = text + "}";
+			tip = agi::GetCalltip(TokenizeDialogueBody(closed, template_line), closed, pos);
+		}
+	}
+	return tip;
+}
+
 agi::Calltip GetDrawingCalltip(std::string_view text, size_t pos, bool template_line) {
 	agi::Calltip none{nullptr, 0, 0, 0};
 	if (pos > text.size() || in_expression(text, pos, template_line)) return none;

@@ -104,6 +104,14 @@ SubsTextEditCtrl::SubsTextEditCtrl(wxWindow* parent, wxSize wsize, long style, a
 	AutoCompSetChooseSingle(false);
 	AutoCompSetFillUps("");
 	Bind(wxEVT_STC_CHARADDED, [this](wxStyledTextEvent&) { ShowCompletion(false); });
+	Bind(wxEVT_SET_FOCUS, [this](wxFocusEvent &event) {
+		CallAfter(&SubsTextEditCtrl::ResumeAssistance);
+		event.Skip();
+	});
+	Bind(wxEVT_LEFT_UP, [this](wxMouseEvent &event) {
+		CallAfter(&SubsTextEditCtrl::ResumeAssistance);
+		event.Skip();
+	});
 	Bind(wxEVT_STC_AUTOCOMP_SELECTION, &SubsTextEditCtrl::AcceptCompletion, this);
 	Bind(wxEVT_STC_AUTOCOMP_CHAR_DELETED, [this](wxStyledTextEvent&) {
 		CallAfter([this] { ShowCompletion(false); });
@@ -211,7 +219,15 @@ END_EVENT_TABLE()
 void SubsTextEditCtrl::OnLoseFocus(wxFocusEvent &event) {
 	AutoCompCancel();
 	CallTipCancel();
+	cursor_pos = -1;
 	event.Skip();
+}
+
+void SubsTextEditCtrl::ResumeAssistance() {
+	if (!HasFocus() || IsComposing()) return;
+	cursor_pos = -1;
+	ShowCompletion(false);
+	UpdateCallTip();
 }
 
 #ifdef __WXMSW__
@@ -332,7 +348,8 @@ bool SubsTextEditCtrl::HandleCompletionKey(wxKeyEvent &event) {
 		}
 		if (key == WXK_ESCAPE) {
 			AutoCompCancel();
-			cursor_pos = -1;
+			CallTipCancel();
+			cursor_pos = GetCurrentPos();
 			event.Skip(false);
 			return true;
 		}
@@ -350,6 +367,10 @@ void SubsTextEditCtrl::OnKeyDown(wxKeyEvent &event) {
 	if (osx::ime::process_key_event(this, event)) return;
 	if (HandleCompletionKey(event)) return;
 	event.Skip();
+	int key = event.GetKeyCode();
+	if (key == WXK_LEFT || key == WXK_RIGHT || key == WXK_UP || key == WXK_DOWN
+		|| key == WXK_HOME || key == WXK_END)
+		CallAfter(&SubsTextEditCtrl::ResumeAssistance);
 
 	bool linebreak = event.GetKeyCode() == WXK_RETURN && event.GetModifiers() == wxMOD_SHIFT;
 #ifndef __WXMAC__
@@ -465,25 +486,23 @@ void SubsTextEditCtrl::UpdateStyle() {
 }
 
 void SubsTextEditCtrl::UpdateCallTip() {
-	if (AutoCompActive() || IsComposing()) return;
+	if (!HasFocus() || AutoCompActive() || IsComposing()) return;
+	if (GetSelectionStart() != GetSelectionEnd()) {
+		CallTipCancel();
+		cursor_pos = -1;
+		return;
+	}
 
 	int pos = GetCurrentPos();
 	if (pos == cursor_pos) return;
 	auto diag = context ? context->selectionController->GetActiveLine() : nullptr;
+	if (diag && diag->Comment && boost::istarts_with(diag->Effect.get(), "code")) return;
 	bool is_template = diag && diag->Comment && boost::istarts_with(diag->Effect.get(), "template");
-	auto drawing_tip = agi::ass::GetDrawingCalltip(line_text, pos, is_template);
 	if (!OPT_GET("App/Call Tips")->GetBool() && !completion_calltip
-		&& !(drawing_tip.text && OPT_GET("Subtitle/Edit Box/Auto Completion")->GetBool())) return;
+		&& !OPT_GET("Subtitle/Edit Box/Auto Completion")->GetBool()) return;
 	cursor_pos = pos;
 
-	agi::Calltip new_calltip = drawing_tip.text ? drawing_tip : agi::GetCalltip(tokenized_line, line_text, pos);
-	if (!new_calltip.text && completion_calltip) {
-		auto open = line_text.rfind('{', pos);
-		if (open != std::string::npos && line_text.find('}', open) == std::string::npos) {
-			auto closed = line_text + "}";
-			new_calltip = agi::GetCalltip(agi::ass::TokenizeDialogueBody(closed), closed, pos);
-		}
-	}
+	auto new_calltip = agi::ass::GetEditingCalltip(line_text, pos, is_template);
 
 	if (!new_calltip.text) {
 		completion_calltip = false;
