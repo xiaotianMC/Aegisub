@@ -265,6 +265,13 @@ void SubsTextEditCtrl::ShowCompletion(bool manual) {
 	completion_pos = GetCurrentPos();
 	wxString list;
 	for (auto& item : completion.items) {
+		// Font and style names are document data, not translatable signatures.
+		if (item.label != item.text) {
+			auto display = agi::TranslateCalltip({item.label.c_str(), 0, 0, 0}, [](std::string_view value) {
+				return from_wx(wxGetTranslation(wxString::FromUTF8(value.data(), value.size())));
+			});
+			item.label = std::move(display.text);
+		}
 		if (!item.description.empty()) item.label += "  " + from_wx(wxGetTranslation(wxString::FromUTF8(item.description)));
 		// wxSTC estimates popup width by character count. Pad wide glyphs so
 		// translated labels are not clipped by the ASCII-width estimate.
@@ -484,13 +491,16 @@ void SubsTextEditCtrl::UpdateCallTip() {
 		return;
 	}
 
-	if (!CallTipActive() || calltip_position != new_calltip.tag_position || calltip_text != new_calltip.text)
-		CallTipShow(new_calltip.tag_position, wxString::FromUTF8Unchecked(new_calltip.text));
+	auto translated = agi::TranslateCalltip(new_calltip, [](std::string_view value) {
+		return from_wx(wxGetTranslation(wxString::FromUTF8(value.data(), value.size())));
+	});
+	if (!CallTipActive() || calltip_position != new_calltip.tag_position || calltip_text != translated.text)
+		CallTipShow(new_calltip.tag_position, wxString::FromUTF8(translated.text));
 
 	calltip_position = new_calltip.tag_position;
-	calltip_text = new_calltip.text;
+	calltip_text = std::move(translated.text);
 
-	CallTipSetHighlight(new_calltip.highlight_start, new_calltip.highlight_end);
+	CallTipSetHighlight(translated.highlight_start, translated.highlight_end);
 }
 
 void SubsTextEditCtrl::SetTextTo(std::string const& text) {

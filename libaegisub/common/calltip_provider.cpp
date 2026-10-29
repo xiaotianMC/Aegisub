@@ -85,7 +85,7 @@ const proto_lit proto_4[] = {
 	{"clip", "\\clip(Command)"},
 	{"clip", "\\clip(Scale,Command)"},
 	{"clip", "\\clip(X1,Y1,X2,Y2)"},
-	{"fad", "\\fad(Start Time,End Time)"},
+	{"fad", "\\fad(Fade In,Fade Out)"},
 	{"fade", "\\fade(Start Alpha,Middle Alpha,End Alpha,Start In,End In,Start Out,End Out)"},
 	{"fscx", "\\fscxScale"},
 	{"fscy", "\\fscyScale"},
@@ -124,6 +124,39 @@ std::vector<AssTagInfo> const& GetAssTagCatalog() {
 		return result;
 	}();
 	return tags;
+}
+
+TranslatedCalltip TranslateCalltip(Calltip tip,
+	std::function<std::string(std::string_view)> const& translate) {
+	TranslatedCalltip result;
+	if (!tip.text) return result;
+	std::string_view source = tip.text;
+	auto append = [&](size_t start, size_t end, bool localize) {
+		auto piece = source.substr(start, end - start);
+		size_t before = result.text.size();
+		result.text += localize ? translate(piece) : std::string(piece);
+		if (tip.highlight_start >= start && tip.highlight_start < end)
+			result.highlight_start = localize ? before : before + tip.highlight_start - start;
+		if (tip.highlight_end > start && tip.highlight_end <= end)
+			result.highlight_end = localize ? result.text.size() : before + tip.highlight_end - start;
+	};
+	size_t prefix = 0;
+	bool drawing = !source.empty() && source.front() != '\\';
+	if (drawing) prefix = std::min(size_t(1), source.size());
+	else {
+		for (auto const& tag : GetAssTagCatalog())
+			if (source.substr(1, tag.name.size()) == tag.name) prefix = std::max(prefix, tag.name.size() + 1);
+	}
+	append(0, prefix, false);
+	for (size_t start = prefix; start < source.size();) {
+		const char *separators = drawing ? " " : "(),";
+		auto end = source.find_first_of(separators, start);
+		if (end == source.npos) end = source.size();
+		if (end > start) append(start, end, true);
+		if (end < source.size()) append(end, end + 1, false);
+		start = end + 1;
+	}
+	return result;
 }
 
 Calltip GetCalltip(std::vector<ass::DialogueToken> const& tokens, std::string const& text, size_t pos) {

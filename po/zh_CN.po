@@ -7960,3 +7960,129 @@ msgstr "延伸 B 样条"
 
 msgid "Close B-spline"
 msgstr "闭合 B 样条"
+
+msgid "Duration"
+msgstr "时长（厘秒）"
+
+msgid "Weight"
+msgstr "字重"
+
+msgid "Colour"
+msgstr "颜色（BBGGRR）"
+
+msgid "1/0"
+msgstr "1 开启／0 关闭"
+
+msgid "Exponent"
+msgstr "绘图缩放指数"
+
+msgid "Wrap Style"
+msgstr "换行方式"
+
+msgid "Acceleration"
+msgstr "加速度"
+
+msgid "Alpha"
+msgstr "透明度"
+
+msgid "Strength"
+msgstr "强度"
+
+msgid "Encoding"
+msgstr "字符编码"
+
+msgid "Font Name"
+msgstr "字体名称"
+
+msgid "Angle"
+msgstr "角度"
+
+msgid "Factor"
+msgstr "倾斜系数"
+
+msgid "X"
+msgstr "横坐标"
+
+msgid "Y"
+msgstr "纵坐标"
+
+msgid "Offset"
+msgstr "偏移量"
+
+msgid "Width"
+msgstr "边框宽度"
+
+msgid "X1"
+msgstr "横坐标1"
+
+msgid "Y1"
+msgstr "纵坐标1"
+
+msgid "X2"
+msgstr "横坐标2"
+
+msgid "Y2"
+msgstr "纵坐标2"
+
+msgid "Start Alpha"
+msgstr "起始透明度"
+
+msgid "Middle Alpha"
+msgstr "中间透明度"
+
+msgid "End Alpha"
+msgstr "结束透明度"
+
+msgid "Start In"
+msgstr "淡入开始时间（毫秒）"
+
+msgid "End In"
+msgstr "淡入结束时间（毫秒）"
+
+msgid "Start Out"
+msgstr "淡出开始时间（毫秒）"
+
+msgid "End Out"
+msgstr "淡出结束时间（毫秒）"
+
+msgid "Fade In"
+msgstr "淡入时长（毫秒）"
+
+msgid "Fade Out"
+msgstr "淡出时长（毫秒）"
+
+msgid "Depth"
+msgstr "阴影距离"
+
+msgid "x"
+msgstr "横坐标"
+
+msgid "y"
+msgstr "纵坐标"
+
+msgid "x1"
+msgstr "横坐标1"
+
+msgid "y1"
+msgstr "纵坐标1"
+
+msgid "x2"
+msgstr "横坐标2"
+
+msgid "y2"
+msgstr "纵坐标2"
+
+msgid "x3"
+msgstr "横坐标3"
+
+msgid "y3"
+msgstr "纵坐标3"
+
+msgid "xN"
+msgstr "后续横坐标"
+
+msgid "yN"
+msgstr "后续纵坐标"
+
+msgid "Spacing"
+msgstr "字间距"

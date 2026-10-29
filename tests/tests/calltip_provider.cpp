@@ -17,6 +17,7 @@
 #include <libaegisub/ass/dialogue_parser.h>
 
 #include <main.h>
+#include <algorithm>
 
 using agi::Calltip;
 
@@ -75,4 +76,37 @@ TEST(lagi_calltip, too_many_args) {
 TEST(lagi_calltip, unknown_tag) {
 	expect_tip("{\\foo(100,100,100)}hello", 3, bad_tip);
 	expect_tip("{\\toolong(100,100,100)}hello", 3, bad_tip);
+}
+
+TEST(lagi_calltip, translated_parameters_keep_utf8_highlight) {
+	auto translate = [](std::string_view value) -> std::string {
+		if (value == "X") return "横坐标";
+		if (value == "Y") return "纵坐标";
+		if (value == "Width") return "边框宽度";
+		return std::string(value);
+	};
+	auto pos = agi::TranslateCalltip({"\\pos(X,Y)", 7, 8, 2}, translate);
+	EXPECT_EQ("\\pos(横坐标,纵坐标)", pos.text);
+	EXPECT_EQ("纵坐标", pos.text.substr(pos.highlight_start, pos.highlight_end - pos.highlight_start));
+	auto bord = agi::TranslateCalltip({"\\bordWidth", 5, 10, 2}, translate);
+	EXPECT_EQ("\\bord边框宽度", bord.text);
+	EXPECT_EQ("边框宽度", bord.text.substr(bord.highlight_start, bord.highlight_end - bord.highlight_start));
+}
+
+TEST(lagi_calltip, translation_preserves_tags_and_parameter_boundaries) {
+	for (auto const& tag : agi::GetAssTagCatalog()) {
+		auto unchanged = agi::TranslateCalltip({tag.signature.c_str(), 0, 0, 0}, [](std::string_view value) { return std::string(value); });
+		EXPECT_EQ(tag.signature, unchanged.text);
+		auto translated = agi::TranslateCalltip({tag.signature.c_str(), 0, 0, 0}, [](std::string_view) { return std::string("参数"); });
+		EXPECT_TRUE(translated.text.starts_with("\\" + tag.name));
+		EXPECT_EQ(std::count(tag.signature.begin(), tag.signature.end(), ','), std::count(translated.text.begin(), translated.text.end(), ','));
+	}
+}
+
+TEST(lagi_calltip, translated_drawing_coordinates) {
+	auto drawing = agi::TranslateCalltip({"b x1 y1 x2 y2 x3 y3", 8, 10, 0}, [](std::string_view value) {
+		return value == "x2" ? std::string("横坐标2") : std::string(value);
+	});
+	EXPECT_EQ("b x1 y1 横坐标2 y2 x3 y3", drawing.text);
+	EXPECT_EQ("横坐标2", drawing.text.substr(drawing.highlight_start, drawing.highlight_end - drawing.highlight_start));
 }

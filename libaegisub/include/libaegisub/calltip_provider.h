@@ -17,6 +17,8 @@
 #pragma once
 
 #include <string>
+#include <string_view>
+#include <functional>
 #include <vector>
 
 namespace agi {
@@ -36,6 +38,16 @@ struct AssTagInfo {
 
 /// Tag names and parameter signatures shared by call tips and completion.
 std::vector<AssTagInfo> const& GetAssTagCatalog();
+
+struct TranslatedCalltip {
+	std::string text;
+	size_t highlight_start = 0;
+	size_t highlight_end = 0;
+};
+
+/// Translate parameter names while keeping ASS commands and UTF-8 highlight offsets intact.
+TranslatedCalltip TranslateCalltip(Calltip tip,
+	std::function<std::string(std::string_view)> const& translate);
 
 /// Get the calltip to show for the given cursor position in the text
 Calltip GetCalltip(std::vector<ass::DialogueToken> const& tokens, std::string const& text, size_t pos);
