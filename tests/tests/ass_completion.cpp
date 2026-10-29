@@ -146,3 +146,28 @@ TEST(ass_completion, resumed_assistance_respects_context) {
 	std::string expression = "!{\\pos(1,";
 	EXPECT_EQ(nullptr, agi::ass::GetEditingCalltip(expression, expression.size(), true).text);
 }
+
+TEST(ass_completion, override_block_structure_and_existing_delimiters) {
+	using agi::ass::GetOverrideBlockSuffix;
+	EXPECT_EQ("\\}", GetOverrideBlockSuffix("{", 1));
+	EXPECT_EQ("\\}", GetOverrideBlockSuffix("中文{正文", std::string("中文{").size()));
+	EXPECT_EQ("\\", GetOverrideBlockSuffix("{}", 1));
+	EXPECT_EQ("", GetOverrideBlockSuffix("{\\}", 1));
+	EXPECT_EQ("", GetOverrideBlockSuffix("{\\pos(1,2)}", 1));
+	EXPECT_FALSE(GetOverrideBlockSuffix("{\\pos(1,2)", 1));
+	EXPECT_FALSE(GetOverrideBlockSuffix("{{", 2));
+	EXPECT_FALSE(GetOverrideBlockSuffix("!{", 2, true));
+	EXPECT_FALSE(GetOverrideBlockSuffix("", 0));
+}
+
+TEST(ass_completion, override_structure_places_caret_after_slash) {
+	std::string text = "中文{正文";
+	size_t caret = std::string("中文{").size();
+	auto suffix = agi::ass::GetOverrideBlockSuffix(text, caret);
+	ASSERT_TRUE(suffix);
+	text.insert(caret, *suffix);
+	++caret;
+	EXPECT_EQ("中文{\\}正文", text);
+	EXPECT_EQ('}', text[caret]);
+	EXPECT_TRUE(has(agi::ass::GetCompletion(text, caret), "\\pos()"));
+}

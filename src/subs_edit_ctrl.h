@@ -94,6 +94,7 @@ class SubsTextEditCtrl final : public wxStyledTextCtrl, private agi::signal::Con
 	void AcceptCompletion(wxStyledTextEvent &event);
 	bool IsComposing();
 	void ResumeAssistance();
+	void OnChar(wxKeyEvent &event);
 #ifdef __WXMSW__
 	WXLRESULT MSWWindowProc(WXUINT message, WXWPARAM wParam, WXLPARAM lParam) override;
 #endif

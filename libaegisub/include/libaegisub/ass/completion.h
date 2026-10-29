@@ -4,6 +4,7 @@
 
 #include <string>
 #include <string_view>
+#include <optional>
 #include <vector>
 
 namespace agi { struct Calltip; }
@@ -31,4 +32,7 @@ agi::Calltip GetDrawingCalltip(std::string_view text, size_t pos, bool template_
 
 /// Get the parameter tip from the current text, including unfinished override blocks.
 agi::Calltip GetEditingCalltip(std::string const& text, size_t pos, bool template_line = false);
+
+/// Suffix to add after a just-typed '{'; nullopt leaves existing code untouched.
+std::optional<std::string> GetOverrideBlockSuffix(std::string_view text, size_t pos, bool template_line = false);
 }

@@ -104,6 +104,7 @@ SubsTextEditCtrl::SubsTextEditCtrl(wxWindow* parent, wxSize wsize, long style, a
 	AutoCompSetChooseSingle(false);
 	AutoCompSetFillUps("");
 	Bind(wxEVT_STC_CHARADDED, [this](wxStyledTextEvent&) { ShowCompletion(false); });
+	Bind(wxEVT_CHAR, &SubsTextEditCtrl::OnChar, this);
 	Bind(wxEVT_SET_FOCUS, [this](wxFocusEvent &event) {
 		CallAfter(&SubsTextEditCtrl::ResumeAssistance);
 		event.Skip();
@@ -228,6 +229,57 @@ void SubsTextEditCtrl::ResumeAssistance() {
 	cursor_pos = -1;
 	ShowCompletion(false);
 	UpdateCallTip();
+}
+
+void SubsTextEditCtrl::OnChar(wxKeyEvent &event) {
+	int key = event.GetUnicodeKey();
+	if ((key != '{' && key != '}') || !OPT_GET("Subtitle/Edit Box/Auto Completion")->GetBool()
+		|| !HasFocus() || IsComposing()) {
+		event.Skip();
+		return;
+	}
+	auto diag = context ? context->selectionController->GetActiveLine() : nullptr;
+	if (diag && diag->Comment && boost::istarts_with(diag->Effect.get(), "code")) {
+		event.Skip();
+		return;
+	}
+	std::string text = GetTextRaw().data();
+	size_t start = GetSelectionStart(), end = GetSelectionEnd();
+	bool is_template = diag && diag->Comment && boost::istarts_with(diag->Effect.get(), "template");
+	if (is_template && std::count(text.begin(), text.begin() + start, '!') % 2) {
+		event.Skip();
+		return;
+	}
+	if (key == '}') {
+		auto before = std::string_view(text).substr(0, start);
+		auto open = before.rfind('{'), close = before.rfind('}');
+		if (start == end && start < text.size() && text[start] == '}' && open != before.npos
+			&& (close == before.npos || open > close)) {
+			AutoCompCancel();
+			SetSelection(start + 1, start + 1);
+			cursor_pos = -1;
+			UpdateCallTip();
+		}
+		else event.Skip();
+		return;
+	}
+	text.replace(start, end - start, "{");
+	auto suffix = agi::ass::GetOverrideBlockSuffix(text, start + 1, is_template);
+	if (!suffix) {
+		event.Skip();
+		return;
+	}
+	AutoCompCancel();
+	// Insert the typed brace and its structure together for a single undo step.
+	BeginUndoAction();
+	SetTargetStart(start);
+	SetTargetEnd(end);
+	ReplaceTarget(wxString::FromUTF8("{" + *suffix));
+	SetSelection(start + 2, start + 2);
+	EndUndoAction();
+	line_text = GetTextRaw().data();
+	UpdateStyle();
+	ShowCompletion(false);
 }
 
 #ifdef __WXMSW__

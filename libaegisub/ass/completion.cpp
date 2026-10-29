@@ -279,6 +279,19 @@ Completion GetCompletion(std::string_view text, size_t pos, bool template_line,
 	return result;
 }
 
+std::optional<std::string> GetOverrideBlockSuffix(std::string_view text, size_t pos, bool template_line) {
+	if (!pos || pos > text.size() || text[pos - 1] != '{' || in_expression(text, pos, template_line)) return {};
+	auto before = text.substr(0, pos - 1);
+	auto open = before.rfind('{'), close = before.rfind('}');
+	if (open != text.npos && (close == text.npos || open > close)) return {};
+	if (pos < text.size() && text[pos] == '\\') {
+		auto next_brace = text.find_first_of("{}", pos);
+		if (next_brace != text.npos && text[next_brace] == '}') return std::string{};
+		return {};
+	}
+	return pos < text.size() && text[pos] == '}' ? "\\" : "\\}";
+}
+
 agi::Calltip GetEditingCalltip(std::string const& text, size_t pos, bool template_line) {
 	if (pos > text.size() || in_expression(text, pos, template_line)) return {nullptr, 0, 0, 0};
 	auto drawing = GetDrawingCalltip(text, pos, template_line);
