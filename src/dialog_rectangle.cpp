@@ -138,7 +138,7 @@ void EditDrawing(agi::Context *c) {
     layout->Add(fields, 0, wxALL | wxEXPAND, dialog.FromDIP(12));
     auto hint = new wxStaticText(&dialog, -1,
         _("Size uses the drawing control-point bounds before rotation. Position is the alignment anchor. Transparency: 0% opaque, 100% invisible."));
-    hint->Wrap(dialog.FromDIP(400));
+    hint->Wrap(fields->GetMinSize().GetWidth());
     layout->Add(hint, 0, wxLEFT | wxRIGHT | wxBOTTOM, dialog.FromDIP(12));
     layout->Add(dialog.CreateStdDialogButtonSizer(wxOK | wxCANCEL), 0,
         wxALL | wxALIGN_RIGHT, dialog.FromDIP(12));
