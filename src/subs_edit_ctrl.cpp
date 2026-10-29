@@ -30,6 +30,7 @@
 #include "subs_edit_ctrl.h"
 
 #include "ass_dialogue.h"
+#include "ass_file.h"
 #include "command/command.h"
 #include "compat.h"
 #include "format.h"
@@ -94,6 +95,19 @@ SubsTextEditCtrl::SubsTextEditCtrl(wxWindow* parent, wxSize wsize, long style, a
 	SetMarginWidth(1,0);
 	UsePopUp(wxSTC_POPUP_NEVER);
 	SetStyles();
+	AutoCompSetSeparator('\n');
+	AutoCompSetTypeSeparator('\t');
+	AutoCompSetOrder(wxSTC_ORDER_CUSTOM);
+	AutoCompSetMaxHeight(9);
+	AutoCompSetMaxWidth(60);
+	AutoCompSetChooseSingle(false);
+	AutoCompSetFillUps("");
+	Bind(wxEVT_STC_CHARADDED, [this](wxStyledTextEvent&) { ShowCompletion(false); });
+	Bind(wxEVT_STC_AUTOCOMP_SELECTION, &SubsTextEditCtrl::AcceptCompletion, this);
+	Bind(wxEVT_STC_AUTOCOMP_CHAR_DELETED, [this](wxStyledTextEvent&) {
+		CallAfter([this] { ShowCompletion(false); });
+	});
+	BindConnection(OPT_SUB("Subtitle/Edit Box/Auto Completion", [this] { AutoCompCancel(); }));
 
 	// Set hotkeys
 	CmdKeyClear(wxSTC_KEY_RETURN,wxSTC_KEYMOD_CTRL);
@@ -189,12 +203,115 @@ BEGIN_EVENT_TABLE(SubsTextEditCtrl,wxStyledTextCtrl)
 END_EVENT_TABLE()
 
 void SubsTextEditCtrl::OnLoseFocus(wxFocusEvent &event) {
+	AutoCompCancel();
 	CallTipCancel();
 	event.Skip();
 }
 
+#ifdef __WXMSW__
+WXLRESULT SubsTextEditCtrl::MSWWindowProc(WXUINT message, WXWPARAM wParam, WXLPARAM lParam) {
+	if (message == WM_IME_STARTCOMPOSITION) {
+		ime_composing = true;
+		AutoCompCancel();
+	}
+	else if (message == WM_IME_ENDCOMPOSITION) {
+		ime_composing = false;
+		CallAfter([this] { ShowCompletion(false); });
+	}
+	return wxStyledTextCtrl::MSWWindowProc(message, wParam, lParam);
+}
+#endif
+
+bool SubsTextEditCtrl::IsComposing() const {
+	if (ime_composing) return true;
+	int pos = GetCurrentPos();
+	// Scintilla uses these indicators for inline IME preedit text.
+	for (int indicator = wxSTC_INDIC_IME; indicator <= wxSTC_INDIC_IME_MAX; ++indicator)
+		if (IndicatorValueAt(indicator, pos) || (pos && IndicatorValueAt(indicator, pos - 1))) return true;
+	return IndicatorValueAt(1, pos) || (pos && IndicatorValueAt(1, pos - 1));
+}
+
+void SubsTextEditCtrl::ShowCompletion(bool manual) {
+	if ((!manual && !OPT_GET("Subtitle/Edit Box/Auto Completion")->GetBool())
+		|| !HasFocus() || IsComposing() || GetSelectionStart() != GetSelectionEnd()) {
+		AutoCompCancel();
+		return;
+	}
+	std::string text = GetTextRaw().data();
+	auto diag = context ? context->selectionController->GetActiveLine() : nullptr;
+	bool is_template = diag && diag->Comment && boost::istarts_with(diag->Effect.get(), "template");
+	completion = agi::ass::GetCompletion(text, GetCurrentPos(), is_template);
+	if (completion.items.empty()) {
+		AutoCompCancel();
+		return;
+	}
+	completion_source = std::move(text);
+	completion_pos = GetCurrentPos();
+	wxString list;
+	for (auto const& item : completion.items) {
+		if (!list.empty()) list += '\n';
+		list += wxString::FromUTF8(item.label);
+	}
+	CallTipCancel();
+	cursor_pos = -1;
+	AutoCompShow(completion_pos - completion.start, list);
+}
+
+void SubsTextEditCtrl::AcceptCompletion(wxStyledTextEvent &event) {
+	auto label = from_wx(event.GetText());
+	auto it = std::find_if(completion.items.begin(), completion.items.end(),
+		[&](auto const& item) { return item.label == label; });
+	if (it == completion.items.end() || completion_source != GetTextRaw().data()
+		|| completion_pos != GetCurrentPos() || IsComposing()) {
+		AutoCompCancel();
+		return;
+	}
+	auto item = *it;
+	AutoCompCancel(); // Prevent Scintilla from inserting the display label.
+	BeginUndoAction();
+	SetTargetStart(completion.start);
+	SetTargetEnd(completion.end);
+	ReplaceTarget(wxString::FromUTF8(item.text));
+	SetSelection(completion.start + item.caret, completion.start + item.caret);
+	EndUndoAction();
+	completion_calltip = true;
+	cursor_pos = -1;
+	line_text = GetTextRaw().data();
+	UpdateStyle();
+}
+
+bool SubsTextEditCtrl::HandleCompletionKey(wxKeyEvent &event) {
+	if (!AutoCompActive()) return false;
+	if (IsComposing()) {
+		AutoCompCancel();
+		return false;
+	}
+	int key = event.GetKeyCode();
+	if (event.GetModifiers() == wxMOD_NONE) {
+		if (key == WXK_RETURN || key == WXK_NUMPAD_ENTER || key == WXK_TAB) {
+			AutoCompComplete();
+			event.Skip(false);
+			return true;
+		}
+		if (key == WXK_ESCAPE) {
+			AutoCompCancel();
+			cursor_pos = -1;
+			event.Skip(false);
+			return true;
+		}
+		if (key == WXK_UP || key == WXK_DOWN || key == WXK_PAGEUP || key == WXK_PAGEDOWN) {
+			event.DoAllowNextEvent();
+			return true;
+		}
+	}
+	if (key == WXK_RETURN || key == WXK_TAB || key == WXK_LEFT || key == WXK_RIGHT
+		|| key == WXK_HOME || key == WXK_END) AutoCompCancel();
+	return false;
+}
+
 void SubsTextEditCtrl::OnKeyDown(wxKeyEvent &event) {
 	if (osx::ime::process_key_event(this, event)) return;
+	if (HandleCompletionKey(event)) return;
 	event.Skip();
 
 	bool linebreak = event.GetKeyCode() == WXK_RETURN && event.GetModifiers() == wxMOD_SHIFT;
@@ -310,7 +427,8 @@ void SubsTextEditCtrl::UpdateStyle() {
 }
 
 void SubsTextEditCtrl::UpdateCallTip() {
-	if (!OPT_GET("App/Call Tips")->GetBool()) return;
+	if (AutoCompActive() || IsComposing()) return;
+	if (!OPT_GET("App/Call Tips")->GetBool() && !completion_calltip) return;
 
 	int pos = GetCurrentPos();
 	if (pos == cursor_pos) return;
@@ -319,6 +437,7 @@ void SubsTextEditCtrl::UpdateCallTip() {
 	agi::Calltip new_calltip = agi::GetCalltip(tokenized_line, line_text, pos);
 
 	if (!new_calltip.text) {
+		completion_calltip = false;
 		CallTipCancel();
 		return;
 	}
@@ -333,6 +452,8 @@ void SubsTextEditCtrl::UpdateCallTip() {
 }
 
 void SubsTextEditCtrl::SetTextTo(std::string const& text) {
+	AutoCompCancel();
+	completion_calltip = false;
 	osx::ime::invalidate(this);
 	SetEvtHandlerEnabled(false);
 	Freeze();

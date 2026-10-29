@@ -111,6 +111,21 @@ const proto_lit *all_protos[] = {proto_1, proto_2, proto_3, proto_4, proto_5};
 }
 
 namespace agi {
+std::vector<AssTagInfo> const& GetAssTagCatalog() {
+	static const auto tags = [] {
+		std::vector<AssTagInfo> result;
+		for (auto group : all_protos)
+			for (auto p = group; p->name; ++p)
+				result.push_back({p->name, p->args});
+		// Relative font sizes are parsed as distinct tags by AssOverrideTag.
+		result.push_back({"fs+", "\\fs+Size"});
+		result.push_back({"fs-", "\\fs-Size"});
+		std::stable_sort(result.begin(), result.end(), [](auto const& a, auto const& b) { return a.name < b.name; });
+		return result;
+	}();
+	return tags;
+}
+
 Calltip GetCalltip(std::vector<ass::DialogueToken> const& tokens, std::string const& text, size_t pos) {
 	namespace dt = ass::DialogueTokenType;
 

@@ -30,6 +30,7 @@
 #pragma once
 
 #include <libaegisub/signal.h>
+#include <libaegisub/ass/completion.h>
 
 #include <memory>
 #include <string>
@@ -83,6 +84,16 @@ class SubsTextEditCtrl final : public wxStyledTextCtrl, private agi::signal::Con
 
 	/// Tokenized version of line_text
 	std::vector<agi::ass::DialogueToken> tokenized_line;
+	agi::ass::Completion completion;
+	std::string completion_source;
+	int completion_pos = 0;
+	bool ime_composing = false;
+	bool completion_calltip = false;
+	void AcceptCompletion(wxStyledTextEvent &event);
+	bool IsComposing() const;
+#ifdef __WXMSW__
+	WXLRESULT MSWWindowProc(WXUINT message, WXWPARAM wParam, WXLPARAM lParam) override;
+#endif
 
 	void OnContextMenu(wxContextMenuEvent &);
 	void OnDoubleClick(wxStyledTextEvent&);
@@ -119,6 +130,8 @@ public:
 
 	void SetTextTo(std::string const& text);
 	void Paste() override;
+	void ShowCompletion(bool manual = true);
+	bool HandleCompletionKey(wxKeyEvent &event);
 
 	std::pair<int, int> GetBoundsOfWordAtPosition(int pos);
 

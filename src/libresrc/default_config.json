@@ -383,6 +383,7 @@
 			"Width" : 1280
 		},
 		"Edit Box" : {
+			"Auto Completion" : true,
 			"Soft Line Break": false,
 			"Font Face" : "",
 			"Font Size" : 10

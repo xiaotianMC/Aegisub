@@ -29,6 +29,14 @@ struct Calltip {
 	size_t tag_position;    ///< Start index of the tag in the input line
 };
 
+struct AssTagInfo {
+	std::string name;
+	std::string signature;
+};
+
+/// Tag names and parameter signatures shared by call tips and completion.
+std::vector<AssTagInfo> const& GetAssTagCatalog();
+
 /// Get the calltip to show for the given cursor position in the text
 Calltip GetCalltip(std::vector<ass::DialogueToken> const& tokens, std::string const& text, size_t pos);
 }

@@ -242,6 +242,9 @@
 		]
 	},
 	"Subtitle Edit Box" : {
+		"edit/complete" : [
+			"Ctrl-J"
+		],
 		"edit/color/outline" : [
 			"Alt-3"
 		],

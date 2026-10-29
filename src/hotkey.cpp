@@ -47,6 +47,11 @@ namespace {
 		{nullptr}
 	};
 
+	const char *added_hotkeys_completion[][3] = {
+		{"edit/complete", "Subtitle Edit Box", "Ctrl-J"},
+		{nullptr}
+	};
+
 #ifdef __WXMAC__
 	const char *added_hotkeys_minimize[][3] = {
 		{"app/minimize", "Default", "Ctrl-M"},
@@ -82,6 +87,10 @@ void init() {
 		GET_DEFAULT_CONFIG(default_hotkey));
 
 	auto migrations = OPT_GET("App/Hotkey Migrations")->GetListString();
+	if (boost::find(migrations, "edit/complete") == end(migrations)) {
+		migrate_hotkeys(added_hotkeys_completion);
+		migrations.emplace_back("edit/complete");
+	}
 
 	if (boost::find(migrations, "7035") == end(migrations)) {
 		migrate_hotkeys(added_hotkeys_7035);

@@ -1,4 +1,5 @@
 libaegisub_src = [
+	'ass/completion.cpp',
     'ass/dialogue_parser.cpp',
     'ass/karaoke.cpp',
     'ass/string_codec.cpp',

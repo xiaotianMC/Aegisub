@@ -48,6 +48,7 @@
 #include "../selection_controller.h"
 #include "../subs_controller.h"
 #include "../subtitle_binding.h"
+#include "../subs_edit_ctrl.h"
 #include "../text_selection_controller.h"
 #include "../utils.h"
 #include "../video_controller.h"
@@ -75,6 +76,17 @@
 namespace {
 	using namespace boost::adaptors;
 	using cmd::Command;
+
+struct edit_complete final : public Command {
+	CMD_NAME("edit/complete")
+	STR_MENU("Complete ASS Tag")
+	STR_DISP("Complete ASS Tag")
+	STR_HELP("Show ASS tag and parameter completions at the cursor")
+	void operator()(agi::Context *) override {
+		if (auto editor = dynamic_cast<SubsTextEditCtrl*>(wxWindow::FindFocus()))
+			editor->ShowCompletion();
+	}
+};
 
 struct validate_sel_nonempty : public Command {
 	CMD_TYPE(COMMAND_VALIDATE)
@@ -1349,6 +1361,7 @@ struct edit_insert_original final : public Command {
 
 namespace cmd {
 	void init_edit() {
+		reg(std::make_unique<edit_complete>());
 		reg(std::make_unique<edit_color_primary>());
 		reg(std::make_unique<edit_color_secondary>());
 		reg(std::make_unique<edit_color_outline>());

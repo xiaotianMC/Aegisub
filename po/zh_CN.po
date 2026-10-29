@@ -7699,3 +7699,12 @@ msgstr "项目管理"
 
 msgid "Open the project dashboard"
 msgstr "打开项目看板"
+
+msgid "Enable ASS autocompletion"
+msgstr "启用 ASS 自动补全"
+
+msgid "Complete ASS Tag"
+msgstr "补全 ASS 标签"
+
+msgid "Show ASS tag and parameter completions at the cursor"
+msgstr "在光标处显示 ASS 标签和参数补全"

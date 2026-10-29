@@ -16,6 +16,7 @@ tests_src = [
     'support/util.cpp',
 
     'tests/access.cpp',
+    'tests/ass_completion.cpp',
     'tests/audio.cpp',
     'tests/cajun.cpp',
     'tests/calltip_provider.cpp',
