@@ -505,8 +505,22 @@ void AudioTimingControllerDialogue::DoCommit(bool user_triggered)
 	// Store back new times
 	if (modified_lines.size())
 	{
+		AssDialogue *single_line = modified_lines.size() == 1 ? (*modified_lines.begin())->GetLine() : nullptr;
+		int old_start = single_line ? static_cast<int>(single_line->Start) : 0;
+		int old_end = single_line ? static_cast<int>(single_line->End) : 0;
 		for (auto line : modified_lines)
 			line->Apply();
+
+		bool linked_neighbor = false;
+		if (single_line && OPT_GET("Timing/Link Adjacent Lines")->GetBool()) {
+			bool start_changed = single_line->Start != old_start;
+			bool end_changed = single_line->End != old_end;
+			if (start_changed != end_changed) {
+				auto old_boundary = start_changed ? old_start : old_end;
+				auto threshold_ms = static_cast<int>(OPT_GET("Timing/Adjacent Line Gap")->GetDouble() * 1000 + 0.5);
+				linked_neighbor = context->ass->LinkAdjacentLine(single_line, start_changed, old_boundary, threshold_ms);
+			}
+		}
 
 		commit_connection.Block();
 		if (user_triggered)
@@ -516,12 +530,16 @@ void AudioTimingControllerDialogue::DoCommit(bool user_triggered)
 		}
 		else
 		{
-			AssDialogue *amend = modified_lines.size() == 1 ? (*modified_lines.begin())->GetLine() : nullptr;
+			AssDialogue *amend = single_line && !linked_neighbor ? single_line : nullptr;
 			commit_id = context->ass->Commit(_("timing"), AssFile::COMMIT_DIAG_TIME, commit_id, amend);
 		}
 
 		commit_connection.Unblock();
 		modified_lines.clear();
+		if (linked_neighbor) {
+			RegenerateSelectedLines();
+			RegenerateInactiveLines();
+		}
 	}
 }
 

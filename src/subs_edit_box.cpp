@@ -505,7 +505,9 @@ void SubsEditBox::CommitText(wxString const& desc) {
 
 void SubsEditBox::CommitTimes(TimeField field) {
 	auto const& sel = c->selectionController->GetSelectedSet();
+	bool linked_neighbor = false;
 	for (AssDialogue *d : sel) {
+		int old_boundary = field == TIME_START ? d->Start : d->End;
 		if (!initial_times.count(d))
 			initial_times[d] = {d->Start, d->End};
 
@@ -530,6 +532,10 @@ void SubsEditBox::CommitTimes(TimeField field) {
 				initial_times[d].second = d->End;
 				break;
 		}
+		if (sel.size() == 1 && OPT_GET("Timing/Link Adjacent Lines")->GetBool()) {
+			auto threshold_ms = static_cast<int>(OPT_GET("Timing/Adjacent Line Gap")->GetDouble() * 1000 + 0.5);
+			linked_neighbor = c->ass->LinkAdjacentLine(d, field == TIME_START, old_boundary, threshold_ms);
+		}
 	}
 
 	start_time->SetTime(line->Start);
@@ -543,7 +549,7 @@ void SubsEditBox::CommitTimes(TimeField field) {
 
 	last_time_commit_type = field;
 	file_changed_slot.Block();
-	commit_id = c->ass->Commit(_("modify times"), AssFile::COMMIT_DIAG_TIME, commit_id, sel.size() == 1 ? *sel.begin() : nullptr);
+	commit_id = c->ass->Commit(_("modify times"), AssFile::COMMIT_DIAG_TIME, commit_id, sel.size() == 1 && !linked_neighbor ? *sel.begin() : nullptr);
 	file_changed_slot.Unblock();
 	wxEventBlocker blocker(this);
 	start_time->SetTime(line->Start);

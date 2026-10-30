@@ -210,6 +210,31 @@ bool AssFile::CompStart(AssDialogue const& lft, AssDialogue const& rgt) {
 bool AssFile::CompEnd(AssDialogue const& lft, AssDialogue const& rgt) {
 	return lft.End < rgt.End;
 }
+
+bool AssFile::LinkAdjacentLine(AssDialogue *line, bool start_changed, int old_boundary, int threshold_ms) {
+	if (!line || threshold_ms <= 0) return false;
+	int new_boundary = start_changed ? line->Start : line->End;
+	if (new_boundary == old_boundary) return false;
+
+	AssDialogue *adjacent = nullptr;
+	int smallest_gap = threshold_ms;
+	for (auto& candidate : Events) {
+		if (&candidate == line || candidate.Comment || candidate.End <= candidate.Start) continue;
+
+		int gap = start_changed ? old_boundary - candidate.End : candidate.Start - old_boundary;
+		if (gap < 0 || gap >= smallest_gap) continue;
+		if (start_changed ? new_boundary < candidate.Start : new_boundary > candidate.End) continue;
+
+		smallest_gap = gap;
+		adjacent = &candidate;
+	}
+	if (!adjacent) return false;
+
+	if (start_changed) adjacent->End = new_boundary;
+	else adjacent->Start = new_boundary;
+	return true;
+}
+
 bool AssFile::CompStyle(AssDialogue const& lft, AssDialogue const& rgt) {
 	return lft.Style < rgt.Style;
 }

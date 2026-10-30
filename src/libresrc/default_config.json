@@ -443,7 +443,9 @@
 	},
 
 	"Timing" : {
-		"Default Duration" : 3000
+		"Default Duration" : 3000,
+		"Link Adjacent Lines" : true,
+		"Adjacent Line Gap" : 0.3
 	},
 
 	"Tool" : {

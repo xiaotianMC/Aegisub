@@ -5805,6 +5805,14 @@ msgid "Default timing length (ms)"
 msgstr "默认时轴长度 (ms)"
 
 #: ../src/preferences.cpp:174
+msgid "Automatically link nearby subtitles"
+msgstr "自动衔接相邻字幕"
+
+#: ../src/preferences.cpp:175
+msgid "Link subtitle gaps under (s)"
+msgstr "字幕间隔小于此值时自动衔接（秒）"
+
+#: ../src/preferences.cpp:174
 msgid "Default lead-in length (ms)"
 msgstr "默认提前开始时间长度 (ms)"
 

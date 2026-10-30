@@ -171,6 +171,9 @@ void Audio(wxTreebook *book, Preferences *parent) {
 	p->OptionAdd(general, _("Play audio when stepping in video"), "Audio/Plays When Stepping Video");
 	p->OptionAdd(general, _("Left-click-drag moves end marker"), "Audio/Drag Timing");
 	p->OptionAdd(general, _("Default timing length (ms)"), "Timing/Default Duration", {.min = 0, .max = 36000});
+	p->OptionAdd(general, _("Automatically link nearby subtitles"), "Timing/Link Adjacent Lines");
+	p->CellSkip(general);
+	p->OptionAdd(general, _("Link subtitle gaps under (s)"), "Timing/Adjacent Line Gap", {.min = 0, .max = 10, .inc = 0.1});
 	p->OptionAdd(general, _("Default lead-in length (ms)"), "Audio/Lead/IN", {.min = 0, .max = 36000});
 	p->OptionAdd(general, _("Default lead-out length (ms)"), "Audio/Lead/OUT", {.min = 0, .max = 36000});
 

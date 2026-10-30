@@ -55,9 +55,9 @@ wxTranslations *AegisubLocale::GetTranslations() {
 	wxTranslations *translations = wxTranslations::Get();
 	if (!translations) {
 		wxTranslations::Set(translations = new wxTranslations);
-		wxFileTranslationsLoader::AddCatalogLookupPathPrefix(config::path->Decode("?data/locale/").wstring());
-		// Meson keeps runnable build-tree catalogs under po/<language>/LC_MESSAGES.
+		// Prefer Meson's build-tree catalogs over potentially stale copied catalogs.
 		wxFileTranslationsLoader::AddCatalogLookupPathPrefix(config::path->Decode("?data/po/").wstring());
+		wxFileTranslationsLoader::AddCatalogLookupPathPrefix(config::path->Decode("?data/locale/").wstring());
 #if !defined(_WIN32) && !defined(__APPLE__) && !defined(APPIMAGE_BUILD)
 		wxFileTranslationsLoader::AddCatalogLookupPathPrefix(P_LOCALE);
 #endif

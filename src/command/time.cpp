@@ -39,6 +39,7 @@
 #include "../dialogs.h"
 #include "../include/aegisub/context.h"
 #include "../libresrc/libresrc.h"
+#include "../options.h"
 #include "../project.h"
 #include "../selection_controller.h"
 #include "../video_controller.h"
@@ -165,12 +166,27 @@ static void snap_subs_video(agi::Context *c, bool set_start) {
 
 	int start = c->videoController->TimeAtFrame(c->videoController->GetFrameN(), agi::vfr::START);
 	int end = c->videoController->TimeAtFrame(c->videoController->GetFrameN(), agi::vfr::END);
+	int old_start = 0;
+	int old_end = 0;
+	if (sel.size() == 1) {
+		old_start = (*sel.begin())->Start;
+		old_end = (*sel.begin())->End;
+	}
 
 	for (auto line : sel) {
 		if (set_start || line->Start > start)
 			line->Start = start;
 		if (!set_start || line->End < end)
 			line->End = end;
+	}
+
+	if (sel.size() == 1 && OPT_GET("Timing/Link Adjacent Lines")->GetBool()) {
+		auto line = *sel.begin();
+		int threshold_ms = static_cast<int>(OPT_GET("Timing/Adjacent Line Gap")->GetDouble() * 1000 + 0.5);
+		if (line->Start != old_start)
+			c->ass->LinkAdjacentLine(line, true, old_start, threshold_ms);
+		if (line->End != old_end)
+			c->ass->LinkAdjacentLine(line, false, old_end, threshold_ms);
 	}
 
 	c->ass->Commit(_("timing"), AssFile::COMMIT_DIAG_TIME);
