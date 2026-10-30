@@ -622,6 +622,10 @@ void VideoDisplay::OnContextMenu(wxContextMenuEvent&) {
 }
 
 void VideoDisplay::OnKeyDown(wxKeyEvent &event) {
+	if (event.GetKeyCode() == WXK_ESCAPE && pan_mode) {
+		SetPanMode(false);
+		return;
+	}
 	hotkey::check("Video", con, event);
 }
 
