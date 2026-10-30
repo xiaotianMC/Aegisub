@@ -7810,32 +7810,20 @@ msgstr "水平倾斜"
 msgid "Vertical shear"
 msgstr "垂直倾斜"
 
-msgid "Primary color (BBGGRR)"
-msgstr "主颜色（BBGGRR）"
+msgid "Primary layer"
+msgstr "主色"
 
-msgid "Secondary color (BBGGRR)"
-msgstr "次颜色（BBGGRR）"
+msgid "Secondary layer"
+msgstr "次色"
 
-msgid "Outline color (BBGGRR)"
-msgstr "边框颜色（BBGGRR）"
+msgid "Outline layer"
+msgstr "边框"
 
-msgid "Shadow color (BBGGRR)"
-msgstr "阴影颜色（BBGGRR）"
+msgid "Shadow layer"
+msgstr "阴影"
 
 msgid "Transparency (00 opaque, FF invisible)"
 msgstr "透明度（00 不透明，FF 全透明）"
-
-msgid "Primary transparency"
-msgstr "主颜色透明度"
-
-msgid "Secondary transparency"
-msgstr "次颜色透明度"
-
-msgid "Outline transparency"
-msgstr "边框透明度"
-
-msgid "Shadow transparency"
-msgstr "阴影透明度"
 
 msgid "Fade in / out (ms)"
 msgstr "淡入／淡出（毫秒）"
@@ -7843,14 +7831,11 @@ msgstr "淡入／淡出（毫秒）"
 msgid "Complex fade (ms)"
 msgstr "复杂淡入淡出（毫秒）"
 
-msgid "Karaoke duration (centiseconds)"
-msgstr "卡拉 OK 时长（厘秒）"
+msgid "Karaoke timing"
+msgstr "卡拉 OK"
 
-msgid "Karaoke fill (centiseconds)"
-msgstr "卡拉 OK 填充（厘秒）"
-
-msgid "Karaoke outline (centiseconds)"
-msgstr "卡拉 OK 边框（厘秒）"
+msgid "Fill"
+msgstr "填充"
 
 msgid "Wrap style"
 msgstr "换行方式"

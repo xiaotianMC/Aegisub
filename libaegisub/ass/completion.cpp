@@ -141,14 +141,14 @@ std::string description(std::string_view name) {
 		{"blur", "Gaussian blur"}, {"be", "Edge blur"},
 		{"fr", "Z rotation"}, {"frz", "Z rotation"}, {"frx", "X rotation"}, {"fry", "Y rotation"},
 		{"fax", "Horizontal shear"}, {"fay", "Vertical shear"},
-		{"c", "Primary color (BBGGRR)"}, {"1c", "Primary color (BBGGRR)"},
-		{"2c", "Secondary color (BBGGRR)"}, {"3c", "Outline color (BBGGRR)"}, {"4c", "Shadow color (BBGGRR)"},
+		{"c", "Primary layer"}, {"1c", "Primary layer"},
+		{"2c", "Secondary layer"}, {"3c", "Outline layer"}, {"4c", "Shadow layer"},
 		{"alpha", "Transparency (00 opaque, FF invisible)"},
-		{"1a", "Primary transparency"}, {"2a", "Secondary transparency"},
-		{"3a", "Outline transparency"}, {"4a", "Shadow transparency"},
+		{"1a", "Primary layer"}, {"2a", "Secondary layer"},
+		{"3a", "Outline layer"}, {"4a", "Shadow layer"},
 		{"fad", "Fade in / out (ms)"}, {"fade", "Complex fade (ms)"},
-		{"k", "Karaoke duration (centiseconds)"}, {"K", "Karaoke fill (centiseconds)"},
-		{"kf", "Karaoke fill (centiseconds)"}, {"ko", "Karaoke outline (centiseconds)"},
+		{"k", "Karaoke timing"}, {"K", "Fill"},
+		{"kf", "Fill"}, {"ko", "Outline"},
 		{"q", "Wrap style"}, {"p", "Drawing mode"}, {"pbo", "Drawing baseline offset"}, {"fe", "Font encoding"}
 	};
 	for (auto const& [tag, label] : descriptions)

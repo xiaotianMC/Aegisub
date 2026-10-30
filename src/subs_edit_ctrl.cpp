@@ -332,6 +332,8 @@ void SubsTextEditCtrl::ShowCompletion(bool manual) {
 	completion_source = std::move(text);
 	completion_pos = GetCurrentPos();
 	wxString list;
+	std::vector<std::string> descriptions;
+	int description_column = 0;
 	for (auto& item : completion.items) {
 		// Font and style names are document data, not translatable signatures.
 		if (item.label != item.text) {
@@ -340,7 +342,20 @@ void SubsTextEditCtrl::ShowCompletion(bool manual) {
 			});
 			item.label = std::move(display.text);
 		}
-		if (!item.description.empty()) item.label += "  " + from_wx(wxGetTranslation(wxString::FromUTF8(item.description)));
+		auto description = item.description.empty() ? std::string{} : from_wx(wxGetTranslation(wxString::FromUTF8(item.description)));
+		descriptions.push_back(std::move(description));
+		if (!descriptions.back().empty())
+			description_column = std::max(description_column, GetTextExtent(wxString::FromUTF8(item.label)).GetWidth());
+	}
+	int space_width = std::max(1, GetTextExtent(" ").GetWidth());
+	for (size_t i = 0; i < completion.items.size(); ++i) {
+		auto& item = completion.items[i];
+		if (!descriptions[i].empty()) {
+			int label_width = GetTextExtent(wxString::FromUTF8(item.label)).GetWidth();
+			int padding = (description_column + 3 * space_width - label_width + space_width - 1) / space_width;
+			item.label.append(std::max(1, padding), ' ');
+			item.label += "|  " + descriptions[i];
+		}
 		// wxSTC estimates popup width by character count. Pad wide glyphs so
 		// translated labels are not clipped by the ASCII-width estimate.
 		auto label = wxString::FromUTF8(item.label);
