@@ -50,7 +50,7 @@
 		],
 		"audio/play/selection" : [
 			"S",
-			"Space"
+			"Ctrl-P"
 		],
 		"audio/play/selection/after" : [
 			"W"
@@ -211,7 +211,7 @@
 			"Ctrl-1"
 		],
 		"video/play" : [
-			"Ctrl-P"
+			"Space"
 		],
 		"video/zoom/in" : [
 			"Ctrl-KP_Add"

@@ -23,6 +23,7 @@
 
 #include <libaegisub/path.h>
 
+#include <algorithm>
 #include <boost/range/algorithm/find.hpp>
 #include <boost/range/iterator_range.hpp>
 #include <wx/intl.h>
@@ -87,6 +88,43 @@ void init() {
 		GET_DEFAULT_CONFIG(default_hotkey));
 
 	auto migrations = OPT_GET("App/Hotkey Migrations")->GetListString();
+	if (boost::find(migrations, "playback hotkey swap") == end(migrations)) {
+		auto hk_map = inst->GetHotkeyMap();
+		auto is_bound = [&](std::string_view context, std::string_view command, std::string_view key) {
+			auto [it, end] = hk_map.equal_range(command);
+			return std::any_of(it, end, [&](auto const& entry) {
+				return entry.second.Context() == context && entry.second.Str() == key;
+			});
+		};
+		auto key_taken = [&](std::string_view context, std::string_view command, std::string_view key) {
+			return std::any_of(hk_map.begin(), hk_map.end(), [&](auto const& entry) {
+				return entry.second.Context() == context && entry.second.Str() == key && entry.second.CmdName() != command;
+			});
+		};
+		if (is_bound("Default", "video/play", "Ctrl-P")
+			&& is_bound("Audio", "audio/play/selection", "Space")
+			&& !key_taken("Default", "video/play", "Space")
+			&& !key_taken("Audio", "audio/play/selection", "Ctrl-P")) {
+			auto remove_binding = [&](std::string_view command, std::string_view context, std::string_view key) {
+				auto [it, end] = hk_map.equal_range(command);
+				while (it != end) {
+					if (it->second.Context() == context && it->second.Str() == key)
+						it = hk_map.erase(it);
+					else
+						++it;
+				}
+			};
+			remove_binding("video/play", "Default", "Ctrl-P");
+			remove_binding("audio/play/selection", "Audio", "Space");
+			if (!is_bound("Audio", "audio/play/selection", "Ctrl-P"))
+				hk_map.emplace("audio/play/selection", agi::hotkey::Combo("Audio", "audio/play/selection", "Ctrl-P"));
+			if (!is_bound("Default", "video/play", "Space"))
+				hk_map.emplace("video/play", agi::hotkey::Combo("Default", "video/play", "Space"));
+			inst->SetHotkeyMap(std::move(hk_map));
+		}
+		migrations.emplace_back("playback hotkey swap");
+	}
+
 	if (boost::find(migrations, "edit/complete") == end(migrations)) {
 		migrate_hotkeys(added_hotkeys_completion);
 		migrations.emplace_back("edit/complete");
