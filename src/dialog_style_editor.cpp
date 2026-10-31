@@ -36,6 +36,7 @@
 
 #include "ass_dialogue.h"
 #include "ass_file.h"
+#include "subtitle_project_access.h"
 #include "ass_style.h"
 #include "ass_style_storage.h"
 #include "colour_button.h"
@@ -124,23 +125,27 @@ public:
 	}
 };
 
-DialogStyleEditor::DialogStyleEditor(wxWindow *parent, AssStyle *style, agi::Context *c, AssStyleStorage *store, std::string const& new_name, wxArrayString const& font_list)
+DialogStyleEditor::DialogStyleEditor(wxWindow *parent, AssStyle const* style, agi::Context *c, AssStyleStorage *store, std::string const& new_name, wxArrayString const& font_list)
 : wxDialog (parent, -1, _("Style Editor"), wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
 , c(c)
 , style(style)
+, source_revision(store ? std::optional<agi::SubtitleEditGate::RevisionToken>{} : c->subtitleEditGate.Capture())
 , store(store)
 {
 	if (new_name.size()) {
 		is_new = true;
-		style = this->style = new AssStyle(*style);
-		style->name = new_name;
+        pending = std::make_unique<AssStyle>(*style);
+        pending->name = new_name;
+        style = this->style = pending.get();
 	}
 	else if (!style) {
 		is_new = true;
-		style = this->style = new AssStyle;
+        pending = std::make_unique<AssStyle>();
+        style = this->style = pending.get();
 	}
 
 	work = std::make_unique<AssStyle>(*style);
+    style_name = style->name;
 
 	SetIcons(GETICONS(style_toolbutton));
 
@@ -409,17 +414,35 @@ DialogStyleEditor::DialogStyleEditor(wxWindow *parent, AssStyle *style, agi::Con
 		elem->Bind(EVT_COLOR, &DialogStyleEditor::OnSetColor, this);
 }
 
-DialogStyleEditor::~DialogStyleEditor() {
-	if (is_new)
-		delete style;
-}
+DialogStyleEditor::~DialogStyleEditor() = default;
 
 std::string DialogStyleEditor::GetStyleName() const {
-	return style->name;
+	return style_name;
 }
 
 void DialogStyleEditor::Apply(bool apply, bool close) {
 	if (apply) {
+        bool source_current = store || is_new || (source_revision && source_revision->Current());
+        auto edit_scope = store ? std::optional<SubtitleProjectAccess::WriteScope>{} : c->subtitleAccess->TryWrite();
+        if (!store && !edit_scope) return;
+        if (!source_current) {
+            wxMessageBox(_("The subtitles changed while this style was being edited. Please reopen the style editor."),
+                _("Style Editor"), wxOK | wxICON_ERROR, this);
+            return;
+        }
+        // Never retain a mutable live style across callbacks. Resolve the
+        // original object by identity, preserving behavior for duplicate names.
+        AssStyle *target = is_new ? pending.get() : nullptr;
+        if (!is_new && store) {
+            for (auto const& entry : *store) if (entry.get() == style) target = entry.get();
+        }
+        else if (!is_new) {
+            for (auto& entry : c->ass->Styles) if (&entry == style) target = &entry;
+        }
+        if (!target) {
+            wxMessageBox(_("The style being edited no longer exists."), _("Style Editor"), wxOK | wxICON_ERROR, this);
+            return;
+        }
 		std::string new_name = from_wx(StyleName->GetValue());
 
 		// Get list of existing styles
@@ -427,7 +450,7 @@ void DialogStyleEditor::Apply(bool apply, bool close) {
 
 		// Check if style name is unique
 		AssStyle *existing = store ? store->GetStyle(new_name) : c->ass->GetStyle(new_name);
-		if (existing && existing != style) {
+		if (existing && existing != target) {
 			wxMessageBox(_("There is already a style with this name. Please choose another name."), _("Style name conflict"), wxOK | wxICON_ERROR | wxCENTER);
 			return;
 		}
@@ -458,20 +481,23 @@ void DialogStyleEditor::Apply(bool apply, bool close) {
 
 		UpdateWorkStyle();
 
-		*style = *work;
-		style->UpdateData();
+		*target = *work;
+		target->UpdateData();
 		if (is_new) {
 			if (store)
-				store->push_back(std::unique_ptr<AssStyle>(style));
+				store->push_back(std::move(pending));
 			else
-				c->ass->Styles.push_back(*style);
+                { c->ass->Styles.push_back(*pending); pending.release(); }
 			is_new = false;
 		}
+        style = target;
+        style_name = target->name;
 		if (!store)
 			c->ass->Commit(_("style change"), AssFile::COMMIT_STYLES | (did_rename ? AssFile::COMMIT_DIAG_FULL : 0));
+        if (!store) source_revision = c->subtitleEditGate.Capture();
 
 		// Update preview
-		if (!close) SubsPreview->SetStyle(*style);
+		if (!close) SubsPreview->SetStyle(*work);
 	}
 
 	if (close) {

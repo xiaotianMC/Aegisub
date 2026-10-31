@@ -591,6 +591,7 @@ static void copy_lines(agi::Context *c) {
 
 static void delete_lines(agi::Context *c, wxString const& commit_message) {
 	auto const& sel = c->selectionController->GetSelectedSet();
+    std::set<AssDialogue const*> readonly_selection(sel.begin(), sel.end());
 
 	// Find a line near the active line not being deleted to make the new active line
 	AssDialogue *pre_sel = nullptr;
@@ -613,8 +614,8 @@ static void delete_lines(agi::Context *c, wxString const& commit_message) {
 	// need to create a new dialogue line for it, and we can't select dialogue
 	// lines until after they're committed.
 	std::vector<std::unique_ptr<AssDialogue>> to_delete;
-	c->ass->Events.remove_and_dispose_if([&sel](AssDialogue const& e) {
-		return sel.count(const_cast<AssDialogue *>(&e));
+	c->ass->Events.remove_and_dispose_if([&readonly_selection](AssDialogue const& e) {
+		return readonly_selection.count(&e);
 	}, [&](AssDialogue *e) {
 		to_delete.emplace_back(e);
 	});
@@ -691,7 +692,8 @@ struct edit_line_delete final : public validate_sel_nonempty {
 
 static void duplicate_lines(agi::Context *c, int shift) {
 	auto const& sel = c->selectionController->GetSelectedSet();
-	auto in_selection = [&](AssDialogue const& d) { return sel.count(const_cast<AssDialogue *>(&d)); };
+    std::set<AssDialogue const*> readonly_selection(sel.begin(), sel.end());
+    auto in_selection = [&](AssDialogue const& d) { return readonly_selection.count(&d); };
 
 	Selection new_sel;
 	AssDialogue *new_active = nullptr;

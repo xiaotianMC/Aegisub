@@ -16,6 +16,7 @@
 
 #include "ass_dialogue.h"
 #include "ass_file.h"
+#include "subtitle_project_access.h"
 #include "compat.h"
 #include "dialog_manager.h"
 #include "help_button.h"
@@ -70,8 +71,8 @@ class DialogSpellChecker final : public wxDialog {
 	wxButton *add_button;      ///< Add word to currently active dictionary
 	wxButton *remove_button;   ///< Remove word from currently active dictionary
 
-	AssDialogue *start_line = nullptr;  ///< The first line checked
-	AssDialogue *active_line = nullptr; ///< The most recently checked line
+	AssDialogue const* start_line = nullptr;  ///< The first line checked
+	AssDialogue const* active_line = nullptr; ///< The most recently checked line
 	bool has_looped = false;            ///< Has the search already looped from the end to beginning?
 
 	/// Find the next misspelled word and close the dialog if there are none
@@ -83,7 +84,7 @@ class DialogSpellChecker final : public wxDialog {
 	/// @param start_pos Index in the line to start at
 	/// @param[in,out] commit_id Commit id for coalescing autoreplace commits
 	/// @return Was a misspelling found?
-	bool CheckLine(AssDialogue *active_line, int start_pos, int *commit_id);
+	bool CheckLine(AssDialogue const* active_line, int start_pos, int *commit_id, agi::SubtitleEditGate::WriteLease const&);
 
 	/// Set the current word to be corrected
 	void SetWord(std::string const& word);
@@ -244,6 +245,8 @@ void DialogSpellChecker::OnChangeSuggestion(wxCommandEvent&) {
 }
 
 bool DialogSpellChecker::FindNext() {
+    auto edit_scope = context->subtitleAccess->TryWrite();
+    if (!edit_scope) return false;
 	AssDialogue *real_active_line = context->selectionController->GetActiveLine();
 	// User has changed the active line; restart search from this position
 	if (real_active_line != active_line) {
@@ -255,10 +258,10 @@ bool DialogSpellChecker::FindNext() {
 	int start_pos = context->textSelectionController->GetInsertionPoint();
 	int commit_id = -1;
 
-	if (CheckLine(active_line, start_pos, &commit_id))
+	if (CheckLine(active_line, start_pos, &commit_id, edit_scope->Lease()))
 		return true;
 
-	auto it = context->ass->iterator_to(*active_line);
+	auto it = context->ass->iterator_to(*real_active_line);
 
 	// Note that it is deliberate that the start line is checked twice, as if
 	// the cursor is past the first misspelled word in the current line, that
@@ -271,7 +274,7 @@ bool DialogSpellChecker::FindNext() {
 		}
 
 		active_line = &*it;
-		if (CheckLine(active_line, 0, &commit_id))
+		if (CheckLine(active_line, 0, &commit_id, edit_scope->Lease()))
 			return true;
 	}
 
@@ -287,7 +290,7 @@ bool DialogSpellChecker::FindNext() {
 	return false;
 }
 
-bool DialogSpellChecker::CheckLine(AssDialogue *active_line, int start_pos, int *commit_id) {
+bool DialogSpellChecker::CheckLine(AssDialogue const* active_line, int start_pos, int *commit_id, agi::SubtitleEditGate::WriteLease const& lease) {
 	if (active_line->Comment && OPT_GET("Tool/Spell Checker/Skip Comments")->GetBool()) return false;
 
 	std::string text = active_line->Text;
@@ -319,13 +322,16 @@ bool DialogSpellChecker::CheckLine(AssDialogue *active_line, int start_pos, int 
 			replace_word->Remove(0, -1);
 #endif
 
-			context->selectionController->SetSelectionAndActive({ active_line }, active_line);
+            auto current = std::find_if(context->ass->Events.begin(), context->ass->Events.end(),
+                [&](AssDialogue const& row) { return row.Id == active_line->Id; });
+            if (current == context->ass->Events.end()) return false;
+            context->selectionController->SetSelectionAndActive({ &*current }, &*current);
 			SetWord(word);
 			return true;
 		}
 
 		text.replace(word_start, word_len, auto_rep->second);
-		active_line->Text = text;
+        context->subtitleAccess->Edit(lease).SetDialogueField(active_line->Id, &AssDialogueBase::Text, text);
 		*commit_id = context->ass->Commit(_("spell check replace"), AssFile::COMMIT_DIAG_TEXT, *commit_id);
 		word_start += auto_rep->second.size();
 	}
@@ -333,6 +339,8 @@ bool DialogSpellChecker::CheckLine(AssDialogue *active_line, int start_pos, int 
 }
 
 void DialogSpellChecker::Replace() {
+    auto edit_scope = context->subtitleAccess->TryWrite();
+    if (!edit_scope) return;
 	AssDialogue *active_line = context->selectionController->GetActiveLine();
 
 	// Only replace if the user hasn't changed the selection to something else

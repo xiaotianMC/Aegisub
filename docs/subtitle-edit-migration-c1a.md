@@ -82,3 +82,76 @@
 - B：70 个命令 operator（edit 33、grid 16、subtitle 4、time 17）均写前授权；覆盖直接调用路径，不依赖分发器。Undo/Redo/OnCommit、两个绑定入口、FindReplace 的替换分支和 ReplaceAll、显式文本粘贴入口另行保护。
   Windows 构建、真实普通编辑集成 9 项、模型 24 项通过。70 个命令均在活动比较会话中逐个直接调用并验证零变化；执行真实粘贴、增删、排序、绑定、单次/批量替换、Undo/Redo 和历史重入测试。
   粘贴的数据入口复用原算法，与系统剪贴板读取分离；测试不更改用户剪贴板。
+
+## 最终覆盖和计数口径
+
+按源码中的授权分支计 **99 处**，其中同一函数的独立写入分支分别计数；不以字段赋值次数、调用次数或测试断言次数计数。
+命令 operator 共 **71 个**（第二批 70 个，第三批另加 tool/resampleres）。盘点范围内普通写入入口 **0 个待迁移**；下列授权分支外的私有 helper 由表中入口的同一作用域覆盖，不重复计数。
+完整入口语义、对象和测试要求见前面的实施前表；以下表格标明实际已接入的位置。
+
+| 实际修改文件 | 已接入分支数 | 已接入函数/分支与位置 |
+| --- | ---: | --- |
+| `src/base_grid.cpp` | 5 | 已接入：SelectRow、OnMouseEvent 注释/选择、OnContextMenu、OnKeyDown；授权行 250, 485, 494, 615, 773 |
+| `src/dialog_attachments.cpp` | 2 | 已接入：AttachFile、OnDelete；授权行 164, 247 |
+| `src/dialog_properties.cpp` | 1 | 已接入：OnOK（SetInfoIfDifferent 由其覆盖）；授权行 224 |
+| `src/dialog_shift_times.cpp` | 1 | 已接入：Process；授权行 367 |
+| `src/dialog_spellchecker.cpp` | 2 | 已接入：FindNext（CheckLine 显式传递 lease）、Replace；授权行 248, 342 |
+| `src/dialog_style_editor.cpp` | 1 | 已接入：Apply（包含 StyleRenamer）；现有样式使用工程版本令牌拒绝过期编辑；授权行 426 |
+| `src/dialog_style_manager.cpp` | 5 | 已接入：OnCopyToCurrent、PasteToCurrent、OnCurrentDelete、OnCurrentImport、MoveStyles(false)；授权行 536, 583, 669, 683, 869 |
+| `src/dialog_timing_processor.cpp` | 1 | 已接入：OnApply（Process 和 SortDialogues 由其覆盖）；授权行 310 |
+| `src/search_replace_engine.cpp` | 2 | 已接入：FindReplace(true)、ReplaceAll；GetMatcher 改为纯只读，Replace 由外层覆盖；授权行 190, 263 |
+| `src/subs_controller.cpp` | 3 | 已接入：OnCommit、Undo、Redo（UndoInfo::Apply 由后两者覆盖）；授权行 313, 375, 390 |
+| `src/subs_edit_box.cpp` | 2 | 已接入：SetSelectedRows、CommitTimes（文本、全部元数据及相邻时间联动）；授权行 486, 510 |
+| `src/subtitle_binding.cpp` | 2 | 已接入：BindSelectedSubtitles、UnbindSelectedSubtitles；授权行 63, 100 |
+| `src/command/edit.cpp` | 34 | 已接入：33 个 operator 和 PasteSubtitleLines；覆盖 update_lines、parsed_line、paste/delete/duplicate/combine/split helpers；授权行 411, 425, 439, 453, 467, 481, 495, 509, 523, 668, 687, 767, 781, 795, 838, 851, 864, 919, 948, 1024, 1104, 1174, 1192, 1205, 1239, 1267, 1310, 1337, 1352, 1363, 1378, 1394, 1414, 1429 |
+| `src/command/grid.cpp` | 16 | 已接入：16 个 operator：next/create、12 个 sort、move/up/down、swap；授权行 68, 108, 130, 144, 158, 172, 186, 200, 214, 228, 242, 256, 270, 384, 403, 423 |
+| `src/command/subtitle.cpp` | 4 | 已接入：4 个 insert operator；授权行 140, 176, 189, 222 |
+| `src/command/time.cpp` | 17 | 已接入：17 个 operator；其中音频计时委托只保护普通调用边界；授权行 112, 125, 139, 210, 224, 270, 286, 300, 313, 326, 339, 352, 365, 378, 393, 406, 420 |
+| `src/command/tool.cpp` | 1 | 已接入：tool_resampleres 的 operator，覆盖当前工程 ResampleResolution 调用边界；授权行 99 |
+
+附加修改文件：`src/ass_file.h/.cpp`（局部通知阶段），`src/subtitle_project_access.h/.cpp`（共享 C0 租约），`src/base_grid.h`、`src/subs_edit_box.h`、`src/dialog_style_editor.h`（const 缓存/行 ID/过期令牌），`src/subs_controller.h`（历史重入状态），`src/command/edit.h`（粘贴数据入口），`meson.build`（Windows 复用应用对象的测试程序），两份交付文档，以及 `tests/support/ordinary_main.cpp`、`tests/tests/ordinary_edit.cpp`、`tests/tests/subtitle_project_access.cpp`。
+
+### 必须保留的兼容性说明
+
+- 继续使用 C0 的门禁；普通嵌套操作共享同一个底层 WriteLease。比较期间拒绝发生在直接字段/容器写入和历史移动之前。
+- 普通租约覆盖同步 modal 交互时只保留任务授权，没有持有门禁互斥锁。样式管理器本身不长期持租约，每个写事件分别授权。
+- 网格、编辑框、样式管理器/编辑器及拼写窗口不再缓存当前模型的可变行/样式指针；短暂可变行表只在有效租约内使用，网格每次写事件构建 O(n) 行表。旧 SelectionController 可变 API 仍是后续缺口。
+- Commit 的 PushState 内部历史维护可以共享租约；AnnounceCommit 阶段拒绝新的普通写操作。Undo/Redo 在历史恢复或提交通知中拒绝重入。Signal 的原有异常传播不变，没有修改 signal.h。
+- 查找原来通过 const_cast 规范化当前字段，这是只读绕过。本批改为在副本上做 NFC 规范化，并使用已有 ICU Edits 将匹配范围映射回原文 UTF-8 字节。单次替换保留未匹配的原始字节；正则批量替换保留原有规范化替换结果。没有新增依赖。
+- 样式复制到剪贴板原来会 UpdateData 当前样式，现仅序列化独立副本。普通复制仍不需要写租约。已迁移代码不使用 const_cast。
+- 样式编辑器在工程版本变化后拒绝应用旧快照，并提示重新打开；防止 Undo/Redo/删除后的地址复用造成误写。独立样式库仍使用原接口，未被错误地限制为当前工程。
+- 不新增 Undo 记录格式，不改变普通 Commit 合并规则、热键资源、菜单定义、保存策略或附加数据解释规则。
+- 新门禁拒绝不产生部分编辑；原算法遇到分配/解析/外部观察者异常时的强原子性尚未提供。已发生的普通写入不会因租约释放自动回滚。该限制不能以本批测试通过掩盖，完整候选/原子发布仍属于后续阶段。
+
+### 明确剩余的写入入口
+
+本次进一步定位 **30 个后续函数入口**，普通模块不能替它们授予长期授权。此数字是下面清单的函数数，不是“全局只剩 30 条赋值路径”的保证；任意持有旧公共字段或可变 API 的调用者仍可能绕过门禁。
+这些属于明确排除的 C1-B/C 范围，在本批无法迁移的原因分别是脚本事务、实时工具生命周期、加载/保存事务和旧访问面，不能开放比较会话入口。
+
+| 后续批次 | 文件 | 尚未迁移函数（按独立函数计） | 数量 |
+| --- | --- | --- | ---: |
+| C1-B/C | src/auto4_lua_assfile.cpp | LuaAssFile::ObjectIndexWrite、ObjectDelete、ObjectDeleteRange、ObjectAppend、ObjectInsert、ProcessingComplete | 6 |
+| C1-B | src/audio_karaoke.cpp | AudioKaraoke::AcceptSplit | 1 |
+| C1-B | src/audio_timing_dialogue.cpp | AudioTimingControllerDialogue::DoCommit | 1 |
+| C1-B | src/audio_timing_karaoke.cpp | AudioTimingControllerKaraoke::DoCommit、ApplyLead | 2 |
+| C1-B | src/visual_tool.cpp | VisualToolBase::SetOverride、Commit（派生视觉工具也必须登记生命周期） | 2 |
+| C1-B | src/visual_tool_rectangle.cpp | VisualToolRectangle::Finish | 1 |
+| C1-B | src/visual_tool_vector_clip.cpp | VisualToolVectorClip::Save | 1 |
+| C1-B | src/dialog_rectangle.cpp | EditDrawing（实时 update/cancel 回调） | 1 |
+| C1-B/C | src/dialog_video_properties.cpp | UpdateVideoProperties（含 matrix/play/layout helper） | 1 |
+| C1-B | src/dialog_styling_assistant.cpp | DialogStyling::Commit | 1 |
+| C1-B | src/dialog_translation.cpp | DialogTranslation::Commit | 1 |
+| C1-B | src/dialog_kara_timing_copy.cpp | DialogKanjiTimer::OnClose（接受结果的批量写回） | 1 |
+| C1-C | src/project.cpp | Project::UpdateRelativePaths、CloseVideo（及加载队列的整体生命周期） | 2 |
+| C1-C | src/subs_controller.cpp | Load、Close、Save、AutoSave；自动保存策略本批未改变 | 4 |
+| C1-C | src/selection_controller.cpp | SetActiveLine、SetSelectedSet、SetSelectionAndActive 的旧公共接口 | 3 |
+| C1-C/收口 | src/ass_file.cpp | Commit 的旧直接调用、CleanExtradata；其他公共容器/字段写入面也须收口 | 2 |
+
+独立读取器、导出副本和独立样式库不是当前工程写任务，保留其可变接口。普通网格/时间命令委托音视频功能时，本批仅保护调用边界，音视频内部的其他触发路径仍未受保护。后台任务登记、排队加载、必要观察者确认、旧节点退休协议接入与原子发布没有提前实现。
+
+### 实际测试和局限
+
+最终 Windows x64 Release 主程序及三个测试程序构建通过。基础 435/435、生产模型 24/24、真实应用对象集成 16/16 通过，共 475 项；相对 C0 新增 19 项。
+集成测试逐一直接调用 71 个命令 operator，覆盖菜单/快捷键/工具栏共用的处理函数。wx 事件测试覆盖真实编辑框、网格、样式编辑器、样式管理器、脚本属性、附件；执行粘贴、增删、排序、样式导入/同名覆盖/移动、绑定、单次及批量替换、修改标记、Undo/Redo、通知及历史重入拒绝。
+程序调用事件代替人工鼠标验收；没有逐个字典测试拼写后端，也没有完成音视频/脚本/加载保存的全链路验收。后续批次必须补测其生命周期，不能宣称全工程隔离完成。
+测试设置、MRU、热键配置、字体预览宿主和数据均使用隔离目录；不运行旧 setup。粘贴测试不触碰系统剪贴板。日志为 build/c1a-final-build.log、c1a-final-main-tests.log、c1a-final-model-tests.log、c1a-final-ordinary-tests.log。

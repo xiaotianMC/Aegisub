@@ -37,6 +37,7 @@
 #include <wx/brush.h>
 #include <wx/scrolbar.h>
 #include <wx/window.h>
+#include <libaegisub/subtitle_edit_gate.h>
 
 namespace agi {
 	struct Context;
@@ -87,7 +88,8 @@ class BaseGrid final : public wxWindow {
 		wxBrush LeftCol;
 	} row_colors;
 
-	std::vector<AssDialogue*> index_line_map;  ///< Row number -> dialogue line
+	std::vector<AssDialogue const*> index_line_map;  ///< Read-only drawing cache
+    std::vector<AssDialogue*> RowsForWrite(agi::SubtitleEditGate::WriteLease const&) const;
 
 	/// Connection for video seek event. Stored explicitly so that it can be
 	/// blocked if the relevant option is disabled
@@ -126,7 +128,7 @@ class BaseGrid final : public wxWindow {
 	/// @brief Get dialogue by index
 	/// @param n Index to look up
 	/// @return Subtitle dialogue line for index, or 0 if invalid index
-	AssDialogue *GetDialogue(int n) const;
+	AssDialogue const* GetDialogue(int n) const;
 
 public:
 	BaseGrid(wxWindow* parent, agi::Context *context);

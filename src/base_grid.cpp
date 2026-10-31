@@ -247,9 +247,12 @@ void BaseGrid::MakeRowVisible(int row) {
 }
 
 void BaseGrid::SelectRow(int row, bool addToSelected, bool select) {
+    auto edit_scope = context->subtitleAccess->TryWrite();
+    if (!edit_scope) return;
 	if (row < 0 || (size_t)row >= index_line_map.size()) return;
 
-	AssDialogue *line = index_line_map[row];
+    auto rows = RowsForWrite(edit_scope->Lease());
+    AssDialogue *line = rows.at(row);
 
 	if (!addToSelected) {
 		context->selectionController->SetSelectedSet(Selection{line});
@@ -365,12 +368,13 @@ void BaseGrid::OnPaint(wxPaintEvent &) {
 	const int grid_x = columns[0]->Width();
 
 	const auto active_line = context->selectionController->GetActiveLine();
-	auto const& selection = context->selectionController->GetSelectedSet();
+	auto const& mutable_selection = context->selectionController->GetSelectedSet();
+    std::set<AssDialogue const*> selection(mutable_selection.begin(), mutable_selection.end());
 	visible_rows.clear();
 
 	for (int i : agi::util::range(nDraw)) {
 		wxBrush color = row_colors.Default;
-		AssDialogue *curDiag = index_line_map[i + yPos];
+		AssDialogue const* curDiag = index_line_map[i + yPos];
 
 		bool inSel = !!selection.count(curDiag);
 		if (inSel && curDiag->Comment)
@@ -461,7 +465,7 @@ void BaseGrid::OnMouseEvent(wxMouseEvent &event) {
 	int row = event.GetY() / lineHeight + yPos - 1;
 	if (holding && !click)
 		row = mid(0, row, GetRows()-1);
-	AssDialogue *dlg = GetDialogue(row);
+	AssDialogue const* dlg = GetDialogue(row);
 	if (!dlg) row = 0;
 
 	bool over_number = dlg && event.GetY() >= lineHeight
@@ -480,11 +484,15 @@ void BaseGrid::OnMouseEvent(wxMouseEvent &event) {
 	if ((click || dclick) && over_number && !holding && !shift && !ctrl && !alt) {
         auto write = context->subtitleAccess->TryWrite();
         if (!write) return;
-		dlg->Comment = !dlg->Comment;
-		context->ass->Commit(_("comment change"), AssFile::COMMIT_DIAG_META, -1, dlg);
+        auto rows = RowsForWrite(write->Lease());
+        auto target = rows.at(row);
+        target->Comment = !target->Comment;
+		context->ass->Commit(_("comment change"), AssFile::COMMIT_DIAG_META, -1, target);
 		return;
 	}
 
+    auto edit_scope = (dlg && (click || holding || dclick)) ? context->subtitleAccess->TryWrite() : std::optional<SubtitleProjectAccess::WriteScope>{};
+    if (dlg && (click || holding || dclick) && !edit_scope) return;
 	if (event.ButtonDown() && OPT_GET("Subtitle/Grid/Focus Allow")->GetBool())
 		SetFocus();
 
@@ -515,13 +523,15 @@ void BaseGrid::OnMouseEvent(wxMouseEvent &event) {
 	}
 
 	if ((click || holding || dclick) && dlg) {
+        auto rows = RowsForWrite(edit_scope->Lease());
+        auto target = rows.at(row);
 		int old_extend = extendRow;
 
 		// SetActiveLine will scroll the grid if the row is only half-visible,
 		// but we don't want to scroll until the mouse moves or the button is
 		// released, to avoid selecting multiple lines on a click
 		int old_y_pos = yPos;
-		context->selectionController->SetActiveLine(dlg);
+		context->selectionController->SetActiveLine(target);
 		ScrollTo(old_y_pos);
 		extendRow = row;
 
@@ -531,11 +541,11 @@ void BaseGrid::OnMouseEvent(wxMouseEvent &event) {
 		if (click && ctrl && !shift && !alt) {
 			// Ctrl+click on a bound row is the temporary single-line edit
 			// escape hatch; do not expand the binding group.
-			if (!GetSubtitleBinding(*context->ass, *dlg).empty()) {
-				context->selectionController->SetSelectionAndActive({dlg}, dlg, false);
+			if (!GetSubtitleBinding(*context->ass, *target).empty()) {
+				context->selectionController->SetSelectionAndActive({target}, target, false);
 				return;
 			}
-			bool isSel = !!selection.count(dlg);
+			bool isSel = !!selection.count(target);
 			if (isSel && selection.size() == 1) return;
 			SelectRow(row, true, !isSel);
 			return;
@@ -550,15 +560,15 @@ void BaseGrid::OnMouseEvent(wxMouseEvent &event) {
 					return;
 				}
 				context->audioBox->ScrollToActiveLine();
-				context->videoController->JumpToTime(dlg->Start);
+				context->videoController->JumpToTime(target->Start);
 			}
 			return;
 		}
 
 		// Alt+click on a bound row also edits only that member.
 		if (click && !shift && !ctrl && alt) {
-			if (!GetSubtitleBinding(*context->ass, *dlg).empty())
-				context->selectionController->SetSelectionAndActive({dlg}, dlg, false);
+			if (!GetSubtitleBinding(*context->ass, *target).empty())
+				context->selectionController->SetSelectionAndActive({target}, target, false);
 			return;
 		}
 
@@ -575,7 +585,7 @@ void BaseGrid::OnMouseEvent(wxMouseEvent &event) {
 			Selection newsel;
 			if (ctrl) newsel = selection;
 			for (int i = i1; i <= i2; i++)
-				newsel.insert(GetDialogue(i));
+				newsel.insert(rows.at(i));
 			context->selectionController->SetSelectedSet(std::move(newsel));
 			return;
 		}
@@ -602,8 +612,11 @@ void BaseGrid::OnContextMenu(wxContextMenuEvent &evt) {
 	if (pos == wxDefaultPosition || ScreenToClient(pos).y > lineHeight) {
 		// Context actions target the row under the pointer, including an unselected rectangle.
 		if (pos != wxDefaultPosition) {
+            auto edit_scope = context->subtitleAccess->TryWrite();
+            if (!edit_scope) return;
+            auto rows = RowsForWrite(edit_scope->Lease());
 			int row = ScreenToClient(pos).y / lineHeight + yPos - 1;
-			if (auto line = GetDialogue(row)) {
+			if (auto line = static_cast<size_t>(row) < rows.size() ? rows[row] : nullptr) {
 				if (context->selectionController->GetSelectedSet().count(line))
 					context->selectionController->SetActiveLine(line);
 				else
@@ -682,9 +695,16 @@ void BaseGrid::SetColumnWidths() {
 	width_helper->Age();
 }
 
-AssDialogue *BaseGrid::GetDialogue(int n) const {
+AssDialogue const* BaseGrid::GetDialogue(int n) const {
 	if (static_cast<size_t>(n) >= index_line_map.size()) return nullptr;
 	return index_line_map[n];
+}
+std::vector<AssDialogue*> BaseGrid::RowsForWrite(agi::SubtitleEditGate::WriteLease const& lease) const {
+    if (!context->subtitleEditGate.Authorizes(lease)) throw std::logic_error("Grid rows require write authorization");
+    std::vector<AssDialogue*> rows;
+    rows.reserve(index_line_map.size());
+    for (auto& row : context->ass->Events) rows.push_back(&row);
+    return rows;
 }
 
 bool BaseGrid::IsDisplayed(const AssDialogue *line) const {
@@ -750,11 +770,15 @@ void BaseGrid::OnKeyDown(wxKeyEvent &event) {
 		event.Skip();
 		return;
 	}
+    auto edit_scope = context->subtitleAccess->TryWrite();
+    if (!edit_scope) return;
+    auto rows = RowsForWrite(edit_scope->Lease());
 
 	auto active_line = context->selectionController->GetActiveLine();
+    if (rows.empty()) { context->selectionController->SetActiveLine(nullptr); return; }
 	int old_extend = extendRow;
 	int next = mid(0, (active_line ? active_line->Row : 0) + dir * step, GetRows() - 1);
-	context->selectionController->SetActiveLine(GetDialogue(next));
+	context->selectionController->SetActiveLine(rows.at(next));
 
 	// Move selection
 	if (!ctrl && !shift && !alt) {
@@ -778,7 +802,7 @@ void BaseGrid::OnKeyDown(wxKeyEvent &event) {
 		// Select range
 		Selection newsel;
 		for (int i = begin; i <= end; i++)
-			newsel.insert(GetDialogue(i));
+			newsel.insert(rows.at(i));
 
 		context->selectionController->SetSelectedSet(std::move(newsel));
 

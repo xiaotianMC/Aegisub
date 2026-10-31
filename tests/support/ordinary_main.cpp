@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 #include "options.h"
 #include "libresrc/libresrc.h"
+#include "subtitles_provider_libass.h"
 #include "command/command.h"
 #include "include/aegisub/hotkey.h"
 #include <libaegisub/dispatch.h>
@@ -26,7 +27,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "wx assertion %s:%d: %s\n", file.utf8_str().data(), line, condition.utf8_str().data());
         std::abort();
     });
-    agi::dispatch::Init([](agi::dispatch::Thunk) {});
+    agi::dispatch::Init([](agi::dispatch::Thunk work) { wxTheApp->CallAfter(std::move(work)); });
     agi::util::InitLocale();
     agi::log::LogSink log; agi::log::log = &log;
     agi::Path paths;
@@ -41,6 +42,9 @@ int main(int argc, char** argv) {
     options.Get("App/Auto/Save on Every Change")->SetBool(false);
     agi::MRUManager mru{root / "mru.json", GET_DEFAULT_CONFIG(default_mru), &options};
     config::mru = &mru;
+    // The real style editor constructs a preview, so initialize its production
+    // font worker just as AegisubApp::OnInit does.
+    libass::CacheFonts();
     hotkey::init(); cmd::init_builtin_commands();
     ::testing::InitGoogleTest(&argc, argv);
     int result = RUN_ALL_TESTS();

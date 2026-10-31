@@ -28,6 +28,7 @@
 // Aegisub Project http://www.aegisub.org/
 
 #include "ass_file.h"
+#include "subtitle_project_access.h"
 #include "async_video_provider.h"
 #include "compat.h"
 #include "help_button.h"
@@ -220,6 +221,8 @@ void DialogProperties::AddProperty(wxWindow *parent, wxSizer *sizer, wxString co
 }
 
 void DialogProperties::OnOK(wxCommandEvent &) {
+    auto edit_scope = c->subtitleAccess->TryWrite();
+    if (!edit_scope) return;
 	int count = 0;
 	for (auto const& prop : properties)
 		count += SetInfoIfDifferent(prop.first, from_wx(prop.second->GetValue()));

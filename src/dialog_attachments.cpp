@@ -29,6 +29,7 @@
 
 #include "ass_attachment.h"
 #include "ass_file.h"
+#include "subtitle_project_access.h"
 #include "compat.h"
 #include "format.h"
 #include "help_button.h"
@@ -160,6 +161,8 @@ void DialogAttachments::UpdateList() {
 
 void DialogAttachments::AttachFile(wxFileDialog &diag, wxString const& commit_msg) {
 	if (diag.ShowModal() == wxID_CANCEL) return;
+    auto edit_scope = c->subtitleAccess->TryWrite();
+    if (!edit_scope) return;
 
 	wxArrayString paths;
 	diag.GetPaths(paths);
@@ -241,6 +244,8 @@ void DialogAttachments::OnExtract(wxCommandEvent &) {
 }
 
 void DialogAttachments::OnDelete(wxCommandEvent &) {
+    auto edit_scope = c->subtitleAccess->TryWrite();
+    if (!edit_scope) return;
 	size_t removed = 0;
 	for (auto i = listView->GetFirstSelected(); i != -1; i = listView->GetNextSelected(i))
 		c->ass->Attachments.erase(c->ass->Attachments.begin() + i - removed++);

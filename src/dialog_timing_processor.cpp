@@ -29,6 +29,7 @@
 
 #include "ass_dialogue.h"
 #include "ass_file.h"
+#include "subtitle_project_access.h"
 #include "async_video_provider.h"
 #include "compat.h"
 #include "format.h"
@@ -306,6 +307,8 @@ void DialogTimingProcessor::UpdateControls() {
 }
 
 void DialogTimingProcessor::OnApply(wxCommandEvent &) {
+    auto edit_scope = c->subtitleAccess->TryWrite();
+    if (!edit_scope) return;
 	d.TransferDataFromWindow();
 	// Save settings
 	OPT_SET("Tool/Timing Post Processor/Lead/IN")->SetInt(leadIn);

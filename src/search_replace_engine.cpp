@@ -28,6 +28,10 @@
 #include <libaegisub/util.h>
 
 #include <boost/locale/conversion.hpp>
+#include <unicode/normalizer2.h>
+#include <unicode/bytestream.h>
+#include <unicode/edits.h>
+#include <limits>
 
 #include <wx/msgdlg.h>
 
@@ -45,12 +49,26 @@ auto get_dialogue_field(SearchReplaceSettings::Field field) -> decltype(&AssDial
 	throw agi::InternalError("Bad field for search");
 }
 
-std::string const& get_normalized(const AssDialogue *diag, decltype(&AssDialogueBase::Text) field) {
-	auto& value = const_cast<AssDialogue*>(diag)->*field;
-	auto normalized = boost::locale::normalize(value.get());
-	if (normalized != value)
-		value = normalized;
-	return value.get();
+std::string get_normalized(const AssDialogue *diag, decltype(&AssDialogueBase::Text) field, icu::Edits& edits) {
+    auto const& value = (diag->*field).get();
+    if (value.size() > std::numeric_limits<int32_t>::max()) throw std::length_error("Subtitle text too long to normalize");
+    std::string normalized;
+    icu::StringByteSink<std::string> sink(&normalized);
+    UErrorCode status = U_ZERO_ERROR;
+    auto normalizer = icu::Normalizer2::getNFCInstance(status);
+    if (U_FAILURE(status)) throw agi::InternalError("Unicode normalizer unavailable");
+    normalizer->normalizeUTF8(0, icu::StringPiece(value.data(), static_cast<int32_t>(value.size())), sink, &edits, status);
+    if (U_FAILURE(status)) throw agi::InternalError("Subtitle normalization failed");
+    return normalized;
+}
+size_t map_normalized_index(icu::Edits const& edits, size_t index, bool to_source) {
+    if (index > std::numeric_limits<int32_t>::max()) throw std::out_of_range("Subtitle match offset too large");
+    UErrorCode status = U_ZERO_ERROR;
+    auto iterator = edits.getFineIterator();
+    auto mapped = to_source ? iterator.sourceIndexFromDestinationIndex(static_cast<int32_t>(index), status)
+                            : iterator.destinationIndexFromSourceIndex(static_cast<int32_t>(index), status);
+    if (U_FAILURE(status)) throw agi::InternalError("Subtitle match offset mapping failed");
+    return mapped;
 }
 
 typedef std::function<MatchState (const AssDialogue*, size_t)> matcher;
@@ -58,34 +76,38 @@ typedef std::function<MatchState (const AssDialogue*, size_t)> matcher;
 class noop_accessor {
 	boost::flyweight<std::string> AssDialogueBase::*field;
 	size_t start = 0;
+    icu::Edits edits;
 
 public:
 	noop_accessor(SearchReplaceSettings::Field f) : field(get_dialogue_field(f)) { }
 
 	std::string get(const AssDialogue *d, size_t s) {
-		start = s;
-		return get_normalized(d, field).substr(s);
+        auto normalized = get_normalized(d, field, edits);
+        start = map_normalized_index(edits, s, false);
+        return normalized.substr(start);
 	}
 
 	MatchState make_match_state(size_t s, size_t e, boost::u32regex *r = nullptr) {
-		return {r, s + start, e + start};
+        return {r, map_normalized_index(edits, s + start, true), map_normalized_index(edits, e + start, true)};
 	}
 };
 
 class skip_tags_accessor {
 	boost::flyweight<std::string> AssDialogueBase::*field;
 	agi::util::tagless_find_helper helper;
+    icu::Edits edits;
 
 public:
 	skip_tags_accessor(SearchReplaceSettings::Field f) : field(get_dialogue_field(f)) { }
 
 	std::string get(const AssDialogue *d, size_t s) {
-		return helper.strip_tags(get_normalized(d, field), s);
+        auto normalized = get_normalized(d, field, edits);
+        return helper.strip_tags(normalized, map_normalized_index(edits, s, false));
 	}
 
 	MatchState make_match_state(size_t s, size_t e, boost::u32regex *r = nullptr) {
 		helper.map_range(s, e);
-		return {r, s, e};
+        return {r, map_normalized_index(edits, s, true), map_normalized_index(edits, e, true)};
 	}
 };
 
@@ -156,7 +178,7 @@ void SearchReplaceEngine::Replace(AssDialogue *diag, MatchState &ms) {
 
 	std::string replacement = settings.replace_with;
 	if (ms.re) {
-		auto to_replace = text.substr(ms.start, ms.end - ms.start);
+		auto to_replace = boost::locale::normalize(text.substr(ms.start, ms.end - ms.start));
 		replacement = u32regex_replace(to_replace, *ms.re, replacement, boost::format_first_only);
 	}
 
@@ -257,7 +279,7 @@ bool SearchReplaceEngine::ReplaceAll() {
 		if (settings.use_regex) {
 			if (MatchState ms = matches(&diag, 0)) {
 				auto& diag_field = diag.*get_dialogue_field(settings.field);
-				std::string const& text = diag_field.get();
+                auto text = boost::locale::normalize(diag_field.get());
 				count += std::distance(
 					boost::u32regex_iterator<std::string::const_iterator>(begin(text), end(text), *ms.re),
 					boost::u32regex_iterator<std::string::const_iterator>());

@@ -30,6 +30,7 @@
 // Aegisub Project http://www.aegisub.org/
 
 #include "command.h"
+#include "../subtitle_project_access.h"
 
 #include "../compat.h"
 #include "../dialog_manager.h"
@@ -95,6 +96,8 @@ struct tool_resampleres final : public Command {
 	STR_HELP("Resample subtitles to maintain their current appearance at a different script resolution")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		c->videoController->Stop();
 		ResampleSettings settings;
 		if (PromptForResampleSettings(c, settings))

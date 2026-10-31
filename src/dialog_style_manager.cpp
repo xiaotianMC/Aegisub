@@ -29,6 +29,7 @@
 
 #include "ass_dialogue.h"
 #include "ass_file.h"
+#include "subtitle_project_access.h"
 #include "ass_style.h"
 #include "ass_style_storage.h"
 #include "charset_detect.h"
@@ -56,6 +57,7 @@
 #include <future>
 #include <memory>
 #include <vector>
+#include <unordered_map>
 #include <wx/bmpbuttn.h>
 #include <wx/button.h>
 #include <wx/checkbox.h>
@@ -85,7 +87,7 @@ class DialogStyleManager final : public wxDialog {
 	std::shared_future<wxArrayString> font_list;
 
 	/// Styles in the current subtitle file
-	std::vector<AssStyle*> styleMap;
+	std::vector<AssStyle const*> styleMap;
 
 	/// Style storage manager
 	AssStyleStorage Store;
@@ -133,7 +135,7 @@ class DialogStyleManager final : public wxDialog {
 	/// Open the style editor for the given style on the script
 	/// @param style Style to edit, or nullptr for new
 	/// @param new_name Default new name for copies
-	void ShowCurrentEditor(AssStyle *style, std::string const& new_name = "");
+	void ShowCurrentEditor(AssStyle const* style, std::string const& new_name = "");
 
 	/// Open the style editor for the given style in the storage
 	/// @param style Style to edit, or nullptr for new
@@ -387,7 +389,7 @@ void DialogStyleManager::LoadCurrentStyles(int commit_type) {
 		CurrentList->Clear();
 		styleMap.clear();
 
-		for (auto& style : c->ass->Styles) {
+		for (auto const& style : c->subtitleAccess->Read().Styles) {
 			CurrentList->Append(to_wx(style.name));
 			styleMap.push_back(&style);
 		}
@@ -531,6 +533,8 @@ void DialogStyleManager::OnCopyToStorage() {
 }
 
 void DialogStyleManager::OnCopyToCurrent() {
+    auto edit_scope = c->subtitleAccess->TryWrite();
+    if (!edit_scope) return;
 	wxArrayInt selections;
 	int n = StorageList->GetSelections(selections);
 	wxArrayString copied;
@@ -566,15 +570,18 @@ void DialogStyleManager::CopyToClipboard(wxListBox *list, T const& v) {
 	std::string data;
 	for(size_t i = 0; i < selections.size(); ++i) {
 		if (i) data += "\r\n";
-		AssStyle *s = v[selections[i]];
-		s->UpdateData();
-		data += s->GetEntryData();
+        // Serialization must not mutate a live style during a read-only copy.
+        AssStyle serialized(*v[selections[i]]);
+        serialized.UpdateData();
+        data += serialized.GetEntryData();
 	}
 
 	SetClipboard(data);
 }
 
 void DialogStyleManager::PasteToCurrent() {
+    auto edit_scope = c->subtitleAccess->TryWrite();
+    if (!edit_scope) return;
 	add_styles(
 		[this](std::string const& str) { return c->ass->GetStyle(str); },
 		[this](AssStyle *s) { c->ass->Styles.push_back(*s); });
@@ -630,7 +637,7 @@ void DialogStyleManager::OnStorageDelete() {
 	}
 }
 
-void DialogStyleManager::ShowCurrentEditor(AssStyle *style, std::string const& new_name) {
+void DialogStyleManager::ShowCurrentEditor(AssStyle const* style, std::string const& new_name) {
 	DialogStyleEditor editor(this, style, c, nullptr, new_name, font_list.get());
 	if (editor.ShowModal()) {
 		CurrentList->DeselectAll();
@@ -659,6 +666,8 @@ void DialogStyleManager::OnCurrentCopy() {
 }
 
 void DialogStyleManager::OnCurrentDelete() {
+    auto edit_scope = c->subtitleAccess->TryWrite();
+    if (!edit_scope) return;
 	wxArrayInt selections;
 	int n = CurrentList->GetSelections(selections);
 
@@ -671,6 +680,8 @@ void DialogStyleManager::OnCurrentDelete() {
 }
 
 void DialogStyleManager::OnCurrentImport() {
+    auto edit_scope = c->subtitleAccess->TryWrite();
+    if (!edit_scope) return;
 	auto filename = OpenFileSelector(c, _("Open Subtitles File"), "Path/Last/Subtitles", "", "", SubtitleFormat::GetWildcards(0), this);
 	if (filename.empty()) return;
 
@@ -855,6 +866,8 @@ static void do_move(Cont& styls, int type, int& first, int& last, bool storage) 
 }
 
 void DialogStyleManager::MoveStyles(bool storage, int type) {
+    auto edit_scope = storage ? std::optional<SubtitleProjectAccess::WriteScope>{} : c->subtitleAccess->TryWrite();
+    if (!storage && !edit_scope) return;
 	wxListBox *list = storage ? StorageList : CurrentList;
 
 	// Get selection
@@ -873,12 +886,19 @@ void DialogStyleManager::MoveStyles(bool storage, int type) {
 		UpdateStorage();
 	}
 	else {
+        // Mutable node identities exist only inside this write scope. Build
+        // once so a read-only UI cache does not turn reorder into O(n^2).
+        std::unordered_map<AssStyle const*, AssStyle*> live;
+        live.reserve(styleMap.size());
+        for (auto& style : c->ass->Styles) live.emplace(&style, &style);
 		do_move(styleMap, type, first, last, false);
 
 		// Replace styles
 		size_t curn = 0;
 		for (auto it = c->ass->Styles.begin(); it != c->ass->Styles.end(); ++it) {
-			auto new_style_at_pos = c->ass->Styles.iterator_to(*styleMap[curn]);
+            auto found = live.find(styleMap[curn]);
+            if (found == live.end()) throw std::logic_error("Style list changed during reorder");
+            auto new_style_at_pos = c->ass->Styles.iterator_to(*found->second);
 			EntryList<AssStyle>::node_algorithms::swap_nodes(it.pointed_node(), new_style_at_pos.pointed_node());
 			if (++curn == styleMap.size()) break;
 			it = new_style_at_pos;

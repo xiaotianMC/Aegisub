@@ -149,7 +149,7 @@ SubsEditBox::SubsEditBox(wxWindow *parent, agi::Context *context)
 		if (active_style) {
 			wxArrayString font_list = wxFontEnumerator::GetFacenames();
 			font_list.Sort();
-			DialogStyleEditor(this, c->ass->GetStyle(active_style->name), c, nullptr, "", font_list).ShowModal();
+			DialogStyleEditor(this, active_style, c, nullptr, "", font_list).ShowModal();
 		}
 	});
 	top_sizer->Add(style_edit_button, wxSizerFlags().Center().Border(wxRIGHT));

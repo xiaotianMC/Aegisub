@@ -31,6 +31,8 @@
 
 #include <memory>
 #include <string>
+#include <optional>
+#include <libaegisub/subtitle_edit_gate.h>
 #include <wx/dialog.h>
 
 class AssStyle;
@@ -62,7 +64,10 @@ class DialogStyleEditor final : public wxDialog {
 	bool updating = false;
 
 	/// The style currently being edited
-	AssStyle *style;
+	AssStyle const* style;
+    std::optional<agi::SubtitleEditGate::RevisionToken> source_revision;
+    std::unique_ptr<AssStyle> pending;
+    std::string style_name;
 
 	/// Copy of style passed to the subtitles preview to avoid making changes
 	/// before Apply is clicked
@@ -105,7 +110,7 @@ class DialogStyleEditor final : public wxDialog {
 	void OnSetColor(ValueEvent<agi::Color>& evt);
 
 public:
-	DialogStyleEditor(wxWindow *parent, AssStyle *style, agi::Context *c, AssStyleStorage *store, std::string const& new_name, wxArrayString const& font_list);
+	DialogStyleEditor(wxWindow *parent, AssStyle const* style, agi::Context *c, AssStyleStorage *store, std::string const& new_name, wxArrayString const& font_list);
 	~DialogStyleEditor();
 
 	std::string GetStyleName() const;

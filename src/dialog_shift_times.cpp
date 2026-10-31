@@ -16,6 +16,7 @@
 
 #include "ass_dialogue.h"
 #include "ass_file.h"
+#include "subtitle_project_access.h"
 #include "compat.h"
 #include "dialog_manager.h"
 #include "format.h"
@@ -363,6 +364,8 @@ void DialogShiftTimes::LoadHistory() {
 }
 
 void DialogShiftTimes::Process(wxCommandEvent &) {
+    auto edit_scope = context->subtitleAccess->TryWrite();
+    if (!edit_scope) return;
 	int mode = selection_mode->GetSelection();
 	int type = time_fields->GetSelection();
 	bool reverse = shift_backward->GetValue();
