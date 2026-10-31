@@ -30,6 +30,7 @@
 // Aegisub Project http://www.aegisub.org/
 
 #include "command.h"
+#include "../subtitle_project_access.h"
 
 #include "../ass_dialogue.h"
 #include "../ass_file.h"
@@ -108,6 +109,8 @@ struct time_continuous_end final : public validate_adjoinable {
 	STR_HELP("Change end times of lines to the next line's start time")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		adjoin_lines(c, false);
 	}
 };
@@ -119,6 +122,8 @@ struct time_continuous_start final : public validate_adjoinable {
 	STR_HELP("Change start times of lines to the previous line's end time")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		adjoin_lines(c, true);
 	}
 };
@@ -131,6 +136,8 @@ struct time_frame_current final : public validate_video_loaded {
 	STR_HELP("Shift selection so that the active line starts at current frame")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		auto const& sel = c->selectionController->GetSelectedSet();
 		const auto active_line = c->selectionController->GetActiveLine();
 
@@ -200,6 +207,8 @@ struct time_snap_end_video final : public validate_video_loaded {
 	STR_HELP("Set end of selected subtitles to current video frame")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		snap_subs_video(c, false);
 	}
 };
@@ -212,6 +221,8 @@ struct time_snap_scene final : public validate_video_loaded {
 	STR_HELP("Set start and end of subtitles to the keyframes around current video frame")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		auto const& keyframes = c->project->Keyframes();
 		if (keyframes.empty()) return;
 
@@ -256,6 +267,8 @@ struct time_add_lead_both final : public Command {
 	STR_DISP("Add lead in and out")
 	STR_HELP("Add both lead in and out to the selected lines")
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		if (AudioTimingController *tc = c->audioController->GetTimingController()) {
 			tc->AddLeadIn();
 			tc->AddLeadOut();
@@ -270,6 +283,8 @@ struct time_add_lead_in final : public Command {
 	STR_DISP("Add lead in")
 	STR_HELP("Add the lead in time to the selected lines")
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		if (c->audioController->GetTimingController())
 			c->audioController->GetTimingController()->AddLeadIn();
 	}
@@ -282,6 +297,8 @@ struct time_add_lead_out final : public Command {
 	STR_DISP("Add lead out")
 	STR_HELP("Add the lead out time to the selected lines")
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		if (c->audioController->GetTimingController())
 			c->audioController->GetTimingController()->AddLeadOut();
 	}
@@ -293,6 +310,8 @@ struct time_length_increase final : public Command {
 	STR_DISP("Increase length")
 	STR_HELP("Increase the length of the current timing unit")
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		if (c->audioController->GetTimingController())
 			c->audioController->GetTimingController()->ModifyLength(1, false);
 	}
@@ -304,6 +323,8 @@ struct time_length_increase_shift final : public Command {
 	STR_DISP("Increase length and shift")
 	STR_HELP("Increase the length of the current timing unit and shift the following items")
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		if (c->audioController->GetTimingController())
 			c->audioController->GetTimingController()->ModifyLength(1, true);
 	}
@@ -315,6 +336,8 @@ struct time_length_decrease final : public Command {
 	STR_DISP("Decrease length")
 	STR_HELP("Decrease the length of the current timing unit")
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		if (c->audioController->GetTimingController())
 			c->audioController->GetTimingController()->ModifyLength(-1, false);
 	}
@@ -326,6 +349,8 @@ struct time_length_decrease_shift final : public Command {
 	STR_DISP("Decrease length and shift")
 	STR_HELP("Decrease the length of the current timing unit and shift the following items")
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		if (c->audioController->GetTimingController())
 			c->audioController->GetTimingController()->ModifyLength(-1, true);
 	}
@@ -337,6 +362,8 @@ struct time_start_increase final : public Command {
 	STR_DISP("Shift start time forward")
 	STR_HELP("Shift the start time of the current timing unit forward")
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		if (c->audioController->GetTimingController())
 			c->audioController->GetTimingController()->ModifyStart(1);
 	}
@@ -348,6 +375,8 @@ struct time_start_decrease final : public Command {
 	STR_DISP("Shift start time backward")
 	STR_HELP("Shift the start time of the current timing unit backward")
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		if (c->audioController->GetTimingController())
 			c->audioController->GetTimingController()->ModifyStart(-1);
 	}
@@ -361,6 +390,8 @@ struct time_snap_start_video final : public validate_video_loaded {
 	STR_HELP("Set start of selected subtitles to current video frame")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		snap_subs_video(c, true);
 	}
 };
@@ -372,6 +403,8 @@ struct time_next final : public Command {
 	STR_DISP("Next Line")
 	STR_HELP("Next line or syllable")
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		if (c->audioController->GetTimingController())
 			c->audioController->GetTimingController()->Next(AudioTimingController::TIMING_UNIT);
 	}
@@ -384,6 +417,8 @@ struct time_prev final : public Command {
 	STR_DISP("Previous Line")
 	STR_HELP("Previous line or syllable")
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		if (c->audioController->GetTimingController())
 			c->audioController->GetTimingController()->Prev();
 	}

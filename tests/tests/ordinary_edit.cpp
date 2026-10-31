@@ -15,13 +15,25 @@
 #include "timeedit_ctrl.h"
 #include "base_grid.h"
 #include "options.h"
+#include "command/command.h"
+#include "command/edit.h"
+#include "subtitle_binding.h"
+#include "search_replace_engine.h"
+#include "text_selection_controller.h"
 #include "utils.h"
 #include <wx/frame.h>
 #include <wx/combobox.h>
 #include <wx/spinctrl.h>
 #include <wx/dcclient.h>
+#include <wx/modalhook.h>
+#include <wx/msgdlg.h>
 
 namespace {
+class AcceptMessages : public wxModalDialogHook {
+public:
+    AcceptMessages() { Register(); }
+    int Enter(wxDialog* dialog) override { return dynamic_cast<wxMessageDialog*>(dialog) ? wxID_OK : wxID_NONE; }
+};
 class ordinary_edit : public testing::Test {
 protected:
     std::unique_ptr<agi::Context> c;
@@ -107,5 +119,164 @@ TEST_F(ordinary_edit, grid_number_cell_direct_event_is_gated) {
     click(); EXPECT_TRUE(c->ass->Events.front().Comment);
     comparison.reset(); click(); EXPECT_FALSE(c->ass->Events.front().Comment);
     c->subsGrid=nullptr;
+}
+TEST_F(ordinary_edit, paste_insert_delete_sort_and_history_restore_ids_order_and_selection) {
+    auto original=c->ass->Events.front().Id;
+    cmd::PasteSubtitleLines(c.get(), "Dialogue: 0,0:00:02.001,0:00:03.002,Default,B,0,0,0,,second\nDialogue: 1,0:00:01.001,0:00:02.002,Default,A,0,0,0,,first");
+    ASSERT_EQ(3u,c->ass->Events.size());
+    std::vector<int> pasted_ids;
+    for(auto const& row:c->ass->Events)pasted_ids.push_back(row.Id);
+    EXPECT_EQ(2u,c->selectionController->GetSelectedSet().size());
+    EXPECT_EQ(pasted_ids.front(),c->selectionController->GetActiveLine()->Id);
+    c->subsController->Undo(); ASSERT_EQ(1u,c->ass->Events.size()); EXPECT_EQ(original,c->ass->Events.front().Id);
+    c->subsController->Redo(); ASSERT_EQ(3u,c->ass->Events.size());
+    std::vector<int> restored;for(auto const& row:c->ass->Events)restored.push_back(row.Id);
+    EXPECT_EQ(pasted_ids,restored); EXPECT_EQ(2u,c->selectionController->GetSelectedSet().size());
+    cmd::call("grid/sort/start/selected",c.get());
+    EXPECT_EQ("first",c->ass->Events.front().Text.get()); EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
+    cmd::call("edit/line/delete",c.get()); ASSERT_EQ(1u,c->ass->Events.size()); EXPECT_EQ(original,c->ass->Events.front().Id);
+    c->subsController->Undo(); EXPECT_EQ(3u,c->ass->Events.size());
+    cmd::call("subtitle/insert/before",c.get()); EXPECT_EQ(4u,c->ass->Events.size());
+    c->subsController->Undo(); EXPECT_EQ(3u,c->ass->Events.size());
+}
+TEST_F(ordinary_edit, binding_and_extradata_survive_undo_redo_and_blocked_public_entry) {
+    cmd::PasteSubtitleLines(c.get(),"one\ntwo");
+    BindSelectedSubtitles(c.get());
+    auto group=GetSubtitleBinding(*c->ass,c->ass->Events.front()); ASSERT_FALSE(group.empty());
+    auto extras=c->ass->Extradata.size();
+    c->subsController->Undo(); EXPECT_TRUE(GetSubtitleBinding(*c->ass,c->ass->Events.front()).empty());
+    c->subsController->Redo(); EXPECT_EQ(group,GetSubtitleBinding(*c->ass,c->ass->Events.front()));
+    auto comparison=c->subtitleEditGate.TryBeginComparison(); ASSERT_TRUE(comparison);
+    UnbindSelectedSubtitles(c.get()); EXPECT_EQ(group,GetSubtitleBinding(*c->ass,c->ass->Events.front()));
+    EXPECT_EQ(extras,c->ass->Extradata.size()); comparison.reset();
+    UnbindSelectedSubtitles(c.get()); EXPECT_TRUE(GetSubtitleBinding(*c->ass,c->ass->Events.front()).empty());
+}
+TEST_F(ordinary_edit, nested_command_reuses_lease_and_commit_observers_cannot_edit_or_undo) {
+    Input("keep");
+    auto outer=c->subtitleAccess->TryWrite(); auto generation=c->subtitleEditGate.Revision().generation;
+    cmd::call("edit/clear",c.get());
+    EXPECT_EQ(generation+1,c->subtitleEditGate.Revision().generation); // Only Commit advanced it.
+    bool visited=false;
+    agi::signal::Connection observer=c->ass->AddCommitListener([&](int,const AssDialogue*) {
+        visited=true; cmd::call("edit/clear",c.get()); c->subsController->Undo();
+    });
+    Input("notification"); EXPECT_TRUE(visited); EXPECT_EQ("notification",c->ass->Events.front().Text.get());
+    outer.reset(); EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+}
+TEST_F(ordinary_edit, undo_redo_reject_before_history_move_and_selection_notifications_cannot_reenter_history) {
+    Input("one"); Input("two");
+    auto comparison=c->subtitleEditGate.TryBeginComparison(); ASSERT_TRUE(comparison);
+    auto description=c->subsController->GetUndoDescription();
+    c->subsController->Undo(); EXPECT_EQ("two",c->ass->Events.front().Text.get());
+    EXPECT_EQ(description,c->subsController->GetUndoDescription()); comparison.reset();
+    c->subsController->Undo(); EXPECT_EQ("one",c->ass->Events.front().Text.get());
+    comparison=c->subtitleEditGate.TryBeginComparison(); c->subsController->Redo();
+    EXPECT_EQ("one",c->ass->Events.front().Text.get()); comparison.reset();
+    bool called=false;
+    agi::signal::Connection selected=c->selectionController->AddSelectionListener([&] {
+        called=true; c->subsController->Undo();
+    });
+    c->subsController->Redo(); EXPECT_TRUE(called); EXPECT_EQ("two",c->ass->Events.front().Text.get());
+}
+TEST_F(ordinary_edit, single_replacement_uses_real_engine_and_comparison_blocks_replace_all) {
+    Input("alpha alpha");
+    SearchReplaceSettings settings{}; settings.find="alpha";settings.replace_with="beta";
+    settings.field=SearchReplaceSettings::Field::TEXT;settings.limit_to=SearchReplaceSettings::Limit::ALL;
+    c->search->Configure(settings); c->textSelectionController->SetSelection(0,5);
+    EXPECT_TRUE(c->search->ReplaceNext()); EXPECT_EQ("beta alpha",c->ass->Events.front().Text.get());
+    auto comparison=c->subtitleEditGate.TryBeginComparison(); ASSERT_TRUE(comparison);
+    EXPECT_FALSE(c->search->ReplaceAll()); EXPECT_FALSE(c->search->ReplaceNext());
+    EXPECT_EQ("beta alpha",c->ass->Events.front().Text.get());
+    comparison.reset();
+    AcceptMessages messages;
+    EXPECT_TRUE(c->search->ReplaceAll()); EXPECT_EQ("beta beta",c->ass->Events.front().Text.get());
+    c->subsController->Undo(); EXPECT_EQ("beta alpha",c->ass->Events.front().Text.get());
+}
+
+TEST_F(ordinary_edit, all_migrated_command_operators_reject_comparison_before_any_model_or_history_change) {
+    Input("unchanged");
+    auto id=c->ass->Events.front().Id;
+    auto description=c->subsController->GetUndoDescription();
+    auto comparison=c->subtitleEditGate.TryBeginComparison(); ASSERT_TRUE(comparison);
+    char const* commands[] = {
+        "edit/color/primary",
+        "edit/color/secondary",
+        "edit/color/outline",
+        "edit/color/shadow",
+        "edit/style/bold",
+        "edit/style/italic",
+        "edit/style/underline",
+        "edit/style/strikeout",
+        "edit/font",
+        "edit/line/cut",
+        "edit/line/delete",
+        "edit/line/duplicate",
+        "edit/line/split/after",
+        "edit/line/split/before",
+        "edit/line/join/as_karaoke",
+        "edit/line/join/concatenate",
+        "edit/line/join/keep_first",
+        "edit/line/paste",
+        "edit/line/paste/over",
+        "edit/line/recombine",
+        "edit/line/split/by_karaoke",
+        "edit/line/split/estimate",
+        "edit/line/split/preserve",
+        "edit/line/split/video",
+        "edit/redo",
+        "edit/undo",
+        "edit/line/reverse_move",
+        "subtitle/bind",
+        "subtitle/unbind",
+        "edit/revert",
+        "edit/clear",
+        "edit/clear/text",
+        "edit/insert_original",
+        "grid/line/next/create",
+        "grid/sort/actor",
+        "grid/sort/actor/selected",
+        "grid/sort/effect",
+        "grid/sort/effect/selected",
+        "grid/sort/end",
+        "grid/sort/end/selected",
+        "grid/sort/layer",
+        "grid/sort/layer/selected",
+        "grid/sort/start",
+        "grid/sort/start/selected",
+        "grid/sort/style",
+        "grid/sort/style/selected",
+        "grid/move/up",
+        "grid/move/down",
+        "grid/swap",
+        "subtitle/insert/after",
+        "subtitle/insert/after/videotime",
+        "subtitle/insert/before",
+        "subtitle/insert/before/videotime",
+        "time/continuous/end",
+        "time/continuous/start",
+        "time/frame/current",
+        "time/snap/end_video",
+        "time/snap/scene",
+        "time/lead/both",
+        "time/lead/in",
+        "time/lead/out",
+        "time/length/increase",
+        "time/length/increase/shift",
+        "time/length/decrease",
+        "time/length/decrease/shift",
+        "time/start/increase",
+        "time/start/decrease",
+        "time/snap/start_video",
+        "time/next",
+        "time/prev",
+    };
+    for(auto name:commands) {
+        SCOPED_TRACE(name); (*cmd::get(name))(c.get());
+        EXPECT_EQ(1u,c->ass->Events.size()); EXPECT_EQ(id,c->ass->Events.front().Id);
+        EXPECT_EQ("unchanged",c->ass->Events.front().Text.get());
+        EXPECT_EQ(description,c->subsController->GetUndoDescription());
+        EXPECT_EQ(id,c->selectionController->GetActiveLine()->Id);
+    }
+    cmd::PasteSubtitleLines(c.get(),"blocked\nblocked"); EXPECT_EQ(1u,c->ass->Events.size());
 }
 }

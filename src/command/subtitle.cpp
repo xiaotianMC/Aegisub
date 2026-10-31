@@ -30,6 +30,7 @@
 // Aegisub Project http://www.aegisub.org/
 
 #include "command.h"
+#include "../subtitle_project_access.h"
 
 #include "../ass_dialogue.h"
 #include "../ass_file.h"
@@ -136,6 +137,8 @@ struct subtitle_insert_after final : public validate_nonempty_selection {
 	STR_HELP("Insert a new line after the current one")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		AssDialogue *active_line = c->selectionController->GetActiveLine();
 
 		auto new_line = new AssDialogue;
@@ -170,6 +173,8 @@ struct subtitle_insert_after_videotime final : public validate_nonempty_selectio
 	STR_HELP("Insert a new line after the current one, starting at video time")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		insert_subtitle_at_video(c, true);
 	}
 };
@@ -181,6 +186,8 @@ struct subtitle_insert_before final : public validate_nonempty_selection {
 	STR_HELP("Insert a new line before the current one")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		AssDialogue *active_line = c->selectionController->GetActiveLine();
 
 		auto new_line = new AssDialogue;
@@ -212,6 +219,8 @@ struct subtitle_insert_before_videotime final : public validate_nonempty_selecti
 	STR_HELP("Insert a new line before the current one, starting at video time")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		insert_subtitle_at_video(c, false);
 	}
 };

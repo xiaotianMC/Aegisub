@@ -30,6 +30,8 @@
 // Aegisub Project http://www.aegisub.org/
 
 #include "command.h"
+#include "edit.h"
+#include "../subtitle_project_access.h"
 
 #include "../ass_dialogue.h"
 #include "../ass_file.h"
@@ -127,8 +129,7 @@ std::unique_ptr<AssDialogue> get_dialogue(String data) {
 }
 
 template<typename Paster>
-void paste_lines(agi::Context *c, bool paste_over, Paster&& paste_line) {
-	std::string data = GetClipboard();
+void paste_lines(agi::Context *c, bool paste_over, std::string const& data, Paster&& paste_line) {
 	if (data.empty()) return;
 
 	AssDialogue *first = nullptr;
@@ -407,6 +408,8 @@ struct edit_color_primary final : public Command {
 	STR_HELP("Set the primary fill color (\\c) at the cursor position")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		show_color_picker(c, &AssStyle::primary, "\\c", "\\1c", "\\1a");
 	}
 };
@@ -419,6 +422,8 @@ struct edit_color_secondary final : public Command {
 	STR_HELP("Set the secondary (karaoke) fill color (\\2c) at the cursor position")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		show_color_picker(c, &AssStyle::secondary, "\\2c", "", "\\2a");
 	}
 };
@@ -431,6 +436,8 @@ struct edit_color_outline final : public Command {
 	STR_HELP("Set the outline color (\\3c) at the cursor position")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		show_color_picker(c, &AssStyle::outline, "\\3c", "", "\\3a");
 	}
 };
@@ -443,6 +450,8 @@ struct edit_color_shadow final : public Command {
 	STR_HELP("Set the shadow color (\\4c) at the cursor position")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		show_color_picker(c, &AssStyle::shadow, "\\4c", "", "\\4a");
 	}
 };
@@ -455,6 +464,8 @@ struct edit_style_bold final : public Command {
 	STR_HELP("Toggle bold (\\b) for the current selection or at the current cursor position")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		toggle_override_tag(c, &AssStyle::bold, "\\b", _("toggle bold"));
 	}
 };
@@ -467,6 +478,8 @@ struct edit_style_italic final : public Command {
 	STR_HELP("Toggle italics (\\i) for the current selection or at the current cursor position")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		toggle_override_tag(c, &AssStyle::italic, "\\i", _("toggle italic"));
 	}
 };
@@ -479,6 +492,8 @@ struct edit_style_underline final : public Command {
 	STR_HELP("Toggle underline (\\u) for the current selection or at the current cursor position")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		toggle_override_tag(c, &AssStyle::underline, "\\u", _("toggle underline"));
 	}
 };
@@ -491,6 +506,8 @@ struct edit_style_strikeout final : public Command {
 	STR_HELP("Toggle strikeout (\\s) for the current selection or at the current cursor position")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		toggle_override_tag(c, &AssStyle::strikeout, "\\s", _("toggle strikeout"));
 	}
 };
@@ -503,6 +520,8 @@ struct edit_font final : public Command {
 	STR_HELP("Select a font face and size")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		const parsed_line active(c->selectionController->GetActiveLine());
 		const int insertion_point = normalize_pos(active.line->Text, c->textSelectionController->GetInsertionPoint());
 
@@ -645,6 +664,8 @@ struct edit_line_cut: public validate_sel_nonempty {
 	STR_HELP("Cut subtitles")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		if (wxTextEntryBase *ctrl = dynamic_cast<wxTextEntryBase*>(c->parent->FindFocus()))
 			ctrl->Cut();
 		else {
@@ -662,6 +683,8 @@ struct edit_line_delete final : public validate_sel_nonempty {
 	STR_HELP("Delete currently selected lines")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		delete_lines(c, _("delete lines"));
 	}
 };
@@ -739,6 +762,8 @@ struct edit_line_duplicate final : public validate_sel_nonempty {
 	STR_HELP("Duplicate the selected lines")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		duplicate_lines(c, 0);
 	}
 };
@@ -751,6 +776,8 @@ struct edit_line_duplicate_shift final : public validate_video_and_sel_nonempty 
 	CMD_TYPE(COMMAND_VALIDATE)
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		duplicate_lines(c, 1);
 	}
 };
@@ -763,6 +790,8 @@ struct edit_line_duplicate_shift_back final : public validate_video_and_sel_none
 	CMD_TYPE(COMMAND_VALIDATE)
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		duplicate_lines(c, -1);
 	}
 };
@@ -804,6 +833,8 @@ struct edit_line_join_as_karaoke final : public validate_sel_multiple {
 	STR_HELP("Join selected lines in a single one, as karaoke")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		combine_lines(c, combine_karaoke, _("join as karaoke"));
 	}
 };
@@ -815,6 +846,8 @@ struct edit_line_join_concatenate final : public validate_sel_multiple {
 	STR_HELP("Join selected lines in a single one, concatenating text together")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		combine_lines(c, combine_concat, _("join lines"));
 	}
 };
@@ -826,6 +859,8 @@ struct edit_line_join_keep_first final : public validate_sel_multiple {
 	STR_HELP("Join selected lines in a single one, keeping text of first and discarding remaining")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		combine_lines(c, combine_drop, _("join lines"));
 	}
 };
@@ -879,16 +914,14 @@ struct edit_line_paste final : public Command {
 	}
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		if (wxTextEntryBase *ctrl = dynamic_cast<wxTextEntryBase*>(c->parent->FindFocus())) {
 			if (!try_paste_lines(c))
 				ctrl->Paste();
 		}
 		else {
-			auto pos = c->ass->iterator_to(*c->selectionController->GetActiveLine());
-			paste_lines(c, false, [=](std::unique_ptr<AssDialogue> new_line) -> AssDialogue * {
-				c->ass->Events.insert(pos, *new_line);
-				return new_line.release();
-			});
+            cmd::PasteSubtitleLines(c, GetClipboard());
 		}
 	}
 };
@@ -910,6 +943,8 @@ struct edit_line_paste_over final : public Command {
 	}
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		auto const& sel = c->selectionController->GetSelectedSet();
 		std::vector<bool> pasteOverOptions;
 
@@ -917,7 +952,7 @@ struct edit_line_paste_over final : public Command {
 		if (sel.size() < 2) {
 			auto pos = c->ass->iterator_to(*c->selectionController->GetActiveLine());
 
-			paste_lines(c, true, [&](std::unique_ptr<AssDialogue> new_line) -> AssDialogue * {
+			paste_lines(c, true, GetClipboard(), [&](std::unique_ptr<AssDialogue> new_line) -> AssDialogue * {
 				if (pos == c->ass->Events.end()) return nullptr;
 
 				auto& old = *pos;
@@ -930,7 +965,7 @@ struct edit_line_paste_over final : public Command {
 			// Multiple lines selected, so paste over the selection
 			auto sorted_selection = c->selectionController->GetSortedSelection();
 			auto pos = begin(sorted_selection);
-			paste_lines(c, true, [&](std::unique_ptr<AssDialogue> new_line) -> AssDialogue * {
+			paste_lines(c, true, GetClipboard(), [&](std::unique_ptr<AssDialogue> new_line) -> AssDialogue * {
 				if (pos == end(sorted_selection)) return nullptr;
 
 				auto& old = **pos;
@@ -984,6 +1019,8 @@ struct edit_line_recombine final : public validate_sel_multiple {
 	STR_HELP("Recombine subtitles which have been split and merged")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		auto const& sel_set = c->selectionController->GetSelectedSet();
 		if (sel_set.size() < 2) return;
 
@@ -1062,6 +1099,8 @@ struct edit_line_split_by_karaoke final : public validate_sel_nonempty {
 	STR_HELP("Use karaoke timing to split line into multiple smaller lines")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		auto sel = c->selectionController->GetSortedSelection();
 		if (sel.empty()) return;
 
@@ -1130,6 +1169,8 @@ struct edit_line_split_estimate final : public validate_video_and_sel_nonempty {
 	STR_HELP("Split the current line at the cursor, dividing the original line's duration between the new ones")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		split_lines(c, [](AssDialogue *n1, AssDialogue *n2) {
 			size_t len = n1->Text.get().size() + n2->Text.get().size();
 			if (!len) return;
@@ -1146,6 +1187,8 @@ struct edit_line_split_preserve final : public validate_sel_nonempty {
 	STR_HELP("Split the current line at the cursor, setting both lines to the original line's times")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		split_lines(c, [](AssDialogue *, AssDialogue *) { });
 	}
 };
@@ -1157,6 +1200,8 @@ struct edit_line_split_video final : public validate_video_and_sel_nonempty {
 	STR_HELP("Split the current line at the cursor, dividing the line's duration at the current video frame")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		split_lines(c, [&](AssDialogue *n1, AssDialogue *n2) {
 			int cur_frame = mid(
 				c->videoController->FrameAtTime(n1->Start, agi::vfr::START),
@@ -1189,6 +1234,8 @@ struct edit_redo final : public Command {
 	}
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		c->subsController->Redo();
 	}
 };
@@ -1215,6 +1262,8 @@ struct edit_undo final : public Command {
 	}
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		c->subsController->Undo();
 	}
 };
@@ -1256,6 +1305,8 @@ struct edit_line_reverse_move final : public Command {
         return reverse_move_paths(c->selectionController->GetActiveLine(), false);
     }
     void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
         auto line = c->selectionController->GetActiveLine();
         if (reverse_move_paths(line, true))
             c->ass->Commit(_("reverse move path"), AssFile::COMMIT_DIAG_TEXT, -1, line);
@@ -1280,7 +1331,9 @@ struct edit_bind_subtitles final : public Command {
         }
         return false;
     }
-    void operator()(agi::Context *c) override { BindSelectedSubtitles(c); }
+    void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return; BindSelectedSubtitles(c); }
 };
 
 struct edit_unbind_subtitles final : public Command {
@@ -1293,7 +1346,9 @@ struct edit_unbind_subtitles final : public Command {
         auto const& selection = c->selectionController->GetSelectedSet();
         return std::any_of(selection.begin(), selection.end(), [&](auto line) { return !GetSubtitleBinding(*c->ass, *line).empty(); });
     }
-    void operator()(agi::Context *c) override { UnbindSelectedSubtitles(c); }
+    void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return; UnbindSelectedSubtitles(c); }
 };
 
 struct edit_revert final : public Command {
@@ -1303,6 +1358,8 @@ struct edit_revert final : public Command {
 	STR_HELP("Revert the active line to its initial state (shown in the upper editor)")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		AssDialogue *line = c->selectionController->GetActiveLine();
 		line->Text = c->initialLineState->GetInitialText();
 		c->ass->Commit(_("revert line"), AssFile::COMMIT_DIAG_TEXT, -1, line);
@@ -1316,6 +1373,8 @@ struct edit_clear final : public Command {
 	STR_HELP("Clear the current line's text")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		AssDialogue *line = c->selectionController->GetActiveLine();
 		line->Text = "";
 		c->ass->Commit(_("clear line"), AssFile::COMMIT_DIAG_TEXT, -1, line);
@@ -1330,6 +1389,8 @@ struct edit_clear_text final : public Command {
 	STR_HELP("Clear the current line's text, leaving override tags")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		AssDialogue *line = c->selectionController->GetActiveLine();
 		auto blocks = line->ParseTags();
 		line->Text = join(blocks
@@ -1348,6 +1409,8 @@ struct edit_insert_original final : public Command {
 	STR_HELP("Insert the original line text at the cursor")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		AssDialogue *line = c->selectionController->GetActiveLine();
 		int sel_start = c->textSelectionController->GetSelectionStart();
 		int sel_end = c->textSelectionController->GetSelectionEnd();
@@ -1360,6 +1423,15 @@ struct edit_insert_original final : public Command {
 }
 
 namespace cmd {
+    void PasteSubtitleLines(agi::Context* c, std::string const& data) {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
+        auto pos = c->ass->iterator_to(*c->selectionController->GetActiveLine());
+        paste_lines(c, false, data, [=](std::unique_ptr<AssDialogue> line) {
+            c->ass->Events.insert(pos, *line);
+            return line.release();
+        });
+    }
 	void init_edit() {
 		reg(std::make_unique<edit_complete>());
 		reg(std::make_unique<edit_color_primary>());

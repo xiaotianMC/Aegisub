@@ -19,6 +19,8 @@
 #include "ass_attachment.h"
 #include "ass_dialogue.h"
 #include "ass_file.h"
+#include "subtitle_project_access.h"
+#include <boost/scope_exit.hpp>
 #include "ass_info.h"
 #include "ass_style.h"
 #include "compat.h"
@@ -308,6 +310,8 @@ void SubsController::SetFileName(agi::fs::path const& path) {
 }
 
 void SubsController::OnCommit(AssFileCommit c) {
+    auto edit_scope = context->subtitleAccess->TryWrite();
+    if (!edit_scope) throw std::logic_error("Subtitle history commit requires write authorization");
 	if (c.message.empty() && !undo_stack.empty()) return;
 
 	commit_id = next_commit_id++;
@@ -367,7 +371,11 @@ void SubsController::OnTextSelectionChanged() {
 }
 
 void SubsController::Undo() {
-	if (undo_stack.size() <= 1) return;
+    if (undo_stack.size() <= 1 || history_action || context->ass->IsNotifying()) return;
+    auto edit_scope = context->subtitleAccess->TryWrite();
+    if (!edit_scope) return;
+    history_action = true;
+    BOOST_SCOPE_EXIT_ALL(this) { history_action = false; text_selection_connection.Unblock(); };
 	redo_stack.splice(redo_stack.end(), undo_stack, std::prev(undo_stack.end()));
 
 	commit_id = undo_stack.back().commit_id;
@@ -378,7 +386,11 @@ void SubsController::Undo() {
 }
 
 void SubsController::Redo() {
-	if (redo_stack.empty()) return;
+    if (redo_stack.empty() || history_action || context->ass->IsNotifying()) return;
+    auto edit_scope = context->subtitleAccess->TryWrite();
+    if (!edit_scope) return;
+    history_action = true;
+    BOOST_SCOPE_EXIT_ALL(this) { history_action = false; text_selection_connection.Unblock(); };
 	undo_stack.splice(undo_stack.end(), redo_stack, std::prev(redo_stack.end()));
 
 	commit_id = undo_stack.back().commit_id;

@@ -4,6 +4,7 @@
 
 #include "ass_dialogue.h"
 #include "ass_file.h"
+#include "subtitle_project_access.h"
 #include "include/aegisub/context.h"
 #include "selection_controller.h"
 
@@ -59,6 +60,8 @@ Selection ExpandBoundSelection(AssFile& file, Selection const& selection) {
 }
 
 void BindSelectedSubtitles(agi::Context *c) {
+    auto edit_scope = c->subtitleAccess->TryWrite();
+    if (!edit_scope) return;
     auto selection = c->selectionController->GetSelectedSet();
     if (selection.size() < 2) return;
     auto& file = *c->ass;
@@ -94,6 +97,8 @@ void BindSelectedSubtitles(agi::Context *c) {
 }
 
 void UnbindSelectedSubtitles(agi::Context *c) {
+    auto edit_scope = c->subtitleAccess->TryWrite();
+    if (!edit_scope) return;
     auto& file = *c->ass;
     bool changed = false;
     for (auto line : c->selectionController->GetSelectedSet()) {

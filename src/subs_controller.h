@@ -53,6 +53,7 @@ class SubsController : private agi::signal::ConnectionScope {
 	/// Needed to handle Save -> Undo -> Edit, which would result in the file
 	/// being marked unmodified if we reused commit IDs
 	int next_commit_id = 1;
+    bool history_action = false;
 
 	/// Timer for triggering autosaves
 	wxTimer autosave_timer;

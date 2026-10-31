@@ -30,6 +30,7 @@
 // Aegisub Project http://www.aegisub.org/
 
 #include "command.h"
+#include "../subtitle_project_access.h"
 
 #include "../ass_dialogue.h"
 #include "../ass_file.h"
@@ -64,6 +65,8 @@ struct grid_line_next_create final : public Command {
 	STR_HELP("Move to the next subtitle line, creating a new one if needed")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		AudioTimingController *tc = c->audioController->GetTimingController();
 		if (tc)
 			tc->Commit();
@@ -102,6 +105,8 @@ struct grid_sort_actor final : public Command {
 	STR_HELP("Sort all subtitles by their actor names")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		c->ass->Sort(AssFile::CompActor);
 		c->ass->Commit(_("sort"), AssFile::COMMIT_ORDER);
 	}
@@ -122,6 +127,8 @@ struct grid_sort_actor_selected final : public validate_sel_multiple {
 	STR_HELP("Sort selected subtitles by their actor names")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		c->ass->Sort(AssFile::CompActor, c->selectionController->GetSelectedSet());
 		c->ass->Commit(_("sort"), AssFile::COMMIT_ORDER);
 	}
@@ -134,6 +141,8 @@ struct grid_sort_effect final : public Command {
 	STR_HELP("Sort all subtitles by their effects")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		c->ass->Sort(AssFile::CompEffect);
 		c->ass->Commit(_("sort"), AssFile::COMMIT_ORDER);
 	}
@@ -146,6 +155,8 @@ struct grid_sort_effect_selected final : public validate_sel_multiple {
 	STR_HELP("Sort selected subtitles by their effects")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		c->ass->Sort(AssFile::CompEffect, c->selectionController->GetSelectedSet());
 		c->ass->Commit(_("sort"), AssFile::COMMIT_ORDER);
 	}
@@ -158,6 +169,8 @@ struct grid_sort_end final : public Command {
 	STR_HELP("Sort all subtitles by their end times")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		c->ass->Sort(AssFile::CompEnd);
 		c->ass->Commit(_("sort"), AssFile::COMMIT_ORDER);
 	}
@@ -170,6 +183,8 @@ struct grid_sort_end_selected final : public validate_sel_multiple {
 	STR_HELP("Sort selected subtitles by their end times")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		c->ass->Sort(AssFile::CompEnd, c->selectionController->GetSelectedSet());
 		c->ass->Commit(_("sort"), AssFile::COMMIT_ORDER);
 	}
@@ -182,6 +197,8 @@ struct grid_sort_layer final : public Command {
 	STR_HELP("Sort all subtitles by their layer number")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		c->ass->Sort(AssFile::CompLayer);
 		c->ass->Commit(_("sort"), AssFile::COMMIT_ORDER);
 	}
@@ -194,6 +211,8 @@ struct grid_sort_layer_selected final : public validate_sel_multiple {
 	STR_HELP("Sort selected subtitles by their layer number")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		c->ass->Sort(AssFile::CompLayer, c->selectionController->GetSelectedSet());
 		c->ass->Commit(_("sort"), AssFile::COMMIT_ORDER);
 	}
@@ -206,6 +225,8 @@ struct grid_sort_start final : public Command {
 	STR_HELP("Sort all subtitles by their start times")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		c->ass->Sort();
 		c->ass->Commit(_("sort"), AssFile::COMMIT_ORDER);
 	}
@@ -218,6 +239,8 @@ struct grid_sort_start_selected final : public validate_sel_multiple {
 	STR_HELP("Sort selected subtitles by their start times")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		c->ass->Sort(AssFile::CompStart, c->selectionController->GetSelectedSet());
 		c->ass->Commit(_("sort"), AssFile::COMMIT_ORDER);
 	}
@@ -230,6 +253,8 @@ struct grid_sort_style final : public Command {
 	STR_HELP("Sort all subtitles by their style names")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		c->ass->Sort(AssFile::CompStyle);
 		c->ass->Commit(_("sort"), AssFile::COMMIT_ORDER);
 	}
@@ -242,6 +267,8 @@ struct grid_sort_style_selected final : public validate_sel_multiple {
 	STR_HELP("Sort selected subtitles by their style names")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		c->ass->Sort(AssFile::CompStyle, c->selectionController->GetSelectedSet());
 		c->ass->Commit(_("sort"), AssFile::COMMIT_ORDER);
 	}
@@ -354,6 +381,8 @@ struct grid_move_up final : public Command {
 	}
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		if (move_one(c->ass->Events.begin(), c->ass->Events.end(), c->selectionController->GetSelectedSet(), false))
 			c->ass->Commit(_("move lines"), AssFile::COMMIT_ORDER);
 	}
@@ -371,6 +400,8 @@ struct grid_move_down final : public Command {
 	}
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		if (move_one(c->ass->Events.rbegin(), c->ass->Events.rend(), c->selectionController->GetSelectedSet(), true))
 			c->ass->Commit(_("move lines"), AssFile::COMMIT_ORDER);
 	}
@@ -389,6 +420,8 @@ struct grid_swap final : public Command {
 	}
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		auto const& sel = c->selectionController->GetSelectedSet();
 		if (sel.size() == 2) {
 			(*sel.begin())->swap_nodes(**sel.rbegin());

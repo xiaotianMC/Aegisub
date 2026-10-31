@@ -9,6 +9,7 @@
 #include <libaegisub/log.h>
 #include <libaegisub/path.h>
 #include <libaegisub/mru.h>
+#include <libaegisub/util.h>
 #include <wx/app.h>
 #include <wx/image.h>
 #include <wx/log.h>
@@ -26,6 +27,7 @@ int main(int argc, char** argv) {
         std::abort();
     });
     agi::dispatch::Init([](agi::dispatch::Thunk) {});
+    agi::util::InitLocale();
     agi::log::LogSink log; agi::log::log = &log;
     agi::Path paths;
     auto native_root = std::filesystem::current_path() / "ordinary-user";

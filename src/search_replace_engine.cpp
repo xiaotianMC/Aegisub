@@ -18,6 +18,7 @@
 
 #include "ass_dialogue.h"
 #include "ass_file.h"
+#include "subtitle_project_access.h"
 #include "format.h"
 #include "include/aegisub/context.h"
 #include "selection_controller.h"
@@ -164,6 +165,8 @@ void SearchReplaceEngine::Replace(AssDialogue *diag, MatchState &ms) {
 }
 
 bool SearchReplaceEngine::FindReplace(bool replace) {
+    auto edit_scope = replace ? context->subtitleAccess->TryWrite() : std::optional<SubtitleProjectAccess::WriteScope>{};
+    if (replace && !edit_scope) return false;
 	if (!initialized)
 		return false;
 
@@ -235,6 +238,8 @@ bool SearchReplaceEngine::FindReplace(bool replace) {
 }
 
 bool SearchReplaceEngine::ReplaceAll() {
+    auto edit_scope = context->subtitleAccess->TryWrite();
+    if (!edit_scope) return false;
 	if (!initialized)
 		return false;
 
