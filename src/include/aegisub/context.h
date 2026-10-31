@@ -17,8 +17,10 @@
 #pragma once
 
 #include <memory>
+#include <libaegisub/subtitle_edit_gate.h>
 
 class AssFile;
+class SubtitleProjectAccess;
 class AudioBox;
 class AudioController;
 class AssDialogue;
@@ -43,7 +45,10 @@ class Path;
 struct Context {
 	// Note: order here matters quite a bit, as things need to be set up and
     // torn down in the correct order
+    SubtitleEditGate subtitleEditGate;
+    // Legacy mutable access: migrate business entry points before enabling comparison.
 	std::unique_ptr<AssFile> ass;
+    std::unique_ptr<SubtitleProjectAccess> subtitleAccess;
 	std::unique_ptr<TextSelectionController> textSelectionController;
 	std::unique_ptr<SubsController> subsController;
 	std::unique_ptr<Project> project;

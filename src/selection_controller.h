@@ -30,11 +30,15 @@
 #pragma once
 
 #include <libaegisub/signal.h>
+#include <libaegisub/subtitle_edit_gate.h>
 
 #include <set>
 #include <vector>
+#include <optional>
+#include <thread>
 
 class AssDialogue;
+class AssFile;
 typedef std::set<AssDialogue *> Selection;
 
 namespace agi { struct Context; }
@@ -43,13 +47,39 @@ class SelectionController {
 	agi::signal::Signal<AssDialogue *> AnnounceActiveLineChanged;
 	agi::signal::Signal<> AnnounceSelectedSetChanged;
 
-	agi::Context *context;
+    AssFile *file;
+    agi::SubtitleEditGate *gate;
+    std::thread::id owner_thread = std::this_thread::get_id();
 
 	Selection selection; ///< Currently selected lines
 	AssDialogue *active_line = nullptr; ///< The currently active line or 0 if none
 
 public:
 	SelectionController(agi::Context *context);
+    SelectionController(AssFile&, agi::SubtitleEditGate&);
+
+    // New read-only API. Legacy mutable getters below still need migration.
+    AssDialogue const* ReadActiveLine() const;
+    AssDialogue const* ReadActiveLine(agi::SubtitleEditGate::RevisionToken const&) const;
+    std::vector<AssDialogue const*> ReadSelectedLines() const;
+    std::vector<AssDialogue const*> ReadSelectedLines(agi::SubtitleEditGate::RevisionToken const&) const;
+    class PreparedSelection {
+        Selection selection;
+        AssDialogue *active = nullptr;
+        AssFile *owner;
+        agi::SubtitleEditGate::RevisionToken revision;
+        PreparedSelection(AssFile*, agi::SubtitleEditGate::RevisionToken);
+        friend class SelectionController;
+    public:
+        PreparedSelection(PreparedSelection const&) = delete;
+        PreparedSelection& operator=(PreparedSelection const&) = delete;
+        PreparedSelection(PreparedSelection&&) noexcept;
+        PreparedSelection& operator=(PreparedSelection&&) = delete;
+    };
+    PreparedSelection PrepareSilent(agi::SubtitleEditGate::ComparisonSession const&,
+        std::vector<int> const& selected_ids, std::optional<int> active_id) const;
+    // All validation precedes the no-allocation swap. Does not notify or expand bindings.
+    void InstallSilent(agi::SubtitleEditGate::ComparisonSession const&, PreparedSelection&&);
 
 	/// @brief Change the active line
 	/// @param new_line Subtitle line to become the new active line

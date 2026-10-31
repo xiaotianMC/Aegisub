@@ -191,6 +191,7 @@ AssStyle *AssFile::GetStyle(std::string const& name) {
 }
 
 int AssFile::Commit(wxString const& desc, int type, int amend_id, AssDialogue *single_line) {
+    if (edit_gate) edit_gate->NoteLegacyCommit();
 	if (type == COMMIT_NEW || (type & COMMIT_DIAG_ADDREM) || (type & COMMIT_ORDER)) {
 		int i = 0;
 		for (auto& event : Events)

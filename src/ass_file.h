@@ -45,7 +45,7 @@ class AssDialogue;
 class AssInfo;
 class AssStyle;
 class wxString;
-namespace agi { struct Context; }
+namespace agi { struct Context; class SubtitleEditGate; }
 
 template<typename T>
 using EntryList = typename boost::intrusive::make_list<T, boost::intrusive::constant_time_size<false>, boost::intrusive::base_hook<AssEntryListHook>>::type;
@@ -83,6 +83,9 @@ struct ProjectProperties {
 };
 
 class AssFile {
+    friend class SubtitleProjectAccess;
+    // Identity belongs to the live file, never copied or swapped into snapshots.
+    agi::SubtitleEditGate *edit_gate = nullptr;
 	/// A set of changes has been committed to the file (AssFile::COMMITType)
 	agi::signal::Signal<int, const AssDialogue*> AnnounceCommit;
 	agi::signal::Signal<AssFileCommit> PushState;

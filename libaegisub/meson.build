@@ -16,6 +16,8 @@ libaegisub_src = [
     'audio/provider_ram.cpp',
 
     'common/calltip_provider.cpp',
+    'common/subtitle_edit_gate.cpp',
+    'common/subtitle_rebind.cpp',
     'common/character_count.cpp',
     'common/charset_6937.cpp',
     'common/charset_conv.cpp',

@@ -17,6 +17,7 @@
 #include "include/aegisub/context.h"
 
 #include "ass_file.h"
+#include "subtitle_project_access.h"
 #include "audio_controller.h"
 #include "auto4_base.h"
 #include "dialog_manager.h"
@@ -34,6 +35,7 @@
 namespace agi {
 Context::Context()
 : ass(std::make_unique<AssFile>())
+, subtitleAccess(std::make_unique<SubtitleProjectAccess>(*ass, subtitleEditGate))
 , textSelectionController(std::make_unique<TextSelectionController>())
 , subsController(std::make_unique<SubsController>(this))
 , project(std::make_unique<Project>(this))
@@ -49,5 +51,8 @@ Context::Context()
 	subsController->SetSelectionController(selectionController.get());
 }
 
-Context::~Context() = default;
+Context::~Context() {
+    subtitleAccess->Close();
+    subtitleEditGate.Close();
+}
 }
