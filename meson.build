@@ -594,3 +594,16 @@ aegisub = executable('aegisub', aegisub_src, version_h, libresrc_headers, aegisu
                      install_dir: bindir,
                      dependencies: deps,
                      win_subsystem: 'windows')
+
+# Windows GUI objects have WinMain, so a console test main can reuse the exact
+# application objects without a second implementation of commands/history.
+if get_option('tests') and host_machine.system() == 'windows'
+    ordinary_runner = executable('ordinary-edit-tests',
+        'tests/support/ordinary_main.cpp', 'tests/tests/ordinary_edit.cpp',
+        objects: aegisub.extract_all_objects(recursive: true),
+        include_directories: [libaegisub_inc, libresrc_inc, version_inc, include_directories('src')],
+        dependencies: [tests_deps, deps], link_with: [libresrc, libaegisub],
+        cpp_args: aegisub_defines, win_subsystem: 'console')
+    test('ordinary editing integration', find_program('tests/run_isolated.py'),
+        args: [ordinary_runner, '--output-root', meson.current_build_dir() / 'ordinary-data'])
+endif

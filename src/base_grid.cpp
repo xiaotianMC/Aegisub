@@ -35,6 +35,7 @@
 
 #include "ass_dialogue.h"
 #include "ass_file.h"
+#include "subtitle_project_access.h"
 #include "audio_box.h"
 #include "compat.h"
 #include "dialog_rectangle.h"
@@ -477,6 +478,8 @@ void BaseGrid::OnMouseEvent(wxMouseEvent &event) {
 	// The number cell is a per-row visibility switch. Modified clicks keep
 	// their normal selection behavior; a double click counts as a second click.
 	if ((click || dclick) && over_number && !holding && !shift && !ctrl && !alt) {
+        auto write = context->subtitleAccess->TryWrite();
+        if (!write) return;
 		dlg->Comment = !dlg->Comment;
 		context->ass->Commit(_("comment change"), AssFile::COMMIT_DIAG_META, -1, dlg);
 		return;

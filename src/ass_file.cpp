@@ -200,6 +200,12 @@ int AssFile::Commit(wxString const& desc, int type, int amend_id, AssDialogue *s
 
 	PushState({desc, &amend_id, single_line});
 
+    struct NotificationScope {
+        bool& flag;
+        bool previous;
+        explicit NotificationScope(bool& flag) : flag(flag), previous(flag) { flag = true; }
+        ~NotificationScope() { flag = previous; }
+    } notification(notifying);
 	AnnounceCommit(type, single_line);
 
 	return amend_id;

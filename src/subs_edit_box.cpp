@@ -36,6 +36,7 @@
 
 #include "ass_dialogue.h"
 #include "ass_file.h"
+#include "subtitle_project_access.h"
 #include "base_grid.h"
 #include "command/command.h"
 #include "compat.h"
@@ -148,7 +149,7 @@ SubsEditBox::SubsEditBox(wxWindow *parent, agi::Context *context)
 		if (active_style) {
 			wxArrayString font_list = wxFontEnumerator::GetFacenames();
 			font_list.Sort();
-			DialogStyleEditor(this, active_style, c, nullptr, "", font_list).ShowModal();
+			DialogStyleEditor(this, c->ass->GetStyle(active_style->name), c, nullptr, "", font_list).ShowModal();
 		}
 	});
 	top_sizer->Add(style_edit_button, wxSizerFlags().Center().Border(wxRIGHT));
@@ -482,6 +483,8 @@ void SubsEditBox::Commit(wxString const& desc, int type, bool amend, AssDialogue
 
 template<class setter>
 void SubsEditBox::SetSelectedRows(setter set, wxString const& desc, int type, bool amend) {
+    auto write = c->subtitleAccess->TryWrite();
+    if (!write) { wxEventBlocker blocker(this); UpdateFields(AssFile::COMMIT_DIAG_FULL, false); return; }
 	auto const& sel = c->selectionController->GetSelectedSet();
 	for_each(sel.begin(), sel.end(), set);
 	Commit(desc, type, amend, sel.size() == 1 ? *sel.begin() : nullptr);
@@ -504,22 +507,24 @@ void SubsEditBox::CommitText(wxString const& desc) {
 }
 
 void SubsEditBox::CommitTimes(TimeField field) {
+    auto write = c->subtitleAccess->TryWrite();
+    if (!write) { wxEventBlocker blocker(this); UpdateFields(AssFile::COMMIT_DIAG_FULL, false); return; }
 	auto const& sel = c->selectionController->GetSelectedSet();
 	bool linked_neighbor = false;
 	for (AssDialogue *d : sel) {
 		int old_boundary = field == TIME_START ? d->Start : d->End;
-		if (!initial_times.count(d))
-			initial_times[d] = {d->Start, d->End};
+		if (!initial_times.count(d->Id))
+			initial_times[d->Id] = {d->Start, d->End};
 
 		switch (field) {
 			case TIME_START:
-				initial_times[d].first = d->Start = start_time->GetTime();
-				d->End = std::max(d->Start, initial_times[d].second);
+				initial_times[d->Id].first = d->Start = start_time->GetTime();
+				d->End = std::max(d->Start, initial_times[d->Id].second);
 				break;
 
 			case TIME_END:
-				initial_times[d].second = d->End = end_time->GetTime();
-				d->Start = std::min(d->End, initial_times[d].first);
+				initial_times[d->Id].second = d->End = end_time->GetTime();
+				d->Start = std::min(d->End, initial_times[d->Id].first);
 				break;
 
 			case TIME_DURATION:
@@ -529,7 +534,7 @@ void SubsEditBox::CommitTimes(TimeField field) {
 				}
 				else
 					d->End = d->Start + duration->GetTime();
-				initial_times[d].second = d->End;
+				initial_times[d->Id].second = d->End;
 				break;
 		}
 		if (sel.size() == 1 && OPT_GET("Timing/Link Adjacent Lines")->GetBool()) {

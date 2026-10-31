@@ -86,10 +86,12 @@ class AssFile {
     friend class SubtitleProjectAccess;
     // Identity belongs to the live file, never copied or swapped into snapshots.
     agi::SubtitleEditGate *edit_gate = nullptr;
+    bool notifying = false;
 	/// A set of changes has been committed to the file (AssFile::COMMITType)
 	agi::signal::Signal<int, const AssDialogue*> AnnounceCommit;
 	agi::signal::Signal<AssFileCommit> PushState;
 public:
+    bool IsNotifying() const noexcept { return notifying; }
 	/// The lines in the file
 	std::vector<AssInfo> Info;
 	EntryList<AssStyle> Styles;

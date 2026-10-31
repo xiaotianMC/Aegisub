@@ -13,9 +13,21 @@
 // Legacy Context::ass remains a migration gap; this facade exposes no mutable pointer.
 class SubtitleProjectAccess {
     struct State;
+    struct ActiveWrite;
     std::shared_ptr<State> state;
     agi::SubtitleEditGate& gate;
 public:
+    // A synchronous ordinary edit, including nested commands and notifications.
+    // Shares a C0 lease, never the gate's internal mutex.
+    class WriteScope {
+        std::weak_ptr<State> owner;
+        std::shared_ptr<ActiveWrite> active;
+        WriteScope(std::shared_ptr<State> const&, std::shared_ptr<ActiveWrite>);
+        friend class SubtitleProjectAccess;
+    public:
+        agi::SubtitleEditGate::WriteLease const& Lease() const;
+    };
+    std::optional<WriteScope> TryWrite();
     class WriteAccess {
         std::weak_ptr<State> state;
         agi::SubtitleEditGate::WriteLease::Token token;

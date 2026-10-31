@@ -95,3 +95,36 @@ TEST(subtitle_project_access, retired_intrusive_nodes_live_until_required_observ
     });
     EXPECT_TRUE(batch.Complete()); EXPECT_TRUE(lifetime.expired());
 }
+TEST(subtitle_project_access, ordinary_nested_edits_share_one_c0_lease_and_release_after_last_scope) {
+    AssFile file; agi::SubtitleEditGate gate; SubtitleProjectAccess access(file, gate);
+    auto outer=access.TryWrite(); ASSERT_TRUE(outer); auto revision=gate.Revision();
+    auto inner=access.TryWrite(); ASSERT_TRUE(inner);
+    EXPECT_EQ(&outer->Lease(), &inner->Lease()); EXPECT_EQ(revision, gate.Revision());
+    outer.reset(); EXPECT_FALSE(gate.TryBeginComparison()); EXPECT_TRUE(inner->Lease().Valid());
+    inner.reset(); auto comparison=gate.TryBeginComparison(); ASSERT_TRUE(comparison);
+    EXPECT_FALSE(access.TryWrite()); comparison.reset(); EXPECT_TRUE(access.TryWrite());
+}
+TEST(subtitle_project_access, ordinary_nested_failure_releases_authority_and_expired_access_cannot_write) {
+    AssFile file; auto line=new AssDialogue; file.Events.push_back(*line);
+    agi::SubtitleEditGate gate; SubtitleProjectAccess access(file, gate);
+    std::optional<SubtitleProjectAccess::WriteAccess> stale;
+    try {
+        auto outer=access.TryWrite(); auto inner=access.TryWrite();
+        stale.emplace(access.Edit(inner->Lease()));
+        stale->SetDialogueField(line->Id, &AssDialogueBase::Layer, 2);
+        throw std::runtime_error("ordinary edit cancelled");
+    } catch (std::runtime_error const&) { }
+    EXPECT_THROW(stale->SetDialogueField(line->Id, &AssDialogueBase::Layer, 3), std::logic_error);
+    EXPECT_TRUE(gate.TryBeginComparison()); EXPECT_EQ(2, line->Layer);
+}
+TEST(subtitle_project_access, ordinary_commit_observers_cannot_reenter_writes_and_throwing_observers_release_phase) {
+    AssFile file; agi::SubtitleEditGate gate; SubtitleProjectAccess access(file,gate);
+    bool visited=false;
+    agi::signal::Connection observer=file.AddCommitListener([&](int,const AssDialogue*) {
+        visited=true; EXPECT_TRUE(file.IsNotifying()); EXPECT_FALSE(access.TryWrite());
+        throw std::runtime_error("observer");
+    });
+    auto outer=access.TryWrite();
+    EXPECT_THROW(file.Commit(wxString{},AssFile::COMMIT_NEW),std::runtime_error);
+    EXPECT_TRUE(visited); EXPECT_FALSE(file.IsNotifying()); EXPECT_TRUE(access.TryWrite());
+}

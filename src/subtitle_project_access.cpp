@@ -3,15 +3,44 @@
 #include "subtitle_project_access.h"
 #include <thread>
 
+struct SubtitleProjectAccess::ActiveWrite {
+    agi::SubtitleEditGate::WriteLease lease;
+    explicit ActiveWrite(agi::SubtitleEditGate::WriteLease&& lease) : lease(std::move(lease)) { }
+};
 struct SubtitleProjectAccess::State {
     AssFile *file;
     std::thread::id thread = std::this_thread::get_id();
     bool alive = true;
+    std::weak_ptr<ActiveWrite> active;
     void Check() const {
         if (thread != std::this_thread::get_id()) throw std::logic_error("Live subtitles require the owner thread");
         if (!alive) throw std::logic_error("Subtitle project access closed");
     }
 };
+SubtitleProjectAccess::WriteScope::WriteScope(std::shared_ptr<State> const& owner, std::shared_ptr<ActiveWrite> active)
+: owner(owner), active(std::move(active)) { }
+agi::SubtitleEditGate::WriteLease const& SubtitleProjectAccess::WriteScope::Lease() const {
+    auto state = owner.lock();
+    if (!state) throw std::logic_error("Expired subtitle edit scope");
+    state->Check();
+    if (!active || !active->lease.Valid()) throw std::logic_error("Invalid subtitle edit scope");
+    return active->lease;
+}
+std::optional<SubtitleProjectAccess::WriteScope> SubtitleProjectAccess::TryWrite() {
+    state->Check();
+    // Undo snapshot maintenance (PushState) precedes observer notification.
+    // Ordinary observers may refresh UI, but may not reenter model editing.
+    if (state->file->IsNotifying()) return {};
+    if (auto active = state->active.lock()) {
+        if (!active->lease.Valid()) return {};
+        return WriteScope(state, std::move(active));
+    }
+    auto lease = gate.TryBeginWrite();
+    if (!lease) return {};
+    auto active = std::make_shared<ActiveWrite>(std::move(*lease));
+    state->active = active;
+    return WriteScope(state, std::move(active));
+}
 SubtitleProjectAccess::SubtitleProjectAccess(AssFile& file, agi::SubtitleEditGate& gate)
 : state(std::make_shared<State>(&file)), gate(gate) {
     if (file.edit_gate) throw std::logic_error("Subtitle file already belongs to a project");

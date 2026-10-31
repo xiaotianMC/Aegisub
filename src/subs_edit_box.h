@@ -76,8 +76,8 @@ class SubsEditBox final : public wxPanel {
 	std::list<ToolTipBinding> tool_tip_bindings;
 
 	/// Currently active dialogue line
-	AssDialogue *line = nullptr;
-	AssStyle *active_style = nullptr;
+	AssDialogue const* line = nullptr;
+	AssStyle const* active_style = nullptr;
 
 	/// Are the buttons currently split into two lines?
 	bool button_bar_split = true;
@@ -133,7 +133,7 @@ class SubsEditBox final : public wxPanel {
 	/// The start and end times of the selected lines without changes made to
 	/// avoid negative durations, so that they can be restored if future changes
 	/// eliminate the negative durations
-	boost::container::map<AssDialogue *, std::pair<agi::Time, agi::Time>> initial_times;
+	boost::container::map<int, std::pair<agi::Time, agi::Time>> initial_times;
 
 	// Constructor helpers
 	wxTextCtrl *MakeMarginCtrl(wxString const& tooltip, int margin, wxString const& commit_msg);
