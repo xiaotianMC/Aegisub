@@ -17,6 +17,7 @@ tests_src = [
 
     'tests/access.cpp',
     'tests/ass_completion.cpp',
+    'tests/version_compare.cpp',
     'tests/audio.cpp',
     'tests/cajun.cpp',
     'tests/calltip_provider.cpp',
@@ -88,3 +89,34 @@ test_setup = custom_target('setup-test-data',
 
 test('gtest main', runner, env: {'AEGISUB_TEST_DATA_DIR': meson.current_source_dir()}, depends: test_setup)
 test('luajit-52', executable('luajit-52', 'tests/luajit_52.c', dependencies: luajit))
+
+# Application-model integration without launching the editor or running setup.bat.
+# Function sections keep unused GUI/format-registry entry points out of this target.
+compare_cpp_args = tests_args + aegisub_defines
+compare_link_args = []
+if host_machine.system() == 'windows'
+    compare_cpp_args += ['/Gy', '/Gw']
+    compare_link_args += ['/OPT:REF']
+elif host_machine.system() == 'darwin'
+    compare_cpp_args += ['-ffunction-sections', '-fdata-sections']
+    compare_link_args += ['-Wl,-dead_strip']
+else
+    compare_cpp_args += ['-ffunction-sections', '-fdata-sections']
+    compare_link_args += ['-Wl,--gc-sections']
+endif
+
+compare_runner = executable('subtitle-compare-tests',
+    'support/main.cpp', 'tests/subtitle_compare.cpp',
+    '../src/ass_attachment.cpp', '../src/ass_dialogue.cpp', '../src/ass_entry.cpp',
+    '../src/ass_file.cpp', '../src/ass_override.cpp', '../src/ass_parser.cpp',
+    '../src/ass_style.cpp', '../src/ass_style_storage.cpp', '../src/subtitle_compare.cpp',
+    '../src/subtitle_format.cpp', '../src/subtitle_format_ass.cpp', '../src/subtitle_format_srt.cpp',
+    '../src/text_file_reader.cpp', '../src/text_file_writer.cpp', '../src/version.cpp', version_h,
+    '../src/compat.cpp', '../src/utils.cpp',
+    include_directories: [tests_inc, libaegisub_inc, include_directories('../src'), version_inc],
+    dependencies: [tests_deps, deps], link_with: libaegisub,
+    cpp_args: compare_cpp_args, link_args: compare_link_args,
+    cpp_pch: '../src/include/agi_pre.h',
+)
+test('subtitle comparison integration', find_program('run_isolated.py'),
+    args: [compare_runner, '--output-root', meson.current_build_dir() / 'compare-data'])

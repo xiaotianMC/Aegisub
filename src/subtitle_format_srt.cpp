@@ -287,10 +287,10 @@ enum class ParseState {
 	LAST_WAS_BLANK
 };
 
-void SRTSubtitleFormat::ReadFile(AssFile *target, agi::fs::path const& filename, agi::vfr::Framerate const&, const char *encoding) const {
+void SRTSubtitleFormat::ReadFile(AssFile *target, agi::fs::path const& filename, agi::vfr::Framerate const&, const char *encoding, SubtitleReadOptions const& options) const {
 	using namespace std;
 
-	TextFileReader file(filename, encoding);
+	TextFileReader file(filename, encoding, !options.preserve_whitespace);
 	target->LoadDefault(false, OPT_GET("Subtitle Format/SRT/Default Style Catalog")->GetString());
 
 	// See parsing algorithm at <http://devel.aegisub.org/wiki/SubtitleFormats/SRT>
@@ -306,22 +306,24 @@ void SRTSubtitleFormat::ReadFile(AssFile *target, agi::fs::path const& filename,
 	AssDialogue *line = nullptr;
 	std::string text;
 	while (file.HasMoreLines()) {
+		options.CheckCancelled();
 		std::string text_line = file.ReadLineFromFile();
 		++line_num;
-		boost::trim(text_line);
+		if (!options.preserve_whitespace) boost::trim(text_line);
 
+		std::string control_line = boost::trim_copy(text_line);
 		boost::smatch timestamp_match;
 		bool found_timestamps = false;
 		switch (state) {
 			case ParseState::INITIAL:
 				// ignore leading blank lines
-				if (text_line.empty()) break;
-				if (all(text_line, boost::is_digit())) {
+				if (control_line.empty()) break;
+				if (all(control_line, boost::is_digit())) {
 					// found the line number, throw it away and hope for timestamps
 					state = ParseState::TIMESTAMP;
 					break;
 				}
-				if (regex_search(text_line, timestamp_match, timestamp_regex)) {
+				if (regex_search(control_line, timestamp_match, timestamp_regex)) {
 					found_timestamps = true;
 					break;
 				}
@@ -329,7 +331,7 @@ void SRTSubtitleFormat::ReadFile(AssFile *target, agi::fs::path const& filename,
 				throw SRTParseError(agi::format("Parsing SRT: Expected subtitle index at line %d", line_num));
 
 			case ParseState::TIMESTAMP:
-				if (!regex_search(text_line, timestamp_match, timestamp_regex))
+				if (!regex_search(control_line, timestamp_match, timestamp_regex))
 					throw SRTParseError(agi::format("Parsing SRT: Expected timestamp pair at line %d", line_num));
 
 				found_timestamps = true;
@@ -363,13 +365,13 @@ void SRTSubtitleFormat::ReadFile(AssFile *target, agi::fs::path const& filename,
 			case ParseState::LAST_WAS_BLANK:
 				++linebreak_debt;
 				if (text_line.empty()) break;
-				if (all(text_line, boost::is_digit())) {
+				if (!control_line.empty() && all(control_line, boost::is_digit())) {
 					// Hopefully it's the start of a new subtitle, and the
 					// previous blank line(s) were the gap between subtitles
 					state = ParseState::TIMESTAMP;
 					break;
 				}
-				if (regex_search(text_line, timestamp_match, timestamp_regex)) {
+				if (regex_search(control_line, timestamp_match, timestamp_regex)) {
 					found_timestamps = true;
 					break;
 				}

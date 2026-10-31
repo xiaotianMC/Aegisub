@@ -33,13 +33,15 @@
 
 DEFINE_EXCEPTION(AssParseError, SubtitleFormatParseError);
 
-void AssSubtitleFormat::ReadFile(AssFile *target, agi::fs::path const& filename, agi::vfr::Framerate const&, const char *encoding) const {
+void AssSubtitleFormat::ReadFile(AssFile *target, agi::fs::path const& filename, agi::vfr::Framerate const&, const char *encoding, SubtitleReadOptions const& options) const {
 	int version = !agi::fs::HasExtension(filename, "ssa");
 
-	TextFileReader file(filename, encoding);
+	TextFileReader file(filename, encoding, !options.preserve_whitespace);
 	AssParser parser(target, version);
-	while (file.HasMoreLines())
+	while (file.HasMoreLines()) {
+		options.CheckCancelled();
 		parser.AddLine(file.ReadLineFromFile());
+	}
 }
 
 #ifdef _WIN32

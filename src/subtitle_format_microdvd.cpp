@@ -77,8 +77,8 @@ bool MicroDVDSubtitleFormat::CanReadFile(agi::fs::path const& filename, const ch
 	return false;
 }
 
-void MicroDVDSubtitleFormat::ReadFile(AssFile *target, agi::fs::path const& filename, agi::vfr::Framerate const& vfps, const char *encoding) const {
-	TextFileReader file(filename, encoding);
+void MicroDVDSubtitleFormat::ReadFile(AssFile *target, agi::fs::path const& filename, agi::vfr::Framerate const& vfps, const char *encoding, SubtitleReadOptions const& options) const {
+	TextFileReader file(filename, encoding, !options.preserve_whitespace);
 
 	target->LoadDefault(false, OPT_GET("Subtitle Format/MicroDVD/Default Style Catalog")->GetString());
 
@@ -86,6 +86,7 @@ void MicroDVDSubtitleFormat::ReadFile(AssFile *target, agi::fs::path const& file
 
 	bool isFirst = true;
 	while (file.HasMoreLines()) {
+		options.CheckCancelled();
 		boost::smatch match;
 		std::string line = file.ReadLineFromFile();
 		if (!regex_match(line, match, line_regex)) continue;
@@ -104,7 +105,10 @@ void MicroDVDSubtitleFormat::ReadFile(AssFile *target, agi::fs::path const& file
 
 			// If it wasn't an fps line, ask the user for it
 			fps = AskForFPS(true, false, vfps);
-			if (!fps.IsLoaded()) return;
+			if (!fps.IsLoaded()) {
+				if (options.preserve_whitespace) throw agi::UserCancelException("Cancelled FPS selection");
+				return;
+			}
 		}
 
 		int f1 = boost::lexical_cast<int>(match[1]);
