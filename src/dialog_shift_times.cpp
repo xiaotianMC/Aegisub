@@ -17,6 +17,7 @@
 #include "ass_dialogue.h"
 #include "ass_file.h"
 #include "subtitle_project_access.h"
+#include "subtitle_row_edit.h"
 #include "compat.h"
 #include "dialog_manager.h"
 #include "format.h"
@@ -394,8 +395,10 @@ void DialogShiftTimes::Process(wxCommandEvent &) {
 	int block_start = 0;
 	json::Array shifted_blocks;
 
-	for (auto& line : context->ass->Events) {
-		if (!sel.count(&line)) {
+	SubtitleRowEdit staged(context,true);
+    for (auto candidate : staged.rows) {
+        auto& line=*candidate;
+		if (!staged.selected.count(line.Id)) {
 			if (block_start) {
 				json::Object block;
 				block["start"] = block_start;
@@ -415,12 +418,12 @@ void DialogShiftTimes::Process(wxCommandEvent &) {
 			line.End = Shift(line.End, shift, by_time, agi::vfr::END);
 	}
 
-	context->ass->Commit(_("shifting"), AssFile::COMMIT_DIAG_TIME);
+	auto edit=context->subtitleAccess->Edit(edit_scope->Lease());edit.UpdateRows(staged.Values());edit.Commit(_("shifting"), AssFile::COMMIT_DIAG_TIME);
 
 	if (block_start) {
 		json::Object block;
 		block["start"] = block_start;
-		block["end"] = context->ass->Events.back().Row + 1;
+		block["end"] = context->subtitleAccess->Read().Events.back().Row + 1;
 		shifted_blocks.push_back(std::move(block));
 	}
 

@@ -32,6 +32,7 @@
 #include "command.h"
 #include "edit.h"
 #include "../subtitle_project_access.h"
+#include "../subtitle_row_edit.h"
 
 #include "../ass_dialogue.h"
 #include "../ass_file.h"
@@ -312,6 +313,8 @@ int normalize_pos(std::string const& text, int pos) {
 
 template<typename Func>
 void update_lines(const agi::Context *c, wxString const& undo_msg, Func&& f) {
+	auto scope = c->subtitleAccess->TryWrite(); if (!scope) return;
+    SubtitleRowEdit staged(c);
 	const auto active_line = c->selectionController->GetActiveLine();
 	const int sel_start = c->textSelectionController->GetSelectionStart();
 	const int sel_end = c->textSelectionController->GetSelectionEnd();
@@ -319,14 +322,16 @@ void update_lines(const agi::Context *c, wxString const& undo_msg, Func&& f) {
 	const int norm_sel_end = normalize_pos(active_line->Text, sel_end);
 	int active_sel_shift = 0;
 
-	for (const auto line : c->selectionController->GetSelectedSet()) {
+	for (const auto line : staged.rows) {
 		int shift = f(line, sel_start, sel_end, norm_sel_start, norm_sel_end);
-		if (line == active_line)
+		if (line->Id == active_line->Id)
 			active_sel_shift = shift;
 	}
 
 	auto const& sel = c->selectionController->GetSelectedSet();
-	c->ass->Commit(undo_msg, AssFile::COMMIT_DIAG_TEXT, -1, sel.size() == 1 ? *sel.begin() : nullptr);
+	auto edit = c->subtitleAccess->Edit(scope->Lease());
+    edit.UpdateRows(staged.Values());
+    edit.Commit(undo_msg, AssFile::COMMIT_DIAG_TEXT, -1, sel.size() == 1 ? (*sel.begin())->Id : 0);
 	if (active_sel_shift != 0)
 		c->textSelectionController->SetSelection(sel_start + active_sel_shift, sel_end + active_sel_shift);
 }
@@ -349,6 +354,9 @@ void toggle_override_tag(const agi::Context *c, bool (AssStyle::*field), const c
 }
 
 void show_color_picker(const agi::Context *c, agi::Color (AssStyle::*field), const char *tag, const char *alt, const char *alpha) {
+	auto scope = c->subtitleAccess->TryWrite(); if (!scope) return;
+    SubtitleRowEdit staged(c);
+    auto revision = c->subtitleEditGate.Capture();
 	agi::Color initial_color;
 	const auto active_line = c->selectionController->GetActiveLine();
 	const int sel_start = c->textSelectionController->GetSelectionStart();
@@ -358,7 +366,7 @@ void show_color_picker(const agi::Context *c, agi::Color (AssStyle::*field), con
 	auto const& sel = c->selectionController->GetSelectedSet();
 	using line_info = std::pair<agi::Color, parsed_line>;
 	std::vector<line_info> lines;
-	for (auto line : sel) {
+	for (auto line : staged.rows) {
 		AssStyle const* const style = c->subtitleAccess->Read().GetStyle(line->Style);
 		agi::Color color = (style ? style->*field : AssStyle().*field);
 
@@ -369,7 +377,7 @@ void show_color_picker(const agi::Context *c, agi::Color (AssStyle::*field), con
 		color = parsed.get_value(blockn, color, tag, alt);
 		color.a = a;
 
-		if (line == active_line)
+		if (line->Id == active_line->Id)
 			initial_color = color;
 
 		lines.emplace_back(color, std::move(parsed));
@@ -378,6 +386,7 @@ void show_color_picker(const agi::Context *c, agi::Color (AssStyle::*field), con
 	int active_shift = 0;
 	int commit_id = -1;
 	bool ok = GetColorFromUser(c->parent, initial_color, true, [&](agi::Color new_color) {
+		if (!revision.Current()) return;
 		for (auto& line : lines) {
 			int shift = line.second.set_tag(tag, new_color.GetAssOverrideFormatted(), norm_sel_start, sel_start);
 			if (new_color.a != line.first.a) {
@@ -385,11 +394,14 @@ void show_color_picker(const agi::Context *c, agi::Color (AssStyle::*field), con
 				line.first.a = new_color.a;
 			}
 
-			if (line.second.line == active_line)
+			if (line.second.line->Id == active_line->Id)
 				active_shift = shift;
 		}
 
-		commit_id = c->ass->Commit(_("set color"), AssFile::COMMIT_DIAG_TEXT, commit_id, sel.size() == 1 ? *sel.begin() : nullptr);
+		auto edit = c->subtitleAccess->Edit(scope->Lease());
+        edit.UpdateRows(staged.Values());
+        commit_id = edit.Commit(_("set color"), AssFile::COMMIT_DIAG_TEXT, commit_id, sel.size() == 1 ? (*sel.begin())->Id : 0);
+        revision = c->subtitleEditGate.Capture();
 		if (active_shift)
 			c->textSelectionController->SetSelection(sel_start + active_shift, sel_start + active_shift);
 	});
@@ -1309,9 +1321,12 @@ struct edit_line_reverse_move final : public Command {
     void operator()(agi::Context *c) override {
         auto edit_scope = c->subtitleAccess->TryWrite();
         if (!edit_scope) return;
-        auto line = c->selectionController->GetActiveLine();
-        if (reverse_move_paths(line, true))
-            c->ass->Commit(_("reverse move path"), AssFile::COMMIT_DIAG_TEXT, -1, line);
+        AssDialogue candidate(static_cast<AssDialogueBase const&>(*c->selectionController->ReadActiveLine()));
+        auto line = &candidate;
+        if (reverse_move_paths(line, true)) {
+            auto edit=c->subtitleAccess->Edit(edit_scope->Lease());edit.UpdateRows({candidate});
+            edit.Commit(_("reverse move path"), AssFile::COMMIT_DIAG_TEXT, -1, line->Id);
+        }
     }
 };
 
@@ -1362,9 +1377,11 @@ struct edit_revert final : public Command {
 	void operator()(agi::Context *c) override {
         auto edit_scope = c->subtitleAccess->TryWrite();
         if (!edit_scope) return;
-		AssDialogue *line = c->selectionController->GetActiveLine();
+		AssDialogue candidate(static_cast<AssDialogueBase const&>(*c->selectionController->ReadActiveLine()));
+        auto line = &candidate;
 		line->Text = c->initialLineState->GetInitialText();
-		c->ass->Commit(_("revert line"), AssFile::COMMIT_DIAG_TEXT, -1, line);
+		auto edit=c->subtitleAccess->Edit(edit_scope->Lease());edit.UpdateRows({candidate});
+        edit.Commit(_("revert line"), AssFile::COMMIT_DIAG_TEXT, -1, line->Id);
 	}
 };
 
@@ -1377,9 +1394,11 @@ struct edit_clear final : public Command {
 	void operator()(agi::Context *c) override {
         auto edit_scope = c->subtitleAccess->TryWrite();
         if (!edit_scope) return;
-		AssDialogue *line = c->selectionController->GetActiveLine();
+		AssDialogue candidate(static_cast<AssDialogueBase const&>(*c->selectionController->ReadActiveLine()));
+        auto line = &candidate;
 		line->Text = "";
-		c->ass->Commit(_("clear line"), AssFile::COMMIT_DIAG_TEXT, -1, line);
+		auto edit=c->subtitleAccess->Edit(edit_scope->Lease());edit.UpdateRows({candidate});
+        edit.Commit(_("clear line"), AssFile::COMMIT_DIAG_TEXT, -1, line->Id);
 	}
 };
 
@@ -1393,14 +1412,16 @@ struct edit_clear_text final : public Command {
 	void operator()(agi::Context *c) override {
         auto edit_scope = c->subtitleAccess->TryWrite();
         if (!edit_scope) return;
-		AssDialogue *line = c->selectionController->GetActiveLine();
+		AssDialogue candidate(static_cast<AssDialogueBase const&>(*c->selectionController->ReadActiveLine()));
+        auto line = &candidate;
 		auto blocks = line->ParseTags();
 		line->Text = join(blocks
 			| indirected
 			| filtered([](AssDialogueBlock const& b) { return b.GetType() != AssBlockType::PLAIN; })
 			| transformed(get_text),
 			"");
-		c->ass->Commit(_("clear line"), AssFile::COMMIT_DIAG_TEXT, -1, line);
+		auto edit=c->subtitleAccess->Edit(edit_scope->Lease());edit.UpdateRows({candidate});
+        edit.Commit(_("clear line"), AssFile::COMMIT_DIAG_TEXT, -1, line->Id);
 	}
 };
 
@@ -1413,12 +1434,14 @@ struct edit_insert_original final : public Command {
 	void operator()(agi::Context *c) override {
         auto edit_scope = c->subtitleAccess->TryWrite();
         if (!edit_scope) return;
-		AssDialogue *line = c->selectionController->GetActiveLine();
+		AssDialogue candidate(static_cast<AssDialogueBase const&>(*c->selectionController->ReadActiveLine()));
+        auto line = &candidate;
 		int sel_start = c->textSelectionController->GetSelectionStart();
 		int sel_end = c->textSelectionController->GetSelectionEnd();
 
 		line->Text = line->Text.get().substr(0, sel_start) + c->initialLineState->GetInitialText() + line->Text.get().substr(sel_end);
-		c->ass->Commit(_("insert original"), AssFile::COMMIT_DIAG_TEXT, -1, line);
+		auto edit=c->subtitleAccess->Edit(edit_scope->Lease());edit.UpdateRows({candidate});
+        edit.Commit(_("insert original"), AssFile::COMMIT_DIAG_TEXT, -1, line->Id);
 	}
 };
 

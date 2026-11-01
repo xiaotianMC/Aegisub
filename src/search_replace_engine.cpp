@@ -209,9 +209,11 @@ bool SearchReplaceEngine::FindReplace(bool replace) {
 				end = context->textSelectionController->GetSelectionEnd();
 
 			if (end == bad_pos || (pos == replace_ms.start && end == replace_ms.end)) {
-				Replace(line, replace_ms);
+				AssDialogue candidate(static_cast<AssDialogueBase const&>(*line));
+                Replace(&candidate, replace_ms);
+                context->subtitleAccess->Edit(edit_scope->Lease()).UpdateRows({candidate});
 				pos = replace_ms.end;
-				context->ass->Commit(_("replace"), AssFile::COMMIT_DIAG_TEXT);
+				context->subtitleAccess->Edit(edit_scope->Lease()).Commit(_("replace"), AssFile::COMMIT_DIAG_TEXT);
 			}
 			else {
 				// The current line matches, but it wasn't already selected,
@@ -269,11 +271,14 @@ bool SearchReplaceEngine::ReplaceAll() {
 
 	auto matches = GetMatcher(settings);
 
-	auto const& sel = context->selectionController->GetSelectedSet();
+	std::set<int> selected;
+    for(auto row:context->selectionController->ReadSelectedLines())selected.insert(row->Id);
 	bool selection_only = settings.limit_to == SearchReplaceSettings::Limit::SELECTED;
 
-	for (auto& diag : context->ass->Events) {
-		if (selection_only && !sel.count(&diag)) continue;
+	std::vector<AssDialogueBase> updates;
+    for (auto const& original : context->subtitleAccess->Read().Events) {
+        AssDialogue diag(static_cast<AssDialogueBase const&>(original));
+		if (selection_only && !selected.contains(original.Id)) continue;
 		if (settings.ignore_comments && diag.Comment) continue;
 
 		if (settings.use_regex) {
@@ -285,6 +290,7 @@ bool SearchReplaceEngine::ReplaceAll() {
 					boost::u32regex_iterator<std::string::const_iterator>());
 				diag_field = u32regex_replace(text, *ms.re, settings.replace_with);
 			}
+			updates.push_back(diag);
 			continue;
 		}
 
@@ -294,10 +300,12 @@ bool SearchReplaceEngine::ReplaceAll() {
 			Replace(&diag, ms);
 			pos = ms.end;
 		}
+        updates.push_back(diag);
 	}
 
 	if (count > 0) {
-		context->ass->Commit(_("replace"), AssFile::COMMIT_DIAG_TEXT);
+        context->subtitleAccess->Edit(edit_scope->Lease()).UpdateRows(updates);
+		context->subtitleAccess->Edit(edit_scope->Lease()).Commit(_("replace"), AssFile::COMMIT_DIAG_TEXT);
 		wxMessageBox(fmt_plural(count, "One match was replaced.", "%d matches were replaced.", (int)count));
 	}
 	else {

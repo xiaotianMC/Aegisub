@@ -30,6 +30,7 @@
 #include "ass_dialogue.h"
 #include "ass_file.h"
 #include "subtitle_project_access.h"
+#include "subtitle_row_edit.h"
 #include "async_video_provider.h"
 #include "compat.h"
 #include "format.h"
@@ -101,7 +102,7 @@ struct DialogTimingProcessor {
 	void Process();
 
 	/// Get a list of dialogue lines in the file sorted by start time
-	std::vector<AssDialogue*> SortDialogues();
+	std::vector<AssDialogue*> SortDialogues(SubtitleRowEdit const& staged);
 
 	DialogTimingProcessor(agi::Context *c);
 };
@@ -330,7 +331,7 @@ void DialogTimingProcessor::OnApply(wxCommandEvent &) {
 	d.EndModal(0);
 }
 
-std::vector<AssDialogue*> DialogTimingProcessor::SortDialogues() {
+std::vector<AssDialogue*> DialogTimingProcessor::SortDialogues(SubtitleRowEdit const& staged) {
 	std::set<boost::flyweight<std::string>> styles;
 	for (size_t i = 0; i < StyleList->GetCount(); ++i) {
 		if (StyleList->IsChecked(i))
@@ -340,13 +341,8 @@ std::vector<AssDialogue*> DialogTimingProcessor::SortDialogues() {
 	std::vector<AssDialogue*> sorted;
 
 	auto valid_line = [&](const AssDialogue *d) { return !d->Comment && styles.count(d->Style); };
-	if (onlySelection->IsChecked())
-		boost::copy(c->selectionController->GetSelectedSet() | filtered(valid_line),
-		    back_inserter(sorted));
-	else {
-		sorted.reserve(c->ass->Events.size());
-		boost::push_back(sorted, c->ass->Events | agi::address_of | filtered(valid_line));
-	}
+    for(auto row:staged.rows)
+        if(valid_line(row) && (!onlySelection->IsChecked() || staged.selected.contains(row->Id))) sorted.push_back(row);
 
 	// Check if rows are valid
 	for (auto diag : sorted) {
@@ -387,7 +383,9 @@ static int safe_time(Iter begin, Iter end, AssDialogue *comp, int initial, Field
 }
 
 void DialogTimingProcessor::Process() {
-	std::vector<AssDialogue*> sorted = SortDialogues();
+	auto scope=c->subtitleAccess->TryWrite();if(!scope)return;
+    SubtitleRowEdit staged(c,true);
+    std::vector<AssDialogue*> sorted = SortDialogues(staged);
 	if (sorted.empty()) return;
 
 	// Add lead-in/out
@@ -448,7 +446,8 @@ void DialogTimingProcessor::Process() {
 		}
 	}
 
-	c->ass->Commit(_("timing processor"), AssFile::COMMIT_DIAG_TIME);
+	std::vector<AssDialogueBase> updates;for(auto row:sorted)updates.push_back(*row);
+    auto edit=c->subtitleAccess->Edit(scope->Lease());edit.UpdateRows(updates);edit.Commit(_("timing processor"), AssFile::COMMIT_DIAG_TIME);
 }
 }
 

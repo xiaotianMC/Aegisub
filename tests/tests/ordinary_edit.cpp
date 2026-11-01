@@ -1408,3 +1408,30 @@ TEST_F(ordinary_edit, video_layout_access_requires_a_current_interaction) {
 }
 
 }
+
+TEST_F(ordinary_edit, controlled_tag_commands_preserve_multiline_data_and_single_undo) {
+    cmd::PasteSubtitleLines(c.get(),"one\ntwo");
+    std::vector<int> ids;for(auto row:c->selectionController->ReadSelectedLines())ids.push_back(row->Id);
+    ASSERT_EQ(2u,ids.size());
+    cmd::call("edit/style/bold",c.get());
+    for(auto const& row:c->ass->Events)if(std::find(ids.begin(),ids.end(),row.Id)!=ids.end())EXPECT_NE(std::string::npos,row.Text.get().find("\\b1"));
+    c->subsController->Undo();
+    for(auto const& row:c->ass->Events)EXPECT_EQ(std::string::npos,row.Text.get().find("\\b1"));
+    c->subsController->Redo();
+    for(auto const& row:c->ass->Events)if(std::find(ids.begin(),ids.end(),row.Id)!=ids.end())EXPECT_NE(std::string::npos,row.Text.get().find("\\b1"));
+}
+TEST_F(ordinary_edit, controlled_adjoin_and_replace_all_use_production_entries_and_preserve_ids) {
+    cmd::PasteSubtitleLines(c.get(),"Dialogue: 0,0:00:00.000,0:00:01.000,Default,A,0,0,0,,one\nDialogue: 0,0:00:02.000,0:00:03.000,Default,B,0,0,0,,one");
+    auto selected=c->selectionController->GetSortedSelection();ASSERT_EQ(2u,selected.size());
+    auto second=selected[1]->Id;
+    cmd::call("time/continuous/start",c.get());
+    EXPECT_EQ(1000,c->ass->Events.front().End.GetMilliseconds());
+    for(auto const& row:c->ass->Events)if(row.Id==second)EXPECT_EQ(1000,row.Start.GetMilliseconds());
+    c->subsController->Undo();
+    for(auto const& row:c->ass->Events)if(row.Id==second)EXPECT_EQ(2000,row.Start.GetMilliseconds());
+    SearchReplaceSettings settings{};settings.find="one";settings.replace_with="translated";
+    settings.field=SearchReplaceSettings::Field::TEXT;settings.limit_to=SearchReplaceSettings::Limit::SELECTED;
+    c->search->Configure(settings);AcceptMessages messages;EXPECT_TRUE(c->search->ReplaceAll());
+    for(auto row:c->selectionController->ReadSelectedLines())EXPECT_EQ("translated",row->Text.get());
+    c->subsController->Undo();for(auto row:c->selectionController->ReadSelectedLines())EXPECT_EQ("one",row->Text.get());
+}

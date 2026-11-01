@@ -31,6 +31,7 @@
 
 #include "command.h"
 #include "../subtitle_project_access.h"
+#include "../subtitle_row_edit.h"
 
 #include "../ass_dialogue.h"
 #include "../ass_file.h"
@@ -63,7 +64,7 @@ struct validate_adjoinable : public Command {
 	bool Validate(const agi::Context *c) override {
 		size_t sel_size = c->selectionController->GetSelectedSet().size();
 		if (sel_size == 0) return false;
-		if (sel_size == 1 || sel_size == c->ass->Events.size()) return true;
+		if (sel_size == 1 || sel_size == c->subtitleAccess->Read().Events.size()) return true;
 
 		auto sel = c->selectionController->GetSortedSelection();
 		for (size_t i = 1; i < sel_size; ++i) {
@@ -75,12 +76,15 @@ struct validate_adjoinable : public Command {
 };
 
 void adjoin_lines(agi::Context *c, bool set_start) {
-	auto const& sel = c->selectionController->GetSelectedSet();
+	auto scope=c->subtitleAccess->TryWrite();if(!scope)return;
+    SubtitleRowEdit staged(c,true);
+    auto const& sel=staged.selected;
 	AssDialogue *prev = nullptr;
 	size_t seen = 0;
 	bool prev_sel = false;
-	for (auto& diag : c->ass->Events) {
-		bool cur_sel = !!sel.count(&diag);
+	for (auto value : staged.rows) {
+        auto& diag=*value;
+		bool cur_sel = !!sel.count(diag.Id);
 		if (prev) {
 			// One row selections act as if the previous or next line was selected
 			if (set_start && cur_sel && (sel.size() == 1 || prev_sel))
@@ -99,7 +103,7 @@ void adjoin_lines(agi::Context *c, bool set_start) {
 		prev_sel = cur_sel;
 	}
 
-	c->ass->Commit(_("adjoin"), AssFile::COMMIT_DIAG_TIME);
+	auto edit=c->subtitleAccess->Edit(scope->Lease());edit.UpdateRows(staged.Values());edit.Commit(_("adjoin"), AssFile::COMMIT_DIAG_TIME);
 }
 
 struct time_continuous_end final : public validate_adjoinable {
@@ -146,12 +150,13 @@ struct time_frame_current final : public validate_video_loaded {
 		int target_start = std::max(0, c->videoController->TimeAtFrame(c->videoController->GetFrameN(), agi::vfr::START));
 		int shift_by = target_start - active_line->Start;
 
-		for (auto line : sel) {
+		SubtitleRowEdit staged(c);
+        for (auto line : staged.rows) {
 			line->Start = line->Start + shift_by;
 			line->End = line->End + shift_by;
 		}
 
-		c->ass->Commit(_("shift to frame"), AssFile::COMMIT_DIAG_TIME);
+		auto edit=c->subtitleAccess->Edit(edit_scope->Lease());edit.UpdateRows(staged.Values());edit.Commit(_("shift to frame"), AssFile::COMMIT_DIAG_TIME);
 	}
 };
 
@@ -168,6 +173,8 @@ struct time_shift final : public Command {
 };
 
 static void snap_subs_video(agi::Context *c, bool set_start) {
+	auto scope=c->subtitleAccess->TryWrite();if(!scope)return;
+    SubtitleRowEdit staged(c);
 	auto const& sel = c->selectionController->GetSelectedSet();
 	if (sel.empty()) return;
 
@@ -180,23 +187,24 @@ static void snap_subs_video(agi::Context *c, bool set_start) {
 		old_end = (*sel.begin())->End;
 	}
 
-	for (auto line : sel) {
+	for (auto line : staged.rows) {
 		if (set_start || line->Start > start)
 			line->Start = start;
 		if (!set_start || line->End < end)
 			line->End = end;
 	}
 
+	auto edit=c->subtitleAccess->Edit(scope->Lease());edit.UpdateRows(staged.Values());
 	if (sel.size() == 1 && OPT_GET("Timing/Link Adjacent Lines")->GetBool()) {
 		auto line = *sel.begin();
 		int threshold_ms = static_cast<int>(OPT_GET("Timing/Adjacent Line Gap")->GetDouble() * 1000 + 0.5);
 		if (line->Start != old_start)
-			c->ass->LinkAdjacentLine(line, true, old_start, threshold_ms);
+			edit.LinkAdjacent(line->Id, true, old_start, threshold_ms);
 		if (line->End != old_end)
-			c->ass->LinkAdjacentLine(line, false, old_end, threshold_ms);
+			edit.LinkAdjacent(line->Id, false, old_end, threshold_ms);
 	}
 
-	c->ass->Commit(_("timing"), AssFile::COMMIT_DIAG_TIME);
+	edit.Commit(_("timing"), AssFile::COMMIT_DIAG_TIME);
 }
 
 struct time_snap_end_video final : public validate_video_loaded {
@@ -252,12 +260,13 @@ struct time_snap_scene final : public validate_video_loaded {
 		int start_ms = con->TimeAtFrame(prev,agi::vfr::START);
 		int end_ms = con->TimeAtFrame(next-1,agi::vfr::END);
 
-		for (auto line : c->selectionController->GetSelectedSet()) {
+		SubtitleRowEdit staged(c);
+        for (auto line : staged.rows) {
 			line->Start = start_ms;
 			line->End = end_ms;
 		}
 
-		c->ass->Commit(_("snap to scene"), AssFile::COMMIT_DIAG_TIME);
+		auto edit=c->subtitleAccess->Edit(edit_scope->Lease());edit.UpdateRows(staged.Values());edit.Commit(_("snap to scene"), AssFile::COMMIT_DIAG_TIME);
 	}
 };
 
