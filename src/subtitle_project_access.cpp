@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: ISC
 #include "subtitle_project_access.h"
 #include "ass_info.h"
+#include "ass_attachment.h"
+#include <boost/algorithm/string/case_conv.hpp>
 #include <thread>
 #include <algorithm>
 #include <unordered_map>
@@ -281,5 +283,91 @@ std::vector<std::unique_ptr<AssDialogue>> SubtitleProjectAccess::WriteAccess::Re
     }
     for(auto& row:allocated)row.release();
     while(!old.empty()) {auto row=&old.front();old.pop_front();retired.emplace_back(row);}
+    return retired;
+}
+
+namespace {
+auto StyleFields(AssStyle const& s) {
+    return std::tie(s.name,s.font,s.fontsize,s.primary,s.secondary,s.outline,s.shadow,s.bold,s.italic,
+        s.underline,s.strikeout,s.scalex,s.scaley,s.spacing,s.angle,s.borderstyle,s.outline_w,s.shadow_w,
+        s.alignment,s.Margin,s.encoding,s.GetEntryData());
+}
+}
+std::vector<std::unique_ptr<AssStyle>> SubtitleProjectAccess::WriteAccess::UpdateValues(
+    agi::SubtitleEditGate::RevisionToken const& revision, AssFile const& original, AssFile const& result,
+    std::vector<int> const& sources, int parts) const {
+    auto access=Check();auto& file=*access.file;
+    if(!access.owner->gate->Authorizes(revision))throw std::logic_error("Stale ordinary value edit");
+    constexpr int supported=AssFile::COMMIT_DIAG_FULL|AssFile::COMMIT_STYLES|AssFile::COMMIT_SCRIPTINFO|AssFile::COMMIT_EXTRADATA|AssFile::COMMIT_ATTACHMENT;
+    if(!parts || (parts & ~supported))throw std::invalid_argument("Unsupported value edit");
+    if(file.Events.size()!=original.Events.size() || result.Events.size()!=original.Events.size() ||
+       file.Styles.size()!=original.Styles.size() || file.Info.size()!=original.Info.size() ||
+       file.Attachments.size()!=original.Attachments.size() || file.Extradata.size()!=original.Extradata.size() ||
+       file.next_extradata_id!=original.next_extradata_id)throw std::logic_error("Ordinary value dependencies changed");
+    auto old_row=original.Events.begin();auto output=result.Events.begin();
+    std::vector<AssDialogueBase> rows;rows.reserve(result.Events.size());
+    for(auto const& row:file.Events) {
+        if(RowFields(row)!=RowFields(*old_row++) || output->Id!=row.Id || output->Row!=row.Row)
+            throw std::logic_error("Ordinary value row changed or reordered");
+        rows.push_back(*output++);
+    }
+    auto old_style=original.Styles.begin();std::vector<AssStyle*> live_styles;
+    for(auto& style:file.Styles) {
+        if(StyleFields(style)!=StyleFields(*old_style++))throw std::logic_error("Style dependencies changed");
+        live_styles.push_back(&style);
+    }
+    for(size_t i=0;i<file.Info.size();++i)
+        if(file.Info[i].Key()!=original.Info[i].Key() || file.Info[i].Value()!=original.Info[i].Value())throw std::logic_error("Script info changed");
+    for(size_t i=0;i<file.Attachments.size();++i)
+        if(file.Attachments[i].Group()!=original.Attachments[i].Group() || file.Attachments[i].GetEntryData()!=original.Attachments[i].GetEntryData())throw std::logic_error("Attachments changed");
+    for(size_t i=0;i<file.Extradata.size();++i) {
+        auto const& a=file.Extradata[i];auto const& b=original.Extradata[i];
+        if(std::tie(a.id,a.key,a.value)!=std::tie(b.id,b.key,b.value))throw std::logic_error("Extradata changed");
+    }
+    std::vector<AssStyle> values;std::vector<std::unique_ptr<AssStyle>> allocated;
+    std::vector<AssStyle*> prepared;
+    if(parts & AssFile::COMMIT_STYLES) {
+        if(sources.size()!=result.Styles.size())throw std::invalid_argument("Missing style origins");
+        std::set<int> used;size_t i=0;
+        std::map<std::string,size_t> existing_names,names;
+        for(auto const& style:original.Styles)++existing_names[boost::to_lower_copy(style.name)];
+        values.reserve(sources.size());allocated.reserve(sources.size());prepared.reserve(sources.size());
+        for(auto const& style:result.Styles) {
+            auto name=boost::to_lower_copy(style.name);
+            if(++names[name]>std::max<size_t>(1,existing_names[name]))throw std::invalid_argument("Conflicting style name");
+            int source=sources[i++];
+            if(source < -1 || source>=static_cast<int>(live_styles.size()) || (source>=0 && !used.insert(source).second))throw std::invalid_argument("Invalid style origin");
+            values.push_back(style);
+            if(source<0) {allocated.push_back(std::make_unique<AssStyle>(style));prepared.push_back(allocated.back().get());}
+            else prepared.push_back(live_styles[source]);
+        }
+    }
+    auto info=result.Info;auto attachments=result.Attachments;auto extras=result.Extradata;
+    if(parts & AssFile::COMMIT_EXTRADATA) {
+        std::set<uint32_t> ids;
+        for(auto const& entry:extras)
+            if(!ids.insert(entry.id).second || entry.id>=result.next_extradata_id)throw std::invalid_argument("Invalid extradata identity");
+        old_row=original.Events.begin();
+        for(auto const& row:result.Events) {
+            auto const& previous=(old_row++)->ExtradataIds.get();
+            for(auto id:row.ExtradataIds.get())
+                if(!ids.contains(id) && std::find(previous.begin(),previous.end(),id)==previous.end())throw std::invalid_argument("Unresolved new extradata reference");
+        }
+    }
+    std::vector<std::unique_ptr<AssStyle>> retired;retired.reserve(live_styles.size());
+    // All validation and preparation precede the first live write.
+    if(parts & AssFile::COMMIT_DIAG_FULL)UpdateRows(rows);
+    if(parts & AssFile::COMMIT_STYLES) {
+        EntryList<AssStyle> old;old.swap(file.Styles);
+        for(size_t i=0;i<prepared.size();++i) {
+            if(sources[i]>=0)old.erase(old.iterator_to(*prepared[i]));
+            prepared[i]->SwapData(values[i]);file.Styles.push_back(*prepared[i]);
+        }
+        for(auto& value:allocated)value.release();
+        while(!old.empty()){auto style=&old.front();old.pop_front();retired.emplace_back(style);}
+    }
+    if(parts & AssFile::COMMIT_SCRIPTINFO)file.Info.swap(info);
+    if(parts & AssFile::COMMIT_ATTACHMENT)file.Attachments.swap(attachments);
+    if(parts & AssFile::COMMIT_EXTRADATA){file.Extradata.swap(extras);file.next_extradata_id=result.next_extradata_id;}
     return retired;
 }

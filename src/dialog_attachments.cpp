@@ -30,6 +30,7 @@
 #include "ass_attachment.h"
 #include "ass_file.h"
 #include "subtitle_project_access.h"
+#include "subtitle_value_edit.h"
 #include "compat.h"
 #include "format.h"
 #include "help_button.h"
@@ -151,7 +152,7 @@ void DialogAttachments::UpdateList() {
 	listView->InsertColumn(1, _("Size"), wxLIST_FORMAT_LEFT, 100);
 	listView->InsertColumn(2, _("Group"), wxLIST_FORMAT_LEFT, 100);
 
-	for (auto& attach : c->ass->Attachments) {
+	for (auto& attach : c->subtitleAccess->Read().Attachments) {
 		int row = listView->GetItemCount();
 		listView->InsertItem(row, to_wx(attach.GetFileName(true)));
 		listView->SetItem(row, 1, PrettySize(attach.GetSize()));
@@ -163,14 +164,15 @@ void DialogAttachments::AttachFile(wxFileDialog &diag, wxString const& commit_ms
 	if (diag.ShowModal() == wxID_CANCEL) return;
     auto edit_scope = c->subtitleAccess->TryWrite();
     if (!edit_scope) return;
+    SubtitleValueEdit staged(c);
 
 	wxArrayString paths;
 	diag.GetPaths(paths);
 
 	for (auto const& fn : paths)
-		c->ass->InsertAttachment(agi::fs::path(fn.wx_str()));
+		staged.file.InsertAttachment(agi::fs::path(fn.wx_str()));
 
-	c->ass->Commit(commit_msg, AssFile::COMMIT_ATTACHMENT);
+	staged.Commit(commit_msg, AssFile::COMMIT_ATTACHMENT);
 
 	UpdateList();
 }
@@ -205,7 +207,7 @@ void DialogAttachments::OnExtract(wxCommandEvent &) {
 	if (listView->GetNextSelected(i) != -1)
 		path = wxDirSelector(_("Select the path to save the files to:"), to_wx(OPT_GET("Path/Fonts Collector Destination")->GetString())).utf8_str().data();
 	else {
-		auto default_filename = c->ass->Attachments[i].GetFileName();
+		auto default_filename = c->subtitleAccess->Read().Attachments[i].GetFileName();
 		if (!is_safe_attachment_filename(default_filename))
 			default_filename = "attachment";
 		path = SaveFileSelector(
@@ -221,7 +223,7 @@ void DialogAttachments::OnExtract(wxCommandEvent &) {
 
 	// Loop through items in list
 	while (i != -1) {
-		auto& attach = c->ass->Attachments[i];
+		auto& attach = c->subtitleAccess->Read().Attachments[i];
 		auto next = listView->GetNextSelected(i);
 		auto destination = fullPath ? std::optional<agi::fs::path>(path) : attachment_destination(path, attach.GetFileName());
 		if (!destination) {
@@ -246,11 +248,12 @@ void DialogAttachments::OnExtract(wxCommandEvent &) {
 void DialogAttachments::OnDelete(wxCommandEvent &) {
     auto edit_scope = c->subtitleAccess->TryWrite();
     if (!edit_scope) return;
+    SubtitleValueEdit staged(c);
 	size_t removed = 0;
 	for (auto i = listView->GetFirstSelected(); i != -1; i = listView->GetNextSelected(i))
-		c->ass->Attachments.erase(c->ass->Attachments.begin() + i - removed++);
+		staged.file.Attachments.erase(staged.file.Attachments.begin() + i - removed++);
 
-	c->ass->Commit(_("remove attachment"), AssFile::COMMIT_ATTACHMENT);
+	staged.Commit(_("remove attachment"), AssFile::COMMIT_ATTACHMENT);
 
 	UpdateList();
 	extractButton->Enable(false);

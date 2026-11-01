@@ -332,7 +332,7 @@ bool DialogSpellChecker::CheckLine(AssDialogue const* active_line, int start_pos
 
 		text.replace(word_start, word_len, auto_rep->second);
         context->subtitleAccess->Edit(lease).SetDialogueField(active_line->Id, &AssDialogueBase::Text, text);
-		*commit_id = context->ass->Commit(_("spell check replace"), AssFile::COMMIT_DIAG_TEXT, *commit_id);
+		*commit_id = context->subtitleAccess->Edit(lease).Commit(_("spell check replace"), AssFile::COMMIT_DIAG_TEXT, *commit_id);
 		word_start += auto_rep->second.size();
 	}
 	return false;
@@ -347,8 +347,8 @@ void DialogSpellChecker::Replace() {
 	if (to_wx(active_line->Text.get().substr(word_start, word_len)) == orig_word->GetValue()) {
 		std::string text = active_line->Text;
 		text.replace(word_start, word_len, from_wx(replace_word->GetValue()));
-		active_line->Text = text;
-		context->ass->Commit(_("spell check replace"), AssFile::COMMIT_DIAG_TEXT);
+		context->subtitleAccess->Edit(edit_scope->Lease()).SetDialogueField(active_line->Id,&AssDialogueBase::Text,text);
+		context->subtitleAccess->Edit(edit_scope->Lease()).Commit(_("spell check replace"), AssFile::COMMIT_DIAG_TEXT);
 		context->textSelectionController->SetInsertionPoint(word_start + replace_word->GetValue().size());
 	}
 }

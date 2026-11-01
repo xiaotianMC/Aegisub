@@ -37,6 +37,7 @@
 #include "ass_dialogue.h"
 #include "ass_file.h"
 #include "subtitle_project_access.h"
+#include "subtitle_value_edit.h"
 #include "ass_style.h"
 #include "ass_style_storage.h"
 #include "colour_button.h"
@@ -66,7 +67,7 @@
 /// Style rename helper that walks a file searching for a style and optionally
 /// updating references to it
 class StyleRenamer {
-	agi::Context *c;
+	AssFile *file;
 	bool found_any = false;
 	bool do_replace = false;
 	std::string source_name;
@@ -87,7 +88,7 @@ class StyleRenamer {
 		found_any = false;
 		do_replace = replace;
 
-		for (auto& diag : c->ass->Events) {
+		for (auto& diag : file->Events) {
 			if (diag.Style == source_name) {
 				if (replace)
 					diag.Style = new_name;
@@ -106,8 +107,8 @@ class StyleRenamer {
 	}
 
 public:
-	StyleRenamer(agi::Context *c, std::string source_name, std::string new_name)
-	: c(c)
+	StyleRenamer(AssFile *file, std::string source_name, std::string new_name)
+	: file(file)
 	, source_name(std::move(source_name))
 	, new_name(std::move(new_name))
 	{
@@ -425,6 +426,8 @@ void DialogStyleEditor::Apply(bool apply, bool close) {
         bool source_current = store || is_new || (source_revision && source_revision->Current());
         auto edit_scope = store ? std::optional<SubtitleProjectAccess::WriteScope>{} : c->subtitleAccess->TryWrite();
         if (!store && !edit_scope) return;
+        std::unique_ptr<SubtitleValueEdit> staged;
+        if(!store)staged=std::make_unique<SubtitleValueEdit>(c);
         if (!source_current) {
             wxMessageBox(_("The subtitles changed while this style was being edited. Please reopen the style editor."),
                 _("Style Editor"), wxOK | wxICON_ERROR, this);
@@ -437,7 +440,7 @@ void DialogStyleEditor::Apply(bool apply, bool close) {
             for (auto const& entry : *store) if (entry.get() == style) target = entry.get();
         }
         else if (!is_new) {
-            for (auto& entry : c->ass->Styles) if (&entry == style) target = &entry;
+            target=staged->Source(style);
         }
         if (!target) {
             wxMessageBox(_("The style being edited no longer exists."), _("Style Editor"), wxOK | wxICON_ERROR, this);
@@ -446,10 +449,10 @@ void DialogStyleEditor::Apply(bool apply, bool close) {
 		std::string new_name = from_wx(StyleName->GetValue());
 
 		// Get list of existing styles
-		std::vector<std::string> styles = store ? store->GetNames() : c->ass->GetStyles();
+		std::vector<std::string> styles = store ? store->GetNames() : staged->file.GetStyles();
 
 		// Check if style name is unique
-		AssStyle *existing = store ? store->GetStyle(new_name) : c->ass->GetStyle(new_name);
+		AssStyle *existing = store ? store->GetStyle(new_name) : staged->file.GetStyle(new_name);
 		if (existing && existing != target) {
 			wxMessageBox(_("There is already a style with this name. Please choose another name."), _("Style name conflict"), wxOK | wxICON_ERROR | wxCENTER);
 			return;
@@ -459,7 +462,7 @@ void DialogStyleEditor::Apply(bool apply, bool close) {
 		bool did_rename = false;
 		if (work->name != new_name) {
 			if (!store && !is_new) {
-				StyleRenamer renamer(c, work->name, new_name);
+				StyleRenamer renamer(&staged->file, work->name, new_name);
 				if (renamer.NeedsReplace()) {
 					// See if user wants to update style name through script
 					int answer = wxMessageBox(
@@ -487,13 +490,14 @@ void DialogStyleEditor::Apply(bool apply, bool close) {
 			if (store)
 				store->push_back(std::move(pending));
 			else
-                { c->ass->Styles.push_back(*pending); pending.release(); }
+                { staged->file.Styles.push_back(*pending); pending.release(); }
 			is_new = false;
 		}
-        style = target;
+        if(store)style=target;
+        else {staged->Publish(AssFile::COMMIT_STYLES | (did_rename?AssFile::COMMIT_DIAG_FULL:0));style=staged->LiveStyle(target);}
         style_name = target->name;
 		if (!store)
-			c->ass->Commit(_("style change"), AssFile::COMMIT_STYLES | (did_rename ? AssFile::COMMIT_DIAG_FULL : 0));
+			staged->Commit(_("style change"), AssFile::COMMIT_STYLES | (did_rename ? AssFile::COMMIT_DIAG_FULL : 0));
         if (!store) source_revision = c->subtitleEditGate.Capture();
 
 		// Update preview

@@ -138,7 +138,7 @@ void BaseGrid::OnDPIChanged(wxDPIChangedEvent &e) {
 
 void BaseGrid::OnSubtitlesCommit(int type) {
 	if (type == AssFile::COMMIT_NEW || (type & AssFile::COMMIT_EXTRADATA)) {
-		bool bound = std::any_of(context->ass->Events.begin(), context->ass->Events.end(), [&](auto const& line) {
+		bool bound = std::any_of(context->subtitleAccess->Read().Events.begin(), context->subtitleAccess->Read().Events.end(), [&](auto const& line) {
 			return !GetSubtitleBinding(context->subtitleAccess->Read(), line).empty();
 		});
 		if (bound) {
@@ -218,7 +218,7 @@ void BaseGrid::UpdateStyle() {
 void BaseGrid::UpdateMaps() {
 	index_line_map.clear();
 
-	for (auto& curdiag : context->ass->Events)
+	for (auto const& curdiag : context->subtitleAccess->Read().Events)
 		index_line_map.push_back(&curdiag);
 
 	SetColumnWidths();

@@ -68,6 +68,7 @@
 #include <wx/filedlg.h>
 #include <wx/choicdlg.h>
 #include <wx/listbox.h>
+#include <wx/checklst.h>
 #include <wx/button.h>
 #include <wx/listctrl.h>
 #include <wx/panel.h>
@@ -1449,4 +1450,62 @@ TEST_F(ordinary_edit, controlled_duplicate_move_join_and_split_preserve_live_ide
     c->textSelectionController->SetSelection(1,1);
     cmd::call("edit/line/split/preserve",c.get());EXPECT_EQ(5u,c->ass->Events.size());
     c->subsController->Undo();EXPECT_EQ(4u,c->ass->Events.size());
+}
+
+TEST_F(ordinary_edit, controlled_real_style_rename_updates_references_and_repeated_apply_keeps_node_identity) {
+    class ConfirmRename : public wxModalDialogHook {
+    public: ConfirmRename(){Register();}
+        int Enter(wxDialog* dialog) override {return dynamic_cast<wxMessageDialog*>(dialog)?wxID_YES:wxID_NONE;}
+    } confirm;
+    Input("{\\rDefault}text");
+    auto live=c->ass->GetStyle("Default");wxArrayString fonts;fonts.Add("Arial");
+    DialogStyleEditor dialog(window,live,c.get(),nullptr,"",fonts);
+    wxTextCtrl* name=nullptr;
+    for(auto child:descendants(&dialog))if(auto text=dynamic_cast<wxTextCtrl*>(child);text && text->GetValue()=="Default"){name=text;break;}
+    ASSERT_NE(nullptr,name);name->ChangeValue("Renamed");button(&dialog,wxID_APPLY);
+    EXPECT_EQ(live,c->ass->GetStyle("Renamed"));EXPECT_EQ("Renamed",c->ass->Events.front().Style.get());EXPECT_EQ("{\\rRenamed}text",c->ass->Events.front().Text.get());
+    button(&dialog,wxID_APPLY);EXPECT_EQ(live,c->ass->GetStyle("Renamed"));
+    c->subsController->Undo();c->subsController->Undo();EXPECT_NE(nullptr,c->ass->GetStyle("Default"));EXPECT_EQ("{\\rDefault}text",c->ass->Events.front().Text.get());
+    c->subsController->Redo();EXPECT_EQ("{\\rRenamed}text",c->ass->Events.front().Text.get());
+}
+
+TEST_F(ordinary_edit, controlled_shift_and_timing_processor_use_real_dialog_confirm_events) {
+    OPT_SET("Tool/Shift Times/ByTime")->SetBool(true);OPT_SET("Tool/Shift Times/Direction")->SetBool(false);
+    OPT_SET("Tool/Shift Times/Type")->SetInt(0);OPT_SET("Tool/Shift Times/Affect")->SetInt(0);
+    ShowShiftTimesDialog(c.get());
+    wxDialog* shift=nullptr;
+    for(auto child:window->GetChildren())if(auto dialog=dynamic_cast<wxDialog*>(child);dialog && dialog->GetTitle()=="Shift Times")shift=dialog;
+    ASSERT_NE(nullptr,shift);
+    TimeEdit* value=nullptr;for(auto child:descendants(shift))if(auto time=dynamic_cast<TimeEdit*>(child))value=time;
+    ASSERT_NE(nullptr,value);value->SetTime(1000);button(shift,wxID_OK);
+    EXPECT_EQ(1000,c->ass->Events.front().Start.GetMilliseconds());
+    OPT_SET("Tool/Timing Post Processor/Lead/IN")->SetInt(100);
+    OPT_SET("Tool/Timing Post Processor/Enable/Lead/IN")->SetBool(true);
+    OPT_SET("Tool/Timing Post Processor/Enable/Lead/OUT")->SetBool(false);
+    OPT_SET("Tool/Timing Post Processor/Enable/Adjacent")->SetBool(false);
+    OPT_SET("Tool/Timing Post Processor/Enable/Keyframe")->SetBool(false);
+    {
+        RunModal hook("Timing Post-Processor",[&](wxDialog* dialog){
+            for(auto child:descendants(dialog))if(auto list=dynamic_cast<wxCheckListBox*>(child))for(unsigned i=0;i<list->GetCount();++i)list->Check(i,true);
+            button(dialog,wxID_OK);
+        });
+        ShowTimingProcessorDialog(c.get());EXPECT_EQ(900,c->ass->Events.front().Start.GetMilliseconds());
+    }
+    c->subsController->Undo();EXPECT_EQ(1000,c->ass->Events.front().Start.GetMilliseconds());
+    c->subsController->Undo();EXPECT_EQ(0,c->ass->Events.front().Start.GetMilliseconds());
+}
+TEST_F(ordinary_edit, controlled_resample_uses_real_settings_confirmation_and_one_history_step) {
+    Input("{\\pos(10,20)}sample");
+    int width,height;c->ass->GetResolution(width,height);auto fontsize=c->ass->GetStyle("Default")->fontsize;
+    RunModal hook("Resample Resolution",[&](wxDialog* dialog){
+        int changed=0;
+        for(auto child:descendants(dialog))if(auto spin=dynamic_cast<wxSpinCtrl*>(child);spin && spin->GetParent()->GetLabel()=="Destination Resolution") {spin->SetValue(spin->GetValue()*2);++changed;}
+        ASSERT_EQ(2,changed);button(dialog,wxID_OK);
+    });
+    cmd::call("tool/resampleres",c.get());
+    EXPECT_EQ(width*2,c->ass->GetScriptInfoAsInt("PlayResX"));EXPECT_EQ(height*2,c->ass->GetScriptInfoAsInt("PlayResY"));
+    EXPECT_DOUBLE_EQ(fontsize*2,c->ass->GetStyle("Default")->fontsize);
+    c->subsController->Undo();int restored_width,restored_height;c->ass->GetResolution(restored_width,restored_height);
+    EXPECT_EQ(width,restored_width);EXPECT_EQ(height,restored_height);EXPECT_DOUBLE_EQ(fontsize,c->ass->GetStyle("Default")->fontsize);
+    EXPECT_EQ("{\\pos(10,20)}sample",c->ass->Events.front().Text.get());
 }

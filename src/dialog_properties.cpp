@@ -29,6 +29,7 @@
 
 #include "ass_file.h"
 #include "subtitle_project_access.h"
+#include "subtitle_value_edit.h"
 #include "async_video_provider.h"
 #include "compat.h"
 #include "help_button.h"
@@ -79,7 +80,7 @@ class DialogProperties {
 	/// @param key Name of field
 	/// @param value New value
 	/// @return Did the value actually need to be changed?
-	int SetInfoIfDifferent(std::string_view key, std::string_view value);
+	int SetInfoIfDifferent(AssFile& target, std::string_view key, std::string_view value);
 
 	/// Add a property with label and text box for updating the property
 	/// @param parent Parent to construct the label and control with
@@ -223,26 +224,27 @@ void DialogProperties::AddProperty(wxWindow *parent, wxSizer *sizer, wxString co
 void DialogProperties::OnOK(wxCommandEvent &) {
     auto edit_scope = c->subtitleAccess->TryWrite();
     if (!edit_scope) return;
+    SubtitleValueEdit staged(c);
 	int count = 0;
 	for (auto const& prop : properties)
-		count += SetInfoIfDifferent(prop.first, from_wx(prop.second->GetValue()));
+		count += SetInfoIfDifferent(staged.file,prop.first, from_wx(prop.second->GetValue()));
 
-	count += SetInfoIfDifferent("PlayResX", from_wx(ResX->GetValue()));
-	count += SetInfoIfDifferent("PlayResY", from_wx(ResY->GetValue()));
-	count += SetInfoIfDifferent("LayoutResX", from_wx(LayoutResX->GetValue()));
-	count += SetInfoIfDifferent("LayoutResY", from_wx(LayoutResY->GetValue()));
-	count += SetInfoIfDifferent("WrapStyle", std::to_string(WrapStyle->GetSelection()));
-	count += SetInfoIfDifferent("ScaledBorderAndShadow", ScaleBorder->GetValue() ? "yes" : "no");
-	count += SetInfoIfDifferent("YCbCr Matrix", from_wx(YCbCrMatrix->GetValue()));
+	count += SetInfoIfDifferent(staged.file,"PlayResX", from_wx(ResX->GetValue()));
+	count += SetInfoIfDifferent(staged.file,"PlayResY", from_wx(ResY->GetValue()));
+	count += SetInfoIfDifferent(staged.file,"LayoutResX", from_wx(LayoutResX->GetValue()));
+	count += SetInfoIfDifferent(staged.file,"LayoutResY", from_wx(LayoutResY->GetValue()));
+	count += SetInfoIfDifferent(staged.file,"WrapStyle", std::to_string(WrapStyle->GetSelection()));
+	count += SetInfoIfDifferent(staged.file,"ScaledBorderAndShadow", ScaleBorder->GetValue() ? "yes" : "no");
+	count += SetInfoIfDifferent(staged.file,"YCbCr Matrix", from_wx(YCbCrMatrix->GetValue()));
 
-	if (count) c->ass->Commit(_("property changes"), AssFile::COMMIT_SCRIPTINFO);
+	if (count) staged.Commit(_("property changes"), AssFile::COMMIT_SCRIPTINFO);
 
 	d.EndModal(!!count);
 }
 
-int DialogProperties::SetInfoIfDifferent(std::string_view key, std::string_view value) {
-	if (c->subtitleAccess->Read().GetScriptInfo(key) != value) {
-		c->ass->SetScriptInfo(key, value);
+int DialogProperties::SetInfoIfDifferent(AssFile& target, std::string_view key, std::string_view value) {
+	if (target.GetScriptInfo(key) != value) {
+		target.SetScriptInfo(key, value);
 		return 1;
 	}
 	return 0;

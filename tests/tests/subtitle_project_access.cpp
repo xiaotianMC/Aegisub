@@ -251,3 +251,28 @@ TEST(subtitle_project_access, ordinary_row_list_rejects_stale_or_duplicate_resul
     auto retired=edit.ReplaceRows(stamp,original,{original[1]});
     ASSERT_EQ(1u,file.Events.size());EXPECT_EQ(b,&file.Events.front());ASSERT_EQ(1u,retired.size());EXPECT_EQ(a,retired.front().get());EXPECT_EQ(a->Id,retired.front()->Id);
 }
+
+TEST(subtitle_project_access, ordinary_dependent_values_prepare_every_part_and_preserve_project_properties) {
+    AssFile file;auto row=new AssDialogue;row->Row=0;file.Events.push_back(*row);auto style=new AssStyle;file.Styles.push_back(*style);
+    file.SetScriptInfo("Title","original");file.Properties.video_position=17;
+    agi::SubtitleEditGate gate;SubtitleProjectAccess access(file,gate);auto scope=access.TryWrite();auto stamp=gate.Capture();
+    AssFile original(file),candidate(file);original.Events.front().Id=candidate.Events.front().Id=row->Id;
+    candidate.Styles.front().name="Renamed";candidate.Styles.front().UpdateData();
+    candidate.Events.front().Style="Renamed";candidate.Events.front().Text="new";
+    auto id=candidate.AddExtradata("opaque","value");candidate.Events.front().ExtradataIds=std::vector<uint32_t>{id};
+    candidate.SetScriptInfo("Title","updated");candidate.Properties.video_position=99;
+    auto edit=access.Edit(scope->Lease());
+    EXPECT_THROW(edit.UpdateValues(stamp,original,candidate,{1},AssFile::COMMIT_STYLES|AssFile::COMMIT_DIAG_FULL),std::invalid_argument);
+    EXPECT_EQ("",row->Text.get());EXPECT_EQ("Default",style->name);EXPECT_EQ("original",file.GetScriptInfo("Title"));
+    auto retired=edit.UpdateValues(stamp,original,candidate,{0},AssFile::COMMIT_STYLES|AssFile::COMMIT_DIAG_FULL|AssFile::COMMIT_SCRIPTINFO|AssFile::COMMIT_EXTRADATA);
+    EXPECT_TRUE(retired.empty());EXPECT_EQ(style,&file.Styles.front());EXPECT_EQ(row,&file.Events.front());
+    EXPECT_EQ("Renamed",row->Style.get());EXPECT_EQ("updated",file.GetScriptInfo("Title"));EXPECT_EQ(1u,file.Extradata.size());EXPECT_EQ(17,file.Properties.video_position);
+}
+TEST(subtitle_project_access, ordinary_values_reject_silent_dependency_changes_and_unknown_new_extra_before_writing) {
+    AssFile file;auto row=new AssDialogue;row->Row=0;file.Events.push_back(*row);file.Styles.push_back(*new AssStyle);
+    agi::SubtitleEditGate gate;SubtitleProjectAccess access(file,gate);auto scope=access.TryWrite();auto stamp=gate.Capture();
+    AssFile original(file),candidate(file);original.Events.front().Id=candidate.Events.front().Id=row->Id;candidate.Events.front().Text="blocked";
+    row->Start=1;auto edit=access.Edit(scope->Lease());EXPECT_THROW(edit.UpdateValues(stamp,original,candidate,{0},AssFile::COMMIT_DIAG_FULL),std::logic_error);
+    row->Start=0;candidate.Events.front().ExtradataIds=std::vector<uint32_t>{100};
+    EXPECT_THROW(edit.UpdateValues(stamp,original,candidate,{0},AssFile::COMMIT_DIAG_FULL|AssFile::COMMIT_EXTRADATA),std::invalid_argument);EXPECT_EQ("",row->Text.get());
+}

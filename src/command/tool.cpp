@@ -31,6 +31,7 @@
 
 #include "command.h"
 #include "../subtitle_project_access.h"
+#include "../subtitle_value_edit.h"
 
 #include "../compat.h"
 #include "../dialog_manager.h"
@@ -100,8 +101,12 @@ struct tool_resampleres final : public Command {
         if (!edit_scope) return;
 		c->videoController->Stop();
 		ResampleSettings settings;
+        SubtitleValueEdit staged(c);
 		if (PromptForResampleSettings(c, settings))
-			ResampleResolution(c->ass.get(), settings);
+			{
+                ResampleResolution(&staged.file, settings);
+                staged.Publish(AssFile::COMMIT_SCRIPTINFO|AssFile::COMMIT_DIAG_FULL|AssFile::COMMIT_STYLES);
+                staged.Commit(_("resolution resampling"),AssFile::COMMIT_SCRIPTINFO|AssFile::COMMIT_DIAG_FULL); }
 	}
 };
 

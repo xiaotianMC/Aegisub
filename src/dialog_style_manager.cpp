@@ -30,6 +30,7 @@
 #include "ass_dialogue.h"
 #include "ass_file.h"
 #include "subtitle_project_access.h"
+#include "subtitle_value_edit.h"
 #include "ass_style.h"
 #include "ass_style_storage.h"
 #include "charset_detect.h"
@@ -535,6 +536,7 @@ void DialogStyleManager::OnCopyToStorage() {
 void DialogStyleManager::OnCopyToCurrent() {
     auto edit_scope = c->subtitleAccess->TryWrite();
     if (!edit_scope) return;
+    SubtitleValueEdit staged(c);
 	wxArrayInt selections;
 	int n = StorageList->GetSelections(selections);
 	wxArrayString copied;
@@ -542,19 +544,19 @@ void DialogStyleManager::OnCopyToCurrent() {
 	for (int i = 0; i < n; i++) {
 		wxString styleName = StorageList->GetString(selections[i]);
 
-		if (AssStyle *style = c->ass->GetStyle(from_wx(styleName))) {
+		if (AssStyle *style = staged.file.GetStyle(from_wx(styleName))) {
 			if (wxYES == wxMessageBox(fmt_tl("There is already a style with the name \"%s\" in the current script. Overwrite?", styleName), _("Style name collision"), wxYES_NO)) {
 				*style = *Store[selections[i]];
 				copied.push_back(styleName);
 			}
 		}
 		else {
-			c->ass->Styles.push_back(*new AssStyle(*Store[selections[i]]));
+			staged.file.Styles.push_back(*new AssStyle(*Store[selections[i]]));
 			copied.push_back(styleName);
 		}
 	}
 
-	c->ass->Commit(_("style copy"), AssFile::COMMIT_STYLES);
+	staged.Commit(_("style copy"), AssFile::COMMIT_STYLES);
 
 	CurrentList->DeselectAll();
 	for (auto const& style_name : copied)
@@ -582,11 +584,12 @@ void DialogStyleManager::CopyToClipboard(wxListBox *list, T const& v) {
 void DialogStyleManager::PasteToCurrent() {
     auto edit_scope = c->subtitleAccess->TryWrite();
     if (!edit_scope) return;
+    SubtitleValueEdit staged(c);
 	add_styles(
-		[this](std::string const& str) { return c->ass->GetStyle(str); },
-		[this](AssStyle *s) { c->ass->Styles.push_back(*s); });
+		[&](std::string const& str) { return staged.file.GetStyle(str); },
+		[&](AssStyle *s) { staged.file.Styles.push_back(*s); });
 
-	c->ass->Commit(_("style paste"), AssFile::COMMIT_STYLES);
+	staged.Commit(_("style paste"), AssFile::COMMIT_STYLES);
 }
 
 void DialogStyleManager::PasteToStorage() {
@@ -661,27 +664,29 @@ void DialogStyleManager::OnCurrentCopy() {
 	if (sel == -1) return;
 
 	ShowCurrentEditor(styleMap[sel], unique_name(
-		[this](std::string const& str) { return c->ass->GetStyle(str); },
+		[this](std::string const& str) { return c->subtitleAccess->Read().GetStyle(str); },
 		styleMap[sel]->name));
 }
 
 void DialogStyleManager::OnCurrentDelete() {
     auto edit_scope = c->subtitleAccess->TryWrite();
     if (!edit_scope) return;
+    SubtitleValueEdit staged(c);
 	wxArrayInt selections;
 	int n = CurrentList->GetSelections(selections);
 
 	if (confirm_delete(n, this, _("Confirm delete from current")) == wxYES) {
 		for (int i = 0; i < n; i++) {
-			delete styleMap.at(selections[i]);
+			delete staged.Source(styleMap.at(selections[i]));
 		}
-		c->ass->Commit(_("style delete"), AssFile::COMMIT_STYLES);
+		staged.Commit(_("style delete"), AssFile::COMMIT_STYLES);
 	}
 }
 
 void DialogStyleManager::OnCurrentImport() {
     auto edit_scope = c->subtitleAccess->TryWrite();
     if (!edit_scope) return;
+    SubtitleValueEdit staged(c);
 	auto filename = OpenFileSelector(c, _("Open Subtitles File"), "Path/Last/Subtitles", "", "", SubtitleFormat::GetWildcards(0), this);
 	if (filename.empty()) return;
 
@@ -726,7 +731,7 @@ void DialogStyleManager::OnCurrentImport() {
 	// Loop through selection
 	for (auto const& sel : selections) {
 		// Check if there is already a style with that name
-		if (AssStyle *existing = c->ass->GetStyle(styles[sel])) {
+		if (AssStyle *existing = staged.file.GetStyle(styles[sel])) {
 			int answer = wxMessageBox(
 				fmt_tl("There is already a style with the name \"%s\" in the current script. Overwrite?", styles[sel]),
 				_("Style name collision"),
@@ -740,12 +745,12 @@ void DialogStyleManager::OnCurrentImport() {
 
 		// Copy
 		modified = true;
-		c->ass->Styles.push_back(*new AssStyle(*temp.GetStyle(styles[sel])));
+		staged.file.Styles.push_back(*new AssStyle(*temp.GetStyle(styles[sel])));
 	}
 
 	// Update
 	if (modified)
-		c->ass->Commit(_("style import"), AssFile::COMMIT_STYLES);
+		staged.Commit(_("style import"), AssFile::COMMIT_STYLES);
 }
 
 void DialogStyleManager::UpdateButtons() {
@@ -888,23 +893,24 @@ void DialogStyleManager::MoveStyles(bool storage, int type) {
 	else {
         // Mutable node identities exist only inside this write scope. Build
         // once so a read-only UI cache does not turn reorder into O(n^2).
+        SubtitleValueEdit staged(c);
         std::unordered_map<AssStyle const*, AssStyle*> live;
         live.reserve(styleMap.size());
-        for (auto& style : c->ass->Styles) live.emplace(&style, &style);
+        for (auto style:styleMap)live.emplace(style,staged.Source(style));
 		do_move(styleMap, type, first, last, false);
 
 		// Replace styles
 		size_t curn = 0;
-		for (auto it = c->ass->Styles.begin(); it != c->ass->Styles.end(); ++it) {
+		for (auto it = staged.file.Styles.begin(); it != staged.file.Styles.end(); ++it) {
             auto found = live.find(styleMap[curn]);
             if (found == live.end()) throw std::logic_error("Style list changed during reorder");
-            auto new_style_at_pos = c->ass->Styles.iterator_to(*found->second);
+            auto new_style_at_pos = staged.file.Styles.iterator_to(*found->second);
 			EntryList<AssStyle>::node_algorithms::swap_nodes(it.pointed_node(), new_style_at_pos.pointed_node());
 			if (++curn == styleMap.size()) break;
 			it = new_style_at_pos;
 		}
 
-		c->ass->Commit(_("style move"), AssFile::COMMIT_STYLES);
+		staged.Commit(_("style move"), AssFile::COMMIT_STYLES);
 	}
 
 	for (int i = 0 ; i < (int)list->GetCount(); ++i) {

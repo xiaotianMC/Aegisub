@@ -86,6 +86,10 @@ public:
             style->UpdateData();
         }
         void SetExtradataValue(uint32_t id, std::string value) const;
+        // Value-only ordinary edits; row structure and project/UI properties cannot change.
+        std::vector<std::unique_ptr<AssStyle>> UpdateValues(
+            agi::SubtitleEditGate::RevisionToken const&, AssFile const& original, AssFile const& result,
+            std::vector<int> const& style_sources, int parts) const;
         void UpdateRows(std::vector<AssDialogueBase> const&) const;
         // Ordinary row-list edits only. Returned nodes are detached retired data;
         // callers retain them through Commit and selection refresh.

@@ -5,6 +5,7 @@
 #include "ass_dialogue.h"
 #include "ass_file.h"
 #include "subtitle_project_access.h"
+#include "subtitle_value_edit.h"
 #include "include/aegisub/context.h"
 #include "selection_controller.h"
 
@@ -63,8 +64,10 @@ void BindSelectedSubtitles(agi::Context *c) {
     auto edit_scope = c->subtitleAccess->TryWrite();
     if (!edit_scope) return;
     auto selection = c->selectionController->GetSelectedSet();
+    std::set<int> ids;for(auto row:selection)ids.insert(row->Id);
     if (selection.size() < 2) return;
-    auto& file = *c->ass;
+    SubtitleValueEdit staged(c);
+    auto& file = staged.file;
     std::set<std::string> merging;
     std::array<int, 8> colors{};
     std::set<std::string> all_groups;
@@ -72,7 +75,7 @@ void BindSelectedSubtitles(agi::Context *c) {
         auto group = GetSubtitleBinding(file, line);
         if (group.empty()) continue;
         if (all_groups.insert(group).second) ++colors[SubtitleBindingColorIndex(group)];
-        if (selection.count(&line)) merging.insert(std::move(group));
+        if (ids.contains(line.Id)) merging.insert(std::move(group));
     }
     if (merging.size() == 1 && std::all_of(selection.begin(), selection.end(), [&](auto line) {
         return GetSubtitleBinding(file, *line) == *merging.begin();
@@ -86,22 +89,26 @@ void BindSelectedSubtitles(agi::Context *c) {
     for (int i = 0; i < 4; ++i) token << std::setw(8) << random();
     auto id = file.AddExtradata(key, token.str());
     for (auto& line : file.Events) {
-        if (selection.count(&line) || merging.count(GetSubtitleBinding(file, line)))
+        if (ids.contains(line.Id) || merging.count(GetSubtitleBinding(file, line)))
             SetBinding(file, line, id);
     }
-    file.Commit(_("bind subtitles"), AssFile::COMMIT_EXTRADATA | AssFile::COMMIT_DIAG_META);
+    staged.Commit(_("bind subtitles"), AssFile::COMMIT_EXTRADATA | AssFile::COMMIT_DIAG_META);
 
     // Selecting one member of the new group should now select all of them.
-    auto expanded = ExpandBoundSelection(file, selection);
+    auto expanded = ExpandBoundSelection(*c->ass, selection);
     c->selectionController->SetSelectedSet(std::move(expanded));
 }
 
 void UnbindSelectedSubtitles(agi::Context *c) {
     auto edit_scope = c->subtitleAccess->TryWrite();
     if (!edit_scope) return;
-    auto& file = *c->ass;
+    SubtitleValueEdit staged(c);
+    auto& file = staged.file;
     bool changed = false;
-    for (auto line : c->selectionController->GetSelectedSet()) {
+    std::set<int> ids;for(auto row:c->selectionController->ReadSelectedLines())ids.insert(row->Id);
+    for (auto& value : file.Events) {
+        if(!ids.contains(value.Id))continue;
+        auto line=&value;
         if (!GetSubtitleBinding(file, *line).empty()) {
             SetBinding(file, *line, std::nullopt);
             changed = true;
@@ -116,5 +123,5 @@ void UnbindSelectedSubtitles(agi::Context *c) {
     }
     for (auto const& [group, members] : groups)
         if (members.size() == 1) SetBinding(file, *members.front(), std::nullopt);
-    file.Commit(_("unbind subtitles"), AssFile::COMMIT_EXTRADATA | AssFile::COMMIT_DIAG_META);
+    staged.Commit(_("unbind subtitles"), AssFile::COMMIT_EXTRADATA | AssFile::COMMIT_DIAG_META);
 }
