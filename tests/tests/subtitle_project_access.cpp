@@ -240,3 +240,14 @@ TEST(subtitle_project_access, const_queries_subscribe_and_all_write_handles_reje
     });
     edit.Commit("ok",AssFile::COMMIT_DIAG_TEXT);EXPECT_TRUE(called);EXPECT_EQ("",file.Events.front().Text.get());
 }
+
+TEST(subtitle_project_access, ordinary_row_list_rejects_stale_or_duplicate_results_before_detaching_any_node) {
+    AssFile file;auto a=new AssDialogue;auto b=new AssDialogue;file.Events.push_back(*a);file.Events.push_back(*b);a->Row=0;b->Row=1;
+    agi::SubtitleEditGate gate,foreign;SubtitleProjectAccess access(file,gate);auto scope=access.TryWrite();auto edit=access.Edit(scope->Lease());
+    auto stamp=gate.Capture();std::vector<AssDialogueBase> original={*a,*b};auto changed=original;changed[0].Text="changed";
+    EXPECT_THROW(edit.ReplaceRows(stamp,original,{changed[0],changed[0]}),std::invalid_argument);EXPECT_EQ("",a->Text.get());
+    EXPECT_THROW(edit.ReplaceRows(foreign.Capture(),original,changed),std::logic_error);
+    auto stale=original;stale[1].Start=1;EXPECT_THROW(edit.ReplaceRows(stamp,stale,changed),std::logic_error);
+    auto retired=edit.ReplaceRows(stamp,original,{original[1]});
+    ASSERT_EQ(1u,file.Events.size());EXPECT_EQ(b,&file.Events.front());ASSERT_EQ(1u,retired.size());EXPECT_EQ(a,retired.front().get());EXPECT_EQ(a->Id,retired.front()->Id);
+}

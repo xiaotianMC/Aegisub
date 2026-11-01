@@ -240,3 +240,46 @@ int SubtitleProjectAccess::WriteAccess::Commit(wxString const& message, int type
     if (id && !single) throw std::out_of_range("Subtitle commit target missing");
     return access.file->Commit(message, type, amend, single);
 }
+
+namespace {
+auto RowFields(AssDialogueBase const& row) {
+    return std::make_tuple(row.Id,row.Row,row.Comment,row.Layer,row.Margin,
+        row.Start.GetMilliseconds(),row.End.GetMilliseconds(),row.Style,row.Actor,row.Effect,row.ExtradataIds,row.Text);
+}
+}
+std::vector<std::unique_ptr<AssDialogue>> SubtitleProjectAccess::WriteAccess::ReplaceRows(
+    agi::SubtitleEditGate::RevisionToken const& revision, std::vector<AssDialogueBase> const& originals,
+    std::vector<AssDialogueBase> const& result) const {
+    auto access=Check();
+    if(!access.owner->gate->Authorizes(revision))throw std::logic_error("Stale row-list edit");
+    auto& events=access.file->Events;
+    if(events.size()!=originals.size())throw std::logic_error("Row-list structure changed");
+    std::unordered_map<int,AssDialogue*> live;
+    size_t i=0;
+    for(auto& row:events) {
+        if(RowFields(row)!=RowFields(originals[i++]))throw std::logic_error("Row-list data changed");
+        if(!live.emplace(row.Id,&row).second)throw std::logic_error("Duplicate live row ID");
+    }
+    std::set<int> seen;
+    std::vector<std::unique_ptr<AssDialogue>> allocated;
+    std::vector<AssDialogue*> prepared;
+    allocated.reserve(result.size());prepared.reserve(result.size());
+    for(auto const& row:result) {
+        if(row.Id<=0 || !seen.insert(row.Id).second)throw std::invalid_argument("Invalid row-list identity");
+        auto found=live.find(row.Id);
+        if(found!=live.end())prepared.push_back(found->second);
+        else {allocated.push_back(std::make_unique<AssDialogue>(row));prepared.push_back(allocated.back().get());}
+    }
+    std::vector<std::unique_ptr<AssDialogue>> retired;retired.reserve(originals.size());
+    EntryList<AssDialogue> old;
+    old.swap(events);
+    for(size_t j=0;j<prepared.size();++j) {
+        auto row=prepared[j];
+        if(live.contains(row->Id))old.erase(old.iterator_to(*row));
+        static_cast<AssDialogueBase&>(*row)=result[j];
+        events.push_back(*row);
+    }
+    for(auto& row:allocated)row.release();
+    while(!old.empty()) {auto row=&old.front();old.pop_front();retired.emplace_back(row);}
+    return retired;
+}

@@ -87,6 +87,11 @@ public:
         }
         void SetExtradataValue(uint32_t id, std::string value) const;
         void UpdateRows(std::vector<AssDialogueBase> const&) const;
+        // Ordinary row-list edits only. Returned nodes are detached retired data;
+        // callers retain them through Commit and selection refresh.
+        std::vector<std::unique_ptr<AssDialogue>> ReplaceRows(
+            agi::SubtitleEditGate::RevisionToken const&, std::vector<AssDialogueBase> const& originals,
+            std::vector<AssDialogueBase> const& result) const;
         bool LinkAdjacent(int id, bool start_changed, int old_boundary, int threshold_ms, bool exact_milliseconds = false) const;
         int Commit(wxString const&, int type, int amend_id = -1, int single_line_id = 0) const;
     };

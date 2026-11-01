@@ -31,6 +31,7 @@
 
 #include "command.h"
 #include "../subtitle_project_access.h"
+#include "../subtitle_row_list_edit.h"
 
 #include "../ass_dialogue.h"
 #include "../ass_file.h"
@@ -115,19 +116,20 @@ struct subtitle_find_next final : public Command {
 };
 
 static void insert_subtitle_at_video(agi::Context *c, bool after) {
+    SubtitleRowListEdit staged(c);
 	auto def = new AssDialogue;
 	int video_ms = c->videoController->TimeAtFrame(c->videoController->GetFrameN(), agi::vfr::START);
 	def->Start = video_ms;
 	def->End = video_ms + OPT_GET("Timing/Default Duration")->GetInt();
-	def->Style = c->selectionController->GetActiveLine()->Style;
+	def->Style = staged.active->Style;
 
-	auto pos = c->ass->iterator_to(*c->selectionController->GetActiveLine());
+	auto pos = staged.file.iterator_to(*staged.active);
 	if (after) ++pos;
 
-	c->ass->Events.insert(pos, *def);
-	c->ass->Commit(_("line insertion"), AssFile::COMMIT_DIAG_ADDREM);
+	staged.file.Events.insert(pos, *def);
+	staged.Commit(_("line insertion"), AssFile::COMMIT_DIAG_ADDREM);
 
-	c->selectionController->SetSelectionAndActive({ def }, def);
+	staged.Select({ def }, def);
 }
 
 struct subtitle_insert_after final : public validate_nonempty_selection {
@@ -139,14 +141,15 @@ struct subtitle_insert_after final : public validate_nonempty_selection {
 	void operator()(agi::Context *c) override {
         auto edit_scope = c->subtitleAccess->TryWrite();
         if (!edit_scope) return;
-		AssDialogue *active_line = c->selectionController->GetActiveLine();
+        SubtitleRowListEdit staged(c);
+		AssDialogue *active_line = staged.active;
 
 		auto new_line = new AssDialogue;
 		new_line->Style = active_line->Style;
 		new_line->Start = active_line->End;
 		new_line->End = new_line->Start + OPT_GET("Timing/Default Duration")->GetInt();
 
-		for (auto it = c->ass->Events.begin(); it != c->ass->Events.end(); ++it) {
+		for (auto it = staged.file.Events.begin(); it != staged.file.Events.end(); ++it) {
 			AssDialogue *diag = &*it;
 
 			// Limit the line to the available time
@@ -156,13 +159,13 @@ struct subtitle_insert_after final : public validate_nonempty_selection {
 			// If we just hit the active line, insert the new line after it
 			if (diag == active_line) {
 				++it;
-				c->ass->Events.insert(it, *new_line);
+				staged.file.Events.insert(it, *new_line);
 				--it;
 			}
 		}
 
-		c->ass->Commit(_("line insertion"), AssFile::COMMIT_DIAG_ADDREM);
-		c->selectionController->SetSelectionAndActive({ new_line }, new_line);
+		staged.Commit(_("line insertion"), AssFile::COMMIT_DIAG_ADDREM);
+		staged.Select({ new_line }, new_line);
 	}
 };
 
@@ -188,14 +191,15 @@ struct subtitle_insert_before final : public validate_nonempty_selection {
 	void operator()(agi::Context *c) override {
         auto edit_scope = c->subtitleAccess->TryWrite();
         if (!edit_scope) return;
-		AssDialogue *active_line = c->selectionController->GetActiveLine();
+        SubtitleRowListEdit staged(c);
+		AssDialogue *active_line = staged.active;
 
 		auto new_line = new AssDialogue;
 		new_line->Style = active_line->Style;
 		new_line->End = active_line->Start;
 		new_line->Start = new_line->End - OPT_GET("Timing/Default Duration")->GetInt();
 
-		for (auto it = c->ass->Events.begin(); it != c->ass->Events.end(); ++it) {
+		for (auto it = staged.file.Events.begin(); it != staged.file.Events.end(); ++it) {
 			auto diag = &*it;
 
 			// Limit the line to the available time
@@ -204,11 +208,11 @@ struct subtitle_insert_before final : public validate_nonempty_selection {
 
 			// If we just hit the active line, insert the new line before it
 			if (diag == active_line)
-				c->ass->Events.insert(it, *new_line);
+				staged.file.Events.insert(it, *new_line);
 		}
 
-		c->ass->Commit(_("line insertion"), AssFile::COMMIT_DIAG_ADDREM);
-		c->selectionController->SetSelectionAndActive({ new_line }, new_line);
+		staged.Commit(_("line insertion"), AssFile::COMMIT_DIAG_ADDREM);
+		staged.Select({ new_line }, new_line);
 	}
 };
 

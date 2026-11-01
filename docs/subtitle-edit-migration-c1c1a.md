@@ -44,3 +44,17 @@ WriteAccess 增加整批 UpdateRows、按 ID 的 LinkAdjacent/Commit；Interacti
 剩余：尚待迁移命令和批处理/结构/样式/Info/Extra/附件等 C1-C1a 操作族；Context::ass、AssFile 公开容器和 Selection mutable getter/通知仍存在，Lua、Load/Close/Save 等属 c。此提交不代表 C1-C1a 或完整工程隔离完成。实体设备/完整主窗口人工验收不由隐藏窗口事件测试替代。
 
 提交名称：refactor(compare): route ordinary row values through write access。每批普通提交并推送 fork/codex/style-name-width，实际哈希由远端核对及交付回复记录。
+
+## 功能族 2：文本命令和时间批处理（d0fb72b）
+
+提交名称 refactor(compare): stage ordinary text and timing edits，完整哈希 d0fb72be0d861dc089b9a58901d075e524fa87ee，普通推送并核对远端一致。
+实际文件：src/subtitle_row_edit.h、src/command/edit.cpp、src/command/time.cpp、src/dialog_shift_times.cpp、src/dialog_timing_processor.cpp、src/search_replace_engine.cpp、tests/tests/ordinary_edit.cpp。
+目标行独立值覆盖标签/颜色/活动行文本、时间对齐/吸附、ShiftTimes、TimingProcessor、替换。颜色回调校验修订。新增真实多行标签 Undo/Redo 及 adjoin/批量替换入口测试。Release 构建通过，应用 93/93、模型 35/35、基础 436/436，总 564/564。隔离日志 build/c1c1a-rows-{build,ordinary,model,base}.log。提交前本记录写入进程启动失败，因此本节随下一完整批次补齐，不另做微小提交。
+
+## 功能族 3：普通行结构操作
+
+实际文件：src/subtitle_project_access.h/.cpp、src/subtitle_row_list_edit.h、src/command/edit.cpp、src/command/grid.cpp、src/command/subtitle.cpp、tests/tests/subtitle_project_access.cpp、tests/tests/ordinary_edit.cpp、本记录。
+普通插入/删除/粘贴覆盖/复制/拆分/合并/重组/排序/移动在独立行列表上沿用原算法。ReplaceRows 在全部原始字段、修订、ID 和结果集合验证后准备新节点，再写回；保留未删除的 live 节点身份，退役节点由调用者保持至通知和选择更新结束。没有公开 mutable live pointer 或通用 callback(AssFile&)；不是比较候选应用/原子发布引擎。
+选择仅经 helper 内部 ID→旧 API 的同步桥接，未改 Selection 接口/通知行为。新测试验证错误/重复/过期结果整批拒绝与退役存活，以及生产复制/移动/合并/拆分、原节点身份和 Undo/Redo。Release 构建通过，应用 94/94、模型 36/36、基础 436/436，共 566/566。隔离日志 build/c1c1a-structure-{build,ordinary,model,base}.log。
+剩余：a 的样式/Info/Extra/附件和重采样；b/c 的公开 Selection、owner、Lua、I/O 及 Properties 旁路未收口。保护文件哈希不变。
+提交名称：refactor(compare): gate ordinary row structure changes。

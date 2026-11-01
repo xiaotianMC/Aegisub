@@ -1435,3 +1435,18 @@ TEST_F(ordinary_edit, controlled_adjoin_and_replace_all_use_production_entries_a
     for(auto row:c->selectionController->ReadSelectedLines())EXPECT_EQ("translated",row->Text.get());
     c->subsController->Undo();for(auto row:c->selectionController->ReadSelectedLines())EXPECT_EQ("one",row->Text.get());
 }
+
+TEST_F(ordinary_edit, controlled_duplicate_move_join_and_split_preserve_live_identity_and_history) {
+    cmd::PasteSubtitleLines(c.get(),"one\ntwo");
+    auto selected=c->selectionController->GetSortedSelection();ASSERT_EQ(2u,selected.size());
+    auto original=selected.front();auto id=original->Id;
+    cmd::call("edit/line/duplicate",c.get());EXPECT_EQ(5u,c->ass->Events.size());
+    bool preserved=false;for(auto const& row:c->ass->Events)if(row.Id==id)preserved=&row==original;EXPECT_TRUE(preserved);
+    cmd::call("grid/move/up",c.get());EXPECT_EQ(2u,c->selectionController->GetSelectedSet().size());
+    cmd::call("edit/line/join/concatenate",c.get());EXPECT_EQ(4u,c->ass->Events.size());
+    c->subsController->Undo();EXPECT_EQ(5u,c->ass->Events.size());
+    c->subsController->Redo();EXPECT_EQ(4u,c->ass->Events.size());
+    c->textSelectionController->SetSelection(1,1);
+    cmd::call("edit/line/split/preserve",c.get());EXPECT_EQ(5u,c->ass->Events.size());
+    c->subsController->Undo();EXPECT_EQ(4u,c->ass->Events.size());
+}
