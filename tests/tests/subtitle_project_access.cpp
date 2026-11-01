@@ -128,3 +128,88 @@ TEST(subtitle_project_access, ordinary_commit_observers_cannot_reenter_writes_an
     EXPECT_THROW(file.Commit(wxString{},AssFile::COMMIT_NEW),std::runtime_error);
     EXPECT_TRUE(visited); EXPECT_FALSE(file.IsNotifying()); EXPECT_TRUE(access.TryWrite());
 }
+TEST(subtitle_interaction, callbacks_keep_task_registered_and_own_commits_advance_baseline) {
+    AssFile file;auto line=new AssDialogue;file.Events.push_back(*line);
+    agi::SubtitleEditGate gate;SubtitleProjectAccess access(file,gate);
+    auto session=access.TryBeginInteraction({line->Id});ASSERT_TRUE(session);
+    EXPECT_FALSE(gate.TryBeginComparison());EXPECT_TRUE(session->Current());
+    AssDialogueBase changed(*line);changed.Start=1001;changed.End=2002;
+    session->UpdateRows({changed});session->Commit(wxString{},AssFile::COMMIT_DIAG_TIME);
+    EXPECT_TRUE(session->Current());EXPECT_EQ(1001,line->Start.GetMilliseconds());
+    changed.Layer=4;session->UpdateRows({changed});session->Commit(wxString{},AssFile::COMMIT_DIAG_META);
+    EXPECT_TRUE(session->Current());session->End();EXPECT_TRUE(gate.TryBeginComparison());
+    EXPECT_THROW(session->UpdateRows({changed}),std::logic_error);
+}
+TEST(subtitle_interaction, external_revision_rejects_even_same_line_id_and_releases_on_close) {
+    AssFile file;auto line=new AssDialogue;file.Events.push_back(*line);
+    agi::SubtitleEditGate gate;SubtitleProjectAccess access(file,gate);
+    auto session=access.TryBeginInteraction({line->Id});AssDialogueBase old(*line);
+    {auto write=access.TryWrite();line->Text="external";file.Commit(wxString{},AssFile::COMMIT_DIAG_TEXT);}
+    EXPECT_FALSE(session->Current());
+    EXPECT_THROW(session->UpdateRows({old}),std::logic_error);
+    EXPECT_EQ("external",line->Text.get());session.reset();EXPECT_TRUE(gate.TryBeginComparison());
+}
+TEST(subtitle_interaction, missing_and_invalid_targets_fail_before_any_row_changes) {
+    AssFile file;auto a=new AssDialogue;auto b=new AssDialogue;file.Events.push_back(*a);file.Events.push_back(*b);
+    agi::SubtitleEditGate gate;SubtitleProjectAccess access(file,gate);
+    EXPECT_THROW(access.TryBeginInteraction({a->Id,a->Id}),std::invalid_argument);
+    EXPECT_THROW(access.TryBeginInteraction({-1}),std::out_of_range);
+    auto session=access.TryBeginInteraction({a->Id,b->Id});AssDialogueBase changed(*a);changed.Layer=8;
+    delete b;
+    EXPECT_THROW(session->UpdateRows({changed}),std::out_of_range);
+    EXPECT_EQ(0,a->Layer);session.reset();EXPECT_TRUE(gate.TryBeginComparison());
+}
+TEST(subtitle_interaction, comparison_foreign_target_and_non_owner_thread_cannot_write) {
+    AssFile file,other;auto a=new AssDialogue;file.Events.push_back(*a);auto b=new AssDialogue;other.Events.push_back(*b);
+    agi::SubtitleEditGate gate;SubtitleProjectAccess access(file,gate);
+    {auto comparison=gate.TryBeginComparison();EXPECT_FALSE(access.TryBeginInteraction({a->Id}));}
+    auto session=access.TryBeginInteraction({a->Id});AssDialogueBase changed(*a);changed.Layer=5;
+    AssDialogueBase foreign(*b);
+    EXPECT_THROW(session->UpdateRows({changed,foreign}),std::invalid_argument);
+    EXPECT_EQ(0,a->Layer);
+    std::thread worker([&]{EXPECT_THROW(session->UpdateRows({changed}),std::logic_error);});worker.join();
+    EXPECT_EQ(0,a->Layer);session.reset();EXPECT_TRUE(gate.TryBeginComparison());
+}
+TEST(subtitle_interaction, failed_commit_releases_task_and_preserves_normal_signal_exceptions) {
+    AssFile file;auto line=new AssDialogue;file.Events.push_back(*line);
+    agi::SubtitleEditGate gate;SubtitleProjectAccess access(file,gate);
+    agi::signal::Connection observer=file.AddCommitListener([](int,const AssDialogue*){throw std::runtime_error("observer");});
+    auto session=access.TryBeginInteraction({line->Id});
+    EXPECT_THROW(session->Commit(wxString{},AssFile::COMMIT_DIAG_TEXT),std::runtime_error);
+    EXPECT_FALSE(session->Current());EXPECT_TRUE(gate.TryBeginComparison());
+}
+TEST(subtitle_interaction, owner_close_invalidates_outstanding_session_without_dangling_model_access) {
+    AssFile file;auto line=new AssDialogue;file.Events.push_back(*line);AssDialogueBase changed(*line);
+    agi::SubtitleEditGate gate;std::optional<SubtitleProjectAccess::Interaction> session;
+    {SubtitleProjectAccess access(file,gate);session=access.TryBeginInteraction({line->Id});access.Close();EXPECT_FALSE(session->Current());}
+    EXPECT_FALSE(session->Current());
+    EXPECT_THROW(session->UpdateRows({changed}),std::logic_error);
+    gate.Close();session.reset();
+}
+TEST(subtitle_interaction, repeated_open_close_and_exception_unwind_leave_no_task_registration) {
+    AssFile file;auto line=new AssDialogue;file.Events.push_back(*line);
+    agi::SubtitleEditGate gate;SubtitleProjectAccess access(file,gate);
+    for(int i=0;i<100;++i) {
+        try {auto session=access.TryBeginInteraction({line->Id});EXPECT_FALSE(gate.TryBeginComparison());throw std::runtime_error("cancel");}
+        catch(std::runtime_error const&){}
+        EXPECT_TRUE(gate.TryBeginComparison());
+    }
+}
+TEST(subtitle_interaction, independent_documents_do_not_share_interaction_authority) {
+    AssFile a,b;auto x=new AssDialogue;auto y=new AssDialogue;a.Events.push_back(*x);b.Events.push_back(*y);
+    agi::SubtitleEditGate ga,gb;SubtitleProjectAccess aa(a,ga),ab(b,gb);
+    auto first=aa.TryBeginInteraction({x->Id});EXPECT_TRUE(gb.TryBeginComparison());
+    auto second=ab.TryBeginInteraction({y->Id});ASSERT_TRUE(second);
+    first.reset();EXPECT_TRUE(ga.TryBeginComparison());EXPECT_FALSE(gb.TryBeginComparison());
+    second.reset();EXPECT_TRUE(gb.TryBeginComparison());
+}
+TEST(subtitle_interaction, own_commit_does_not_adopt_unexpected_nested_revision) {
+    AssFile file;auto line=new AssDialogue;file.Events.push_back(*line);
+    agi::SubtitleEditGate gate;SubtitleProjectAccess access(file,gate);bool nested=false;
+    agi::signal::Connection observer=file.AddCommitListener([&](int,const AssDialogue*) {
+        if(!nested) {nested=true;file.Commit(wxString{},AssFile::COMMIT_DIAG_TEXT);}
+    });
+    auto session=access.TryBeginInteraction({line->Id});
+    EXPECT_THROW(session->Commit(wxString{},AssFile::COMMIT_DIAG_TEXT),std::logic_error);
+    EXPECT_FALSE(session->Current());EXPECT_TRUE(gate.TryBeginComparison());
+}

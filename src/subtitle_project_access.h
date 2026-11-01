@@ -28,6 +28,26 @@ public:
         agi::SubtitleEditGate::WriteLease const& Lease() const;
     };
     std::optional<WriteScope> TryWrite();
+    class Interaction {
+        std::weak_ptr<State> owner;
+        std::optional<WriteScope> scope;
+        agi::SubtitleEditGate::RevisionToken revision;
+        std::vector<int> targets;
+        Interaction(std::shared_ptr<State> const&, WriteScope, agi::SubtitleEditGate::RevisionToken, std::vector<int>);
+        friend class SubtitleProjectAccess;
+    public:
+        Interaction(Interaction const&) = delete;
+        Interaction& operator=(Interaction const&) = delete;
+        Interaction(Interaction&&) noexcept = default;
+        Interaction& operator=(Interaction&&) noexcept = default;
+        bool Current() const;
+        // Data-only writeback: no mutable live pointers escape the session.
+        void UpdateRows(std::vector<AssDialogueBase> const&);
+        int Commit(wxString const&, int type, int amend_id = -1);
+        // Releases task registration; does not imply rollback or an Undo record.
+        void End() noexcept { scope.reset(); }
+    };
+    std::optional<Interaction> TryBeginInteraction(std::vector<int> targets);
     class WriteAccess {
         std::weak_ptr<State> state;
         agi::SubtitleEditGate::WriteLease::Token token;

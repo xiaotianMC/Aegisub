@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: ISC
 #include "subtitle_project_access.h"
 #include <thread>
+#include <algorithm>
+#include <unordered_map>
 
 struct SubtitleProjectAccess::ActiveWrite {
     agi::SubtitleEditGate::WriteLease lease;
@@ -12,6 +14,7 @@ struct SubtitleProjectAccess::State {
     std::thread::id thread = std::this_thread::get_id();
     bool alive = true;
     std::weak_ptr<ActiveWrite> active;
+    agi::SubtitleEditGate *gate = nullptr;
     void Check() const {
         if (thread != std::this_thread::get_id()) throw std::logic_error("Live subtitles require the owner thread");
         if (!alive) throw std::logic_error("Subtitle project access closed");
@@ -45,6 +48,63 @@ SubtitleProjectAccess::SubtitleProjectAccess(AssFile& file, agi::SubtitleEditGat
 : state(std::make_shared<State>(&file)), gate(gate) {
     if (file.edit_gate) throw std::logic_error("Subtitle file already belongs to a project");
     file.edit_gate = &gate;
+    state->gate = &gate;
+}
+SubtitleProjectAccess::Interaction::Interaction(std::shared_ptr<State> const& owner, WriteScope scope,
+    agi::SubtitleEditGate::RevisionToken revision, std::vector<int> targets)
+: owner(owner), scope(std::move(scope)), revision(std::move(revision)), targets(std::move(targets)) { }
+bool SubtitleProjectAccess::Interaction::Current() const {
+    auto state = owner.lock();
+    if (!state || !scope || !revision.Current()) return false;
+    if (state->thread != std::this_thread::get_id()) throw std::logic_error("Interaction requires owner thread");
+    return state->alive && !state->file->IsNotifying();
+}
+std::optional<SubtitleProjectAccess::Interaction> SubtitleProjectAccess::TryBeginInteraction(std::vector<int> targets) {
+    state->Check();
+    std::sort(targets.begin(), targets.end());
+    if (targets.empty() || std::adjacent_find(targets.begin(), targets.end()) != targets.end())
+        throw std::invalid_argument("Interaction requires distinct target line IDs");
+    std::unordered_map<int, bool> present;
+    for (auto const& row : state->file->Events)
+        if (!present.emplace(row.Id, true).second) throw std::logic_error("Duplicate live subtitle ID");
+    for (auto id : targets) if (!present.contains(id)) throw std::out_of_range("Interaction target missing");
+    auto scope = TryWrite();
+    if (!scope) return {};
+    return Interaction(state, std::move(*scope), gate.Capture(), std::move(targets));
+}
+void SubtitleProjectAccess::Interaction::UpdateRows(std::vector<AssDialogueBase> const& updates) {
+    try {
+        if (!Current()) throw std::logic_error("Stale subtitle interaction");
+        auto state = owner.lock();
+        scope->Lease();
+        std::unordered_map<int, AssDialogue*> live;
+        for (auto& row : state->file->Events)
+            if (!live.emplace(row.Id, &row).second) throw std::logic_error("Duplicate live subtitle ID");
+        // Validate every original target, not only the subset written by this callback.
+        for (auto id : targets) if (!live.contains(id)) throw std::out_of_range("Interaction target removed");
+        std::unordered_map<int, bool> written;
+        for (auto const& row : updates) {
+            if (!std::binary_search(targets.begin(), targets.end(), row.Id) || !written.emplace(row.Id,true).second)
+                throw std::invalid_argument("Invalid interaction update target");
+            if (row.Row != live.at(row.Id)->Row) throw std::invalid_argument("Interaction cannot reorder rows");
+        }
+        for (auto const& row : updates) static_cast<AssDialogueBase&>(*live.at(row.Id)) = row;
+    }
+    catch (...) { End(); throw; }
+}
+int SubtitleProjectAccess::Interaction::Commit(wxString const& description, int type, int amend_id) {
+    try {
+        if (!Current()) throw std::logic_error("Stale subtitle interaction");
+        auto state = owner.lock();
+        scope->Lease();
+        auto id = state->file->Commit(description,type,amend_id);
+        auto next = state->gate->Capture();
+        if (next.Revision().generation != revision.Revision().generation + 1)
+            throw std::logic_error("Unexpected nested subtitle revision during interaction commit");
+        revision = std::move(next);
+        return id;
+    }
+    catch (...) { End(); throw; }
 }
 SubtitleProjectAccess::~SubtitleProjectAccess() { Close(); }
 void SubtitleProjectAccess::Close() noexcept {
