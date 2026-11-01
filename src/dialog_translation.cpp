@@ -182,7 +182,7 @@ DialogTranslation::~DialogTranslation() {
 	edit->End();
 }
 
-void DialogTranslation::OnActiveLineChanged(AssDialogue *) try {
+void DialogTranslation::OnActiveLineChanged() try {
 	if (switching_lines || !edit->Alive()) return;
 	edit->ResetActive();
 	if(edit->Rows().empty()){edit->Invalidate();return;}

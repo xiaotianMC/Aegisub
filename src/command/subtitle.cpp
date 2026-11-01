@@ -64,14 +64,14 @@ namespace {
 struct validate_nonempty_selection : public Command {
 	CMD_TYPE(COMMAND_VALIDATE)
 	bool Validate(const agi::Context *c) override {
-		return !c->selectionController->GetSelectedSet().empty();
+		return !c->selectionController->ReadSelectedSet().empty();
 	}
 };
 
 struct validate_nonempty_selection_video_loaded : public Command {
 	CMD_TYPE(COMMAND_VALIDATE)
 	bool Validate(const agi::Context *c) override {
-		return c->project->VideoProvider() && !c->selectionController->GetSelectedSet().empty();
+		return c->project->VideoProvider() && !c->selectionController->ReadSelectedSet().empty();
 	}
 };
 

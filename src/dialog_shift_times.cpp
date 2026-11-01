@@ -262,7 +262,7 @@ void DialogShiftTimes::OnTimecodesLoaded(agi::vfr::Framerate const& new_fps) {
 }
 
 void DialogShiftTimes::OnSelectedSetChanged() {
-	if (context->selectionController->GetSelectedSet().empty()) {
+	if (context->selectionController->ReadSelectedSet().empty()) {
 		selection_mode->Enable(1, false);
 		selection_mode->Enable(2, false);
 		selection_mode->SetSelection(0);
@@ -375,7 +375,7 @@ void DialogShiftTimes::Process(wxCommandEvent &) {
 	bool start = type != 2;
 	bool end = type != 1;
 
-	auto const& sel = context->selectionController->GetSelectedSet();
+	auto const& sel = context->selectionController->ReadSelectedSet();
 
 	long shift;
 	if (by_time) {

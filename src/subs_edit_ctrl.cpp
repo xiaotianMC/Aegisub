@@ -239,7 +239,7 @@ void SubsTextEditCtrl::OnChar(wxKeyEvent &event) {
 		event.Skip();
 		return;
 	}
-	auto diag = context ? context->selectionController->GetActiveLine() : nullptr;
+	auto diag = context ? context->selectionController->ReadActiveLine() : nullptr;
 	if (diag && diag->Comment && boost::istarts_with(diag->Effect.get(), "code")) {
 		event.Skip();
 		return;
@@ -313,7 +313,7 @@ void SubsTextEditCtrl::ShowCompletion(bool manual) {
 		return;
 	}
 	std::string text = GetTextRaw().data();
-	auto diag = context ? context->selectionController->GetActiveLine() : nullptr;
+	auto diag = context ? context->selectionController->ReadActiveLine() : nullptr;
 	if (diag && diag->Comment && boost::istarts_with(diag->Effect.get(), "code")) {
 		AutoCompCancel();
 		return;
@@ -520,7 +520,7 @@ void SubsTextEditCtrl::SetStyles() {
 }
 
 void SubsTextEditCtrl::UpdateStyle() {
-	AssDialogue *diag = context ? context->selectionController->GetActiveLine() : nullptr;
+	AssDialogue const* diag = context ? context->selectionController->ReadActiveLine() : nullptr;
 	bool template_line = diag && diag->Comment && boost::istarts_with(diag->Effect.get(), "template");
 
 	tokenized_line = agi::ass::TokenizeDialogueBody(line_text, template_line);
@@ -563,7 +563,7 @@ void SubsTextEditCtrl::UpdateCallTip() {
 
 	int pos = GetCurrentPos();
 	if (pos == cursor_pos) return;
-	auto diag = context ? context->selectionController->GetActiveLine() : nullptr;
+	auto diag = context ? context->selectionController->ReadActiveLine() : nullptr;
 	if (diag && diag->Comment && boost::istarts_with(diag->Effect.get(), "code")) return;
 	bool is_template = diag && diag->Comment && boost::istarts_with(diag->Effect.get(), "template");
 	if (!OPT_GET("App/Call Tips")->GetBool() && !completion_calltip

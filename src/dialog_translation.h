@@ -70,7 +70,7 @@ class DialogTranslation final : public wxDialog {
 
 	void UpdateDisplay();
 
-	void OnActiveLineChanged(AssDialogue *new_line);
+	void OnActiveLineChanged();
 
 public:
 	DialogTranslation(agi::Context *context);

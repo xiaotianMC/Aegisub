@@ -95,21 +95,21 @@ struct edit_complete final : public Command {
 struct validate_sel_nonempty : public Command {
 	CMD_TYPE(COMMAND_VALIDATE)
 	bool Validate(const agi::Context *c) override {
-		return c->selectionController->GetSelectedSet().size() > 0;
+		return c->selectionController->ReadSelectedSet().size() > 0;
 	}
 };
 
 struct validate_video_and_sel_nonempty : public Command {
 	CMD_TYPE(COMMAND_VALIDATE)
 	bool Validate(const agi::Context *c) override {
-		return c->project->VideoProvider() && !c->selectionController->GetSelectedSet().empty();
+		return c->project->VideoProvider() && !c->selectionController->ReadSelectedSet().empty();
 	}
 };
 
 struct validate_sel_multiple : public Command {
 	CMD_TYPE(COMMAND_VALIDATE)
 	bool Validate(const agi::Context *c) override {
-		return c->selectionController->GetSelectedSet().size() > 1;
+		return c->selectionController->ReadSelectedSet().size() > 1;
 	}
 };
 
@@ -316,7 +316,7 @@ template<typename Func>
 void update_lines(const agi::Context *c, wxString const& undo_msg, Func&& f) {
 	auto scope = c->subtitleAccess->TryWrite(); if (!scope) return;
     SubtitleRowEdit staged(c);
-	const auto active_line = c->selectionController->GetActiveLine();
+	const auto active_line = c->selectionController->ReadActiveLine();
 	const int sel_start = c->textSelectionController->GetSelectionStart();
 	const int sel_end = c->textSelectionController->GetSelectionEnd();
 	const int norm_sel_start = normalize_pos(active_line->Text, sel_start);
@@ -329,7 +329,7 @@ void update_lines(const agi::Context *c, wxString const& undo_msg, Func&& f) {
 			active_sel_shift = shift;
 	}
 
-	auto const& sel = c->selectionController->GetSelectedSet();
+	auto const& sel = c->selectionController->ReadSelectedSet();
 	auto edit = c->subtitleAccess->Edit(scope->Lease());
     edit.UpdateRows(staged.Values());
     edit.Commit(undo_msg, AssFile::COMMIT_DIAG_TEXT, -1, sel.size() == 1 ? (*sel.begin())->Id : 0);
@@ -359,12 +359,12 @@ void show_color_picker(const agi::Context *c, agi::Color (AssStyle::*field), con
     SubtitleRowEdit staged(c);
     auto revision = c->subtitleEditGate.Capture();
 	agi::Color initial_color;
-	const auto active_line = c->selectionController->GetActiveLine();
+	const auto active_line = c->selectionController->ReadActiveLine();
 	const int sel_start = c->textSelectionController->GetSelectionStart();
 	const int sel_end = c->textSelectionController->GetSelectionStart();
 	const int norm_sel_start = normalize_pos(active_line->Text, sel_start);
 
-	auto const& sel = c->selectionController->GetSelectedSet();
+	auto const& sel = c->selectionController->ReadSelectedSet();
 	using line_info = std::pair<agi::Color, parsed_line>;
 	std::vector<line_info> lines;
 	for (auto line : staged.rows) {
@@ -535,7 +535,8 @@ struct edit_font final : public Command {
 	void operator()(agi::Context *c) override {
         auto edit_scope = c->subtitleAccess->TryWrite();
         if (!edit_scope) return;
-		const parsed_line active(c->selectionController->GetActiveLine());
+		AssDialogue active_copy(static_cast<AssDialogueBase const&>(*c->selectionController->ReadActiveLine()));
+        const parsed_line active(&active_copy);
 		const int insertion_point = normalize_pos(active.line->Text, c->textSelectionController->GetInsertionPoint());
 
 		auto font_for_line = [&](parsed_line const& line) -> wxFont {
@@ -597,8 +598,8 @@ struct edit_find_replace final : public Command {
 };
 
 static void copy_lines(agi::Context *c) {
-	SetClipboard(join(c->selectionController->GetSortedSelection()
-		| transformed(static_cast<std::string(*)(AssDialogue*)>([](AssDialogue *d) { return d->GetEntryData(); })),
+	SetClipboard(join(c->selectionController->ReadSortedSelection()
+		| transformed(static_cast<std::string(*)(AssDialogue const*)>([](AssDialogue const*d) { return d->GetEntryData(); })),
 		"\r\n"));
 }
 
@@ -953,7 +954,7 @@ struct edit_line_paste_over final : public Command {
 	CMD_TYPE(COMMAND_VALIDATE)
 
 	bool Validate(const agi::Context *c) override {
-		bool can_paste = !c->selectionController->GetSelectedSet().empty();
+		bool can_paste = !c->selectionController->ReadSelectedSet().empty();
 		if (can_paste && wxTheClipboard->Open()) {
 			can_paste = wxTheClipboard->IsSupported(wxDF_TEXT) || wxTheClipboard->IsSupported(wxDF_UNICODETEXT);
 			wxTheClipboard->Close();
@@ -1097,7 +1098,7 @@ struct edit_line_recombine final : public validate_sel_multiple {
 		}
 
 		// Remove now non-existent lines from the selection
-		Selection lines, new_sel;
+		std::set<AssDialogue*> lines, new_sel;
 		boost::copy(staged.file.Events | agi::address_of, inserter(lines, lines.begin()));
 		boost::set_intersection(lines, sel_set, inserter(new_sel, new_sel.begin()));
 
@@ -1126,7 +1127,7 @@ struct edit_line_split_by_karaoke final : public validate_sel_nonempty {
 		auto sel = staged.SortedSelection();
 		if (sel.empty()) return;
 
-		Selection new_sel;
+		std::set<AssDialogue*> new_sel;
 		agi::ass::Karaoke kara;
 
 		std::vector<std::unique_ptr<AssDialogue>> to_delete;
@@ -1325,7 +1326,8 @@ struct edit_line_reverse_move final : public Command {
     STR_DISP("Reverse Move Path")
     STR_HELP("Swap the active line's move start and end positions, keeping its movement times")
     bool Validate(const agi::Context *c) override {
-        return reverse_move_paths(c->selectionController->GetActiveLine(), false);
+        AssDialogue candidate(static_cast<AssDialogueBase const&>(*c->selectionController->ReadActiveLine()));
+        return reverse_move_paths(&candidate, false);
     }
     void operator()(agi::Context *c) override {
         auto edit_scope = c->subtitleAccess->TryWrite();
@@ -1346,7 +1348,7 @@ struct edit_bind_subtitles final : public Command {
     STR_DISP("Bind Subtitles")
     STR_HELP("Bind selected subtitles into a persistent multi-selection group")
     bool Validate(const agi::Context *c) override {
-        auto const& selection = c->selectionController->GetSelectedSet();
+        auto const& selection = c->selectionController->ReadSelectedSet();
         if (selection.size() < 2) return false;
         std::string group;
         for (auto line : selection) {
@@ -1369,7 +1371,7 @@ struct edit_unbind_subtitles final : public Command {
     STR_DISP("Unbind Subtitles")
     STR_HELP("Remove the selected subtitles from their binding groups")
     bool Validate(const agi::Context *c) override {
-        auto const& selection = c->selectionController->GetSelectedSet();
+        auto const& selection = c->selectionController->ReadSelectedSet();
         return std::any_of(selection.begin(), selection.end(), [&](auto line) { return !GetSubtitleBinding(c->subtitleAccess->Read(), *line).empty(); });
     }
     void operator()(agi::Context *c) override {

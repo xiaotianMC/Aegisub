@@ -72,16 +72,16 @@ struct grid_line_next_create final : public Command {
 		if (tc)
 			tc->Commit();
 
-		AssDialogue *cur = c->selectionController->GetActiveLine();
+		AssDialogue const* cur = c->selectionController->ReadActiveLine();
 		c->selectionController->NextLine();
-		if (cur == c->selectionController->GetActiveLine()) {
+		if (cur == c->selectionController->ReadActiveLine()) {
             SubtitleRowListEdit staged(c);cur=staged.active;
 			auto newline = new AssDialogue;
 			newline->Start = cur->End;
 			newline->End = cur->End + OPT_GET("Timing/Default Duration")->GetInt();
 			newline->Style = cur->Style;
 
-			auto pos = staged.file.iterator_to(*cur);
+			auto pos = staged.file.iterator_to(*staged.active);
 			staged.file.Events.insert(++pos, *newline);
 			staged.Commit(_("line insertion"), AssFile::COMMIT_DIAG_ADDREM);
 			c->selectionController->NextLine();
@@ -119,7 +119,7 @@ struct validate_sel_multiple : public Command {
 	CMD_TYPE(COMMAND_VALIDATE)
 
 	bool Validate(const agi::Context *c) override {
-		return c->selectionController->GetSelectedSet().size() > 1;
+		return c->selectionController->ReadSelectedSet().size() > 1;
 	}
 };
 
@@ -391,7 +391,7 @@ struct grid_move_up final : public Command {
 	CMD_TYPE(COMMAND_VALIDATE)
 
 	bool Validate(const agi::Context *c) override {
-		return c->selectionController->GetSelectedSet().size() != 0;
+		return c->selectionController->ReadSelectedSet().size() != 0;
 	}
 
 	void operator()(agi::Context *c) override {
@@ -411,7 +411,7 @@ struct grid_move_down final : public Command {
 	CMD_TYPE(COMMAND_VALIDATE)
 
 	bool Validate(const agi::Context *c) override {
-		return c->selectionController->GetSelectedSet().size() != 0;
+		return c->selectionController->ReadSelectedSet().size() != 0;
 	}
 
 	void operator()(agi::Context *c) override {
@@ -432,7 +432,7 @@ struct grid_swap final : public Command {
 	CMD_TYPE(COMMAND_VALIDATE)
 
 	bool Validate(const agi::Context *c) override {
-		return c->selectionController->GetSelectedSet().size() == 2;
+		return c->selectionController->ReadSelectedSet().size() == 2;
 	}
 
 	void operator()(agi::Context *c) override {

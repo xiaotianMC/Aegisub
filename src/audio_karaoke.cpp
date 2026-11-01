@@ -111,7 +111,7 @@ AudioKaraoke::~AudioKaraoke() {
 	catch (...) { }
 }
 
-void AudioKaraoke::OnActiveLineChanged(AssDialogue *) {
+void AudioKaraoke::OnActiveLineChanged() {
 	active_line = edit->Active();
 	edit->Refresh();
 	if (enabled) {

@@ -760,7 +760,7 @@ void AudioTimingControllerDialogue::RegenerateInactiveLines()
 	bool was_empty = inactive_lines.empty();
 	inactive_lines.clear();
 
-	auto const& sel = context->selectionController->GetSelectedSet();
+	auto const& sel = context->selectionController->ReadSelectedSet();
 
 	switch (int mode = inactive_line_mode->GetInt())
 	{
@@ -826,7 +826,7 @@ void AudioTimingControllerDialogue::RegenerateSelectedLines()
 	selected_lines.clear();
 
 	auto active = active_line.GetLine();
-	auto const& selected = context->selectionController->GetSelectedSet();
+	auto const& selected = context->selectionController->ReadSelectedSet();
 	for (auto const& row : context->subtitleAccess->Read().Events)
 	{
 		auto line = &row;

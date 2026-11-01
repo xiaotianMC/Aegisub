@@ -72,7 +72,7 @@ class VisualToolBase {
 	AssDialogue *GetActiveDialogueLine();
 
 	// SubtitleSelectionListener implementation
-	void OnActiveLineChanged(AssDialogue *new_line);
+	void OnActiveLineChanged();
 
 	// Below here are the virtuals that must be implemented
 

@@ -125,13 +125,13 @@ struct SubsController::UndoInfo {
 	}
 
 	void UpdateActiveLine(const agi::Context *c) {
-		auto line = c->selectionController->GetActiveLine();
+		auto line = c->selectionController->ReadActiveLine();
 		if (line)
 			active_line_id = line->Id;
 	}
 
 	void UpdateSelection(const agi::Context *c) {
-		auto const& sel = c->selectionController->GetSelectedSet();
+		auto const& sel = c->selectionController->ReadSelectedSet();
 		selection.clear();
 		selection.reserve(sel.size());
 		for (const auto diag : sel)

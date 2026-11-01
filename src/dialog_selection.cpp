@@ -76,7 +76,7 @@ enum Mode {
 	REGEXP
 };
 
-std::set<AssDialogue*> process(std::string const& match_text, bool match_case, Mode mode, bool invert, bool comments, bool dialogue, int field_n, AssFile *ass) {
+Selection process(std::string const& match_text, bool match_case, Mode mode, bool invert, bool comments, bool dialogue, int field_n, AssFile const *ass) {
 	SearchReplaceSettings settings = {
 		match_text,
 		std::string(),
@@ -91,7 +91,7 @@ std::set<AssDialogue*> process(std::string const& match_text, bool match_case, M
 
 	auto predicate = SearchReplaceEngine::GetMatcher(settings);
 
-	std::set<AssDialogue*> matches;
+	Selection matches;
 	for (auto& diag : ass->Events) {
 		if (diag.Comment && !comments) continue;
 		if (!diag.Comment && !dialogue) continue;
@@ -186,7 +186,7 @@ DialogSelection::~DialogSelection() {
 }
 
 void DialogSelection::Process(wxCommandEvent& event) {
-	std::set<AssDialogue*> matches;
+	Selection matches;
 
 	try {
 		matches = process(
@@ -204,7 +204,7 @@ void DialogSelection::Process(wxCommandEvent& event) {
 
 	Selection old_sel, new_sel;
 	if (action != Action::SET)
-		old_sel = con->selectionController->GetSelectedSet();
+		old_sel = con->selectionController->ReadSelectedSet();
 
 	wxString message;
 	size_t count = 0;
@@ -241,7 +241,7 @@ void DialogSelection::Process(wxCommandEvent& event) {
 	else
 		con->frame->StatusTimeout(message);
 
-	AssDialogue *new_active = con->selectionController->GetActiveLine();
+	AssDialogue const* new_active = con->selectionController->ReadActiveLine();
 	if (new_sel.size() && !new_sel.count(new_active))
 		new_active = *new_sel.begin();
 	con->selectionController->SetSelectionAndActive(std::move(new_sel), new_active);

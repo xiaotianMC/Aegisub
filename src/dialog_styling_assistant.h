@@ -56,7 +56,7 @@ class DialogStyling final : public wxDialog {
 	void OnPlayVideoButton(wxCommandEvent &evt);
 	void OnStyleBoxModified(wxCommandEvent &evt);
 
-	void OnActiveLineChanged(AssDialogue *);
+	void OnActiveLineChanged();
 
 	int active_id = 0;
 

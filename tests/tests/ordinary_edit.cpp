@@ -197,12 +197,12 @@ TEST_F(ordinary_edit, paste_insert_delete_sort_and_history_restore_ids_order_and
     ASSERT_EQ(3u,c->ass->Events.size());
     std::vector<int> pasted_ids;
     for(auto const& row:c->ass->Events)pasted_ids.push_back(row.Id);
-    EXPECT_EQ(2u,c->selectionController->GetSelectedSet().size());
-    EXPECT_EQ(pasted_ids.front(),c->selectionController->GetActiveLine()->Id);
+    EXPECT_EQ(2u,c->selectionController->ReadSelectedSet().size());
+    EXPECT_EQ(pasted_ids.front(),c->selectionController->ReadActiveLine()->Id);
     c->subsController->Undo(); ASSERT_EQ(1u,c->ass->Events.size()); EXPECT_EQ(original,c->ass->Events.front().Id);
     c->subsController->Redo(); ASSERT_EQ(3u,c->ass->Events.size());
     std::vector<int> restored;for(auto const& row:c->ass->Events)restored.push_back(row.Id);
-    EXPECT_EQ(pasted_ids,restored); EXPECT_EQ(2u,c->selectionController->GetSelectedSet().size());
+    EXPECT_EQ(pasted_ids,restored); EXPECT_EQ(2u,c->selectionController->ReadSelectedSet().size());
     cmd::call("grid/sort/start/selected",c.get());
     EXPECT_EQ("first",c->ass->Events.front().Text.get()); EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
     cmd::call("edit/line/delete",c.get()); ASSERT_EQ(1u,c->ass->Events.size()); EXPECT_EQ(original,c->ass->Events.front().Id);
@@ -485,7 +485,7 @@ TEST_F(ordinary_edit, all_migrated_command_operators_reject_comparison_before_an
         EXPECT_EQ(1u,c->ass->Events.size()); EXPECT_EQ(id,c->ass->Events.front().Id);
         EXPECT_EQ("unchanged",c->ass->Events.front().Text.get());
         EXPECT_EQ(description,c->subsController->GetUndoDescription());
-        EXPECT_EQ(id,c->selectionController->GetActiveLine()->Id);
+        EXPECT_EQ(id,c->selectionController->ReadActiveLine()->Id);
     }
     cmd::PasteSubtitleLines(c.get(),"blocked\nblocked"); EXPECT_EQ(1u,c->ass->Events.size());
 }
@@ -550,7 +550,7 @@ TEST_F(audio_edit, dialogue_manual_commit_and_history_preserve_exact_millisecond
     c->subsController->Undo();EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
     c->subsController->Redo();EXPECT_EQ(1011,c->ass->Events.front().Start.GetMilliseconds());
     EXPECT_EQ(id,c->ass->Events.front().Id);
-    EXPECT_EQ(id,c->selectionController->GetActiveLine()->Id);
+    EXPECT_EQ(id,c->selectionController->ReadActiveLine()->Id);
 }
 TEST_F(audio_edit, continuous_autocommit_drag_keeps_marker_borrow_and_coalesces_undo) {
     OPT_SET("Audio/Auto/Commit")->SetBool(true);
@@ -589,7 +589,7 @@ TEST_F(audio_edit, multiple_selected_rows_share_pending_lifetime_and_undo) {
     for(auto const& row:c->ass->Events)EXPECT_EQ(4503,row.End.GetMilliseconds());
     c->subsController->Undo();EXPECT_EQ(2002,c->ass->Events.front().End.GetMilliseconds());
     EXPECT_EQ(4002,c->ass->Events.back().End.GetMilliseconds());
-    EXPECT_EQ(2u,c->selectionController->GetSelectedSet().size());
+    EXPECT_EQ(2u,c->selectionController->ReadSelectedSet().size());
 }
 TEST_F(audio_edit, comparison_rejects_dialogue_and_karaoke_cache_changes) {
     auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);
@@ -1125,7 +1125,7 @@ TEST_F(visual_edit, feature_hit_order_follows_document_order_after_sort) {
      c->ass->Events.push_back(*other);c->ass->Events.reverse();c->ass->Commit("visual fixture",AssFile::COMMIT_ORDER);}
     auto expected=c->ass->Events.back().Id;auto untouched=c->ass->Events.front().Text.get();
     Install<VisualToolDrag>();Drag(100,100,160,170);
-    EXPECT_EQ(expected,c->selectionController->GetActiveLine()->Id);
+    EXPECT_EQ(expected,c->selectionController->ReadActiveLine()->Id);
     EXPECT_EQ(untouched,c->ass->Events.front().Text.get());EXPECT_NE(untouched,c->ass->Events.back().Text.get());
 }
 TEST_F(visual_edit, missing_target_without_commit_cannot_partially_write_other_rows) {
@@ -1423,7 +1423,7 @@ TEST_F(ordinary_edit, controlled_tag_commands_preserve_multiline_data_and_single
 }
 TEST_F(ordinary_edit, controlled_adjoin_and_replace_all_use_production_entries_and_preserve_ids) {
     cmd::PasteSubtitleLines(c.get(),"Dialogue: 0,0:00:00.000,0:00:01.000,Default,A,0,0,0,,one\nDialogue: 0,0:00:02.000,0:00:03.000,Default,B,0,0,0,,one");
-    auto selected=c->selectionController->GetSortedSelection();ASSERT_EQ(2u,selected.size());
+    auto selected=c->selectionController->ReadSortedSelection();ASSERT_EQ(2u,selected.size());
     auto second=selected[1]->Id;
     cmd::call("time/continuous/start",c.get());
     EXPECT_EQ(1000,c->ass->Events.front().End.GetMilliseconds());
@@ -1439,11 +1439,11 @@ TEST_F(ordinary_edit, controlled_adjoin_and_replace_all_use_production_entries_a
 
 TEST_F(ordinary_edit, controlled_duplicate_move_join_and_split_preserve_live_identity_and_history) {
     cmd::PasteSubtitleLines(c.get(),"one\ntwo");
-    auto selected=c->selectionController->GetSortedSelection();ASSERT_EQ(2u,selected.size());
+    auto selected=c->selectionController->ReadSortedSelection();ASSERT_EQ(2u,selected.size());
     auto original=selected.front();auto id=original->Id;
     cmd::call("edit/line/duplicate",c.get());EXPECT_EQ(5u,c->ass->Events.size());
     bool preserved=false;for(auto const& row:c->ass->Events)if(row.Id==id)preserved=&row==original;EXPECT_TRUE(preserved);
-    cmd::call("grid/move/up",c.get());EXPECT_EQ(2u,c->selectionController->GetSelectedSet().size());
+    cmd::call("grid/move/up",c.get());EXPECT_EQ(2u,c->selectionController->ReadSelectedSet().size());
     cmd::call("edit/line/join/concatenate",c.get());EXPECT_EQ(4u,c->ass->Events.size());
     c->subsController->Undo();EXPECT_EQ(5u,c->ass->Events.size());
     c->subsController->Redo();EXPECT_EQ(4u,c->ass->Events.size());
@@ -1508,4 +1508,30 @@ TEST_F(ordinary_edit, controlled_resample_uses_real_settings_confirmation_and_on
     c->subsController->Undo();int restored_width,restored_height;c->ass->GetResolution(restored_width,restored_height);
     EXPECT_EQ(width,restored_width);EXPECT_EQ(height,restored_height);EXPECT_DOUBLE_EQ(fontsize,c->ass->GetStyle("Default")->fontsize);
     EXPECT_EQ("{\\pos(10,20)}sample",c->ass->Events.front().Text.get());
+}
+
+TEST_F(ordinary_edit, selection_notifications_refresh_real_editor_without_model_authority) {
+    int first=c->selectionController->ActiveID(), second=0;
+    {
+        auto write=c->subtitleAccess->TryWrite();
+        auto row=new AssDialogue;row->Text="second selection";second=row->Id;
+        c->ass->Events.push_back(*row);c->ass->Commit("selection fixture",AssFile::COMMIT_DIAG_ADDREM);
+    }
+    auto undo=c->subsController->GetUndoDescription();auto revision=c->subtitleEditGate.Revision();
+    auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);
+    std::vector<char> order;
+    agi::signal::Connection selected=c->selectionController->AddSelectionListener([&]{order.push_back('S');});
+    agi::signal::Connection active=c->selectionController->AddActiveLineListener([&] {
+        order.push_back('A');EXPECT_FALSE(c->subtitleAccess->TryWrite());
+        c->subsController->Undo(); // History is also read-only during delivery.
+    });
+    c->selectionController->SetSelectionAndActiveIDs({second},second,false);
+    EXPECT_EQ("second selection",std::string(editor->GetTextRaw().data()));
+    c->selectionController->SetSelectionAndActiveIDs({second},second,false);
+    EXPECT_EQ((std::vector<char>{'S','A','S'}),order);
+    EXPECT_EQ(second,c->selectionController->ActiveID());
+    EXPECT_EQ(undo,c->subsController->GetUndoDescription());EXPECT_EQ(revision,c->subtitleEditGate.Revision());
+    c->selectionController->SetActiveID(first);
+    EXPECT_EQ("",std::string(editor->GetTextRaw().data()));
+    EXPECT_EQ((std::set<int>{second}),c->selectionController->SelectedIDs());
 }

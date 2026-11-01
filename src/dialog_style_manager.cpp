@@ -171,7 +171,7 @@ class DialogStyleManager final : public wxDialog {
 	template<class T>
 	void CopyToClipboard(wxListBox *list, T const& v);
 
-	void OnActiveLineChanged(AssDialogue *new_line);
+	void OnActiveLineChanged();
 
 public:
 	DialogStyleManager(agi::Context *context);
@@ -397,7 +397,7 @@ void DialogStyleManager::LoadCurrentStyles(int commit_type) {
 	}
 
 	if (commit_type & AssFile::COMMIT_DIAG_META) {
-		AssDialogue *dia = c->selectionController->GetActiveLine();
+		AssDialogue const* dia = c->selectionController->ReadActiveLine();
 		CurrentList->DeselectAll();
 		if (dia && commit_type != AssFile::COMMIT_NEW)
 			CurrentList->SetStringSelection(to_wx(dia->Style));
@@ -408,7 +408,8 @@ void DialogStyleManager::LoadCurrentStyles(int commit_type) {
 	UpdateButtons();
 }
 
-void DialogStyleManager::OnActiveLineChanged(AssDialogue *new_line) {
+void DialogStyleManager::OnActiveLineChanged() {
+    auto new_line = c->selectionController->ReadActiveLine();
 	if (new_line) {
 		CurrentList->DeselectAll();
 		CurrentList->SetStringSelection(to_wx(new_line->Style));

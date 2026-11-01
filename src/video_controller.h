@@ -109,7 +109,7 @@ class VideoController final : public wxEvtHandler {
 
 	void OnSubtitlesCommit(int type, const AssDialogue *changed);
 	void OnNewVideoProvider(AsyncVideoProvider *provider);
-	void OnActiveLineChanged(AssDialogue *line);
+	void OnActiveLineChanged();
 
 	void RequestFrame();
 

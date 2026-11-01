@@ -62,11 +62,11 @@ struct validate_video_loaded : public Command {
 struct validate_adjoinable : public Command {
 	CMD_TYPE(COMMAND_VALIDATE)
 	bool Validate(const agi::Context *c) override {
-		size_t sel_size = c->selectionController->GetSelectedSet().size();
+		size_t sel_size = c->selectionController->ReadSelectedSet().size();
 		if (sel_size == 0) return false;
 		if (sel_size == 1 || sel_size == c->subtitleAccess->Read().Events.size()) return true;
 
-		auto sel = c->selectionController->GetSortedSelection();
+		auto sel = c->selectionController->ReadSortedSelection();
 		for (size_t i = 1; i < sel_size; ++i) {
 			if (sel[i]->Row != sel[i - 1]->Row + 1)
 				return false;
@@ -142,8 +142,8 @@ struct time_frame_current final : public validate_video_loaded {
 	void operator()(agi::Context *c) override {
         auto edit_scope = c->subtitleAccess->TryWrite();
         if (!edit_scope) return;
-		auto const& sel = c->selectionController->GetSelectedSet();
-		const auto active_line = c->selectionController->GetActiveLine();
+		auto const& sel = c->selectionController->ReadSelectedSet();
+		const auto active_line = c->selectionController->ReadActiveLine();
 
 		if (sel.empty() || !active_line) return;
 
@@ -175,7 +175,7 @@ struct time_shift final : public Command {
 static void snap_subs_video(agi::Context *c, bool set_start) {
 	auto scope=c->subtitleAccess->TryWrite();if(!scope)return;
     SubtitleRowEdit staged(c);
-	auto const& sel = c->selectionController->GetSelectedSet();
+	auto const& sel = c->selectionController->ReadSelectedSet();
 	if (sel.empty()) return;
 
 	int start = c->videoController->TimeAtFrame(c->videoController->GetFrameN(), agi::vfr::START);

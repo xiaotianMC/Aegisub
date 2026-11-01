@@ -44,7 +44,7 @@ int SubtitleBindingColorIndex(std::string const& group) {
     return group.size() > 1 && group[0] >= '0' && group[0] <= '7' && group[1] == ':' ? group[0] - '0' : 0;
 }
 
-Selection ExpandBoundSelection(AssFile& file, Selection const& selection) {
+Selection ExpandBoundSelection(AssFile const& file, Selection const& selection) {
     std::set<std::string> groups;
     for (auto line : selection) {
         auto group = GetSubtitleBinding(file, *line);
@@ -63,7 +63,7 @@ Selection ExpandBoundSelection(AssFile& file, Selection const& selection) {
 void BindSelectedSubtitles(agi::Context *c) {
     auto edit_scope = c->subtitleAccess->TryWrite();
     if (!edit_scope) return;
-    auto selection = c->selectionController->GetSelectedSet();
+    auto selection = c->selectionController->ReadSelectedSet();
     std::set<int> ids;for(auto row:selection)ids.insert(row->Id);
     if (selection.size() < 2) return;
     SubtitleValueEdit staged(c);

@@ -21,7 +21,7 @@ class SubtitleRowListEdit {
     }
 public:
     AssFile file;
-    Selection selection;
+    std::set<AssDialogue*> selection;
     AssDialogue* active = nullptr;
     explicit SubtitleRowListEdit(agi::Context* c)
     : c(c), scope(c->subtitleAccess->TryWrite()), revision(c->subtitleEditGate.Capture()) {
@@ -45,6 +45,9 @@ public:
     int Commit(wxString const& message, int type) {
         Apply();
         return c->subtitleAccess->Edit(scope->Lease()).Commit(message, type);
+    }
+    template<class Row> void Select(std::set<Row*> const& chosen, AssDialogue const* current, bool expand = true) {
+        Select(Selection(chosen.begin(), chosen.end()), current, expand);
     }
     void Select(Selection const& chosen, AssDialogue const* current, bool expand = true) {
         std::set<int> ids;

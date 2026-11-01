@@ -127,7 +127,7 @@ void VideoBox::UpdateTimeBoxes() {
 		VideoPosition->SetForegroundColour(wxNullColour);
 	}
 
-	AssDialogue *active_line = context->selectionController->GetActiveLine();
+	AssDialogue const* active_line = context->selectionController->ReadActiveLine();
 	if (!active_line)
 		VideoSubsPos->SetValue("");
 	else {

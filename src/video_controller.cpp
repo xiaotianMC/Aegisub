@@ -84,7 +84,8 @@ void VideoController::OnSubtitlesCommit(int type, const AssDialogue *changed) {
 		provider->UpdateSubtitles(changed);
 }
 
-void VideoController::OnActiveLineChanged(AssDialogue *line) {
+void VideoController::OnActiveLineChanged() {
+    auto line = context->selectionController->ReadActiveLine();
 	if (line && provider && OPT_GET("Video/Subtitle Sync")->GetBool()) {
 		Stop();
 		JumpToTime(line->Start);
@@ -153,15 +154,15 @@ void VideoController::Play() {
 void VideoController::PlayLine() {
 	Stop();
 
-	AssDialogue *curline = context->selectionController->GetActiveLine();
+	AssDialogue const* curline = context->selectionController->ReadActiveLine();
 	if (!curline) return;
 
 	context->audioController->PlayRange(TimeRange(curline->Start, curline->End));
 
 	// Round-trip conversion to convert start to exact
-	int startFrame = FrameAtTime(context->selectionController->GetActiveLine()->Start, agi::vfr::START);
+	int startFrame = FrameAtTime(context->selectionController->ReadActiveLine()->Start, agi::vfr::START);
 	start_ms = TimeAtFrame(startFrame);
-	end_frame = FrameAtTime(context->selectionController->GetActiveLine()->End, agi::vfr::END) + 1;
+	end_frame = FrameAtTime(context->selectionController->ReadActiveLine()->End, agi::vfr::END) + 1;
 
 	JumpToFrame(startFrame);
 

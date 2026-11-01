@@ -148,7 +148,7 @@ class AudioKaraoke final : public wxWindow, private agi::signal::ConnectionScope
 	/// Apply any pending split information to the syllable data and return to normal mode
 	void AcceptSplit();
 
-	void OnActiveLineChanged(AssDialogue *new_line);
+	void OnActiveLineChanged();
 	void OnContextMenu(wxContextMenuEvent&);
 	void OnEnableButton(wxCommandEvent &evt);
 	void OnFileChanged(int type, const AssDialogue *changed);

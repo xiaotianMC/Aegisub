@@ -347,7 +347,7 @@ struct video_frame_next_boundary final : public validator_video_loaded {
 	STR_HELP("Seek to the next beginning or end of a subtitle")
 
 	void operator()(agi::Context *c) override {
-		AssDialogue *active_line = c->selectionController->GetActiveLine();
+		AssDialogue const* active_line = c->selectionController->ReadActiveLine();
 		if (!active_line) return;
 
 		int target = c->videoController->FrameAtTime(active_line->Start, agi::vfr::START);
@@ -363,7 +363,7 @@ struct video_frame_next_boundary final : public validator_video_loaded {
 		}
 
 		c->selectionController->NextLine();
-		AssDialogue *new_line = c->selectionController->GetActiveLine();
+		AssDialogue const* new_line = c->selectionController->ReadActiveLine();
 		if (new_line != active_line)
 		c->videoController->JumpToTime(new_line->Start);
 	}
@@ -414,7 +414,7 @@ struct video_frame_prev_boundary final : public validator_video_loaded {
 	STR_HELP("Seek to the previous beginning or end of a subtitle")
 
 	void operator()(agi::Context *c) override {
-		AssDialogue *active_line = c->selectionController->GetActiveLine();
+		AssDialogue const* active_line = c->selectionController->ReadActiveLine();
 		if (!active_line) return;
 
 		int target = c->videoController->FrameAtTime(active_line->End, agi::vfr::END);
@@ -430,7 +430,7 @@ struct video_frame_prev_boundary final : public validator_video_loaded {
 		}
 
 		c->selectionController->PrevLine();
-		AssDialogue *new_line = c->selectionController->GetActiveLine();
+		AssDialogue const* new_line = c->selectionController->ReadActiveLine();
 		if (new_line != active_line)
 			c->videoController->JumpToTime(new_line->End, agi::vfr::END);
 	}
@@ -564,7 +564,7 @@ struct video_jump_end final : public validator_video_loaded {
 	STR_HELP("Jump the video to the end frame of current subtitle")
 
 	void operator()(agi::Context *c) override {
-		if (auto active_line = c->selectionController->GetActiveLine())
+		if (auto active_line = c->selectionController->ReadActiveLine())
 			c->videoController->JumpToTime(active_line->End, agi::vfr::END);
 	}
 };
@@ -577,7 +577,7 @@ struct video_jump_start final : public validator_video_loaded {
 	STR_HELP("Jump the video to the start frame of current subtitle")
 
 	void operator()(agi::Context *c) override {
-		if (auto active_line = c->selectionController->GetActiveLine())
+		if (auto active_line = c->selectionController->ReadActiveLine())
 			c->videoController->JumpToTime(active_line->Start);
 	}
 };

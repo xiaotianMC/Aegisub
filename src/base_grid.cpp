@@ -226,7 +226,8 @@ void BaseGrid::UpdateMaps() {
 	Refresh(false);
 }
 
-void BaseGrid::OnActiveLineChanged(AssDialogue *new_active) {
+void BaseGrid::OnActiveLineChanged() {
+    auto new_active = context->selectionController->ReadActiveLine();
 	if (new_active) {
 		if (new_active->Row != active_row)
 			MakeRowVisible(new_active->Row);
@@ -259,9 +260,9 @@ void BaseGrid::SelectRow(int row, bool addToSelected, bool select) {
 		return;
 	}
 
-	bool selected = !!context->selectionController->GetSelectedSet().count(line);
+	bool selected = !!context->selectionController->ReadSelectedSet().count(line);
 	if (select != selected) {
-		auto selection = context->selectionController->GetSelectedSet();
+		auto selection = context->selectionController->ReadSelectedSet();
 		if (select)
 			selection.insert(line);
 		else
@@ -367,8 +368,8 @@ void BaseGrid::OnPaint(wxPaintEvent &) {
 	const int nDraw = mid(0, drawPerScreen, GetRows() - yPos);
 	const int grid_x = columns[0]->Width();
 
-	const auto active_line = context->selectionController->GetActiveLine();
-	auto const& mutable_selection = context->selectionController->GetSelectedSet();
+	const auto active_line = context->selectionController->ReadActiveLine();
+	auto const& mutable_selection = context->selectionController->ReadSelectedSet();
     std::set<AssDialogue const*> selection(mutable_selection.begin(), mutable_selection.end());
 	visible_rows.clear();
 
@@ -535,7 +536,7 @@ void BaseGrid::OnMouseEvent(wxMouseEvent &event) {
 		ScrollTo(old_y_pos);
 		extendRow = row;
 
-		auto const& selection = context->selectionController->GetSelectedSet();
+		auto const& selection = context->selectionController->ReadSelectedSet();
 
 		// Toggle selected
 		if (click && ctrl && !shift && !alt) {
@@ -617,7 +618,7 @@ void BaseGrid::OnContextMenu(wxContextMenuEvent &evt) {
             auto rows = RowsForWrite(edit_scope->Lease());
 			int row = ScreenToClient(pos).y / lineHeight + yPos - 1;
 			if (auto line = static_cast<size_t>(row) < rows.size() ? rows[row] : nullptr) {
-				if (context->selectionController->GetSelectedSet().count(line))
+				if (context->selectionController->ReadSelectedSet().count(line))
 					context->selectionController->SetActiveLine(line);
 				else
 					context->selectionController->SetSelectionAndActive({line}, line);
@@ -774,7 +775,7 @@ void BaseGrid::OnKeyDown(wxKeyEvent &event) {
     if (!edit_scope) return;
     auto rows = RowsForWrite(edit_scope->Lease());
 
-	auto active_line = context->selectionController->GetActiveLine();
+	auto active_line = context->selectionController->ReadActiveLine();
     if (rows.empty()) { context->selectionController->SetActiveLine(nullptr); return; }
 	int old_extend = extendRow;
 	int next = mid(0, (active_line ? active_line->Row : 0) + dir * step, GetRows() - 1);

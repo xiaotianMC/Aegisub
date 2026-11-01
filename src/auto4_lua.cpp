@@ -816,7 +816,7 @@ namespace {
 
 	static std::vector<int> selected_rows(const agi::Context *c)
 	{
-		auto const& sel = c->selectionController->GetSelectedSet();
+		auto const& sel = c->selectionController->ReadSelectedSet();
 		int offset = c->ass->Info.size() + c->ass->Styles.size();
 		std::vector<int> rows;
 		rows.reserve(sel.size());
@@ -839,7 +839,7 @@ namespace {
 		auto subsobj = new LuaAssFile(L, c->ass.get());
 
 		push_value(L, selected_rows(c));
-		if (auto active_line = c->selectionController->GetActiveLine())
+		if (auto active_line = c->selectionController->ReadActiveLine())
 			push_value(L, active_line->Row + c->ass->Info.size() + c->ass->Styles.size() + 1);
 		else
 			lua_pushnil(L);
@@ -878,7 +878,7 @@ namespace {
 		int original_offset = c->ass->Info.size() + c->ass->Styles.size() + 1;
 		auto original_sel = selected_rows(c);
 		int original_active = 0;
-		if (auto active_line = c->selectionController->GetActiveLine())
+		if (auto active_line = c->selectionController->ReadActiveLine())
 			original_active = active_line->Row + original_offset;
 
 		push_value(L, original_sel);
@@ -912,7 +912,7 @@ namespace {
 
 		// top of stack will be selected lines array, if any was returned
 		if (lua_istable(L, -1)) {
-			std::set<AssDialogue*> sel;
+			Selection sel;
 			lua_for_each(L, [&] {
 				if (!lua_isnumber(L, -1))
 					return;
@@ -934,7 +934,7 @@ namespace {
 					active_line = diag;
 			});
 
-			AssDialogue *new_active = c->selectionController->GetActiveLine();
+			AssDialogue const* new_active = c->selectionController->ReadActiveLine();
 			if (active_line && (active_idx > 0 || !sel.count(new_active)))
 				new_active = active_line;
 			if (sel.empty())
@@ -945,7 +945,7 @@ namespace {
 			lua_pop(L, 1);
 
 			Selection new_sel;
-			AssDialogue *new_active = nullptr;
+			AssDialogue const* new_active = nullptr;
 
 			int prev = original_offset;
 			auto it = c->ass->Events.begin();
@@ -982,7 +982,7 @@ namespace {
 		GetFeatureFunction("isactive");
 		auto subsobj = new LuaAssFile(L, c->ass.get());
 		push_value(L, selected_rows(c));
-		if (auto active_line = c->selectionController->GetActiveLine())
+		if (auto active_line = c->selectionController->ReadActiveLine())
 			push_value(L, active_line->Row + c->ass->Info.size() + c->ass->Styles.size() + 1);
 
 		int err = lua_pcall(L, 3, 1, 0);

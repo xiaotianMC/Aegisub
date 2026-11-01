@@ -82,7 +82,7 @@ int main(int argc, char **argv) {
     try {
         auto& c = wxGetApp().NewProjectContext();
         c.project->LoadSubtitles("../tests/data/shape-editor-test.ass", "UTF-8", false);
-        auto line = c.selectionController->GetActiveLine();
+        auto line = c.selectionController->ReadActiveLine();
         const auto original = line->Text;
         auto editor = find_child<SubsTextEditCtrl>(c.parent);
         require(editor, "native subtitle editor missing");
@@ -117,7 +117,7 @@ int main(int argc, char **argv) {
         });
         require(c.subsController->IsModified(), "confirmation did not create an edit");
         c.subsController->Undo();
-        line = c.selectionController->GetActiveLine();
+        line = c.selectionController->ReadActiveLine();
         require(line->Text == original, "one undo did not restore the whole edit");
         synced();
         require(!c.subsController->IsModified(), "undo did not restore saved state");
@@ -161,9 +161,9 @@ int main(int argc, char **argv) {
         cmd::call("subtitle/bind", &c);
         require(!GetSubtitleBinding(*c.ass, *first).empty(), "binding was not created");
         c.selectionController->SetSelectedSet({first});
-        require(c.selectionController->GetSelectedSet().size() == 2, "binding group did not expand the selection");
+        require(c.selectionController->ReadSelectedSet().size() == 2, "binding group did not expand the selection");
         c.selectionController->SetSelectedSet({first}, false);
-        require(c.selectionController->GetSelectedSet().size() == 1, "single-line selection bypass did not work");
+        require(c.selectionController->ReadSelectedSet().size() == 1, "single-line selection bypass did not work");
 
         // A duration edit through the normal multi-line editor must apply once
         // to the whole group, without the old custom duration-sync path.
@@ -196,10 +196,10 @@ int main(int argc, char **argv) {
         ctrl_up.SetPosition({200, 30});
         ctrl_up.SetEventObject(grid);
         grid->ProcessWindowEvent(ctrl_up);
-        require(c.selectionController->GetSelectedSet().size() == 1, "Ctrl+click did not select a single bound row");
+        require(c.selectionController->ReadSelectedSet().size() == 1, "Ctrl+click did not select a single bound row");
         grid_click(wxEVT_LEFT_DOWN);
         grid_click(wxEVT_LEFT_UP);
-        require(c.selectionController->GetSelectedSet().size() == 2, "normal click did not expand the bound group");
+        require(c.selectionController->ReadSelectedSet().size() == 2, "normal click did not expand the bound group");
 
         c.selectionController->SetSelectionAndActive({first, second}, first);
         cmd::call("subtitle/unbind", &c);

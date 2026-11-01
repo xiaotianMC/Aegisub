@@ -39,33 +39,55 @@
 
 class AssDialogue;
 class AssFile;
-typedef std::set<AssDialogue *> Selection;
+using Selection = std::set<AssDialogue const*>;
 
 namespace agi { struct Context; }
 
+// Selection changes are UI state and require no subtitle WriteLease. Returned
+// row views are read-only and valid only until the next model mutation.
 class SelectionController {
-	agi::signal::Signal<AssDialogue *> AnnounceActiveLineChanged;
-	agi::signal::Signal<> AnnounceSelectedSetChanged;
-
+    agi::signal::Signal<> AnnounceActiveLineChanged;
+    agi::signal::Signal<> AnnounceSelectedSetChanged;
     AssFile *file;
     agi::SubtitleEditGate *gate;
+    agi::SubtitleEditGate::RevisionToken lifetime;
     std::thread::id owner_thread = std::this_thread::get_id();
-
-	Selection selection; ///< Currently selected lines
-	AssDialogue *active_line = nullptr; ///< The currently active line or 0 if none
-
+    std::set<int> selection;
+    int active_id = 0;
+    bool model_replaced = false;
+    agi::signal::Connection commit_connection;
+    void Check() const;
+    Selection Validate(std::set<int> const&) const;
+    void Notify(bool selected, bool active);
 public:
-	SelectionController(agi::Context *context);
+    SelectionController(agi::Context*);
     SelectionController(AssFile&, agi::SubtitleEditGate&);
-
-    // New read-only API. Legacy mutable getters below still need migration.
+    int ActiveID() const;
+    std::set<int> SelectedIDs() const;
     AssDialogue const* ReadActiveLine() const;
     AssDialogue const* ReadActiveLine(agi::SubtitleEditGate::RevisionToken const&) const;
+    Selection ReadSelectedSet() const;
     std::vector<AssDialogue const*> ReadSelectedLines() const;
     std::vector<AssDialogue const*> ReadSelectedLines(agi::SubtitleEditGate::RevisionToken const&) const;
+    std::vector<AssDialogue const*> ReadSortedSelection() const;
+
+    // Active-only changes leave the selected set unchanged. Zero clears active.
+    void SetActiveID(int);
+    // Always announces Selection, including an identical set. Binding expansion
+    // can be disabled for a temporary single-line operation.
+    void SetSelectedIDs(std::set<int>, bool expand_bound_groups = true);
+    // Installs both values, announces Selection, then Active if it changed.
+    void SetSelectionAndActiveIDs(std::set<int>, int, bool expand_bound_groups = true);
+
+    // Transitional read-only inputs, removed with the caller migration.
+    void SetActiveLine(AssDialogue const*);
+    void SetSelectedSet(Selection, bool expand_bound_groups = true);
+    void SetSelectionAndActive(Selection, AssDialogue const*, bool expand_bound_groups = true);
+
     class PreparedSelection {
-        Selection selection;
-        AssDialogue *active = nullptr;
+        std::set<int> selection;
+        int active = 0;
+        std::vector<int> model_ids;
         AssFile *owner;
         agi::SubtitleEditGate::RevisionToken revision;
         PreparedSelection(AssFile*, agi::SubtitleEditGate::RevisionToken);
@@ -78,71 +100,11 @@ public:
     };
     PreparedSelection PrepareSilent(agi::SubtitleEditGate::ComparisonSession const&,
         std::vector<int> const& selected_ids, std::optional<int> active_id) const;
-    // All validation precedes the no-allocation swap. Does not notify or expand bindings.
+    // Validation precedes the no-allocation swap. No notifications or expansion.
     void InstallSilent(agi::SubtitleEditGate::ComparisonSession const&, PreparedSelection&&);
-
-	/// @brief Change the active line
-	/// @param new_line Subtitle line to become the new active line
-	///
-	/// The active line may be changed to nullptr, in which case there is no longer an
-	/// active line.
-	///
-	/// Calling this method should only cause a change notification to be sent if
-	/// the active line was actually changed.
-	///
-	/// This method must not affect the selected set.
-	void SetActiveLine(AssDialogue *new_line);
-
-	/// @brief Obtain the active line
-	/// @return The active line or nullptr if there is none
-	AssDialogue *GetActiveLine() const { return active_line;  }
-
-	/// @brief Change the selected set
-	/// @param new_selection The set of subtitle lines to become the new selected set
-	/// @param expand_bound_groups Add all members of any binding group touched by
-	///        the selection. Pass false for a temporary single-line edit.
-	///
-	/// Implementations must either completely change the selected set to the new
-	/// set provided, or not change the selected set at all. Partial changes are
-	/// not allowed.
-	///
-	/// If no change happens to the selected set, whether because it was refused or
-	/// because the new set was identical to the old set, no change notification may
-	/// be sent.
-	void SetSelectedSet(Selection new_selection, bool expand_bound_groups = true);
-
-	/// @brief Obtain the selected set
-	/// @return The selected set
-	Selection const& GetSelectedSet() const { return selection; }
-
-	/// Get the selection sorted by row number
-	std::vector<AssDialogue *> GetSortedSelection() const;
-
-	/// @brief Set both the selected set and active line
-	/// @param new_line Subtitle line to become the new active line
-	/// @param new_selection The set of subtitle lines to become the new selected set
-	/// @param expand_bound_groups Add all members of any binding group touched by
-	///        the selection. Pass false for a temporary single-line edit.
-	///
-	/// This sets both the active line and selected set before announcing the
-	/// change to either of them, and is guaranteed to announce the active line
-	/// change before the selection change.
-	void SetSelectionAndActive(Selection new_selection, AssDialogue *new_line, bool expand_bound_groups = true);
-
-	/// @brief Change the active line to the next in sequence
-	///
-	/// If there is no logical next line in sequence, no change happens. This should
-	/// also reset the selected set to consist of exactly the active line, if the
-	/// active line was changed.
-	void NextLine();
-
-	/// @brief Change the active line to the previous in sequence
-	///
-	/// If there is no logical previous line in sequence, no change happens. This
-	/// should also reset the selected set to consist of exactly the active line, if
-	/// the active line was changed.
-	void PrevLine();
-
-	DEFINE_SIGNAL_ADDERS(AnnounceSelectedSetChanged, AddSelectionListener)
-	DEFINE_SIGNAL_ADDERS(AnnounceActiveLineChanged, AddActiveLineListener)
+    void NextLine();
+    void PrevLine();
+    DEFINE_SIGNAL_ADDERS(AnnounceSelectedSetChanged, AddSelectionListener)
+    // No row payload: each observer reads current state, including after nested navigation.
+    DEFINE_SIGNAL_ADDERS(AnnounceActiveLineChanged, AddActiveLineListener)
 };

@@ -99,6 +99,12 @@ EntryList<AssDialogue>::iterator AssFile::iterator_to(AssDialogue& line) {
 	return in_list ? Events.iterator_to(line) : Events.end();
 }
 
+EntryList<AssDialogue>::const_iterator AssFile::iterator_to(AssDialogue const& line) const {
+    using l = EntryList<AssDialogue>;
+    bool in_list = !l::node_algorithms::inited(l::value_traits::to_node_ptr(line));
+    return in_list ? Events.iterator_to(line) : Events.end();
+}
+
 void AssFile::InsertAttachment(agi::fs::path const& filename) {
 	AssEntryGroup group = AssEntryGroup::GRAPHIC;
 

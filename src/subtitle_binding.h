@@ -16,4 +16,4 @@ void BindSelectedSubtitles(agi::Context *c);
 void UnbindSelectedSubtitles(agi::Context *c);
 
 /// Expand a selection to include every member of the binding groups it touches.
-Selection ExpandBoundSelection(AssFile& file, Selection const& selection);
+Selection ExpandBoundSelection(AssFile const& file, Selection const& selection);

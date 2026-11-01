@@ -24,10 +24,11 @@ class AssDialogue;
 class InitialLineState {
 	agi::signal::Connection active_line_connection;
 	std::string initial_text;
-	int line_id;
+	int line_id = 0;
+    agi::Context *context;
 
 	agi::signal::Signal<std::string const&> InitialStateChanged;
-	void OnActiveLineChanged(AssDialogue *new_line);
+	void OnActiveLineChanged();
 
 public:
 	InitialLineState(agi::Context *c);

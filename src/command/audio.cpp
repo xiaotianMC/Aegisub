@@ -169,11 +169,11 @@ struct audio_save_clip final : public Command {
 	CMD_TYPE(COMMAND_VALIDATE)
 
 	bool Validate(const agi::Context *c) override {
-		return c->project->AudioProvider() && !c->selectionController->GetSelectedSet().empty();
+		return c->project->AudioProvider() && !c->selectionController->ReadSelectedSet().empty();
 	}
 
 	void operator()(agi::Context *c) override {
-		auto const& sel = c->selectionController->GetSelectedSet();
+		auto const& sel = c->selectionController->ReadSelectedSet();
 		if (sel.empty()) return;
 
 		auto filename = SaveFileSelector(c, _("Save Audio Clip"), "", "", "wav", "", c->parent);

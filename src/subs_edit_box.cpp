@@ -425,7 +425,8 @@ void SubsEditBox::PopulateList(wxComboBox *combo, boost::flyweight<std::string> 
 	combo->Thaw();
 }
 
-void SubsEditBox::OnActiveLineChanged(AssDialogue *new_line) {
+void SubsEditBox::OnActiveLineChanged() {
+    auto new_line = c->selectionController->ReadActiveLine();
 	wxEventBlocker blocker(this);
 	line = new_line;
 	commit_id = -1;
@@ -513,7 +514,7 @@ void SubsEditBox::CommitText(wxString const& desc) {
 void SubsEditBox::CommitTimes(TimeField field) {
     auto write = c->subtitleAccess->TryWrite();
     if (!write) { wxEventBlocker blocker(this); UpdateFields(AssFile::COMMIT_DIAG_FULL, false); return; }
-	auto const& sel = c->selectionController->GetSelectedSet();
+	auto const& sel = c->selectionController->ReadSelectedSet();
 	bool linked_neighbor = false;
     std::vector<AssDialogueBase> updates;
     int old_boundary = 0;

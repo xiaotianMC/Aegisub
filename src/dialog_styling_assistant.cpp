@@ -153,7 +153,7 @@ DialogStyling::DialogStyling(agi::Context *context)
 	style_list->Bind(wxEVT_LISTBOX_DCLICK, &DialogStyling::OnListDoubleClicked, this);
 	style_name->Bind(wxEVT_TEXT, &DialogStyling::OnStyleBoxModified, this);
 
-	OnActiveLineChanged(c->selectionController->GetActiveLine());
+	OnActiveLineChanged();
 }
 
 DialogStyling::~DialogStyling() {
@@ -161,7 +161,7 @@ DialogStyling::~DialogStyling() {
 	edit->End();
 }
 
-void DialogStyling::OnActiveLineChanged(AssDialogue *) try {
+void DialogStyling::OnActiveLineChanged() try {
 	if(!edit->Alive())return;
 	edit->ResetActive();active_id=SubtitleDialogEdit::ActiveID(c);
 	auto active_line=edit->Find(active_id);

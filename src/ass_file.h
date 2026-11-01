@@ -84,6 +84,7 @@ struct ProjectProperties {
 
 class AssFile {
     friend class SubtitleProjectAccess;
+    friend class SelectionController;
     // Identity belongs to the live file, never copied or swapped into snapshots.
     agi::SubtitleEditGate *edit_gate = nullptr;
     bool notifying = false;
@@ -108,6 +109,7 @@ public:
 	~AssFile();
 
 	EntryList<AssDialogue>::iterator iterator_to(AssDialogue& line);
+    EntryList<AssDialogue>::const_iterator iterator_to(AssDialogue const& line) const;
 
 	/// @brief Load default file
 	/// @param defline Add a blank line to the file

@@ -109,7 +109,7 @@ class BaseGrid final : public wxWindow {
 	void OnShowColMenu(wxCommandEvent &event);
 	void OnSize(wxSizeEvent &event);
 	void OnSubtitlesCommit(int type);
-	void OnActiveLineChanged(AssDialogue *);
+	void OnActiveLineChanged();
 	void OnSeek();
 
 	void AdjustScrollbar();

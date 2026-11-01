@@ -194,7 +194,7 @@ bool SearchReplaceEngine::FindReplace(bool replace) {
 
 	auto matches = GetMatcher(settings);
 
-	AssDialogue *line = context->selectionController->GetActiveLine();
+	AssDialogue const* line = context->selectionController->ReadActiveLine();
 	auto it = context->ass->iterator_to(*line);
 	size_t pos = 0;
 
@@ -232,7 +232,7 @@ bool SearchReplaceEngine::FindReplace(bool replace) {
 	else if (settings.field != SearchReplaceSettings::Field::TEXT)
 		it = circular_next(it, context->ass->Events);
 
-	auto const& sel = context->selectionController->GetSelectedSet();
+	auto const& sel = context->selectionController->ReadSelectedSet();
 	bool selection_only = sel.size() > 1 && settings.limit_to == SearchReplaceSettings::Limit::SELECTED;
 
 	do {

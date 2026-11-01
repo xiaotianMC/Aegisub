@@ -247,7 +247,7 @@ void DialogSpellChecker::OnChangeSuggestion(wxCommandEvent&) {
 bool DialogSpellChecker::FindNext() {
     auto edit_scope = context->subtitleAccess->TryWrite();
     if (!edit_scope) return false;
-	AssDialogue *real_active_line = context->selectionController->GetActiveLine();
+	AssDialogue const* real_active_line = context->selectionController->ReadActiveLine();
 	// User has changed the active line; restart search from this position
 	if (real_active_line != active_line) {
 		active_line = real_active_line;
@@ -341,7 +341,7 @@ bool DialogSpellChecker::CheckLine(AssDialogue const* active_line, int start_pos
 void DialogSpellChecker::Replace() {
     auto edit_scope = context->subtitleAccess->TryWrite();
     if (!edit_scope) return;
-	AssDialogue *active_line = context->selectionController->GetActiveLine();
+	AssDialogue const* active_line = context->selectionController->ReadActiveLine();
 
 	// Only replace if the user hasn't changed the selection to something else
 	if (to_wx(active_line->Text.get().substr(word_start, word_len)) == orig_word->GetValue()) {

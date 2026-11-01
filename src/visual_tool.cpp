@@ -86,7 +86,7 @@ void VisualToolBase::SetResolutions() {
 
 void VisualToolBase::ReadSelection() {
 	selected_ids.clear();
-	auto const& selected = c->selectionController->GetSelectedSet();
+	auto const& selected = c->selectionController->ReadSelectedSet();
 	for (auto const& row : c->subtitleAccess->Read().Events)
 		if (std::find(selected.begin(), selected.end(), &row) != selected.end()) selected_ids.push_back(row.Id);
 	std::sort(selected_ids.begin(), selected_ids.end());
@@ -246,7 +246,7 @@ void VisualToolBase::OnSeek(int new_frame) {
 	OnLineChanged();
 }
 void VisualToolBase::OnMouseCaptureLost(wxMouseCaptureLostEvent& event) { Cancel(); event.Skip(); }
-void VisualToolBase::OnActiveLineChanged(AssDialogue*) {
+void VisualToolBase::OnActiveLineChanged() {
 	if (!changing_selection) Cancel();
 	active_line = GetActiveDialogueLine();
 	OnLineChanged();
@@ -286,19 +286,19 @@ void VisualToolBase::SelectFeature(int id, bool clear) {
 	if (!EditCurrent()) throw std::logic_error("Unauthorized visual selection");
 	changing_selection = true;
 	BOOST_SCOPE_EXIT_ALL(this) { changing_selection = false; };
-	auto selected = clear ? Selection{} : c->selectionController->GetSelectedSet();
+	auto selected = clear ? Selection{} : c->selectionController->ReadSelectedSet();
 	for (auto& row : c->ass->Events) if (row.Id == id) {
 		selected.insert(&row); c->selectionController->SetSelectedSet(std::move(selected)); return;
 	}
 }
 void VisualToolBase::DeselectFeature(int id) {
 	if (!EditCurrent()) throw std::logic_error("Unauthorized visual selection");
-	auto selected = c->selectionController->GetSelectedSet();
+	auto selected = c->selectionController->ReadSelectedSet();
 	if (selected.size() <= 1) return;
 	for (auto& row : c->ass->Events) if (row.Id == id) selected.erase(&row);
 	changing_selection = true;
 	BOOST_SCOPE_EXIT_ALL(this) { changing_selection = false; };
-	auto active = c->selectionController->GetActiveLine();
+	auto active = c->selectionController->ReadActiveLine();
 	if (!selected.count(active)) active = *selected.begin();
 	c->selectionController->SetSelectionAndActive(std::move(selected), active);
 }
