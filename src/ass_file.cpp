@@ -190,6 +190,12 @@ AssStyle *AssFile::GetStyle(std::string const& name) {
 	return nullptr;
 }
 
+AssStyle const* AssFile::GetStyle(std::string const& name) const {
+    for (auto const& style : Styles)
+        if (boost::iequals(style.name, name)) return &style;
+    return nullptr;
+}
+
 int AssFile::Commit(wxString const& desc, int type, int amend_id, AssDialogue *single_line) {
     if (edit_gate) edit_gate->NoteLegacyCommit();
 	if (type == COMMIT_NEW || (type & COMMIT_DIAG_ADDREM) || (type & COMMIT_ORDER)) {

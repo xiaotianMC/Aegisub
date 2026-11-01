@@ -28,6 +28,7 @@
 
 #include "ass_dialogue.h"
 #include "ass_file.h"
+#include "subtitle_project_access.h"
 #include "command/command.h"
 #include "compat.h"
 #include "format.h"
@@ -65,10 +66,10 @@ static bool bad_block(std::unique_ptr<AssDialogueBlock> &block) {
 DialogTranslation::DialogTranslation(agi::Context *c)
 : wxDialog(c->parent, -1, _("Translation Assistant"), wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER | wxMINIMIZE_BOX)
 , c(c)
-, file_change_connection(c->ass->AddCommitListener(&DialogTranslation::OnExternalCommit, this))
+, file_change_connection(c->subtitleAccess->Read().AddCommitListener(&DialogTranslation::OnExternalCommit, this))
 , active_line_connection(c->selectionController->AddActiveLineListener(&DialogTranslation::OnActiveLineChanged, this))
 , edit(std::make_unique<SubtitleDialogEdit>(c))
-, line_count(c->ass->Events.size())
+, line_count(c->subtitleAccess->Read().Events.size())
 {
 	SetIcons(GETICONS(translation_toolbutton));
 	Bind(wxEVT_SHOW,&DialogTranslation::OnShow,this);

@@ -213,3 +213,30 @@ TEST(subtitle_interaction, own_commit_does_not_adopt_unexpected_nested_revision)
     EXPECT_THROW(session->Commit(wxString{},AssFile::COMMIT_DIAG_TEXT),std::logic_error);
     EXPECT_FALSE(session->Current());EXPECT_TRUE(gate.TryBeginComparison());
 }
+
+TEST(subtitle_project_access, ordinary_value_batch_validates_all_rows_and_preserves_live_nodes) {
+    AssFile file; auto first=new AssDialogue; auto second=new AssDialogue;
+    file.Events.push_back(*first); file.Events.push_back(*second); first->Row=0;second->Row=1;
+    agi::SubtitleEditGate gate;SubtitleProjectAccess access(file,gate);
+    auto scope=access.TryWrite();ASSERT_TRUE(scope);auto edit=access.Edit(scope->Lease());
+    AssDialogueBase a=*first,b=*second;a.Text="candidate";b.Id=-1;
+    EXPECT_THROW(edit.UpdateRows({a,b}),std::out_of_range);EXPECT_EQ("",first->Text.get());
+    EXPECT_THROW(edit.UpdateRows({a,a}),std::invalid_argument);EXPECT_EQ("",first->Text.get());
+    b=*second;b.Start=123;edit.UpdateRows({a,b});
+    EXPECT_EQ(first,&file.Events.front());EXPECT_EQ("candidate",first->Text.get());EXPECT_EQ(123,second->Start.GetMilliseconds());
+    scope.reset();EXPECT_THROW(edit.UpdateRows({a}),std::logic_error);
+}
+TEST(subtitle_project_access, const_queries_subscribe_and_all_write_handles_reject_notification_reentry) {
+    AssFile file;file.Events.push_back(*new AssDialogue);file.Styles.push_back(*new AssStyle);
+    agi::SubtitleEditGate gate;SubtitleProjectAccess access(file,gate);
+    auto scope=access.TryWrite();auto edit=access.Edit(scope->Lease());
+    static_assert(std::is_same_v<decltype(access.Read().GetStyle("Default")),AssStyle const*>);
+    bool called=false;
+    agi::signal::Connection observer=access.Read().AddCommitListener([&] {
+        called=true;EXPECT_THROW(edit.SetDialogueField(file.Events.front().Id,&AssDialogueBase::Text,"bad"),std::logic_error);
+        auto direct=gate.TryBeginWrite();ASSERT_TRUE(direct);auto bypass=access.Edit(*direct);
+        EXPECT_THROW(bypass.UpdateRows({file.Events.front()}),std::logic_error);
+        EXPECT_THROW(bypass.Commit("bad",AssFile::COMMIT_DIAG_TEXT),std::logic_error);
+    });
+    edit.Commit("ok",AssFile::COMMIT_DIAG_TEXT);EXPECT_TRUE(called);EXPECT_EQ("",file.Events.front().Text.get());
+}

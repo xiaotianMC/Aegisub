@@ -91,7 +91,7 @@ BaseGrid::BaseGrid(wxWindow* parent, agi::Context *context)
 	OnHighlightVisibleChange(*OPT_GET("Subtitle/Grid/Highlight Subtitles in Frame"));
 
 	connections = agi::signal::make_vector({
-		context->ass->AddCommitListener(&BaseGrid::OnSubtitlesCommit, this),
+		context->subtitleAccess->Read().AddCommitListener(&BaseGrid::OnSubtitlesCommit, this),
 
 		context->selectionController->AddActiveLineListener(&BaseGrid::OnActiveLineChanged, this),
 		context->selectionController->AddSelectionListener([&]{ Refresh(false); }),
@@ -139,7 +139,7 @@ void BaseGrid::OnDPIChanged(wxDPIChangedEvent &e) {
 void BaseGrid::OnSubtitlesCommit(int type) {
 	if (type == AssFile::COMMIT_NEW || (type & AssFile::COMMIT_EXTRADATA)) {
 		bool bound = std::any_of(context->ass->Events.begin(), context->ass->Events.end(), [&](auto const& line) {
-			return !GetSubtitleBinding(*context->ass, line).empty();
+			return !GetSubtitleBinding(context->subtitleAccess->Read(), line).empty();
 		});
 		if (bound) {
 			columns[1]->SetVisible(true);
@@ -484,10 +484,10 @@ void BaseGrid::OnMouseEvent(wxMouseEvent &event) {
 	if ((click || dclick) && over_number && !holding && !shift && !ctrl && !alt) {
         auto write = context->subtitleAccess->TryWrite();
         if (!write) return;
-        auto rows = RowsForWrite(write->Lease());
-        auto target = rows.at(row);
-        target->Comment = !target->Comment;
-		context->ass->Commit(_("comment change"), AssFile::COMMIT_DIAG_META, -1, target);
+        auto target = GetDialogue(row);
+        auto edit = context->subtitleAccess->Edit(write->Lease());
+        edit.SetDialogueField(target->Id, &AssDialogueBase::Comment, !target->Comment);
+        edit.Commit(_("comment change"), AssFile::COMMIT_DIAG_META, -1, target->Id);
 		return;
 	}
 
@@ -541,7 +541,7 @@ void BaseGrid::OnMouseEvent(wxMouseEvent &event) {
 		if (click && ctrl && !shift && !alt) {
 			// Ctrl+click on a bound row is the temporary single-line edit
 			// escape hatch; do not expand the binding group.
-			if (!GetSubtitleBinding(*context->ass, *target).empty()) {
+			if (!GetSubtitleBinding(context->subtitleAccess->Read(), *target).empty()) {
 				context->selectionController->SetSelectionAndActive({target}, target, false);
 				return;
 			}
@@ -567,7 +567,7 @@ void BaseGrid::OnMouseEvent(wxMouseEvent &event) {
 
 		// Alt+click on a bound row also edits only that member.
 		if (click && !shift && !ctrl && alt) {
-			if (!GetSubtitleBinding(*context->ass, *target).empty())
+			if (!GetSubtitleBinding(context->subtitleAccess->Read(), *target).empty())
 				context->selectionController->SetSelectionAndActive({target}, target, false);
 			return;
 		}

@@ -27,6 +27,7 @@
 #include "ass_dialogue.h"
 #include "subtitle_dialog_edit.h"
 #include "ass_file.h"
+#include "subtitle_project_access.h"
 #include "command/command.h"
 #include "compat.h"
 #include "help_button.h"
@@ -56,7 +57,7 @@ DialogStyling::DialogStyling(agi::Context *context)
 : wxDialog(context->parent, -1, _("Styling Assistant"), wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER | wxMINIMIZE_BOX)
 , c(context)
 , active_line_connection(context->selectionController->AddActiveLineListener(&DialogStyling::OnActiveLineChanged, this))
-, file_change_connection(context->ass->AddCommitListener([this]{edit->Invalidate();}))
+, file_change_connection(context->subtitleAccess->Read().AddCommitListener([this]{edit->Invalidate();}))
 , edit(std::make_unique<SubtitleDialogEdit>(context))
 {
 	SetIcons(GETICONS(styling_toolbutton));

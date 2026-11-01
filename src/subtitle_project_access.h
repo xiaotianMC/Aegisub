@@ -86,6 +86,9 @@ public:
             style->UpdateData();
         }
         void SetExtradataValue(uint32_t id, std::string value) const;
+        void UpdateRows(std::vector<AssDialogueBase> const&) const;
+        bool LinkAdjacent(int id, bool start_changed, int old_boundary, int threshold_ms, bool exact_milliseconds = false) const;
+        int Commit(wxString const&, int type, int amend_id = -1, int single_line_id = 0) const;
     };
     SubtitleProjectAccess(AssFile&, agi::SubtitleEditGate&);
     SubtitleProjectAccess(SubtitleProjectAccess const&) = delete;

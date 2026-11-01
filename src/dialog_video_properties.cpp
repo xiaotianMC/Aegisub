@@ -16,6 +16,7 @@
 // Aegisub Project http://www.aegisub.org/
 
 #include "ass_file.h"
+#include "subtitle_project_access.h"
 #include "subtitle_dialog_edit.h"
 #include "project.h"
 #include "async_video_provider.h"
@@ -531,7 +532,7 @@ bool update_layout_res(AssFile *file, const VideoPropertyValues *new_provider, w
 void UpdateVideoProperties(agi::Context *c, const AsyncVideoProvider *new_provider) {
     SubtitleDialogEdit edit(c);
     VideoPropertyValues video(*new_provider);
-    agi::signal::Connection changed=c->ass->AddCommitListener([&]{edit.Invalidate();});
+    agi::signal::Connection changed=c->subtitleAccess->Read().AddCommitListener([&]{edit.Invalidate();});
     struct Cancelled {};
     auto step=[&](auto calculate,wxString const& description) {
         if(!edit.Alive() || c->project->VideoProvider()!=new_provider)throw Cancelled{};

@@ -157,7 +157,7 @@ DialogTimingProcessor::DialogTimingProcessor(agi::Context *c)
 	// Styles box
 	auto LeftSizer = new wxStaticBoxSizer(wxVERTICAL,&d,_("Apply to styles"));
 	wxWindow *LeftSizerBox = LeftSizer->GetStaticBox();
-	StyleList = new wxCheckListBox(LeftSizerBox, -1, wxDefaultPosition, wxSize(150,150), to_wx(c->ass->GetStyles()));
+	StyleList = new wxCheckListBox(LeftSizerBox, -1, wxDefaultPosition, wxSize(150,150), to_wx(c->subtitleAccess->Read().GetStyles()));
 	StyleList->SetToolTip(_("Select styles to process. Unchecked ones will be ignored."));
 
 	auto all = new wxButton(LeftSizerBox,-1,_("&All"));

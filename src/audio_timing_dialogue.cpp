@@ -29,6 +29,7 @@
 
 #include "ass_dialogue.h"
 #include "ass_file.h"
+#include "subtitle_project_access.h"
 #include "audio_edit_session.h"
 #include <boost/scope_exit.hpp>
 #include "audio_marker.h"
@@ -425,7 +426,7 @@ AudioTimingControllerDialogue::AudioTimingControllerDialogue(agi::Context *c)
 , keyframes_provider(c, "Audio/Display/Draw/Keyframes in Dialogue Mode")
 , video_position_provider(c)
 , context(c)
-, commit_connection(c->ass->AddCommitListener(&AudioTimingControllerDialogue::OnFileChanged, this))
+, commit_connection(c->subtitleAccess->Read().AddCommitListener(&AudioTimingControllerDialogue::OnFileChanged, this))
 , inactive_line_mode_connection(OPT_SUB("Audio/Inactive Lines Display Mode", &AudioTimingControllerDialogue::Revert, this))
 , inactive_line_comment_connection(OPT_SUB("Audio/Display/Draw/Inactive Comments", &AudioTimingControllerDialogue::Revert, this))
 , active_line_connection(c->selectionController->AddActiveLineListener(&AudioTimingControllerDialogue::Revert, this))

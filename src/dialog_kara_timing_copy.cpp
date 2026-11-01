@@ -30,6 +30,7 @@
 
 #include "ass_dialogue.h"
 #include "ass_file.h"
+#include "subtitle_project_access.h"
 #include "subtitle_dialog_edit.h"
 #include "ass_karaoke.h"
 #include "compat.h"
@@ -387,7 +388,7 @@ public:
 DialogKanjiTimer::DialogKanjiTimer(agi::Context *c)
 : wxDialog(c->parent, -1, _("Kanji timer"))
 , edit(c)
-, file_changed(c->ass->AddCommitListener([this]{edit.Invalidate();currentSourceLine=currentDestinationLine=0;display->SetInputData(nullptr,nullptr);}))
+, file_changed(c->subtitleAccess->Read().AddCommitListener([this]{edit.Invalidate();currentSourceLine=currentDestinationLine=0;display->SetInputData(nullptr,nullptr);}))
 {
 	SetIcons(GETICONS(kara_timing_copier));
 

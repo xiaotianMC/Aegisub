@@ -130,11 +130,11 @@ DialogProperties::DialogProperties(agi::Context *c)
 	wxStaticBoxSizer *res_box_sizer = new wxStaticBoxSizer(wxVERTICAL, &d, _("Resolution"));
 	wxWindow *res_box = res_box_sizer->GetStaticBox();
 
-	ResX = new wxTextCtrl(res_box,-1,"",wxDefaultPosition,wxDefaultSize,0,IntValidator(c->ass->GetScriptInfoAsInt("PlayResX")));
-	ResY = new wxTextCtrl(res_box,-1,"",wxDefaultPosition,wxDefaultSize,0,IntValidator(c->ass->GetScriptInfoAsInt("PlayResY")));
+	ResX = new wxTextCtrl(res_box,-1,"",wxDefaultPosition,wxDefaultSize,0,IntValidator(c->subtitleAccess->Read().GetScriptInfoAsInt("PlayResX")));
+	ResY = new wxTextCtrl(res_box,-1,"",wxDefaultPosition,wxDefaultSize,0,IntValidator(c->subtitleAccess->Read().GetScriptInfoAsInt("PlayResY")));
 
-	LayoutResX = new wxTextCtrl(res_box,-1,"",wxDefaultPosition,wxDefaultSize,0,IntValidator(c->ass->GetScriptInfoAsInt("LayoutResX")));
-	LayoutResY = new wxTextCtrl(res_box,-1,"",wxDefaultPosition,wxDefaultSize,0,IntValidator(c->ass->GetScriptInfoAsInt("LayoutResY")));
+	LayoutResX = new wxTextCtrl(res_box,-1,"",wxDefaultPosition,wxDefaultSize,0,IntValidator(c->subtitleAccess->Read().GetScriptInfoAsInt("LayoutResX")));
+	LayoutResY = new wxTextCtrl(res_box,-1,"",wxDefaultPosition,wxDefaultSize,0,IntValidator(c->subtitleAccess->Read().GetScriptInfoAsInt("LayoutResY")));
 
 	wxButton *FromVideo = new wxButton(res_box,-1,_("From &video"));
 	if (!c->project->VideoProvider())
@@ -164,7 +164,7 @@ DialogProperties::DialogProperties(agi::Context *c)
 	res_sizer->Add(LayoutResY, wxGBPosition(1, 3), wxGBSpan(1, 1), wxRIGHT | wxALIGN_CENTER_VERTICAL | wxEXPAND, 2);
 	res_sizer->Add(LayoutResFromVideo, wxGBPosition(1, 4), wxGBSpan(1, 1), wxALIGN_CENTER_VERTICAL | wxEXPAND);
 
-	YCbCrMatrix = new wxComboBox(res_box, -1, to_wx(c->ass->GetScriptInfo("YCbCr Matrix")),
+	YCbCrMatrix = new wxComboBox(res_box, -1, to_wx(c->subtitleAccess->Read().GetScriptInfo("YCbCr Matrix")),
 		 wxDefaultPosition, wxDefaultSize, to_wx(agi::ycbcr::valid_header_strings), wxCB_READONLY);
 
 	wxButton *YCbCrMatrixFromVideo = new wxButton(res_box,-1,_("From video"));
@@ -190,13 +190,13 @@ DialogProperties::DialogProperties(agi::Context *c)
 		_("3: Smart wrapping, bottom line is wider")
 	};
 	WrapStyle = new wxComboBox(optionsBox, -1, "", wxDefaultPosition, wxDefaultSize, 4, wrap_opts, wxCB_READONLY);
-	WrapStyle->SetSelection(c->ass->GetScriptInfoAsInt("WrapStyle"));
+	WrapStyle->SetSelection(c->subtitleAccess->Read().GetScriptInfoAsInt("WrapStyle"));
 	optionsGrid->Add(new wxStaticText(optionsBox,-1,_("Wrap Style: ")),0,wxALIGN_CENTER_VERTICAL,0);
 	optionsGrid->Add(WrapStyle,1,wxEXPAND,0);
 
 	ScaleBorder = new wxCheckBox(optionsBox,-1,_("Scale Border and Shadow"));
 	ScaleBorder->SetToolTip(_("Scale border and shadow together with script/render resolution. If this is unchecked, relative border and shadow size will depend on renderer."));
-	ScaleBorder->SetValue(boost::iequals(c->ass->GetScriptInfo("ScaledBorderAndShadow"), "yes"));
+	ScaleBorder->SetValue(boost::iequals(c->subtitleAccess->Read().GetScriptInfo("ScaledBorderAndShadow"), "yes"));
 	optionsGrid->AddSpacer(0);
 	optionsGrid->Add(ScaleBorder,1,wxEXPAND,0);
 	optionsGrid->AddGrowableCol(1,1);
@@ -214,7 +214,7 @@ DialogProperties::DialogProperties(agi::Context *c)
 }
 
 void DialogProperties::AddProperty(wxWindow *parent, wxSizer *sizer, wxString const& label, std::string_view property) {
-	wxTextCtrl *ctrl = new wxTextCtrl(parent, -1, to_wx(c->ass->GetScriptInfo(property)));
+	wxTextCtrl *ctrl = new wxTextCtrl(parent, -1, to_wx(c->subtitleAccess->Read().GetScriptInfo(property)));
 	sizer->Add(new wxStaticText(parent, -1, label), wxSizerFlags().Center().Left());
 	sizer->Add(ctrl, wxSizerFlags(1).Expand());
 	properties.emplace_back(property, ctrl);
@@ -241,7 +241,7 @@ void DialogProperties::OnOK(wxCommandEvent &) {
 }
 
 int DialogProperties::SetInfoIfDifferent(std::string_view key, std::string_view value) {
-	if (c->ass->GetScriptInfo(key) != value) {
+	if (c->subtitleAccess->Read().GetScriptInfo(key) != value) {
 		c->ass->SetScriptInfo(key, value);
 		return 1;
 	}

@@ -31,6 +31,7 @@
 
 #include "ass_dialogue.h"
 #include "ass_file.h"
+#include "subtitle_project_access.h"
 #include "audio_controller.h"
 #include "compat.h"
 #include "format.h"
@@ -50,7 +51,7 @@ VideoController::VideoController(agi::Context *c)
 : context(c)
 , playAudioOnStep(OPT_GET("Audio/Plays When Stepping Video"))
 , connections(agi::signal::make_vector({
-	context->ass->AddCommitListener(&VideoController::OnSubtitlesCommit, this),
+	context->subtitleAccess->Read().AddCommitListener(&VideoController::OnSubtitlesCommit, this),
 	context->project->AddVideoProviderListener(&VideoController::OnNewVideoProvider, this),
 	context->selectionController->AddActiveLineListener(&VideoController::OnActiveLineChanged, this),
 }))
@@ -70,7 +71,7 @@ void VideoController::OnSubtitlesCommit(int type, const AssDialogue *changed) {
 	if (!provider) return;
 
 	if ((type & AssFile::COMMIT_SCRIPTINFO) || type == AssFile::COMMIT_NEW) {
-		auto new_matrix = context->ass->GetYCbCrMatrix();
+		auto new_matrix = context->subtitleAccess->Read().GetYCbCrMatrix();
 		if (new_matrix != color_matrix) {
 			color_matrix = new_matrix;
 			provider->SetColorSpace(new_matrix);

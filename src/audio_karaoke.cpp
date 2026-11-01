@@ -20,6 +20,7 @@
 
 #include "ass_dialogue.h"
 #include "ass_file.h"
+#include "subtitle_project_access.h"
 #include "audio_edit_session.h"
 #include <boost/scope_exit.hpp>
 #include "ass_karaoke.h"
@@ -58,7 +59,7 @@ static inline size_t last_lt_or_eq(Container const& c, Value const& v) {
 AudioKaraoke::AudioKaraoke(wxWindow *parent, agi::Context *c)
 : wxWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL | wxBORDER_SUNKEN)
 , c(c)
-, file_changed(c->ass->AddCommitListener(&AudioKaraoke::OnFileChanged, this))
+, file_changed(c->subtitleAccess->Read().AddCommitListener(&AudioKaraoke::OnFileChanged, this))
 , audio_opened(c->project->AddAudioProviderListener(&AudioKaraoke::OnAudioOpened, this))
 , active_line_changed(c->selectionController->AddActiveLineListener(&AudioKaraoke::OnActiveLineChanged, this))
 , edit(std::make_shared<AudioEditSession>(c))

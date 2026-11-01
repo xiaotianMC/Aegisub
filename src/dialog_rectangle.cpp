@@ -4,6 +4,7 @@
 #include "dialog_rectangle.h"
 #include "ass_dialogue.h"
 #include "ass_file.h"
+#include "subtitle_project_access.h"
 #include "ass_override.h"
 #include "ass_style.h"
 #include "colour_button.h"
@@ -129,7 +130,7 @@ void EditDrawing(agi::Context *c) {
         previewing=false;
     };
     BOOST_SCOPE_EXIT_ALL(&edit,&restore){edit.End();restore();};
-    agi::signal::Connection file_changed=c->ass->AddCommitListener([&]{edit.Invalidate();});
+    agi::signal::Connection file_changed=c->subtitleAccess->Read().AddCommitListener([&]{edit.Invalidate();});
     agi::signal::Connection selection_changed=c->selectionController->AddActiveLineListener([&]{edit.Invalidate();});
     wxDialog dialog(c->parent, -1, _("Edit Shape"));
     auto layout = new wxBoxSizer(wxVERTICAL);

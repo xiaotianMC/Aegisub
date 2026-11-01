@@ -333,7 +333,7 @@ void update_lines(const agi::Context *c, wxString const& undo_msg, Func&& f) {
 
 void toggle_override_tag(const agi::Context *c, bool (AssStyle::*field), const char *tag, wxString const& undo_msg) {
 	update_lines(c, undo_msg, [&](AssDialogue *line, int sel_start, int sel_end, int norm_sel_start, int norm_sel_end) {
-		AssStyle const* const style = c->ass->GetStyle(line->Style);
+		AssStyle const* const style = c->subtitleAccess->Read().GetStyle(line->Style);
 		bool state = style ? style->*field : AssStyle().*field;
 
 		parsed_line parsed(line);
@@ -359,7 +359,7 @@ void show_color_picker(const agi::Context *c, agi::Color (AssStyle::*field), con
 	using line_info = std::pair<agi::Color, parsed_line>;
 	std::vector<line_info> lines;
 	for (auto line : sel) {
-		AssStyle const* const style = c->ass->GetStyle(line->Style);
+		AssStyle const* const style = c->subtitleAccess->Read().GetStyle(line->Style);
 		agi::Color color = (style ? style->*field : AssStyle().*field);
 
 		parsed_line parsed(line);
@@ -528,7 +528,7 @@ struct edit_font final : public Command {
 		auto font_for_line = [&](parsed_line const& line) -> wxFont {
 			const int blockn = line.block_at_pos(insertion_point);
 
-			const AssStyle *style = c->ass->GetStyle(line.line->Style);
+			const AssStyle *style = c->subtitleAccess->Read().GetStyle(line.line->Style);
 			const AssStyle default_style;
 			if (!style)
 				style = &default_style;
@@ -1326,7 +1326,7 @@ struct edit_bind_subtitles final : public Command {
         if (selection.size() < 2) return false;
         std::string group;
         for (auto line : selection) {
-            auto current = GetSubtitleBinding(*c->ass, *line);
+            auto current = GetSubtitleBinding(c->subtitleAccess->Read(), *line);
             if (current.empty()) return true;
             if (group.empty()) group = std::move(current);
             else if (group != current) return true;
@@ -1346,7 +1346,7 @@ struct edit_unbind_subtitles final : public Command {
     STR_HELP("Remove the selected subtitles from their binding groups")
     bool Validate(const agi::Context *c) override {
         auto const& selection = c->selectionController->GetSelectedSet();
-        return std::any_of(selection.begin(), selection.end(), [&](auto line) { return !GetSubtitleBinding(*c->ass, *line).empty(); });
+        return std::any_of(selection.begin(), selection.end(), [&](auto line) { return !GetSubtitleBinding(c->subtitleAccess->Read(), *line).empty(); });
     }
     void operator()(agi::Context *c) override {
         auto edit_scope = c->subtitleAccess->TryWrite();

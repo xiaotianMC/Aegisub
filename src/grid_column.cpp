@@ -18,6 +18,7 @@
 
 #include "ass_dialogue.h"
 #include "ass_file.h"
+#include "subtitle_project_access.h"
 #include "compat.h"
 #include "include/aegisub/context.h"
 #include "options.h"
@@ -112,7 +113,7 @@ struct GridColumnLineNumber final : GridColumn {
 	}
 
 	int Width(const agi::Context *c, WidthHelper &helper) const override {
-		int number_width = c->ass->Events.empty() ? helper("1") : helper(Value(&c->ass->Events.back()));
+		int number_width = c->subtitleAccess->Read().Events.empty() ? helper("1") : helper(Value(&c->subtitleAccess->Read().Events.back()));
 		return std::max(number_width, helper("00"));
 	}
 
@@ -152,11 +153,11 @@ struct GridColumnLayer final : GridColumn {
 	bool Centered() const override { return true; }
 
 	wxString Value(const AssDialogue *d, const agi::Context *c) const override {
-		return d->Layer || !GetSubtitleBinding(*c->ass, *d).empty() ? wxString(std::to_wstring(d->Layer)) : wxString();
+		return d->Layer || !GetSubtitleBinding(c->subtitleAccess->Read(), *d).empty() ? wxString(std::to_wstring(d->Layer)) : wxString();
 	}
 
 	void Paint(wxDC &dc, int x, int y, const AssDialogue *d, const agi::Context *c) const override {
-		auto group = GetSubtitleBinding(*c->ass, *d);
+		auto group = GetSubtitleBinding(c->subtitleAccess->Read(), *d);
 		if (group.empty()) { GridColumn::Paint(dc, x, y, d, c); return; }
 		static const wxColour colors[] = {
 			{191, 219, 254}, {254, 215, 170}, {187, 247, 208}, {233, 213, 255},
@@ -171,9 +172,9 @@ struct GridColumnLayer final : GridColumn {
 	}
 
 	int Width(const agi::Context *c, WidthHelper &helper) const override {
-		int max_layer = max_value(&AssDialogue::Layer, c->ass->Events);
-		bool bound = std::any_of(c->ass->Events.begin(), c->ass->Events.end(), [&](auto const& line) {
-			return !GetSubtitleBinding(*c->ass, line).empty();
+		int max_layer = max_value(&AssDialogue::Layer, c->subtitleAccess->Read().Events);
+		bool bound = std::any_of(c->subtitleAccess->Read().Events.begin(), c->subtitleAccess->Read().Events.end(), [&](auto const& line) {
+			return !GetSubtitleBinding(c->subtitleAccess->Read(), line).empty();
 		});
 		return max_layer == 0 && !bound ? 0 : helper(std::to_wstring(max_layer));
 	}
@@ -199,7 +200,7 @@ struct GridColumnStartTime final : GridColumnTime {
 	int Width(const agi::Context *c, WidthHelper &helper) const override {
 		if (!by_frame)
 			return helper(wxS("0:00:00.00"));
-		int frame = c->videoController->FrameAtTime(max_value(&AssDialogue::Start, c->ass->Events), agi::vfr::START);
+		int frame = c->videoController->FrameAtTime(max_value(&AssDialogue::Start, c->subtitleAccess->Read().Events), agi::vfr::START);
 		return helper(std::to_wstring(frame));
 	}
 };
@@ -217,7 +218,7 @@ struct GridColumnEndTime final : GridColumnTime {
 	int Width(const agi::Context *c, WidthHelper &helper) const override {
 		if (!by_frame)
 			return helper(wxS("0:00:00.00"));
-		int frame = c->videoController->FrameAtTime(max_value(&AssDialogue::End, c->ass->Events), agi::vfr::END);
+		int frame = c->videoController->FrameAtTime(max_value(&AssDialogue::End, c->subtitleAccess->Read().Events), agi::vfr::END);
 		return helper(std::to_wstring(frame));
 	}
 };
@@ -245,7 +246,7 @@ struct GridColumnStyle final : GridColumn {
 	}
 
 	int Width(const agi::Context *c, WidthHelper &helper) const override {
-		return max_width(&AssDialogue::Style, c->ass->Events, helper);
+		return max_width(&AssDialogue::Style, c->subtitleAccess->Read().Events, helper);
 	}
 };
 
@@ -259,7 +260,7 @@ struct GridColumnEffect final : GridColumn {
 	}
 
 	int Width(const agi::Context *c, WidthHelper &helper) const override {
-		return max_width(&AssDialogue::Effect, c->ass->Events, helper);
+		return max_width(&AssDialogue::Effect, c->subtitleAccess->Read().Events, helper);
 	}
 };
 
@@ -273,7 +274,7 @@ struct GridColumnActor final : GridColumn {
 	}
 
 	int Width(const agi::Context *c, WidthHelper &helper) const override {
-		return max_width(&AssDialogue::Actor, c->ass->Events, helper);
+		return max_width(&AssDialogue::Actor, c->subtitleAccess->Read().Events, helper);
 	}
 };
 
@@ -289,7 +290,7 @@ struct GridColumnMargin : GridColumn {
 
 	int Width(const agi::Context *c, WidthHelper &helper) const override {
 		int max = 0;
-		for (AssDialogue const& line : c->ass->Events) {
+		for (AssDialogue const& line : c->subtitleAccess->Read().Events) {
 			if (line.Margin[index] > max)
 				max = line.Margin[index];
 		}

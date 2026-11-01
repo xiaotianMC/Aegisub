@@ -88,7 +88,7 @@ class AssFile {
     agi::SubtitleEditGate *edit_gate = nullptr;
     bool notifying = false;
 	/// A set of changes has been committed to the file (AssFile::COMMITType)
-	agi::signal::Signal<int, const AssDialogue*> AnnounceCommit;
+	mutable agi::signal::Signal<int, const AssDialogue*> AnnounceCommit;
 	agi::signal::Signal<AssFileCommit> PushState;
 public:
     bool IsNotifying() const noexcept { return notifying; }
@@ -121,6 +121,7 @@ public:
 	/// @param name Style name
 	/// @return Pointer to style or nullptr
 	AssStyle *GetStyle(std::string const& name);
+    AssStyle const* GetStyle(std::string const& name) const;
 
 	void swap(AssFile &) throw();
 
@@ -187,7 +188,10 @@ public:
 		COMMIT_EXTRADATA   = 0x100,
 	};
 
-	DEFINE_SIGNAL_ADDERS(AnnounceCommit, AddCommitListener)
+	template<typename... Args>
+    agi::signal::UnscopedConnection AddCommitListener(Args&&... args) const {
+        return AnnounceCommit.Connect(std::forward<Args>(args)...);
+    }
 	DEFINE_SIGNAL_ADDERS(PushState, AddUndoManager)
 
 	/// @brief Flag the file as modified and push a copy onto the undo stack

@@ -253,7 +253,7 @@ SubsEditBox::SubsEditBox(wxWindow *parent, agi::Context *context)
 	wxSizeEvent evt;
 	OnSize(evt);
 
-	file_changed_slot = c->ass->AddCommitListener(&SubsEditBox::OnCommit, this);
+	file_changed_slot = c->subtitleAccess->Read().AddCommitListener(&SubsEditBox::OnCommit, this);
 	connections = agi::signal::make_vector({
 		context->project->AddTimecodesListener(&SubsEditBox::UpdateFrameTiming, this),
 		context->selectionController->AddActiveLineListener(&SubsEditBox::OnActiveLineChanged, this),
@@ -345,9 +345,9 @@ void SubsEditBox::OnCommit(int type) {
 	if (type == AssFile::COMMIT_NEW || type & AssFile::COMMIT_STYLES) {
 		wxString style = style_box->GetValue();
 		style_box->Clear();
-		style_box->Append(to_wx(c->ass->GetStyles()));
+		style_box->Append(to_wx(c->subtitleAccess->Read().GetStyles()));
 		style_box->Select(style_box->FindString(style, true));
-		active_style = line ? c->ass->GetStyle(line->Style) : nullptr;
+		active_style = line ? c->subtitleAccess->Read().GetStyle(line->Style) : nullptr;
 	}
 
 	if (type == AssFile::COMMIT_NEW) {
@@ -384,7 +384,7 @@ void SubsEditBox::UpdateFields(int type, bool repopulate_lists) {
 			change_value(margin[i], std::to_wstring(line->Margin[i]));
 		comment_box->SetValue(line->Comment);
 		UpdateStyleBox();
-		active_style = line ? c->ass->GetStyle(line->Style) : nullptr;
+		active_style = line ? c->subtitleAccess->Read().GetStyle(line->Style) : nullptr;
 		style_edit_button->Enable(active_style != nullptr);
 
 		if (repopulate_lists) PopulateList(effect_box, AssDialogue_Effect);
@@ -401,7 +401,7 @@ void SubsEditBox::PopulateList(wxComboBox *combo, boost::flyweight<std::string> 
 	wxEventBlocker blocker(this);
 
 	std::unordered_set<boost::flyweight<std::string>> values;
-	for (auto const& line : c->ass->Events) {
+	for (auto const& line : c->subtitleAccess->Read().Events) {
 		auto const& value = line.*field;
 		if (!value.get().empty())
 			values.insert(value);
@@ -471,9 +471,11 @@ void SubsEditBox::OnChange(wxStyledTextEvent &event) {
 	}
 }
 
-void SubsEditBox::Commit(wxString const& desc, int type, bool amend, AssDialogue *line) {
+void SubsEditBox::Commit(wxString const& desc, int type, bool amend, AssDialogue const* line) {
 	file_changed_slot.Block();
-	commit_id = c->ass->Commit(desc, type, (amend && desc == last_commit_type) ? commit_id : -1, line);
+	auto scope = c->subtitleAccess->TryWrite();
+    if (!scope) { file_changed_slot.Unblock(); return; }
+    commit_id = c->subtitleAccess->Edit(scope->Lease()).Commit(desc, type, (amend && desc == last_commit_type) ? commit_id : -1, line ? line->Id : 0);
 	file_changed_slot.Unblock();
 	last_commit_type = desc;
 	last_time_commit_type = -1;
@@ -485,9 +487,11 @@ template<class setter>
 void SubsEditBox::SetSelectedRows(setter set, wxString const& desc, int type, bool amend) {
     auto write = c->subtitleAccess->TryWrite();
     if (!write) { wxEventBlocker blocker(this); UpdateFields(AssFile::COMMIT_DIAG_FULL, false); return; }
-	auto const& sel = c->selectionController->GetSelectedSet();
-	for_each(sel.begin(), sel.end(), set);
-	Commit(desc, type, amend, sel.size() == 1 ? *sel.begin() : nullptr);
+	auto const sel = c->selectionController->ReadSelectedLines();
+    std::vector<AssDialogueBase> updates;
+    for (auto row : sel) { AssDialogue candidate(static_cast<AssDialogueBase const&>(*row)); set(&candidate); updates.push_back(candidate); }
+    c->subtitleAccess->Edit(write->Lease()).UpdateRows(updates);
+    Commit(desc, type, amend, sel.size() == 1 ? sel.front() : nullptr);
 }
 
 template<class T>
@@ -511,8 +515,12 @@ void SubsEditBox::CommitTimes(TimeField field) {
     if (!write) { wxEventBlocker blocker(this); UpdateFields(AssFile::COMMIT_DIAG_FULL, false); return; }
 	auto const& sel = c->selectionController->GetSelectedSet();
 	bool linked_neighbor = false;
-	for (AssDialogue *d : sel) {
-		int old_boundary = field == TIME_START ? d->Start : d->End;
+    std::vector<AssDialogueBase> updates;
+    int old_boundary = 0;
+	for (AssDialogue const* original : sel) {
+        AssDialogue candidate(static_cast<AssDialogueBase const&>(*original));
+        auto d = &candidate;
+		old_boundary = field == TIME_START ? d->Start : d->End;
 		if (!initial_times.count(d->Id))
 			initial_times[d->Id] = {d->Start, d->End};
 
@@ -537,11 +545,14 @@ void SubsEditBox::CommitTimes(TimeField field) {
 				initial_times[d->Id].second = d->End;
 				break;
 		}
-		if (sel.size() == 1 && OPT_GET("Timing/Link Adjacent Lines")->GetBool()) {
-			auto threshold_ms = static_cast<int>(OPT_GET("Timing/Adjacent Line Gap")->GetDouble() * 1000 + 0.5);
-			linked_neighbor = c->ass->LinkAdjacentLine(d, field == TIME_START, old_boundary, threshold_ms);
-		}
-	}
+        updates.push_back(candidate);
+    }
+    auto edit = c->subtitleAccess->Edit(write->Lease());
+    edit.UpdateRows(updates);
+    if (sel.size() == 1 && OPT_GET("Timing/Link Adjacent Lines")->GetBool()) {
+        auto threshold_ms = static_cast<int>(OPT_GET("Timing/Adjacent Line Gap")->GetDouble() * 1000 + 0.5);
+        linked_neighbor = edit.LinkAdjacent((*sel.begin())->Id, field == TIME_START, old_boundary, threshold_ms);
+    }
 
 	start_time->SetTime(line->Start);
 	end_time->SetTime(line->End);
@@ -554,7 +565,7 @@ void SubsEditBox::CommitTimes(TimeField field) {
 
 	last_time_commit_type = field;
 	file_changed_slot.Block();
-	commit_id = c->ass->Commit(_("modify times"), AssFile::COMMIT_DIAG_TIME, commit_id, sel.size() == 1 && !linked_neighbor ? *sel.begin() : nullptr);
+	commit_id = c->subtitleAccess->Edit(write->Lease()).Commit(_("modify times"), AssFile::COMMIT_DIAG_TIME, commit_id, sel.size() == 1 && !linked_neighbor ? (*sel.begin())->Id : 0);
 	file_changed_slot.Unblock();
 	wxEventBlocker blocker(this);
 	start_time->SetTime(line->Start);
@@ -647,7 +658,7 @@ void SubsEditBox::UpdateStyleBox() {
 
 void SubsEditBox::OnStyleChange(wxCommandEvent &evt) {
 	SetSelectedRows(&AssDialogue::Style, new_value(style_box, evt), _("style change"), AssFile::COMMIT_DIAG_META);
-	active_style = c->ass->GetStyle(line->Style);
+	active_style = c->subtitleAccess->Read().GetStyle(line->Style);
 	UpdateStyleBox();
 }
 

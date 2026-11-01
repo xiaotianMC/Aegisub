@@ -83,13 +83,10 @@ void SubtitleProjectAccess::Interaction::UpdateRows(std::vector<AssDialogueBase>
             if (!live.emplace(row.Id, &row).second) throw std::logic_error("Duplicate live subtitle ID");
         // Validate every original target, not only the subset written by this callback.
         for (auto id : targets) if (!live.contains(id)) throw std::out_of_range("Interaction target removed");
-        std::unordered_map<int, bool> written;
-        for (auto const& row : updates) {
-            if (!std::binary_search(targets.begin(), targets.end(), row.Id) || !written.emplace(row.Id,true).second)
-                throw std::invalid_argument("Invalid interaction update target");
-            if (row.Row != live.at(row.Id)->Row) throw std::invalid_argument("Interaction cannot reorder rows");
-        }
-        for (auto const& row : updates) static_cast<AssDialogueBase&>(*live.at(row.Id)) = row;
+        for (auto const& row : updates)
+            if (!std::binary_search(targets.begin(), targets.end(), row.Id))
+                throw std::invalid_argument("Unauthorized interaction update target");
+        WriteAccess(state, scope->Lease().Capture()).UpdateRows(updates);
     }
     catch (...) { End(); throw; }
 }
@@ -204,6 +201,7 @@ SubtitleProjectAccess::WriteAccess::Borrow SubtitleProjectAccess::WriteAccess::C
     auto owner = state.lock();
     if (!owner) throw std::logic_error("Subtitle project access expired");
     owner->Check();
+    if (owner->file->IsNotifying()) throw std::logic_error("Subtitle observers cannot write during notification");
     auto authority = token.Hold();
     auto file = owner->file;
     return {std::move(authority), std::move(owner), file};
@@ -213,4 +211,32 @@ void SubtitleProjectAccess::WriteAccess::SetExtradataValue(uint32_t id, std::str
     for (auto& extra : access.file->Extradata)
         if (extra.id == id) { extra.value = std::move(value); return; }
     throw std::out_of_range("Subtitle extradata no longer exists");
+}
+
+void SubtitleProjectAccess::WriteAccess::UpdateRows(std::vector<AssDialogueBase> const& updates) const {
+    auto access = Check();
+    std::unordered_map<int, AssDialogue*> live;
+    for (auto& row : access.file->Events)
+        if (!live.emplace(row.Id, &row).second) throw std::logic_error("Duplicate live subtitle ID");
+    std::set<int> written;
+    for (auto const& row : updates) {
+        auto found = live.find(row.Id);
+        if (found == live.end()) throw std::out_of_range("Subtitle update target missing");
+        if (!written.insert(row.Id).second || row.Row != found->second->Row)
+            throw std::invalid_argument("Invalid or duplicate subtitle update");
+    }
+    for (auto const& row : updates) static_cast<AssDialogueBase&>(*live.at(row.Id)) = row;
+}
+bool SubtitleProjectAccess::WriteAccess::LinkAdjacent(int id, bool start, int old, int threshold, bool exact) const {
+    auto access = Check();
+    for (auto& row : access.file->Events)
+        if (row.Id == id) return access.file->LinkAdjacentLine(&row, start, old, threshold, exact);
+    throw std::out_of_range("Subtitle neighbor target missing");
+}
+int SubtitleProjectAccess::WriteAccess::Commit(wxString const& message, int type, int amend, int id) const {
+    auto access = Check();
+    AssDialogue* single = nullptr;
+    for (auto& row : access.file->Events) if (row.Id == id) single = &row;
+    if (id && !single) throw std::out_of_range("Subtitle commit target missing");
+    return access.file->Commit(message, type, amend, single);
 }

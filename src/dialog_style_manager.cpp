@@ -260,7 +260,7 @@ int get_single_sel(wxListBox *lb) {
 DialogStyleManager::DialogStyleManager(agi::Context *context)
 : wxDialog(context->parent, -1, _("Styles Manager"))
 , c(context)
-, commit_connection(c->ass->AddCommitListener(&DialogStyleManager::LoadCurrentStyles, this))
+, commit_connection(c->subtitleAccess->Read().AddCommitListener(&DialogStyleManager::LoadCurrentStyles, this))
 , active_line_connection(c->selectionController->AddActiveLineListener(&DialogStyleManager::OnActiveLineChanged, this))
 , font_list(std::async(std::launch::async, []() -> wxArrayString {
 	wxArrayString fontList = wxFontEnumerator::GetFacenames();

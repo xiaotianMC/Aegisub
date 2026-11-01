@@ -18,6 +18,7 @@
 
 #include "ass_dialogue.h"
 #include "ass_file.h"
+#include "subtitle_project_access.h"
 #include "ass_style.h"
 #include "async_video_provider.h"
 #include "project.h"
@@ -56,7 +57,7 @@ VisualToolBase::VisualToolBase(VideoDisplay *parent, agi::Context *context)
 , line_color_primary_opt(OPT_GET("Colour/Visual Tools/Lines Primary"))
 , line_color_secondary_opt(OPT_GET("Colour/Visual Tools/Lines Secondary"))
 , shaded_area_alpha_opt(OPT_GET("Colour/Visual Tools/Shaded Area Alpha"))
-, file_changed_connection(c->ass->AddCommitListener(&VisualToolBase::OnCommit, this))
+, file_changed_connection(c->subtitleAccess->Read().AddCommitListener(&VisualToolBase::OnCommit, this))
 {
 	SetResolutions();
 	RefreshRows();
@@ -77,8 +78,8 @@ VisualToolBase::~VisualToolBase() {
 
 void VisualToolBase::SetResolutions() {
 	int script_w, script_h, layout_w, layout_h;
-	c->ass->GetResolution(script_w, script_h);
-	c->ass->GetEffectiveLayoutResolution(c, layout_w, layout_h);
+	c->subtitleAccess->Read().GetResolution(script_w, script_h);
+	c->subtitleAccess->Read().GetEffectiveLayoutResolution(c, layout_w, layout_h);
 	script_res = Vector2D(script_w, script_h);
 	layout_res = Vector2D(layout_w, layout_h);
 }
@@ -532,7 +533,7 @@ Vector2D VisualToolBase::GetLinePosition(AssDialogue *diag) {
 	auto margin = diag->Margin;
 	int align = 2;
 
-	if (AssStyle const* style = c->ass->GetStyle(diag->Style)) {
+	if (AssStyle const* style = c->subtitleAccess->Read().GetStyle(diag->Style)) {
 		align = style->alignment;
 		for (int i = 0; i < 3; i++) {
 			if (margin[i] == 0)
@@ -597,7 +598,7 @@ bool VisualToolBase::GetLineMove(AssDialogue *diag, Vector2D &p1, Vector2D &p2, 
 void VisualToolBase::GetLineRotation(AssDialogue *diag, float &rx, float &ry, float &rz) {
 	rx = ry = rz = 0.f;
 
-	if (AssStyle const* style = c->ass->GetStyle(diag->Style))
+	if (AssStyle const* style = c->subtitleAccess->Read().GetStyle(diag->Style))
 		rz = style->angle;
 
 	auto blocks = diag->ParseTags();
@@ -626,7 +627,7 @@ void VisualToolBase::GetLineShear(AssDialogue *diag, float& fax, float& fay) {
 void VisualToolBase::GetLineScale(AssDialogue *diag, Vector2D &scale) {
 	float x = 100.f, y = 100.f;
 
-	if (AssStyle const* style = c->ass->GetStyle(diag->Style)) {
+	if (AssStyle const* style = c->subtitleAccess->Read().GetStyle(diag->Style)) {
 		x = style->scalex;
 		y = style->scaley;
 	}

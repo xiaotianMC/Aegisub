@@ -31,6 +31,7 @@
 
 #include "ass_dialogue.h"
 #include "ass_file.h"
+#include "subtitle_project_access.h"
 #include "command/command.h"
 #include "compat.h"
 #include "format.h"
@@ -318,7 +319,7 @@ void SubsTextEditCtrl::ShowCompletion(bool manual) {
 		return;
 	}
 	bool is_template = diag && diag->Comment && boost::istarts_with(diag->Effect.get(), "template");
-	auto styles = context ? context->ass->GetStyles() : std::vector<std::string>{};
+	auto styles = context ? context->subtitleAccess->Read().GetStyles() : std::vector<std::string>{};
 	completion = agi::ass::GetCompletion(text, GetCurrentPos(), is_template, styles, completion_fonts);
 	if (completion.font && !completion_fonts_loaded) {
 		for (auto const& name : wxFontEnumerator::GetFacenames()) completion_fonts.push_back(from_wx(name));
