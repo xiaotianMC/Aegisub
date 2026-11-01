@@ -20,6 +20,8 @@
 #include "visual_tool.h"
 #include "spline.h"
 #include "command/command.h"
+#include <wx/toolbar.h>
+#include <wx/weakref.h>
 
 class wxToolBar;
 
@@ -48,13 +50,15 @@ struct VisualToolVectorClipDraggableFeature final : public VisualDraggableFeatur
 
 class VisualToolVectorClip final : public VisualTool<VisualToolVectorClipDraggableFeature> {
 	Spline spline; /// The current spline
-	wxToolBar *toolBar = nullptr; /// The subtoolbar
+	wxWeakRef<wxToolBar> toolBar; /// The subtoolbar may be destroyed before the canvas
 	int mode = VCLIP_DRAG; /// 0-7
 	bool inverse = false; /// is iclip?
 
 	std::set<Feature *> box_added;
 
 	void Save();
+	void OnSubTool(wxCommandEvent&);
+	void SetMode(int);
 	void Commit(wxString message="") override;
 
 	void AddTool(std::string command_name, VisualToolVectorClipMode mode);
@@ -74,6 +78,7 @@ class VisualToolVectorClip final : public VisualTool<VisualToolVectorClipDraggab
 public:
 	VisualToolVectorClip(VideoDisplay *parent, agi::Context *context);
 	void SetToolbar(wxToolBar *tb) override;
+	~VisualToolVectorClip() override;
 
 	void SetSubTool(int subtool) override;
 	int GetSubTool() override;

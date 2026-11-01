@@ -97,6 +97,8 @@ public:
 	/// This function only supports changes to a single existing line, and not
 	/// insertions or deletions.
 	void UpdateSubtitles(const AssDialogue *changed) throw();
+	// Visual preview only: data is copied into the renderer's detached file.
+	void PreviewSubtitles(std::vector<AssDialogueBase> changes);
 
 	/// @brief Queue a request for a frame
 	/// @brief frame Frame number

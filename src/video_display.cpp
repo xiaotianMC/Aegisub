@@ -116,6 +116,7 @@ VideoDisplay::VideoDisplay(wxToolBar *toolbar, bool freeSize, wxComboBox *zoomBo
 	con->videoController->Bind(EVT_FRAME_READY, &VideoDisplay::UploadFrameData, this);
 	connections = agi::signal::make_vector({
 		con->project->AddVideoProviderListener([this] (AsyncVideoProvider *provider) {
+			if (tool) tool->Cancel();
 			if (pan_mode) SetPanMode(false);
 			StopPanning();
 			if (provider && render_failed) {
@@ -599,6 +600,7 @@ void VideoDisplay::SetPanMode(bool enabled) {
 		UpdateVideoCursor();
 		return;
 	}
+	if (enabled && tool) tool->Cancel();
 	pan_mode = enabled;
 	if (enabled) {
 		UpdateVideoCursor();
@@ -708,6 +710,8 @@ void VideoDisplay::SetTool(std::unique_ptr<VisualToolBase> new_tool) {
 	// Picking another tool is a request to leave the preview pan mode.
 	if (pan_mode) SetPanMode(false);
 	StopPanning();
+	// Cancel before retiring the old tool and its feature/cache storage.
+	if (tool) tool->Cancel();
 	// Set the tool first to prevent repeated initialization from VideoDisplay::Render
 	tool = std::move(new_tool);
 
@@ -741,6 +745,7 @@ void VideoDisplay::Unload() {
 	if (glContext) {
 		SetCurrent(*glContext);
 	}
+	if (tool) { try { tool->Cancel(); } catch (...) { } }
 	videoOut.reset();
 	tool.reset();
 	glContext.reset();

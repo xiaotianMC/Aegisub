@@ -33,6 +33,23 @@
 #include "audio_edit_session.h"
 #include "ass_karaoke.h"
 #include "project.h"
+#include "video_display.h"
+#include "video_controller.h"
+#include "async_video_provider.h"
+#include "video_frame.h"
+#include "visual_tool_drag.h"
+#include "visual_tool_cross.h"
+#include "visual_tool_scale.h"
+#include "visual_tool_rotatexy.h"
+#include "visual_tool_rotatez.h"
+#include "visual_tool_clip.h"
+#include "visual_tool_vector_clip.h"
+#include "visual_tool_rectangle.h"
+#include "subtitle_format.h"
+#include <wx/toolbar.h>
+#include <wx/evtloop.h>
+#include <thread>
+#include <chrono>
 #include <libaegisub/ass/karaoke.h>
 #include <wx/frame.h>
 #include <wx/combobox.h>
@@ -803,6 +820,397 @@ TEST_F(audio_edit, cancelling_an_untimed_row_cannot_be_committed_later) {
     EXPECT_EQ(0,c->ass->Events.front().Start.GetMilliseconds());
     EXPECT_EQ(0,c->ass->Events.front().End.GetMilliseconds());
     EXPECT_EQ("audio fixture",c->subsController->GetUndoDescription());
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+}
+
+class visual_edit : public ordinary_edit {
+protected:
+    VideoDisplay* display=nullptr;
+    wxToolBar* toolbar=nullptr;
+    void SetUp() override {
+        ordinary_edit::SetUp();
+        OPT_SET("Video/Subtitle Sync")->SetBool(false);
+        c->project->LoadVideo("?dummy:25:250:640:480:64:64:64:");
+        ASSERT_NE(nullptr,c->project->VideoProvider());
+        {auto scope=c->subtitleAccess->TryWrite();
+         auto& row=c->ass->Events.front();row.Start=0;row.End=5000;
+         row.Text="{\\pos(100,100)\\bord3\\i1}中 文 {\\b1} tail";
+         c->ass->Commit("visual fixture",AssFile::COMMIT_DIAG_FULL);}
+        toolbar=new wxToolBar(window,wxID_ANY);
+        auto zoom=new wxComboBox(window,wxID_ANY);
+        display=new VideoDisplay(toolbar,false,zoom,window,c.get());
+        display->SetSize(640,480);
+        FrameData(); // finish renderer initialization with the main dispatch queue running
+    }
+    void TearDown() override {
+        if(display) {delete display;display=nullptr;c->videoDisplay=nullptr;}
+        c->project->CloseVideo();
+        ordinary_edit::TearDown();
+    }
+    template<class Tool> Tool* Install() {
+        auto tool=std::make_unique<Tool>(display,c.get());auto ptr=tool.get();
+        display->SetTool(std::move(tool));
+        ptr->SetCanvasSize(640,480);ptr->SetDisplayArea(0,0,640,480);
+        return ptr;
+    }
+    void Mouse(wxEventType type,int x,int y,bool down=false,bool ctrl=false) {
+        wxMouseEvent event(type);event.SetLeftDown(down);event.SetControlDown(ctrl);
+        event.SetPosition({x,y});event.SetEventObject(display);
+        display->GetEventHandler()->ProcessEvent(event);
+    }
+    void Drag(int x,int y,int x2,int y2) {
+        Mouse(wxEVT_LEFT_DOWN,x,y,true);Mouse(wxEVT_MOTION,x2,y2,true);Mouse(wxEVT_LEFT_UP,x2,y2);
+    }
+    std::string Text() { return c->ass->Events.front().Text.get(); }
+    std::vector<unsigned char> FrameData() {
+        // Libass font setup may need the main dispatch queue. Keep the normal
+        // wx loop responsive rather than synchronously waiting on that worker.
+        wxEventLoop loop;
+        wxEventLoopActivator activate(&loop);
+        std::vector<unsigned char> data;
+        std::exception_ptr error;
+        auto provider=c->project->VideoProvider();
+        std::thread reader([&] {
+            try { data=provider->GetFrame(0,0)->data; }
+            catch (...) { error=std::current_exception(); }
+            window->CallAfter([&] { loop.Exit(); });
+        });
+        loop.Run();reader.join();
+        if(error)std::rethrow_exception(error);
+        return data;
+    }
+};
+TEST_F(visual_edit, position_drag_previews_without_model_write_then_commits_once_and_undoes) {
+    Install<VisualToolDrag>();auto text=Text();auto id=c->ass->Events.front().Id;
+    auto before=FrameData();
+    Mouse(wxEVT_LEFT_DOWN,100,100,true);ASSERT_TRUE(display->HasCapture());
+    EXPECT_FALSE(c->subtitleEditGate.TryBeginComparison());
+    Mouse(wxEVT_MOTION,140,160,true);EXPECT_EQ(text,Text());
+    auto preview=FrameData();
+    EXPECT_NE(before,preview);
+    Mouse(wxEVT_LEFT_UP,140,160);
+    EXPECT_NE(text,Text());EXPECT_NE(std::string::npos,Text().find("\\pos(140,160)"));
+    EXPECT_NE(std::string::npos,Text().find("\\bord3"));EXPECT_NE(std::string::npos,Text().find("中 文 {\\b1} tail"));
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());EXPECT_EQ(id,c->ass->Events.front().Id);
+    c->subsController->Undo();EXPECT_EQ(text,Text());EXPECT_EQ("visual fixture",c->subsController->GetUndoDescription());
+    c->subsController->Redo();EXPECT_NE(text,Text());
+}
+TEST_F(visual_edit, capture_loss_discards_preview_without_undo_record) {
+    Install<VisualToolDrag>();auto text=Text();
+    auto before=FrameData();
+    Mouse(wxEVT_LEFT_DOWN,100,100,true);Mouse(wxEVT_MOTION,200,200,true);
+    display->ReleaseMouse();wxMouseCaptureLostEvent lost(display->GetId());display->GetEventHandler()->ProcessEvent(lost);
+    EXPECT_EQ(text,Text());EXPECT_EQ("visual fixture",c->subsController->GetUndoDescription());
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    EXPECT_EQ(before,FrameData());
+}
+TEST_F(visual_edit, lost_button_release_cancels_instead_of_committing) {
+    Install<VisualToolClip>();auto text=Text();
+    Mouse(wxEVT_LEFT_DOWN,50,50,true);Mouse(wxEVT_MOTION,200,200,true);
+    Mouse(wxEVT_MOTION,210,210,false);
+    EXPECT_EQ(text,Text());EXPECT_FALSE(display->HasCapture());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+}
+TEST_F(visual_edit, all_standard_tools_reject_comparison_writes) {
+    auto blocked=[&] {
+        auto text=Text();auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);
+        Drag(100,100,160,170);Mouse(wxEVT_LEFT_DCLICK,200,220,true);Mouse(wxEVT_LEFT_UP,200,220);
+        EXPECT_EQ(text,Text());EXPECT_FALSE(display->HasCapture());
+    };
+    Install<VisualToolCross>();blocked();Install<VisualToolDrag>();blocked();
+    Install<VisualToolScale>();blocked();Install<VisualToolRotateXY>();blocked();
+    Install<VisualToolRotateZ>();blocked();Install<VisualToolClip>();blocked();
+    Install<VisualToolVectorClip>();blocked();Install<VisualToolRectangle>();blocked();
+    EXPECT_EQ(1u,c->ass->Events.size());
+}
+TEST_F(visual_edit, scale_rotation_and_rectangular_clip_preserve_unedited_tags) {
+    auto text=Text();Install<VisualToolScale>();Drag(200,200,240,160);
+    EXPECT_NE(text,Text());EXPECT_NE(std::string::npos,Text().find("\\fscx"));EXPECT_NE(std::string::npos,Text().find("\\fscy"));
+    Install<VisualToolRotateXY>();Drag(200,200,220,230);
+    EXPECT_NE(std::string::npos,Text().find("\\frx"));EXPECT_NE(std::string::npos,Text().find("\\fry"));
+    Install<VisualToolRotateZ>();Drag(200,200,250,180);EXPECT_NE(std::string::npos,Text().find("\\frz"));
+    Install<VisualToolClip>();Drag(30,40,300,250);EXPECT_NE(std::string::npos,Text().find("\\clip(30,40,300,250)"));
+    EXPECT_NE(std::string::npos,Text().find("\\bord3"));EXPECT_NE(std::string::npos,Text().find("中 文 {\\b1} tail"));
+}
+TEST_F(visual_edit, drawing_finish_inserts_before_source_with_style_and_preserves_identity) {
+    Install<VisualToolRectangle>();auto source=c->ass->Events.front().Id;auto text=Text();
+    Mouse(wxEVT_LEFT_DOWN,30,40,true);Mouse(wxEVT_MOTION,100,150,true);
+    EXPECT_EQ(1u,c->ass->Events.size());EXPECT_FALSE(c->subtitleEditGate.TryBeginComparison());
+    Mouse(wxEVT_LEFT_UP,100,150);
+    ASSERT_EQ(2u,c->ass->Events.size());EXPECT_NE(source,c->ass->Events.front().Id);
+    EXPECT_EQ(source,c->ass->Events.back().Id);EXPECT_EQ(text,c->ass->Events.back().Text.get());
+    EXPECT_NE(nullptr,c->ass->GetStyle("图形"));EXPECT_EQ("图形",c->ass->Events.front().Style.get());
+    c->subsController->Undo();EXPECT_EQ(1u,c->ass->Events.size());EXPECT_EQ(nullptr,c->ass->GetStyle("图形"));
+    c->subsController->Redo();EXPECT_EQ(2u,c->ass->Events.size());
+}
+TEST_F(visual_edit, vector_clip_drag_and_cancel_rebuild_path_without_losing_inverse) {
+    {auto write=c->subtitleAccess->TryWrite();c->ass->Events.front().Text="{\\iclip(m 50 50 l 200 50 200 200)\\bord3}字幕";c->ass->Commit("visual fixture",AssFile::COMMIT_DIAG_TEXT);}
+    auto tool=Install<VisualToolVectorClip>();tool->SetSubTool(VCLIP_DRAG);auto text=Text();
+    Drag(50,50,70,80);EXPECT_NE(text,Text());EXPECT_NE(std::string::npos,Text().find("\\iclip("));
+    auto changed=Text();Mouse(wxEVT_LEFT_DOWN,70,80,true);Mouse(wxEVT_MOTION,90,100,true);
+    wxKeyEvent esc(wxEVT_CHAR_HOOK);esc.m_keyCode=WXK_ESCAPE;display->GetEventHandler()->ProcessEvent(esc);
+    EXPECT_EQ(changed,Text());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    c->subsController->Undo();EXPECT_EQ(text,Text());
+}
+TEST_F(visual_edit, tool_switch_and_window_close_cancel_pending_drag) {
+    Install<VisualToolDrag>();auto text=Text();
+    Mouse(wxEVT_LEFT_DOWN,100,100,true);Mouse(wxEVT_MOTION,200,200,true);
+    Install<VisualToolScale>();EXPECT_EQ(text,Text());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    Mouse(wxEVT_LEFT_DOWN,200,200,true);Mouse(wxEVT_MOTION,250,160,true);
+    delete display;display=nullptr;c->videoDisplay=nullptr;
+    EXPECT_EQ(text,Text());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+}
+
+TEST_F(visual_edit, selection_change_and_delete_cancel_without_writing_other_row) {
+    AssDialogue* other;
+    {auto write=c->subtitleAccess->TryWrite();other=new AssDialogue;
+     other->Text="{\\pos(300,300)}other";c->ass->Events.push_back(*other);c->ass->Commit("visual fixture",AssFile::COMMIT_DIAG_ADDREM);}
+    Install<VisualToolDrag>();auto text=Text();auto other_id=other->Id;
+    Mouse(wxEVT_LEFT_DOWN,100,100,true);Mouse(wxEVT_MOTION,150,150,true);
+    c->selectionController->SetSelectionAndActive({other},other);
+    EXPECT_EQ(text,Text());EXPECT_FALSE(display->HasCapture());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    Mouse(wxEVT_LEFT_DOWN,300,300,true);Mouse(wxEVT_MOTION,350,350,true);
+    (*cmd::get("edit/line/delete"))(c.get());
+    Mouse(wxEVT_LEFT_UP,350,350);
+    EXPECT_EQ(1u,c->ass->Events.size());EXPECT_NE(other_id,c->ass->Events.front().Id);EXPECT_EQ(text,Text());
+}
+TEST_F(visual_edit, foreign_generation_rejects_pending_result_and_releases_registration) {
+    Install<VisualToolScale>();auto text=Text();
+    Mouse(wxEVT_LEFT_DOWN,200,200,true);Mouse(wxEVT_MOTION,230,180,true);
+    {auto foreign=c->subtitleEditGate.TryBeginWrite();ASSERT_TRUE(foreign);}
+    Mouse(wxEVT_LEFT_UP,230,180);
+    EXPECT_EQ(text,Text());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    Drag(200,200,240,160);EXPECT_NE(text,Text());
+}
+TEST_F(visual_edit, video_seek_replacement_and_close_cancel_old_previews) {
+    Install<VisualToolDrag>();auto text=Text();
+    Mouse(wxEVT_LEFT_DOWN,100,100,true);Mouse(wxEVT_MOTION,160,170,true);
+    c->videoController->JumpToFrame(2);EXPECT_EQ(text,Text());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    Mouse(wxEVT_LEFT_DOWN,100,100,true);Mouse(wxEVT_MOTION,160,170,true);
+    c->project->LoadVideo("?dummy:25:200:640:480:96:96:96:");
+    EXPECT_EQ(text,Text());EXPECT_FALSE(display->HasCapture());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    FrameData();
+    Mouse(wxEVT_LEFT_DOWN,100,100,true);Mouse(wxEVT_MOTION,180,190,true);
+    c->project->CloseVideo();EXPECT_EQ(text,Text());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+}
+TEST_F(visual_edit, continuous_drags_have_separate_undo_records_and_refresh_after_redo) {
+    Install<VisualToolDrag>();auto text=Text();
+    Drag(100,100,150,150);auto first=Text();Drag(150,150,200,180);auto second=Text();
+    EXPECT_NE(text,first);EXPECT_NE(first,second);
+    c->subsController->Undo();EXPECT_EQ(first,Text());c->subsController->Undo();EXPECT_EQ(text,Text());
+    c->subsController->Redo();EXPECT_EQ(first,Text());c->subsController->Redo();EXPECT_EQ(second,Text());
+    Drag(200,180,220,200);EXPECT_NE(second,Text());
+}
+TEST_F(visual_edit, multirow_position_changes_preserve_metadata_extras_and_binding) {
+    int first_id,second_id;std::string group;
+    {auto write=c->subtitleAccess->TryWrite();auto row=new AssDialogue(c->ass->Events.front());
+     row->Text="{\\pos(300,300)\\blur2}other";c->ass->Events.push_back(*row);
+     first_id=c->ass->Events.front().Id;second_id=row->Id;
+     auto extra=c->ass->AddExtradata("unknown-test","opaque value");
+     c->ass->Events.front().Actor="actor";c->ass->Events.front().Layer=7;c->ass->Events.front().ExtradataIds=std::vector<uint32_t>{extra};
+     c->ass->Commit("visual fixture",AssFile::COMMIT_DIAG_ADDREM);
+     c->selectionController->SetSelectedSet({&c->ass->Events.front(),row});BindSelectedSubtitles(c.get());
+     group=GetSubtitleBinding(*c->ass,c->ass->Events.front());}
+    auto extras=c->ass->Extradata;Install<VisualToolDrag>();
+    Drag(100,100,130,140);
+    EXPECT_EQ(first_id,c->ass->Events.front().Id);EXPECT_EQ(second_id,c->ass->Events.back().Id);
+    EXPECT_EQ(7,c->ass->Events.front().Layer);EXPECT_EQ("actor",c->ass->Events.front().Actor.get());
+    EXPECT_EQ(group,GetSubtitleBinding(*c->ass,c->ass->Events.front()));
+    EXPECT_NE(std::string::npos,c->ass->Events.back().Text.get().find("\\pos(330,340)"));
+    ASSERT_EQ(extras.size(),c->ass->Extradata.size());
+    for(size_t i=0;i<extras.size();++i){EXPECT_EQ(extras[i].key,c->ass->Extradata[i].key);EXPECT_EQ(extras[i].value,c->ass->Extradata[i].value);}
+}
+TEST_F(visual_edit, selecting_another_visible_line_with_subtitle_sync_keeps_feature_alive) {
+    {auto write=c->subtitleAccess->TryWrite();auto row=new AssDialogue;
+     row->Start=1000;row->End=5000;row->Text="{\\pos(300,300)}other";c->ass->Events.push_back(*row);c->ass->Commit("visual fixture",AssFile::COMMIT_DIAG_ADDREM);}
+    c->videoController->JumpToFrame(50);OPT_SET("Video/Subtitle Sync")->SetBool(true);
+    Install<VisualToolDrag>();auto first=Text();
+    Drag(300,300,340,350);
+    EXPECT_EQ(first,Text());EXPECT_NE(std::string::npos,c->ass->Events.back().Text.get().find("\\pos(340,350)"));
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+}
+TEST_F(visual_edit, vector_tools_insert_convert_remove_and_freehand_use_authorized_completion) {
+    auto tool=Install<VisualToolVectorClip>();tool->SetSubTool(VCLIP_LINE);
+    Drag(40,40,40,40);Drag(200,50,200,50);Drag(200,200,200,200);
+    auto path=Text();EXPECT_NE(std::string::npos,path.find("\\clip("));
+    tool->SetSubTool(VCLIP_CONVERT);Mouse(wxEVT_LEFT_DOWN,120,45,true);Mouse(wxEVT_LEFT_UP,120,45);
+    EXPECT_NE(path,Text());auto converted=Text();
+    tool->SetSubTool(VCLIP_INSERT);Mouse(wxEVT_LEFT_DOWN,120,45,true);Mouse(wxEVT_LEFT_UP,120,45);
+    EXPECT_NE(converted,Text());
+    tool->SetSubTool(VCLIP_REMOVE);Mouse(wxEVT_LEFT_DOWN,40,40,true);Mouse(wxEVT_LEFT_UP,40,40);
+    tool->SetSubTool(VCLIP_FREEHAND_SMOOTH);Mouse(wxEVT_LEFT_DOWN,40,40,true);
+    Mouse(wxEVT_MOTION,120,100,true);Mouse(wxEVT_MOTION,240,180,true);Mouse(wxEVT_LEFT_UP,260,200);
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());EXPECT_EQ(VCLIP_DRAG,tool->GetSubTool());
+}
+TEST_F(visual_edit, rectangle_escape_polygon_and_existing_style_are_safe) {
+    auto tool=Install<VisualToolRectangle>();auto text=Text();
+    Mouse(wxEVT_LEFT_DOWN,30,40,true);Mouse(wxEVT_MOTION,90,100,true);
+    wxKeyEvent esc(wxEVT_CHAR_HOOK);esc.m_keyCode=WXK_ESCAPE;display->GetEventHandler()->ProcessEvent(esc);
+    EXPECT_EQ(1u,c->ass->Events.size());EXPECT_EQ(text,Text());EXPECT_EQ(nullptr,c->ass->GetStyle("图形"));
+    tool->SetSubTool(static_cast<int>(DrawingShape::Polygon));
+    Mouse(wxEVT_LEFT_DOWN,20,20,true);Mouse(wxEVT_LEFT_UP,20,20);
+    Mouse(wxEVT_LEFT_DOWN,100,20,true);Mouse(wxEVT_LEFT_UP,100,20);
+    Mouse(wxEVT_LEFT_DOWN,100,100,true);Mouse(wxEVT_LEFT_UP,100,100);
+    EXPECT_FALSE(c->subtitleEditGate.TryBeginComparison());
+    wxKeyEvent enter(wxEVT_CHAR_HOOK);enter.m_keyCode=WXK_RETURN;display->GetEventHandler()->ProcessEvent(enter);
+    ASSERT_EQ(2u,c->ass->Events.size());auto style=c->ass->GetStyle("图形");ASSERT_NE(nullptr,style);auto data=style->GetEntryData();
+    tool->SetSubTool(static_cast<int>(DrawingShape::Ellipse));Drag(200,200,240,260);
+    EXPECT_EQ(3u,c->ass->Events.size());EXPECT_EQ(data,c->ass->GetStyle("图形")->GetEntryData());
+}
+TEST_F(visual_edit, commit_observer_exception_ends_task_and_preserves_normal_undo) {
+    Install<VisualToolDrag>();auto text=Text();
+    Mouse(wxEVT_LEFT_DOWN,100,100,true);Mouse(wxEVT_MOTION,160,170,true);
+    agi::signal::Connection observer=c->ass->AddCommitListener([]{throw std::runtime_error("observer");});
+    EXPECT_THROW(Mouse(wxEVT_LEFT_UP,160,170),std::runtime_error);
+    EXPECT_FALSE(display->HasCapture());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    observer.Disconnect();c->subsController->Undo();EXPECT_EQ(text,Text());
+}
+TEST_F(visual_edit, no_op_ordinary_scope_does_not_drop_next_visual_gesture) {
+    Install<VisualToolScale>();auto text=Text();
+    {auto ordinary=c->subtitleAccess->TryWrite();ASSERT_TRUE(ordinary);}
+    Drag(200,200,230,170);EXPECT_NE(text,Text());
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+}
+TEST_F(visual_edit, toolbar_callbacks_detach_on_tool_destruction) {
+    Install<VisualToolDrag>();auto id=toolbar->GetToolByPos(1)->GetId();
+    wxCommandEvent toggle(wxEVT_TOOL,id);toolbar->GetEventHandler()->ProcessEvent(toggle);
+    EXPECT_NE(std::string::npos,Text().find("\\move("));
+    auto text=Text();Install<VisualToolCross>();
+    toolbar->GetEventHandler()->ProcessEvent(toggle);EXPECT_EQ(text,Text());
+    Install<VisualToolVectorClip>();Install<VisualToolCross>();
+    wxCommandEvent old_clip(wxEVT_TOOL,1301);toolbar->GetEventHandler()->ProcessEvent(old_clip);
+    EXPECT_EQ(text,Text());
+}
+TEST_F(visual_edit, rejected_structural_insertion_does_not_add_style_or_row) {
+    auto session=c->subtitleAccess->TryBeginInteraction({c->ass->Events.front().Id});ASSERT_TRUE(session);
+    AssDialogue drawing;drawing.Id=c->ass->Events.front().Id;AssStyle style;style.name="must-not-be-added";
+    auto count=c->ass->Styles.size();
+    EXPECT_THROW(session->InsertBefore(drawing.Id,drawing,&style),std::invalid_argument);
+    EXPECT_EQ(1u,c->ass->Events.size());EXPECT_EQ(count,c->ass->Styles.size());
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+}
+
+TEST_F(visual_edit, outside_video_rectangle_click_does_not_leave_a_write_task) {
+    Install<VisualToolRectangle>();Mouse(wxEVT_LEFT_DOWN,-10,-10,true);Mouse(wxEVT_LEFT_UP,-10,-10);
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());EXPECT_EQ(1u,c->ass->Events.size());
+}
+TEST_F(visual_edit, cross_double_click_preserves_move_origin_and_unrelated_tags) {
+    {auto write=c->subtitleAccess->TryWrite();c->ass->Events.front().Text="{\\move(100,100,200,200,10,900)\\org(80,80)\\fax0.2\\i1}字幕";c->ass->Commit("visual fixture",AssFile::COMMIT_DIAG_TEXT);}
+    Install<VisualToolCross>();Mouse(wxEVT_LEFT_DCLICK,150,160,true);Mouse(wxEVT_LEFT_UP,150,160);
+    EXPECT_NE(std::string::npos,Text().find("\\move(150,160,250,260,10,900)"));
+    EXPECT_NE(std::string::npos,Text().find("\\org(130,140)"));EXPECT_NE(std::string::npos,Text().find("\\fax0.2"));
+}
+TEST_F(visual_edit, replacing_document_content_invalidates_old_geometry_and_target_ids) {
+    Install<VisualToolDrag>();auto previous=c->ass->Events.front().Id;
+    Mouse(wxEVT_LEFT_DOWN,100,100,true);Mouse(wxEVT_MOTION,160,170,true);
+    {auto write=c->subtitleAccess->TryWrite();AssFile replacement;replacement.LoadDefault();
+     replacement.SetScriptInfo("PlayResX","640");replacement.SetScriptInfo("PlayResY","480");
+     replacement.Events.front().Text="{\\pos(300,300)}new document";c->ass->swap(replacement);
+     c->ass->Commit("new document",AssFile::COMMIT_NEW);
+     auto active=&c->ass->Events.front();c->selectionController->SetSelectionAndActive({active},active);}
+    Mouse(wxEVT_LEFT_UP,160,170);
+    EXPECT_NE(previous,c->ass->Events.front().Id);EXPECT_EQ("{\\pos(300,300)}new document",Text());
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    Drag(300,300,350,350);EXPECT_NE(std::string::npos,Text().find("\\pos(350,350)"));
+}
+TEST_F(visual_edit, feature_hit_order_follows_document_order_after_sort) {
+    {auto write=c->subtitleAccess->TryWrite();auto other=new AssDialogue(c->ass->Events.front());
+     c->ass->Events.push_back(*other);c->ass->Events.reverse();c->ass->Commit("visual fixture",AssFile::COMMIT_ORDER);}
+    auto expected=c->ass->Events.back().Id;auto untouched=c->ass->Events.front().Text.get();
+    Install<VisualToolDrag>();Drag(100,100,160,170);
+    EXPECT_EQ(expected,c->selectionController->GetActiveLine()->Id);
+    EXPECT_EQ(untouched,c->ass->Events.front().Text.get());EXPECT_NE(untouched,c->ass->Events.back().Text.get());
+}
+TEST_F(visual_edit, missing_target_without_commit_cannot_partially_write_other_rows) {
+    AssDialogue* other;
+    {auto write=c->subtitleAccess->TryWrite();other=new AssDialogue;other->Text="untouched";
+     c->ass->Events.push_back(*other);c->ass->Commit("visual fixture",AssFile::COMMIT_DIAG_ADDREM);}
+    Install<VisualToolDrag>();Mouse(wxEVT_LEFT_DOWN,100,100,true);Mouse(wxEVT_MOTION,160,170,true);
+    // Deliberately simulate a not-yet-migrated C1-C caller which removes a row without Commit.
+    {auto write=c->subtitleAccess->TryWrite();c->ass->Events.erase_and_dispose(c->ass->Events.begin(),[](auto row){delete row;});}
+    EXPECT_THROW(Mouse(wxEVT_LEFT_UP,160,170),std::out_of_range);
+    EXPECT_EQ("untouched",Text());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    c->selectionController->SetSelectionAndActive({other},other);
+}
+class VisualAccessProbe : public VisualTool<VisualDraggableFeature> {
+public:
+    using VisualTool::VisualTool;
+    void Draw() override {}
+    void Override() { SetSelectedOverride("\\pos","(200,200)"); }
+};
+TEST_F(visual_edit, override_interface_rejects_calls_without_interaction) {
+    auto tool=std::make_unique<VisualAccessProbe>(display,c.get());auto probe=tool.get();
+    display->SetTool(std::move(tool));auto text=Text();
+    EXPECT_THROW(probe->Override(),std::logic_error);EXPECT_EQ(text,Text());
+}
+TEST_F(visual_edit, invalid_preview_batch_changes_neither_renderer_nor_live_model) {
+    auto before=FrameData();auto text=Text();
+    AssDialogueBase valid=c->ass->Events.front();valid.Text="{\\pos(500,400)}different";
+    auto missing=valid;missing.Id+=100000;
+    c->project->VideoProvider()->PreviewSubtitles({valid,missing});
+    EXPECT_EQ(before,FrameData());EXPECT_EQ(text,Text());
+    c->project->VideoProvider()->PreviewSubtitles({valid,valid});EXPECT_EQ(before,FrameData());
+}
+TEST_F(visual_edit, ten_thousand_rows_keep_mouse_motion_local_to_edited_targets) {
+    {auto write=c->subtitleAccess->TryWrite();for(int i=1;i<10000;++i){auto row=new AssDialogue;
+     row->Start=10000;row->End=15000;row->Text="inactive subtitle";c->ass->Events.push_back(*row);}
+     c->ass->Commit("visual fixture",AssFile::COMMIT_DIAG_ADDREM);}
+    Install<VisualToolDrag>();Mouse(wxEVT_LEFT_DOWN,100,100,true);
+    auto start=std::chrono::steady_clock::now();
+    for(int i=1;i<=100;++i)Mouse(wxEVT_MOTION,100+i,100+i,true);
+    auto milliseconds=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
+    std::printf("B2 10000 rows, 100 mouse moves: %.3f ms UI dispatch\n",milliseconds);
+    EXPECT_LT(milliseconds,10000);EXPECT_EQ("{\\pos(100,100)\\bord3\\i1}中 文 {\\b1} tail",Text());
+    Mouse(wxEVT_LEFT_UP,200,200);EXPECT_EQ(10000u,c->ass->Events.size());
+    EXPECT_NE(std::string::npos,Text().find("\\pos(200,200)"));
+    EXPECT_EQ("inactive subtitle",c->ass->Events.back().Text.get());
+}
+
+TEST_F(visual_edit, toolbar_can_be_destroyed_before_its_tool_and_canvas) {
+    Install<VisualToolDrag>();Mouse(wxEVT_LEFT_DOWN,100,100,true);Mouse(wxEVT_MOTION,140,150,true);
+    delete toolbar;toolbar=nullptr;
+    delete display;display=nullptr;c->videoDisplay=nullptr;
+    EXPECT_EQ("{\\pos(100,100)\\bord3\\i1}中 文 {\\b1} tail",Text());
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+}
+TEST_F(visual_edit, changing_vector_subtool_cancels_uncommitted_spline) {
+    auto tool=Install<VisualToolVectorClip>();tool->SetSubTool(VCLIP_LINE);auto text=Text();
+    Mouse(wxEVT_LEFT_DOWN,50,50,true);Mouse(wxEVT_MOTION,150,150,true);
+    tool->SetSubTool(VCLIP_DRAG);Mouse(wxEVT_LEFT_UP,150,150);
+    EXPECT_EQ(text,Text());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+}
+
+TEST_F(visual_edit, ass_save_reopen_contains_only_confirmed_visual_edits_and_drawing_style) {
+    Install<VisualToolRectangle>();Drag(30,40,120,150);
+    ASSERT_EQ(2u,c->ass->Events.size());auto shape=c->ass->Events.front().Text.get();
+    Install<VisualToolDrag>();
+    auto save=agi::fs::path((std::filesystem::current_path()/"visual-result.ass").wstring());
+    {auto write=c->subtitleAccess->TryWrite();c->subsController->Save(save);}
+    AssFile reopened;SubtitleFormat::GetReader(save,"utf-8")->ReadFile(&reopened,save,c->project->Timecodes(),"utf-8");
+    ASSERT_EQ(2u,reopened.Events.size());EXPECT_EQ(shape,reopened.Events.front().Text.get());
+    EXPECT_NE(nullptr,reopened.GetStyle("图形"));
+    auto saved=c->ass->Events.front().Text.get();
+    Mouse(wxEVT_LEFT_DOWN,30,40,true);Mouse(wxEVT_MOTION,60,70,true);
+    {auto write=c->subtitleAccess->TryWrite();c->subsController->Save(save);}
+    AssFile pending;SubtitleFormat::GetReader(save,"utf-8")->ReadFile(&pending,save,c->project->Timecodes(),"utf-8");
+    EXPECT_EQ(saved,pending.Events.front().Text.get());
+    wxKeyEvent esc(wxEVT_CHAR_HOOK);esc.m_keyCode=WXK_ESCAPE;display->GetEventHandler()->ProcessEvent(esc);
+    EXPECT_EQ(saved,c->ass->Events.front().Text.get());
+}
+
+TEST_F(visual_edit, entering_preview_pan_mode_cancels_visual_edit_and_releases_capture) {
+    Install<VisualToolDrag>();auto text=Text();
+    Mouse(wxEVT_LEFT_DOWN,100,100,true);Mouse(wxEVT_MOTION,140,150,true);
+    display->SetPanMode(true);Mouse(wxEVT_LEFT_UP,140,150);
+    EXPECT_EQ(text,Text());EXPECT_FALSE(display->HasCapture());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+}
+
+TEST_F(visual_edit, unnotified_metadata_and_one_millisecond_changes_are_not_overwritten) {
+    Install<VisualToolDrag>();auto text=Text();
+    Mouse(wxEVT_LEFT_DOWN,100,100,true);Mouse(wxEVT_MOTION,140,150,true);
+    {auto legacy=c->subtitleAccess->TryWrite();c->ass->Events.front().Layer=7;c->ass->Events.front().Start=1;}
+    EXPECT_THROW(Mouse(wxEVT_LEFT_UP,140,150),std::logic_error);
+    EXPECT_EQ(text,Text());EXPECT_EQ(7,c->ass->Events.front().Layer);
+    EXPECT_EQ(1,c->ass->Events.front().Start.GetMilliseconds());
     EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
 }
 }

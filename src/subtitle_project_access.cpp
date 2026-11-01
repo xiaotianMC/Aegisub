@@ -92,6 +92,33 @@ void SubtitleProjectAccess::Interaction::UpdateRows(std::vector<AssDialogueBase>
     }
     catch (...) { End(); throw; }
 }
+int SubtitleProjectAccess::Interaction::InsertBefore(int target_id, AssDialogueBase const& data, AssStyle const* missing_style) {
+    try {
+        if (!Current() || !std::binary_search(targets.begin(), targets.end(), target_id))
+            throw std::logic_error("Invalid visual insertion target");
+        auto state = owner.lock();
+        scope->Lease();
+        std::unordered_map<int, AssDialogue*> live;
+        for (auto& row : state->file->Events)
+            if (!live.emplace(row.Id, &row).second) throw std::logic_error("Duplicate live subtitle ID");
+        for (auto id : targets) if (!live.contains(id)) throw std::out_of_range("Visual target removed");
+        if (data.Id <= 0 || live.contains(data.Id)) throw std::invalid_argument("Invalid inserted row ID");
+        if (!data.ExtradataIds.get().empty()) throw std::invalid_argument("Drawing insertion does not import extradata");
+        if (missing_style && data.Style.get() != missing_style->name)
+            throw std::invalid_argument("Drawing style does not match inserted style");
+        if (!missing_style && !state->file->GetStyle(data.Style))
+            throw std::invalid_argument("Missing drawing style");
+        if (missing_style && state->file->GetStyle(missing_style->name))
+            throw std::logic_error("Insertion style already exists");
+        auto row = std::make_unique<AssDialogue>(data);
+        auto style = missing_style ? std::make_unique<AssStyle>(*missing_style) : nullptr;
+        // Intrusive insertions below allocate nothing. A node belongs to one file only.
+        if (style) state->file->Styles.push_back(*style.release());
+        state->file->Events.insert(state->file->iterator_to(*live.at(target_id)), *row.release());
+        return data.Id;
+    }
+    catch (...) { End(); throw; }
+}
 bool SubtitleProjectAccess::Interaction::LinkAdjacent(int id,bool start,int old,int threshold) {
     try {
         if(!Current() || !std::binary_search(targets.begin(),targets.end(),id))throw std::logic_error("Invalid audio neighbor target");

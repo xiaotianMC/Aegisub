@@ -23,6 +23,8 @@
 
 #include "visual_feature.h"
 #include "visual_tool.h"
+#include <wx/toolbar.h>
+#include <wx/weakref.h>
 
 /// @class VisualToolDragDraggableFeature
 /// @brief VisualDraggableFeature with a time value
@@ -40,14 +42,14 @@ class wxToolBar;
 /// @brief Moveable features for the positions of each visible line
 class VisualToolDrag final : public VisualTool<VisualToolDragDraggableFeature> {
 	/// The subtoolbar for the move/pos conversion button
-	wxToolBar *toolbar;
+	wxWeakRef<wxToolBar> toolbar;
 	/// The feature last clicked on for the double-click handler
 	/// Equal to curFeature during drags; possibly different at all other times
 	/// nullptr if no features have been clicked on or the last clicked on one no
 	/// longer exists
 	Feature *primary = nullptr;
 	/// The last announced selection set
-	std::vector<AssDialogue *> selection;
+	std::vector<int> selection;
 
 	/// When the button is pressed, will it convert the line to a move (vs. from
 	/// move to pos)? Used to avoid changing the button's icon unnecessarily
@@ -77,4 +79,5 @@ class VisualToolDrag final : public VisualTool<VisualToolDragDraggableFeature> {
 public:
 	VisualToolDrag(VideoDisplay *parent, agi::Context *context);
 	void SetToolbar(wxToolBar *tb) override;
+	~VisualToolDrag() override;
 };

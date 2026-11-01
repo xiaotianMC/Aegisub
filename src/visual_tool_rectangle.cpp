@@ -63,7 +63,8 @@ VisualToolRectangle::VisualToolRectangle(VideoDisplay *parent, agi::Context *con
 }
 
 VisualToolRectangle::~VisualToolRectangle() {
-	Cancel();
+	// The display explicitly cancels before retiring us; destructors never commit.
+	try { EndEdit(false); } catch (...) { }
 	parent->Unbind(wxEVT_CHAR_HOOK, &VisualToolRectangle::OnKeyDown, this);
 	parent->Unbind(wxEVT_KEY_UP, &VisualToolRectangle::OnKeyUp, this);
 	parent->Unbind(wxEVT_RIGHT_DOWN, &VisualToolRectangle::OnMouseEvent, this);
@@ -84,6 +85,8 @@ void VisualToolRectangle::Cancel() {
 	if (holding && parent->HasCapture()) parent->ReleaseMouse();
 	holding = false;
 	vertices.clear();
+	EndEdit(false);
+	RefreshRows();
 }
 
 Vector2D VisualToolRectangle::DrawingEnd() const {
@@ -95,7 +98,8 @@ Vector2D VisualToolRectangle::DrawingEnd() const {
 	return FromScriptCoords(Vector2D(point.x, point.y));
 }
 
-void VisualToolRectangle::OnKeyDown(wxKeyEvent& event) {
+void VisualToolRectangle::OnKeyDown(wxKeyEvent& event) try {
+	if (holding && !EditCurrent()) { Cancel(); return; }
 	if (event.GetKeyCode() == WXK_ESCAPE && holding) {
 		Cancel();
 		parent->Render();
@@ -119,6 +123,8 @@ void VisualToolRectangle::OnKeyDown(wxKeyEvent& event) {
 	else event.Skip();
 }
 
+catch (...) { Cancel(); throw; }
+
 void VisualToolRectangle::OnKeyUp(wxKeyEvent& event) {
 	if (event.GetKeyCode() == WXK_SHIFT) {
 		shift_down = false;
@@ -127,13 +133,15 @@ void VisualToolRectangle::OnKeyUp(wxKeyEvent& event) {
 	event.Skip();
 }
 
-void VisualToolRectangle::OnMouseEvent(wxMouseEvent& event) {
+void VisualToolRectangle::OnMouseEvent(wxMouseEvent& event) try {
+	if (holding && !EditCurrent()) { VisualToolBase::Cancel(); return; }
 	mouse_pos = ClampToVideo(event.GetPosition());
 	shift_down = event.ShiftDown();
 	if (shape == DrawingShape::Polygon) {
 		if (!active_line) return;
 		if (event.LeftDown() || event.LeftDClick()) {
 			if (event.GetPosition() != wxPoint(mouse_pos.X(), mouse_pos.Y())) return;
+			if (!BeginEdit()) return;
 			parent->SetFocus();
 			if (vertices.size() >= 3 && (mouse_pos - vertices.front()).Len() <= 6) {
 				Finish();
@@ -156,6 +164,7 @@ void VisualToolRectangle::OnMouseEvent(wxMouseEvent& event) {
 	}
 	if (event.LeftDown()) {
 		if (!active_line || event.GetPosition() != wxPoint(mouse_pos.X(), mouse_pos.Y())) return;
+		if (!BeginEdit()) return;
 		parent->SetFocus();
 		drag_start = mouse_pos;
 		holding = true;
@@ -174,8 +183,10 @@ void VisualToolRectangle::OnMouseEvent(wxMouseEvent& event) {
 	parent->Render();
 }
 
+catch (...) { Cancel(); throw; }
+
 void VisualToolRectangle::Finish() {
-	if (!active_line) return;
+	if (!active_line || !EditCurrent()) return;
 	Vector2D end = DrawingEnd();
 	Vector2D first;
 	std::string path;
@@ -197,9 +208,10 @@ void VisualToolRectangle::Finish() {
 	}
 	if (path.empty()) return;
 
-	bool added_style = false;
-	if (!c->ass->GetStyle("图形")) {
-		auto style = std::make_unique<AssStyle>();
+	std::unique_ptr<AssStyle> style;
+	auto const& styles = c->subtitleAccess->Read().Styles;
+	if (std::none_of(styles.begin(), styles.end(), [](auto const& item) { return item.name == "图形"; })) {
+		style = std::make_unique<AssStyle>();
 		style->name = "图形";
 		style->alignment = 7;
 		style->outline_w = 0;
@@ -207,8 +219,6 @@ void VisualToolRectangle::Finish() {
 		style->primary = agi::Color(0, 0, 0, 64);
 		style->Margin = {0, 0, 0};
 		style->UpdateData();
-		c->ass->Styles.push_back(*style.release());
-		added_style = true;
 	}
 	auto drawing = std::make_unique<AssDialogue>();
 	drawing->Start = active_line->Start;
@@ -220,12 +230,8 @@ void VisualToolRectangle::Finish() {
 		"\\1c&H000000&\\1a&H40&\\3a&HFF&\\4a&HFF&\\p1}"
 		"%s{\\p0}", first.DStr(), path);
 
-	// Same layer and earlier read order put the shape behind the source subtitle.
-	auto added = drawing.get();
-	c->ass->Events.insert(c->ass->iterator_to(*active_line), *added);
-	drawing.release();
-	c->ass->Commit(_("draw shape"), AssFile::COMMIT_DIAG_ADDREM | (added_style ? AssFile::COMMIT_STYLES : 0));
-	c->selectionController->SetSelectionAndActive({added}, added);
+	// Same layer and earlier read order put the shape behind its source.
+	InsertDrawing(*drawing, style.get());
 }
 
 void VisualToolRectangle::Draw() {

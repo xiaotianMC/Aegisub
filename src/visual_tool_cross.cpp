@@ -42,7 +42,7 @@ VisualToolCross::~VisualToolCross() {
 void VisualToolCross::OnDoubleClick() {
 	Vector2D d = ToScriptCoords(mouse_pos) - GetLinePosition(active_line);
 
-	for (auto line : c->selectionController->GetSelectedSet()) {
+	for (auto line : SelectedLines()) {
 		Vector2D p1, p2;
 		int t1, t2;
 		if (GetLineMove(line, p1, p2, t1, t2)) {

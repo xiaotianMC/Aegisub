@@ -19,6 +19,9 @@
 #include "ass_dialogue.h"
 #include "ass_file.h"
 #include "ass_style.h"
+#include "async_video_provider.h"
+#include "project.h"
+#include <boost/scope_exit.hpp>
 #include "compat.h"
 #include "include/aegisub/context.h"
 #include "options.h"
@@ -35,6 +38,14 @@
 #include <libaegisub/string.h>
 
 #include <algorithm>
+#include <tuple>
+
+namespace {
+auto row_fields(AssDialogueBase const& r) {
+	return std::make_tuple(r.Id,r.Row,r.Comment,r.Layer,r.Margin,r.Start.GetMilliseconds(),
+		r.End.GetMilliseconds(),r.Style,r.Actor,r.Effect,r.ExtradataIds,r.Text);
+}
+}
 
 VisualToolBase::VisualToolBase(VideoDisplay *parent, agi::Context *context)
 : c(context)
@@ -48,14 +59,20 @@ VisualToolBase::VisualToolBase(VideoDisplay *parent, agi::Context *context)
 , file_changed_connection(c->ass->AddCommitListener(&VisualToolBase::OnCommit, this))
 {
 	SetResolutions();
+	RefreshRows();
 	active_line = GetActiveDialogueLine();
 	connections.push_back(c->selectionController->AddActiveLineListener(&VisualToolBase::OnActiveLineChanged, this));
 	connections.push_back(c->videoController->AddSeekListener(&VisualToolBase::OnSeek, this));
 	parent->Bind(wxEVT_MOUSE_CAPTURE_LOST, &VisualToolBase::OnMouseCaptureLost, this);
+	parent->Bind(wxEVT_CHAR_HOOK, &VisualToolBase::OnKeyDown, this);
+	connections.push_back(c->selectionController->AddSelectionListener(&VisualToolBase::OnSelectionChanged, this));
 }
 
 VisualToolBase::~VisualToolBase() {
+	parent->Unbind(wxEVT_CHAR_HOOK, &VisualToolBase::OnKeyDown, this);
 	parent->Unbind(wxEVT_MOUSE_CAPTURE_LOST, &VisualToolBase::OnMouseCaptureLost, this);
+	if ((holding || dragging) && parent->HasCapture()) parent->ReleaseMouse();
+	try { EndEdit(false); } catch (...) { }
 }
 
 void VisualToolBase::SetResolutions() {
@@ -66,76 +83,236 @@ void VisualToolBase::SetResolutions() {
 	layout_res = Vector2D(layout_w, layout_h);
 }
 
-void VisualToolBase::OnCommit(int type) {
-	holding = false;
-	dragging = false;
-
-	if (type == AssFile::COMMIT_NEW || type & AssFile::COMMIT_SCRIPTINFO) {
-		SetResolutions();
-		OnCoordinateSystemsChanged();
-	}
-
-	if (type & AssFile::COMMIT_DIAG_FULL || type & AssFile::COMMIT_DIAG_ADDREM) {
-		active_line = GetActiveDialogueLine();
-		OnFileChanged();
-	}
+void VisualToolBase::ReadSelection() {
+	selected_ids.clear();
+	auto const& selected = c->selectionController->GetSelectedSet();
+	for (auto const& row : c->subtitleAccess->Read().Events)
+		if (std::find(selected.begin(), selected.end(), &row) != selected.end()) selected_ids.push_back(row.Id);
+	std::sort(selected_ids.begin(), selected_ids.end());
 }
 
+void VisualToolBase::RefreshRows() {
+	int previous = active_line ? active_line->Id : 0;
+	active_line = nullptr;
+	ordered_rows.clear();
+	rows.clear();
+	for (auto const& row : c->subtitleAccess->Read().Events) {
+		auto [it, inserted] = rows.emplace(row.Id, std::make_unique<AssDialogue>(static_cast<AssDialogueBase const&>(row)));
+		if (!inserted) throw std::logic_error("Duplicate visual row identity");
+		ordered_rows.push_back(it->second.get());
+	}
+	ReadSelection();
+	auto selected = c->selectionController->ReadActiveLine();
+	int active = selected ? previous : 0;
+	for (auto const& row : c->subtitleAccess->Read().Events)
+		if (&row == selected) { active = row.Id; break; }
+	active_line = Snapshot(active);
+	if (!IsDisplayed(active_line)) active_line = nullptr;
+	cache_revision = c->subtitleEditGate.Capture();
+	if (deferred_seek) { deferred_seek = false; OnFrameChanged(); }
+}
+
+AssDialogue* VisualToolBase::Snapshot(int id) const {
+	auto it = rows.find(id);
+	return it == rows.end() ? nullptr : it->second.get();
+}
+std::vector<AssDialogue*> VisualToolBase::SelectedLines() const {
+	std::vector<AssDialogue*> result;
+	for (auto id : selected_ids) if (auto row = Snapshot(id)) result.push_back(row);
+	return result;
+}
+
+bool VisualToolBase::BeginEdit(int include_id) {
+	if (interaction) {
+		if (EditCurrent()) {
+			auto expanded = targets;
+			expanded.insert(expanded.end(), selected_ids.begin(), selected_ids.end());
+			if (include_id) expanded.push_back(include_id);
+			std::sort(expanded.begin(), expanded.end());
+			expanded.erase(std::unique(expanded.begin(), expanded.end()), expanded.end());
+			if (expanded != targets) {
+				auto baseline = originals;
+				for (auto id : expanded) if (!baseline.contains(id)) {
+					auto row = Snapshot(id);
+					if (!row) throw std::logic_error("Missing visual target snapshot");
+					baseline.emplace(id, *row);
+				}
+				auto next = c->subtitleAccess->TryBeginInteraction(expanded);
+				if (!next) return false;
+				interaction = std::move(next); targets = std::move(expanded);
+				originals = std::move(baseline);
+			}
+			return true;
+		}
+		Cancel(); return false;
+	}
+	if (!cache_revision || !cache_revision->Current()) {
+		// A no-op C1-A command also advances the generation. Rebind an idle
+		// cache only after exact data equality, never an in-progress gesture.
+		bool equal = cache_revision && cache_revision->Revision().document == c->subtitleEditGate.Revision().document
+			&& rows.size() == c->subtitleAccess->Read().Events.size();
+		for (auto const& row : c->subtitleAccess->Read().Events) {
+			auto copy = Snapshot(row.Id);
+			if (!copy || row_fields(row) != row_fields(*copy)) { equal = false; break; }
+		}
+		if (!equal) { Cancel(); return false; }
+		cache_revision = c->subtitleEditGate.Capture();
+	}
+	targets = selected_ids;
+	if (active_line) targets.push_back(active_line->Id);
+	if (include_id) targets.push_back(include_id);
+	std::sort(targets.begin(), targets.end());
+	targets.erase(std::unique(targets.begin(), targets.end()), targets.end());
+	if (targets.empty()) return false;
+	std::map<int, AssDialogueBase> baseline;
+	for (auto id : targets) {
+		auto row = Snapshot(id);
+		if (!row) throw std::logic_error("Missing visual target snapshot");
+		baseline.emplace(id, *row);
+	}
+	interaction = c->subtitleAccess->TryBeginInteraction(targets);
+	if (interaction) originals = std::move(baseline);
+	return interaction.has_value();
+}
+bool VisualToolBase::EditCurrent() const { return interaction && interaction->Current(); }
+
+void VisualToolBase::ValidateOriginals() const {
+	if (!EditCurrent()) throw std::logic_error("Stale visual interaction");
+	size_t found = 0;
+	for (auto const& row : c->subtitleAccess->Read().Events) {
+		auto it = originals.find(row.Id);
+		if (it == originals.end()) continue;
+		if (row_fields(row) != row_fields(it->second)) throw std::logic_error("Visual target changed without notification");
+		++found;
+	}
+	if (found != originals.size()) throw std::out_of_range("Visual target removed");
+}
+
+void VisualToolBase::EndEdit(bool apply) {
+	// End registration even if rendering or a normal Commit observer throws.
+	BOOST_SCOPE_EXIT_ALL(this) { interaction.reset(); dirty.clear(); targets.clear(); originals.clear(); edit_message.clear(); };
+	auto provider = c->project->VideoProvider();
+	if (!apply || !EditCurrent()) {
+		if (previewing && provider) provider->LoadSubtitles(&c->subtitleAccess->Read());
+		previewing = false;
+		return;
+	}
+	std::vector<AssDialogueBase> updates;
+	ValidateOriginals();
+	for (auto const& row : c->subtitleAccess->Read().Events) if (dirty.contains(row.Id)) {
+		auto update = AssDialogueBase(row);
+		update.Text = Snapshot(row.Id)->Text;
+		updates.push_back(std::move(update));
+	}
+	if (!updates.empty()) {
+		file_changed_connection.Block();
+		BOOST_SCOPE_EXIT_ALL(this) { file_changed_connection.Unblock(); };
+		interaction->UpdateRows(updates);
+		interaction->Commit(edit_message.empty() ? _("visual typesetting") : edit_message, AssFile::COMMIT_DIAG_TEXT);
+	}
+	previewing = false;
+}
+
+void VisualToolBase::Cancel() {
+	holding = dragging = false;
+	if (parent->HasCapture()) parent->ReleaseMouse();
+	EndEdit(false);
+	RefreshRows();
+	OnFileChanged();
+}
+void VisualToolBase::OnKeyDown(wxKeyEvent& event) {
+	if (event.GetKeyCode() == WXK_ESCAPE && (interaction || holding || dragging)) { Cancel(); parent->Render(); }
+	else event.Skip();
+}
+void VisualToolBase::OnSelectionChanged() {
+	if (changing_selection) { ReadSelection(); return; }
+	Cancel();
+}
+void VisualToolBase::OnCommit(int) {
+	// VideoController already queued the new live subtitles before this listener.
+	previewing = false;
+	Cancel();
+	SetResolutions();
+	OnCoordinateSystemsChanged();
+}
 void VisualToolBase::OnSeek(int new_frame) {
 	if (frame_number == new_frame) return;
-
+	if (changing_selection) { frame_number = new_frame; deferred_seek = true; return; }
+	Cancel();
 	frame_number = new_frame;
+	active_line = GetActiveDialogueLine();
 	OnFrameChanged();
-
-	AssDialogue *new_line = GetActiveDialogueLine();
-	if (new_line != active_line) {
-		dragging = false;
-		active_line = new_line;
-		OnLineChanged();
-	}
+	OnLineChanged();
 }
-
-void VisualToolBase::OnMouseCaptureLost(wxMouseCaptureLostEvent &event) {
-	holding = false;
-	dragging = false;
-	event.Skip();
-}
-
-void VisualToolBase::OnActiveLineChanged(AssDialogue *new_line) {
-	if (!IsDisplayed(new_line))
-		new_line = nullptr;
-
-	holding = false;
-	dragging = false;
-	if (new_line != active_line) {
-		active_line = new_line;
-		OnLineChanged();
-		parent->Render();
-	}
+void VisualToolBase::OnMouseCaptureLost(wxMouseCaptureLostEvent& event) { Cancel(); event.Skip(); }
+void VisualToolBase::OnActiveLineChanged(AssDialogue*) {
+	if (!changing_selection) Cancel();
+	active_line = GetActiveDialogueLine();
+	OnLineChanged();
+	parent->Render();
 }
 
 bool VisualToolBase::IsDisplayed(AssDialogue *line) const {
 	int frame = c->videoController->GetFrameN();
-	return line
-		&& !line->Comment
+	return line && !line->Comment
 		&& c->videoController->FrameAtTime(line->Start, agi::vfr::START) <= frame
 		&& c->videoController->FrameAtTime(line->End, agi::vfr::END) >= frame;
 }
-
 void VisualToolBase::Commit(wxString message) {
-	file_changed_connection.Block();
-	if (message.empty())
-		message = _("visual typesetting");
-
-	commit_id = c->ass->Commit(message, AssFile::COMMIT_DIAG_TEXT, commit_id);
-	file_changed_connection.Unblock();
+	if (!EditCurrent()) throw std::logic_error("Stale visual interaction");
+	if (!message.empty()) edit_message = message;
+	std::vector<AssDialogueBase> preview;
+	for (auto id : dirty) if (auto row = Snapshot(id)) preview.push_back(*row);
+	if (!preview.empty()) if (auto provider = c->project->VideoProvider()) {
+		provider->PreviewSubtitles(std::move(preview));
+		previewing = true;
+	}
+}
+AssDialogue* VisualToolBase::GetActiveDialogueLine() {
+	auto selected = c->selectionController->ReadActiveLine();
+	for (auto const& row : c->subtitleAccess->Read().Events)
+		if (&row == selected) { auto copy = Snapshot(row.Id); return IsDisplayed(copy) ? copy : nullptr; }
+	return selected && active_line && IsDisplayed(active_line) ? active_line : nullptr;
 }
 
-AssDialogue* VisualToolBase::GetActiveDialogueLine() {
-	AssDialogue *diag = c->selectionController->GetActiveLine();
-	if (IsDisplayed(diag))
-		return diag;
-	return nullptr;
+void VisualToolBase::SelectLine(int id) {
+	if (!EditCurrent()) throw std::logic_error("Unauthorized visual selection");
+	changing_selection = true;
+	BOOST_SCOPE_EXIT_ALL(this) { changing_selection = false; };
+	for (auto& row : c->ass->Events) if (row.Id == id) { c->selectionController->SetActiveLine(&row); return; }
+}
+void VisualToolBase::SelectFeature(int id, bool clear) {
+	if (!EditCurrent()) throw std::logic_error("Unauthorized visual selection");
+	changing_selection = true;
+	BOOST_SCOPE_EXIT_ALL(this) { changing_selection = false; };
+	auto selected = clear ? Selection{} : c->selectionController->GetSelectedSet();
+	for (auto& row : c->ass->Events) if (row.Id == id) {
+		selected.insert(&row); c->selectionController->SetSelectedSet(std::move(selected)); return;
+	}
+}
+void VisualToolBase::DeselectFeature(int id) {
+	if (!EditCurrent()) throw std::logic_error("Unauthorized visual selection");
+	auto selected = c->selectionController->GetSelectedSet();
+	if (selected.size() <= 1) return;
+	for (auto& row : c->ass->Events) if (row.Id == id) selected.erase(&row);
+	changing_selection = true;
+	BOOST_SCOPE_EXIT_ALL(this) { changing_selection = false; };
+	auto active = c->selectionController->GetActiveLine();
+	if (!selected.count(active)) active = *selected.begin();
+	c->selectionController->SetSelectionAndActive(std::move(selected), active);
+}
+int VisualToolBase::InsertDrawing(AssDialogueBase const& drawing, AssStyle const* style) {
+	if (!EditCurrent() || !active_line) throw std::logic_error("Stale drawing interaction");
+	ValidateOriginals();
+	auto id = interaction->InsertBefore(active_line->Id, drawing, style);
+	file_changed_connection.Block();
+	BOOST_SCOPE_EXIT_ALL(this) { file_changed_connection.Unblock(); };
+	interaction->Commit(_("draw shape"), AssFile::COMMIT_DIAG_ADDREM | (style ? AssFile::COMMIT_STYLES : 0));
+	BOOST_SCOPE_EXIT_ALL(this) { interaction.reset(); };
+	for (auto& row : c->ass->Events) if (row.Id == id) {
+		c->selectionController->SetSelectionAndActive({&row}, &row); break;
+	}
+	return id;
 }
 
 void VisualToolBase::SetCanvasSize(int w, int h) {
@@ -148,10 +325,7 @@ void VisualToolBase::SetDisplayArea(int x, int y, int w, int h) {
 	video_pos = Vector2D(x, y);
 	video_size = Vector2D(w, h);
 
-	if ((holding || dragging) && parent->HasCapture())
-		parent->ReleaseMouse();
-	holding = false;
-	dragging = false;
+	Cancel();
 	OnCoordinateSystemsChanged();
 }
 
@@ -171,6 +345,13 @@ VisualTool<FeatureType>::VisualTool(VideoDisplay *parent, agi::Context *context)
 
 template<class FeatureType>
 void VisualTool<FeatureType>::OnMouseEvent(wxMouseEvent &event) {
+	try { MouseEvent(event); }
+	catch (...) { Cancel(); throw; }
+}
+
+template<class FeatureType>
+void VisualTool<FeatureType>::MouseEvent(wxMouseEvent &event) {
+	if ((dragging || holding) && (!EditCurrent() || !parent->HasCapture())) { Cancel(); return; }
 	bool left_click = event.LeftDown();
 	bool left_double = event.LeftDClick();
 	shift_down = event.ShiftDown();
@@ -207,6 +388,7 @@ void VisualTool<FeatureType>::OnMouseEvent(wxMouseEvent &event) {
 		}
 		// end drag
 		else {
+			if (!event.LeftUp()) { Cancel(); return; }
 			dragging = false;
 
 			// mouse didn't move, fiddle with selection
@@ -227,6 +409,7 @@ void VisualTool<FeatureType>::OnMouseEvent(wxMouseEvent &event) {
 	}
 	else if (holding) {
 		if (!event.LeftIsDown()) {
+			if (!event.LeftUp()) { Cancel(); return; }
 			holding = false;
 
 			parent->ReleaseMouse();
@@ -238,6 +421,7 @@ void VisualTool<FeatureType>::OnMouseEvent(wxMouseEvent &event) {
 
 	}
 	else if (left_click) {
+		if (!BeginEdit(active_feature ? active_feature->line_id : 0)) return;
 		drag_start = mouse_pos;
 
 		// start drag
@@ -249,8 +433,8 @@ void VisualTool<FeatureType>::OnMouseEvent(wxMouseEvent &event) {
 			else
 				sel_changed = false;
 
-			if (active_feature->line)
-				c->selectionController->SetActiveLine(active_feature->line);
+			if (active_feature->line_id) SelectLine(active_feature->line_id);
+			if (!BeginEdit(active_feature->line_id)) return;
 
 			if (InitializeDrag(active_feature)) {
 				for (auto sel : sel_features) sel->StartDrag();
@@ -262,7 +446,7 @@ void VisualTool<FeatureType>::OnMouseEvent(wxMouseEvent &event) {
 		else {
 			if (!alt_down && features.size() > 1) {
 				sel_features.clear();
-				c->selectionController->SetSelectedSet({ c->selectionController->GetActiveLine() });
+				if (active_line) SelectFeature(active_line->Id, true);
 			}
 			if (active_line && InitializeHold()) {
 				holding = true;
@@ -271,14 +455,14 @@ void VisualTool<FeatureType>::OnMouseEvent(wxMouseEvent &event) {
 		}
 	}
 
-	if (active_line && left_double)
+	if (active_line && left_double) {
+		if (!BeginEdit()) return;
 		OnDoubleClick();
+	}
 
+	if (!holding && !dragging && HasEdit()) { EndEdit(true); RefreshRows(); }
 	parent->Render();
 
-	// Only coalesce the changes made in a single drag
-	if (!event.LeftIsDown())
-		commit_id = -1;
 }
 
 template<class FeatureType>
@@ -301,38 +485,14 @@ void VisualTool<FeatureType>::DrawAllFeatures() {
 
 template<class FeatureType>
 void VisualTool<FeatureType>::SetSelection(FeatureType *feat, bool clear) {
-	if (clear)
-		sel_features.clear();
-
-	if (sel_features.insert(feat).second && feat->line) {
-		Selection sel;
-		if (!clear)
-			sel = c->selectionController->GetSelectedSet();
-		if (sel.insert(feat->line).second)
-			c->selectionController->SetSelectedSet(std::move(sel));
-	}
+	if (clear) sel_features.clear();
+	if (sel_features.insert(feat).second && feat->line_id) SelectFeature(feat->line_id, clear);
 }
-
 template<class FeatureType>
 void VisualTool<FeatureType>::RemoveSelection(FeatureType *feat) {
-	if (!sel_features.erase(feat) || !feat->line) return;
-	for (auto sel : sel_features)
-		if (sel->line == feat->line) return;
-
-	auto sel = c->selectionController->GetSelectedSet();
-
-	// Don't deselect the only selected line
-	if (sel.size() <= 1) return;
-
-	sel.erase(feat->line);
-
-	// Set the active line to an arbitrary selected line if we just
-	// deselected the active line
-	AssDialogue *new_active = c->selectionController->GetActiveLine();
-	if (feat->line == new_active)
-		new_active = *sel.begin();
-
-	c->selectionController->SetSelectionAndActive(std::move(sel), new_active);
+	if (!sel_features.erase(feat) || !feat->line_id) return;
+	for (auto sel : sel_features) if (sel->line_id == feat->line_id) return;
+	DeselectFeature(feat->line_id);
 }
 
 //////// PARSERS
@@ -372,7 +532,7 @@ Vector2D VisualToolBase::GetLinePosition(AssDialogue *diag) {
 	auto margin = diag->Margin;
 	int align = 2;
 
-	if (AssStyle *style = c->ass->GetStyle(diag->Style)) {
+	if (AssStyle const* style = c->ass->GetStyle(diag->Style)) {
 		align = style->alignment;
 		for (int i = 0; i < 3; i++) {
 			if (margin[i] == 0)
@@ -437,7 +597,7 @@ bool VisualToolBase::GetLineMove(AssDialogue *diag, Vector2D &p1, Vector2D &p2, 
 void VisualToolBase::GetLineRotation(AssDialogue *diag, float &rx, float &ry, float &rz) {
 	rx = ry = rz = 0.f;
 
-	if (AssStyle *style = c->ass->GetStyle(diag->Style))
+	if (AssStyle const* style = c->ass->GetStyle(diag->Style))
 		rz = style->angle;
 
 	auto blocks = diag->ParseTags();
@@ -466,7 +626,7 @@ void VisualToolBase::GetLineShear(AssDialogue *diag, float& fax, float& fay) {
 void VisualToolBase::GetLineScale(AssDialogue *diag, Vector2D &scale) {
 	float x = 100.f, y = 100.f;
 
-	if (AssStyle *style = c->ass->GetStyle(diag->Style)) {
+	if (AssStyle const* style = c->ass->GetStyle(diag->Style)) {
 		x = style->scalex;
 		y = style->scaley;
 	}
@@ -529,12 +689,14 @@ std::string VisualToolBase::GetLineVectorClip(AssDialogue *diag, int &scale, boo
 }
 
 void VisualToolBase::SetSelectedOverride(std::string const& tag, std::string const& value) {
-	for (auto line : c->selectionController->GetSelectedSet())
+	for (auto line : SelectedLines())
 		SetOverride(line, tag, value);
 }
 
 void VisualToolBase::SetOverride(AssDialogue* line, std::string const& tag, std::string const& value) {
-	if (!line) return;
+	if (!EditCurrent() || !line || Snapshot(line->Id) != line || !std::binary_search(targets.begin(), targets.end(), line->Id))
+		throw std::logic_error("Unauthorized visual snapshot");
+	auto original = line->Text;
 
 	std::string removeTag;
 	if (tag == "\\1c") removeTag = "\\c";
@@ -564,6 +726,7 @@ void VisualToolBase::SetOverride(AssDialogue* line, std::string const& tag, std:
 	}
 	else
 		line->Text = agi::Str("{", tag, value, "}", line->Text.get());
+	if (line->Text != original) dirty.insert(line->Id);
 }
 
 // If only export worked
