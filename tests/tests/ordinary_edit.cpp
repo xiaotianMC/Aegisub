@@ -46,9 +46,16 @@
 #include "visual_tool_vector_clip.h"
 #include "visual_tool_rectangle.h"
 #include "subtitle_format.h"
+#include "subtitle_dialog_edit.h"
+#include "dialog_rectangle.h"
+#include "dialog_styling_assistant.h"
+#include "dialog_translation.h"
+#include "dialogs.h"
+#include <wx/combobox.h>
 #include <wx/toolbar.h>
 #include <wx/evtloop.h>
 #include <thread>
+#include <fstream>
 #include <chrono>
 #include <libaegisub/ass/karaoke.h>
 #include <wx/frame.h>
@@ -79,10 +86,10 @@ class RunModal : public wxModalDialogHook {
 public:
     RunModal(wxString title,std::function<void(wxDialog*)> action):title(title),action(std::move(action)) { Register(); }
     int Enter(wxDialog* dialog) override {
-        if(dialog->GetTitle()!=title)return wxID_NONE;
+        if(dialog->GetTitle()!=title || !action)return wxID_NONE;
         dialog->CallAfter([this,dialog] {
             action(dialog);
-            if(dialog->IsModal())dialog->EndModal(wxID_CANCEL);
+            if(dialog->IsModal() && dialog->IsShown())dialog->EndModal(wxID_CANCEL);
         });
         return wxID_NONE;
     }
@@ -1213,4 +1220,191 @@ TEST_F(visual_edit, unnotified_metadata_and_one_millisecond_changes_are_not_over
     EXPECT_EQ(1,c->ass->Events.front().Start.GetMilliseconds());
     EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
 }
+
+TEST_F(visual_edit, drawing_dialog_preview_confirm_cancel_and_undo_use_independent_data) {
+    Install<VisualToolRectangle>();Drag(30,40,120,150);auto text=Text();
+    {RunModal edit("Edit Shape",[&](wxDialog* dialog){
+        EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+        wxSpinCtrlDouble* width=nullptr;for(auto child:descendants(dialog))if((width=dynamic_cast<wxSpinCtrlDouble*>(child)))break;
+        ASSERT_NE(nullptr,width);width->SetValue(width->GetValue()+20);
+        wxSpinDoubleEvent event(wxEVT_SPINCTRLDOUBLE,width->GetId());event.SetEventObject(width);width->GetEventHandler()->ProcessEvent(event);
+        EXPECT_EQ(text,Text());EXPECT_FALSE(c->subtitleEditGate.TryBeginComparison());
+        button(dialog,wxID_OK);
+    });
+    EditDrawing(c.get());}EXPECT_NE(text,Text());auto changed=Text();
+    c->subsController->Undo();EXPECT_EQ(text,Text());c->subsController->Redo();EXPECT_EQ(changed,Text());
+    RunModal cancel("Edit Shape",[&](wxDialog* dialog){
+        wxSpinCtrlDouble* width=nullptr;for(auto child:descendants(dialog))if((width=dynamic_cast<wxSpinCtrlDouble*>(child)))break;
+        ASSERT_NE(nullptr,width);width->SetValue(width->GetValue()+30);
+        wxCommandEvent event(wxEVT_TEXT,width->GetId());width->GetEventHandler()->ProcessEvent(event);
+        EXPECT_EQ(changed,Text());dialog->EndModal(wxID_CANCEL);
+    });
+    EditDrawing(c.get());EXPECT_EQ(changed,Text());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+}
+TEST_F(visual_edit, drawing_dialog_rejects_changed_target_and_comparison_authorization) {
+    Install<VisualToolRectangle>();Drag(30,40,120,150);auto text=Text();AcceptMessages accept;
+    {RunModal changed("Edit Shape",[&](wxDialog* dialog){
+        {auto write=c->subtitleAccess->TryWrite();c->ass->Events.front().Layer=9;}
+        button(dialog,wxID_OK);EXPECT_EQ(text,Text());EXPECT_TRUE(dialog->IsModal());
+    });
+    EditDrawing(c.get());}EXPECT_EQ(9,c->ass->Events.front().Layer);EXPECT_EQ(text,Text());
+    auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);
+    RunModal blocked("Edit Shape",[&](wxDialog* dialog){button(dialog,wxID_OK);EXPECT_TRUE(dialog->IsModal());});
+    EditDrawing(c.get());EXPECT_EQ(text,Text());
+}
+TEST_F(ordinary_edit, dialog_snapshot_closes_with_parent_and_rejects_duplicate_batch_before_writing) {
+    SubtitleDialogEdit edit(c.get());edit.ResetActive();ASSERT_TRUE(edit.Begin());
+    auto row=edit.Rows().front();row.Text="must not be written";
+    EXPECT_THROW(edit.Commit({row,row},"duplicate",AssFile::COMMIT_DIAG_TEXT),std::invalid_argument);
+    EXPECT_EQ("",c->ass->Events.front().Text.get());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    edit.ResetActive();delete window;window=nullptr;
+    EXPECT_FALSE(edit.Alive());EXPECT_FALSE(edit.Begin());
+}
+TEST_F(ordinary_edit, styling_dialog_commits_owned_style_and_rejects_stale_definitions) {
+    {auto write=c->subtitleAccess->TryWrite();auto style=new AssStyle();style->name="Other";c->ass->Styles.push_back(*style);c->ass->Commit("fixture",AssFile::COMMIT_STYLES);}
+    DialogStyling dialog(c.get());wxTextCtrl* name=nullptr;
+    for(auto child:descendants(&dialog))if(auto text=dynamic_cast<wxTextCtrl*>(child);text && (text->GetWindowStyleFlag() & wxTE_PROCESS_ENTER))name=text;
+    ASSERT_NE(nullptr,name);EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    name->SetValue("Other");EXPECT_FALSE(c->subtitleEditGate.TryBeginComparison());dialog.Commit(false);
+    EXPECT_EQ("Other",c->ass->Events.front().Style.get());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    c->subsController->Undo();EXPECT_EQ("Default",c->ass->Events.front().Style.get());
+    c->subsController->Redo();EXPECT_EQ("Other",c->ass->Events.front().Style.get());
+    {auto write=c->subtitleAccess->TryWrite();c->ass->Styles.front().fontsize+=1;}
+    AcceptMessages accept;name->ChangeValue("Default");dialog.Commit(false);EXPECT_EQ("Other",c->ass->Events.front().Style.get());
+}
+TEST_F(ordinary_edit, styling_dialog_comparison_denial_and_draft_cancel_do_not_write) {
+    {DialogStyling dialog(c.get());auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);AcceptMessages accept;dialog.Commit(false);EXPECT_EQ("Default",c->ass->Events.front().Style.get());}
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+}
+
+TEST_F(ordinary_edit, translation_dialog_preserves_tags_ids_and_per_line_undo) {
+    int second;
+    {auto write=c->subtitleAccess->TryWrite();c->ass->Events.front().Text="{\\i1}one";auto row=new AssDialogue();row->Text="{\\b1}two";second=row->Id;c->ass->Events.push_back(*row);c->ass->Commit("fixture",AssFile::COMMIT_DIAG_ADDREM);}
+    auto first=c->ass->Events.front().Id;DialogTranslation dialog(c.get());
+    SubsTextEditCtrl* target=nullptr;for(auto child:descendants(&dialog))if(auto text=dynamic_cast<SubsTextEditCtrl*>(child))target=text;
+    ASSERT_NE(nullptr,target);target->SetTextRaw("中 文");EXPECT_FALSE(c->subtitleEditGate.TryBeginComparison());dialog.Commit(true);
+    EXPECT_EQ(first,c->ass->Events.front().Id);EXPECT_EQ("{\\i1}中 文",c->ass->Events.front().Text.get());
+    EXPECT_EQ(second,c->selectionController->ReadActiveLine()->Id);
+    target->SetTextRaw("译文");dialog.Commit(false);EXPECT_EQ("{\\b1}译文",c->ass->Events.back().Text.get());
+    c->subsController->Undo();EXPECT_EQ("{\\b1}two",c->ass->Events.back().Text.get());EXPECT_EQ("{\\i1}中 文",c->ass->Events.front().Text.get());
+    c->subsController->Redo();EXPECT_EQ("{\\b1}译文",c->ass->Events.back().Text.get());
+}
+TEST_F(ordinary_edit, translation_dialog_rejects_stale_row_and_releases_draft_on_close) {
+    {auto write=c->subtitleAccess->TryWrite();c->ass->Events.front().Text="source";c->ass->Commit("fixture",AssFile::COMMIT_DIAG_TEXT);}
+    {
+        DialogTranslation dialog(c.get());dialog.InsertOriginal();EXPECT_FALSE(c->subtitleEditGate.TryBeginComparison());
+        {auto write=c->subtitleAccess->TryWrite();c->ass->Events.front().Text="external";c->ass->Commit("external",AssFile::COMMIT_DIAG_TEXT);}
+        AcceptMessages accept;dialog.Commit(false);EXPECT_EQ("external",c->ass->Events.front().Text.get());
+    }
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+}
+
+TEST_F(ordinary_edit, kanji_dialog_validates_all_targets_and_commits_once_or_discards) {
+    std::vector<int> ids;
+    {auto write=c->subtitleAccess->TryWrite();auto style=new AssStyle();style->name="Target";c->ass->Styles.push_back(*style);
+        c->ass->Events.front().Text=R"({\k10}a)";ids.push_back(c->ass->Events.front().Id);
+        for(int i=1;i<4;++i){auto row=new AssDialogue();row->Style=i%2?"Target":"Default";row->Text=i%2?"字":R"({\k20}b)";ids.push_back(row->Id);c->ass->Events.push_back(*row);}
+        c->ass->Commit("fixture",AssFile::COMMIT_DIAG_ADDREM|AssFile::COMMIT_STYLES);
+    }
+    auto text=[&](int id){for(auto const& row:c->ass->Events)if(row.Id==id)return row.Text.get();return std::string();};
+    auto prepare=[&](wxDialog* dialog){
+        std::vector<wxComboBox*> combos;for(auto child:descendants(dialog))if(auto combo=dynamic_cast<wxComboBox*>(child))combos.push_back(combo);
+        ASSERT_EQ(2u,combos.size());combos[0]->SetStringSelection("Default");combos[1]->SetStringSelection("Target");
+    };
+    auto press=[&](wxDialog* dialog,wxString label){for(auto child:descendants(dialog))if(auto b=dynamic_cast<wxButton*>(child);b && b->GetLabel()==label){button(b,b->GetId());return;}FAIL()<<"Button missing";};
+    {RunModal accept("Kanji timer",[&](wxDialog* dialog){prepare(dialog);press(dialog,"S&tart!");EXPECT_FALSE(c->subtitleEditGate.TryBeginComparison());for(int i=0;i<2;++i){press(dialog,"&Link");press(dialog,"&Accept Line");}EXPECT_EQ("字",text(ids[1]));press(dialog,"&Close");});ShowKanjiTimerDialog(c.get());}
+    EXPECT_EQ(R"({\k10}字)",text(ids[1]));EXPECT_EQ(R"({\k20}字)",text(ids[3]));EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    c->subsController->Undo();EXPECT_EQ("字",text(ids[1]));EXPECT_EQ("字",text(ids[3]));c->subsController->Redo();EXPECT_EQ(R"({\k20}字)",text(ids[3]));c->subsController->Undo();
+    {RunModal cancel("Kanji timer",[&](wxDialog* dialog){prepare(dialog);press(dialog,"S&tart!");press(dialog,"&Link");press(dialog,"&Accept Line");wxCloseEvent e(wxEVT_CLOSE_WINDOW);dialog->GetEventHandler()->ProcessEvent(e);});ShowKanjiTimerDialog(c.get());}
+    EXPECT_EQ("字",text(ids[1]));EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    {RunModal stale("Kanji timer",[&](wxDialog* dialog){prepare(dialog);press(dialog,"S&tart!");for(int i=0;i<2;++i){press(dialog,"&Link");press(dialog,"&Accept Line");}
+        {auto write=c->subtitleAccess->TryWrite();c->ass->Events.back().Text="external";c->ass->Commit("external",AssFile::COMMIT_DIAG_TEXT);}
+        AcceptMessages messages;press(dialog,"&Close");EXPECT_TRUE(dialog->IsShown());});ShowKanjiTimerDialog(c.get());}
+    EXPECT_EQ("字",text(ids[1]));EXPECT_EQ("external",text(ids[3]));EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+}
+
+TEST_F(visual_edit, video_properties_prompt_is_detached_and_preserves_resample_undo) {
+    {std::ofstream video("properties.y4m",std::ios::binary);video<<"YUV4MPEG2 W32 H24 F25:1 Ip A1:1 C420jpeg\nFRAME\n";std::string pixels(32*24*3/2,'\x80');video.write(pixels.data(),pixels.size());}
+    OPT_SET("Video/No YCbCr Matrix in Script")->SetInt(0);OPT_SET("Video/PlayRes Mismatch")->SetInt(0);OPT_SET("Video/No LayoutRes in Script")->SetInt(0);OPT_SET("Video/LayoutRes Mismatch")->SetInt(0);
+    AcceptMessages messages;c->project->LoadVideo("properties.y4m");ASSERT_NE(nullptr,c->project->VideoProvider());FrameData();
+    {auto write=c->subtitleAccess->TryWrite();c->ass->SetScriptInfo("PlayResX","80");c->ass->SetScriptInfo("PlayResY","60");c->ass->Events.front().Text=R"({\pos(20,20)\bord4}中 文)";c->ass->Commit("fixture",AssFile::COMMIT_SCRIPTINFO|AssFile::COMMIT_DIAG_TEXT);}
+    auto id=c->ass->Events.front().Id;auto pointer=&c->ass->Events.front();auto text=c->ass->Events.front().Text.get();auto size=c->ass->Styles.front().fontsize;
+    OPT_SET("Video/PlayRes Mismatch")->SetInt(1);
+    {RunModal choose("Resolution mismatch",[&](wxDialog* dialog){EXPECT_EQ(text,c->ass->Events.front().Text.get());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+        for(auto child:descendants(dialog))if(auto list=dynamic_cast<wxListBox*>(child))list->SetSelection(1);button(dialog,wxID_OK);
+    });UpdateVideoProperties(c.get(),c->project->VideoProvider());}
+    EXPECT_EQ(32,c->ass->GetScriptInfoAsInt("PlayResX"));EXPECT_NE(text,c->ass->Events.front().Text.get());EXPECT_DOUBLE_EQ(std::round(size*0.4),c->ass->Styles.front().fontsize);EXPECT_EQ(id,c->ass->Events.front().Id);EXPECT_EQ(pointer,&c->ass->Events.front());
+    auto changed=c->ass->Events.front().Text.get();c->subsController->Undo();EXPECT_EQ(changed,c->ass->Events.front().Text.get());c->subsController->Undo();EXPECT_EQ(text,c->ass->Events.front().Text.get());EXPECT_EQ(80,c->ass->GetScriptInfoAsInt("PlayResX"));c->subsController->Redo();EXPECT_EQ(changed,c->ass->Events.front().Text.get());
+}
+TEST_F(visual_edit, video_properties_denies_comparison_without_changing_script_metadata) {
+    {auto write=c->subtitleAccess->TryWrite();c->ass->SetScriptInfo("PlayResX","0");c->ass->SetScriptInfo("PlayResY","0");c->ass->Commit("fixture",AssFile::COMMIT_SCRIPTINFO);}
+    auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);AcceptMessages messages;UpdateVideoProperties(c.get(),c->project->VideoProvider());
+    EXPECT_EQ(0,c->ass->GetScriptInfoAsInt("PlayResX"));
+}
+
+TEST_F(ordinary_edit, dialog_batch_rejects_reordered_missing_or_invalid_rows_before_any_write) {
+    {auto write=c->subtitleAccess->TryWrite();for(int i=0;i<2;++i)c->ass->Events.push_back(*new AssDialogue());c->ass->Commit("fixture",AssFile::COMMIT_DIAG_ADDREM);}
+    SubtitleDialogEdit edit(c.get());edit.ResetAll();auto updates=edit.Rows();updates.front().Text="first";updates.back().Text="last";
+    updates.back().Row=99;EXPECT_THROW(edit.Commit(updates,"bad order",AssFile::COMMIT_DIAG_TEXT),std::invalid_argument);EXPECT_EQ("",c->ass->Events.front().Text.get());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    edit.ResetAll();updates=edit.Rows();updates.front().Text="first";updates.back().Text="last";
+    {auto write=c->subtitleAccess->TryWrite();c->ass->Events.splice(c->ass->Events.begin(),c->ass->Events,c->ass->iterator_to(c->ass->Events.back()));}
+    EXPECT_FALSE(edit.Commit(updates,"reordered",AssFile::COMMIT_DIAG_TEXT));for(auto const& row:c->ass->Events)EXPECT_EQ("",row.Text.get());
+    edit.ResetAll();updates=edit.Rows();updates.front().Text="first";
+    {auto write=c->subtitleAccess->TryWrite();delete &c->ass->Events.back();}
+    EXPECT_FALSE(edit.Commit(updates,"removed",AssFile::COMMIT_DIAG_TEXT));EXPECT_EQ("",c->ass->Events.front().Text.get());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+}
+TEST_F(ordinary_edit, translation_dialog_repeated_preview_does_not_reinterpret_inserted_tags_as_blocks) {
+    {auto write=c->subtitleAccess->TryWrite();c->ass->Events.front().Text=R"({\i1}source)";c->ass->Commit("fixture",AssFile::COMMIT_DIAG_TEXT);}
+    DialogTranslation dialog(c.get());SubsTextEditCtrl* target=nullptr;for(auto child:descendants(&dialog))if(auto text=dynamic_cast<SubsTextEditCtrl*>(child))target=text;
+    ASSERT_NE(nullptr,target);target->SetTextRaw(R"({\b1}译文)");dialog.Commit(false);EXPECT_EQ(R"({\i1}{\b1}译文)",c->ass->Events.front().Text.get());
+    target->SetTextRaw("second");dialog.Commit(false);EXPECT_EQ(R"({\i1}second)",c->ass->Events.front().Text.get());
+}
+TEST_F(ordinary_edit, dialog_noncontiguous_batch_preserves_unselected_fields_and_releases_on_notification_exception) {
+    {auto write=c->subtitleAccess->TryWrite();for(int i=0;i<2;++i)c->ass->Events.push_back(*new AssDialogue());c->ass->Commit("fixture",AssFile::COMMIT_DIAG_ADDREM);}
+    SubtitleDialogEdit edit(c.get());auto first=c->ass->Events.front().Id,last=c->ass->Events.back().Id;edit.Reset({first,last});auto updates=edit.Rows();updates.front().Text="first";updates.back().Text="last";
+    agi::signal::Connection throwing=c->ass->AddCommitListener([]{throw std::runtime_error("observer");});
+    EXPECT_THROW(edit.Commit(updates,"complete batch",AssFile::COMMIT_DIAG_TEXT),std::runtime_error);
+    EXPECT_EQ("first",c->ass->Events.front().Text.get());EXPECT_EQ("last",c->ass->Events.back().Text.get());EXPECT_EQ("",std::next(c->ass->Events.begin())->Text.get());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    throwing.Disconnect();c->subsController->Undo();for(auto const& row:c->ass->Events)EXPECT_EQ("",row.Text.get());
+}
+
+TEST_F(ordinary_edit, translation_dialog_persists_only_confirmed_text_and_keeps_metadata) {
+    uint32_t extra;
+    {auto write=c->subtitleAccess->TryWrite();auto& row=c->ass->Events.front();row.Text="source";row.Comment=true;row.Layer=3;row.Start=1;row.End=2002;row.Actor="actor";row.Effect="effect";extra=c->ass->AddExtradata("unknown","payload");row.ExtradataIds=std::vector<uint32_t>{extra};c->ass->Commit("fixture",AssFile::COMMIT_DIAG_FULL);}
+    auto id=c->ass->Events.front().Id;
+    {DialogTranslation dialog(c.get());SubsTextEditCtrl* target=nullptr;for(auto child:descendants(&dialog))if(auto text=dynamic_cast<SubsTextEditCtrl*>(child))target=text;ASSERT_NE(nullptr,target);target->SetTextRaw("中 文");dialog.Commit(false);target->SetTextRaw("unconfirmed");}
+    auto const& row=c->ass->Events.front();EXPECT_EQ(id,row.Id);EXPECT_EQ(1,row.Start.GetMilliseconds());EXPECT_EQ(2002,row.End.GetMilliseconds());EXPECT_TRUE(row.Comment);EXPECT_EQ(3,row.Layer);EXPECT_EQ("actor",row.Actor.get());EXPECT_EQ("effect",row.Effect.get());EXPECT_EQ(std::vector<uint32_t>{extra},row.ExtradataIds.get());
+    auto save=agi::fs::path((std::filesystem::current_path()/"dialog-result.ass").wstring());{auto write=c->subtitleAccess->TryWrite();c->subsController->Save(save);}
+    AssFile reopened;SubtitleFormat::GetReader(save,"utf-8")->ReadFile(&reopened,save,c->project->Timecodes(),"utf-8");EXPECT_EQ("中 文",reopened.Events.front().Text.get());ASSERT_EQ(1u,reopened.Extradata.size());EXPECT_EQ("payload",reopened.Extradata.front().value);
+}
+TEST_F(ordinary_edit, dialog_dependency_changes_and_explicit_hide_release_pending_work) {
+    SubtitleDialogEdit edit(c.get());edit.ResetActive();
+    {auto write=c->subtitleAccess->TryWrite();c->ass->Events.front().Start=1;}
+    EXPECT_FALSE(edit.Begin());edit.ResetActive();
+    {auto write=c->subtitleAccess->TryWrite();c->ass->Styles.front().fontsize+=1;}
+    EXPECT_FALSE(edit.Begin());
+    DialogStyling dialog(c.get());dialog.Show();wxTextCtrl* name=nullptr;for(auto child:descendants(&dialog))if(auto text=dynamic_cast<wxTextCtrl*>(child);text && (text->GetWindowStyleFlag()&wxTE_PROCESS_ENTER))name=text;
+    ASSERT_NE(nullptr,name);name->SetValue("Default");EXPECT_FALSE(c->subtitleEditGate.TryBeginComparison());dialog.Hide();EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+}
+TEST_F(ordinary_edit, styling_dialog_notification_exception_releases_interaction_without_partial_state) {
+    DialogStyling dialog(c.get());agi::signal::Connection throwing=c->ass->AddCommitListener([]{throw std::runtime_error("observer");});
+    EXPECT_THROW(dialog.Commit(false),std::runtime_error);EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());EXPECT_EQ("Default",c->ass->Events.front().Style.get());
+}
+
+TEST_F(ordinary_edit, video_layout_writeback_rejects_bad_structure_and_keeps_live_nodes_and_other_state) {
+    {auto write=c->subtitleAccess->TryWrite();c->ass->Properties.video_zoom=2;c->ass->AddExtradata("unknown","keep");}
+    SubtitleDialogEdit edit(c.get());edit.ResetAll();AssFile calculated(c->subtitleAccess->Read());calculated.Events.front().Id=c->ass->Events.front().Id;
+    calculated.Events.front().Text="layout";calculated.Styles.front().name="renamed";
+    EXPECT_THROW(edit.CommitLayout(calculated,"invalid layout",AssFile::COMMIT_DIAG_FULL),std::invalid_argument);EXPECT_EQ("",c->ass->Events.front().Text.get());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    calculated.Styles.front().name="Default";calculated.Styles.front().fontsize=24;calculated.Styles.front().UpdateData();calculated.SetScriptInfo("PlayResX","123");
+    edit.ResetAll();auto row=&c->ass->Events.front();auto style=&c->ass->Styles.front();
+    ASSERT_TRUE(edit.CommitLayout(calculated,"layout",AssFile::COMMIT_DIAG_FULL|AssFile::COMMIT_STYLES|AssFile::COMMIT_SCRIPTINFO));
+    EXPECT_EQ(row,&c->ass->Events.front());EXPECT_EQ(style,&c->ass->Styles.front());EXPECT_EQ(row,c->selectionController->ReadActiveLine());EXPECT_EQ("layout",row->Text.get());EXPECT_DOUBLE_EQ(24,style->fontsize);EXPECT_DOUBLE_EQ(2,c->ass->Properties.video_zoom);EXPECT_EQ("keep",c->ass->Extradata.front().value);
+}
+TEST_F(ordinary_edit, video_layout_access_requires_a_current_interaction) {
+    auto id=c->ass->Events.front().Id;AssFile calculated(c->subtitleAccess->Read());calculated.Events.front().Id=id;calculated.SetScriptInfo("Title","blocked");
+    auto interaction=c->subtitleAccess->TryBeginInteraction({id});ASSERT_TRUE(interaction);interaction->End();
+    EXPECT_THROW(interaction->UpdateLayout(calculated),std::logic_error);EXPECT_NE("blocked",c->ass->GetScriptInfo("Title"));
+}
+
 }

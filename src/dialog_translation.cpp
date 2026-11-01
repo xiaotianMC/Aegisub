@@ -20,6 +20,7 @@
 ///
 
 #include "dialog_translation.h"
+#include "subtitle_dialog_edit.h"
 
 #include "include/aegisub/context.h"
 #include "include/aegisub/hotkey.h"
@@ -66,10 +67,11 @@ DialogTranslation::DialogTranslation(agi::Context *c)
 , c(c)
 , file_change_connection(c->ass->AddCommitListener(&DialogTranslation::OnExternalCommit, this))
 , active_line_connection(c->selectionController->AddActiveLineListener(&DialogTranslation::OnActiveLineChanged, this))
-, active_line(c->selectionController->GetActiveLine())
+, edit(std::make_unique<SubtitleDialogEdit>(c))
 , line_count(c->ass->Events.size())
 {
 	SetIcons(GETICONS(translation_toolbutton));
+	Bind(wxEVT_SHOW,&DialogTranslation::OnShow,this);
 
 	wxSizer *main_sizer = new wxBoxSizer(wxVERTICAL);
 
@@ -159,6 +161,12 @@ DialogTranslation::DialogTranslation(agi::Context *c)
 
 	Bind(wxEVT_KEY_DOWN, &DialogTranslation::OnKeyDown, this);
 
+	edit->ResetActive();
+	if(edit->Rows().empty())throw NothingToTranslate();
+	active_line=std::make_unique<AssDialogue>(edit->Rows().front());
+	translated_text->Bind(wxEVT_STC_MODIFIED,[this](wxStyledTextEvent& e){
+		if(!updating_display && (e.GetModificationType() & (wxSTC_MOD_INSERTTEXT|wxSTC_MOD_DELETETEXT)))edit->Begin();
+	});
 	blocks = active_line->ParseTags();
 	if (bad_block(blocks[0])) {
 		if (!NextBlock())
@@ -168,12 +176,16 @@ DialogTranslation::DialogTranslation(agi::Context *c)
 		UpdateDisplay();
 }
 
-DialogTranslation::~DialogTranslation() { }
+DialogTranslation::~DialogTranslation() {
+	Unbind(wxEVT_SHOW,&DialogTranslation::OnShow,this);
+	edit->End();
+}
 
-void DialogTranslation::OnActiveLineChanged(AssDialogue *new_line) {
-	if (switching_lines) return;
-
-	active_line = new_line;
+void DialogTranslation::OnActiveLineChanged(AssDialogue *) try {
+	if (switching_lines || !edit->Alive()) return;
+	edit->ResetActive();
+	if(edit->Rows().empty()){edit->Invalidate();return;}
+	active_line=std::make_unique<AssDialogue>(edit->Rows().front());
 	blocks = active_line->ParseTags();
 	cur_block = 0;
 
@@ -181,27 +193,28 @@ void DialogTranslation::OnActiveLineChanged(AssDialogue *new_line) {
 		wxMessageBox(_("No more lines to translate."));
 		EndModal(1);
 	}
+	else UpdateDisplay();
+}
+catch (...) {edit->Invalidate();throw;}
+
+void DialogTranslation::OnExternalCommit(int) {
+	// Keep the user's independent draft, but never rebase it onto changed data.
+	edit->Invalidate();
 }
 
-void DialogTranslation::OnExternalCommit(int commit_type) {
-	if (commit_type == AssFile::COMMIT_NEW || commit_type & AssFile::COMMIT_DIAG_ADDREM) {
-		line_count = c->ass->Events.size();
-		line_number_display->SetLabel(fmt_tl("Current line: %d/%d", active_line->Row + 1, line_count));
-	}
-
-	if (commit_type & AssFile::COMMIT_DIAG_TEXT)
-		OnActiveLineChanged(active_line);
-}
-
-bool DialogTranslation::NextBlock() {
+bool DialogTranslation::NextBlock() try {
+	if(!edit->Alive())return false;
 	switching_lines = true;
+	BOOST_SCOPE_EXIT_ALL(this){switching_lines=false;};
+	edit->End();
 	do {
 		if (cur_block == blocks.size() - 1) {
 			c->selectionController->NextLine();
-			AssDialogue *new_line = c->selectionController->GetActiveLine();
-			if (active_line == new_line || !new_line) return false;
-
-			active_line = new_line;
+			auto id=SubtitleDialogEdit::ActiveID(c);
+			if(!id || id==active_line->Id)return false;
+			edit->ResetActive();
+			active_line=std::make_unique<AssDialogue>(edit->Rows().front());
+			line_count=c->subtitleAccess->Read().Events.size();
 			blocks = active_line->ParseTags();
 			cur_block = 0;
 		}
@@ -213,16 +226,21 @@ bool DialogTranslation::NextBlock() {
 	UpdateDisplay();
 	return true;
 }
+catch (...) {edit->Invalidate();throw;}
 
-bool DialogTranslation::PrevBlock() {
+bool DialogTranslation::PrevBlock() try {
+	if(!edit->Alive())return false;
 	switching_lines = true;
+	BOOST_SCOPE_EXIT_ALL(this){switching_lines=false;};
+	edit->End();
 	do {
 		if (cur_block == 0) {
 			c->selectionController->PrevLine();
-			AssDialogue *new_line = c->selectionController->GetActiveLine();
-			if (active_line == new_line || !new_line) return false;
-
-			active_line = new_line;
+			auto id=SubtitleDialogEdit::ActiveID(c);
+			if(!id || id==active_line->Id)return false;
+			edit->ResetActive();
+			active_line=std::make_unique<AssDialogue>(edit->Rows().front());
+			line_count=c->subtitleAccess->Read().Events.size();
 			blocks = active_line->ParseTags();
 			cur_block = blocks.size() - 1;
 		}
@@ -234,8 +252,12 @@ bool DialogTranslation::PrevBlock() {
 	UpdateDisplay();
 	return true;
 }
+catch (...) {edit->Invalidate();throw;}
 
 void DialogTranslation::UpdateDisplay() {
+	if(!edit->Alive())return;
+	updating_display=true;
+	BOOST_SCOPE_EXIT_ALL(this){updating_display=false;};
 	line_number_display->SetLabel(fmt_tl("Current line: %d/%d", active_line->Row, line_count));
 
 	original_text->SetReadOnly(false);
@@ -264,17 +286,25 @@ void DialogTranslation::UpdateDisplay() {
 	translated_text->SetFocus();
 }
 
-void DialogTranslation::Commit(bool next) {
+void DialogTranslation::Commit(bool next) try {
+	if(!edit->Alive() || !active_line)return;
 	std::string new_value = translated_text->GetTextRaw().data();
 	boost::replace_all(new_value, "\r\n", "\\N");
 	boost::replace_all(new_value, "\r", "\\N");
 	boost::replace_all(new_value, "\n", "\\N");
-	*blocks[cur_block] = AssDialogueBlockPlain(new_value);
-	active_line->UpdateText(blocks);
-
+	AssDialogue candidate(static_cast<AssDialogueBase const&>(*active_line));
+	if(cur_block>=blocks.size())return;
+	auto replacement=std::make_unique<AssDialogueBlockPlain>(new_value);
+	std::string text;
+	for(size_t i=0;i<blocks.size();++i)text+=i==cur_block?new_value:blocks[i]->GetText();
+	candidate.Text=std::move(text);
 	file_change_connection.Block();
-	c->ass->Commit(_("translation assistant"), AssFile::COMMIT_DIAG_TEXT);
-	file_change_connection.Unblock();
+	BOOST_SCOPE_EXIT_ALL(this){file_change_connection.Unblock();};
+	if(!edit->Commit({AssDialogueBase(candidate)},_("translation assistant"),AssFile::COMMIT_DIAG_TEXT)) {
+		wxMessageBox(_("The subtitle or its dependencies changed. Select the line again to restart."),_("Translation Assistant"),wxOK|wxICON_WARNING,this);return;
+	}
+	active_line=std::make_unique<AssDialogue>(edit->Rows().front());
+	blocks[cur_block]=std::move(replacement);
 
 	if (next) {
 		if (!NextBlock()) {
@@ -287,21 +317,30 @@ void DialogTranslation::Commit(bool next) {
 	}
 }
 
-void DialogTranslation::InsertOriginal() {
+catch (...) {edit->Invalidate();throw;}
+
+void DialogTranslation::InsertOriginal() try {
+	if(!edit->Alive() || !edit->Begin())return;
 	auto const& text = blocks[cur_block]->GetText();
 	translated_text->AddTextRaw(text.data(), text.size());
 }
+catch (...) {edit->Invalidate();throw;}
 
 void DialogTranslation::OnKeyDown(wxKeyEvent &evt) {
-	hotkey::check("Translation Assistant", c, evt);
+	if(edit->Alive())hotkey::check("Translation Assistant", c, evt);
 }
 
 void DialogTranslation::OnPlayVideoButton(wxCommandEvent &) {
-	c->videoController->PlayLine();
+	if(edit->Alive())c->videoController->PlayLine();
 	translated_text->SetFocus();
 }
 
 void DialogTranslation::OnPlayAudioButton(wxCommandEvent &) {
-	cmd::call("audio/play/selection", c);
+	if(edit->Alive())cmd::call("audio/play/selection", c);
 	translated_text->SetFocus();
+}
+
+void DialogTranslation::OnShow(wxShowEvent& event) {
+	if(!event.IsShown())edit->Invalidate();
+	event.Skip();
 }

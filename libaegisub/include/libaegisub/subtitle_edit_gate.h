@@ -26,6 +26,7 @@ public:
         friend class ComparisonSession;
     public:
         bool Current() const;
+        bool Alive() const;
         SubtitleRevision Revision() const noexcept { return revision; }
     };
     class WriteLease {

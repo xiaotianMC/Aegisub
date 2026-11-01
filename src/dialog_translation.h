@@ -25,6 +25,7 @@
 
 namespace agi { struct Context; }
 class AssDialogue;
+class SubtitleDialogEdit;
 class AssDialogueBlock;
 class PersistLocation;
 class SubsTextEditCtrl;
@@ -40,7 +41,9 @@ class DialogTranslation final : public wxDialog {
 	agi::signal::Connection active_line_connection;
 
 	/// The active line
-	AssDialogue *active_line;
+	std::unique_ptr<AssDialogue> active_line;
+	std::unique_ptr<SubtitleDialogEdit> edit;
+	bool updating_display = false;
 	/// The parsed dialogue blocks for the active line
 	std::vector<std::unique_ptr<AssDialogueBlock>> blocks;
 	/// Which dialogue block in the active line is currently being translated
@@ -62,6 +65,7 @@ class DialogTranslation final : public wxDialog {
 	void OnPlayAudioButton(wxCommandEvent &);
 	void OnPlayVideoButton(wxCommandEvent &);
 	void OnKeyDown(wxKeyEvent &evt);
+	void OnShow(wxShowEvent &evt);
 	void OnExternalCommit(int commit_type);
 
 	void UpdateDisplay();

@@ -1,6 +1,7 @@
 // Copyright (c) 2026, Aegisub contributors
 // SPDX-License-Identifier: ISC
 #include "subtitle_project_access.h"
+#include "ass_info.h"
 #include <thread>
 #include <algorithm>
 #include <unordered_map>
@@ -91,6 +92,33 @@ void SubtitleProjectAccess::Interaction::UpdateRows(std::vector<AssDialogueBase>
         for (auto const& row : updates) static_cast<AssDialogueBase&>(*live.at(row.Id)) = row;
     }
     catch (...) { End(); throw; }
+}
+void SubtitleProjectAccess::Interaction::UpdateLayout(AssFile const& calculated) {
+    try {
+        if(!Current())throw std::logic_error("Stale video properties");
+        auto state=owner.lock();scope->Lease();
+        auto& file=*state->file;
+        if(file.Events.size()!=calculated.Events.size() || file.Events.size()!=targets.size() || file.Styles.size()!=calculated.Styles.size())
+            throw std::invalid_argument("Layout update cannot change structure");
+        auto info=calculated.Info;
+        std::vector<AssStyle> styles;styles.reserve(calculated.Styles.size());
+        auto original=file.Styles.begin();
+        for(auto const& style:calculated.Styles) {
+            if(style.name!=(original++)->name)throw std::invalid_argument("Layout update cannot rename styles");
+            styles.push_back(style);
+        }
+        std::vector<AssDialogueBase> rows;rows.reserve(calculated.Events.size());
+        auto row=file.Events.begin();
+        for(auto const& candidate:calculated.Events) {
+            if(candidate.Id!=row->Id || candidate.Row!=row->Row)throw std::invalid_argument("Layout update cannot reorder rows");
+            rows.push_back(candidate);++row;
+        }
+        // All validation and allocations finish before changing the first value.
+        // UpdateRows copies existing flyweight handles, never constructs new text.
+        UpdateRows(rows);
+        auto prepared=styles.begin();for(auto& style:file.Styles)style.SwapData(*prepared++);
+        file.Info.swap(info);
+    } catch (...) {End();throw;}
 }
 int SubtitleProjectAccess::Interaction::InsertBefore(int target_id, AssDialogueBase const& data, AssStyle const* missing_style) {
     try {

@@ -90,3 +90,11 @@ TEST(subtitle_id_allocator, multithreaded_ids_are_unique_and_positive) {
     EXPECT_EQ(1,all.front()); EXPECT_EQ(16000,all.back());
     EXPECT_EQ(all.end(),std::adjacent_find(all.begin(),all.end()));
 }
+
+TEST(subtitle_edit_gate, lifetime_token_distinguishes_an_old_revision_from_a_closed_project) {
+    agi::SubtitleEditGate gate;auto token=gate.Capture();
+    EXPECT_TRUE(token.Alive());EXPECT_TRUE(token.Current());
+    {auto write=gate.TryBeginWrite();EXPECT_TRUE(write);}
+    EXPECT_TRUE(token.Alive());EXPECT_FALSE(token.Current());
+    gate.Close();EXPECT_FALSE(token.Alive());EXPECT_FALSE(token.Current());
+}

@@ -25,6 +25,7 @@
 #include "include/aegisub/hotkey.h"
 
 #include "ass_dialogue.h"
+#include "subtitle_dialog_edit.h"
 #include "ass_file.h"
 #include "command/command.h"
 #include "compat.h"
@@ -39,6 +40,7 @@
 #include <wx/colour.h>
 #include <wx/event.h>
 #include <wx/listbox.h>
+#include <wx/msgdlg.h>
 #include <wx/settings.h>
 #include <wx/sizer.h>
 #include <wx/statbox.h>
@@ -54,8 +56,11 @@ DialogStyling::DialogStyling(agi::Context *context)
 : wxDialog(context->parent, -1, _("Styling Assistant"), wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER | wxMINIMIZE_BOX)
 , c(context)
 , active_line_connection(context->selectionController->AddActiveLineListener(&DialogStyling::OnActiveLineChanged, this))
+, file_change_connection(context->ass->AddCommitListener([this]{edit->Invalidate();}))
+, edit(std::make_unique<SubtitleDialogEdit>(context))
 {
 	SetIcons(GETICONS(styling_toolbutton));
+	Bind(wxEVT_SHOW,&DialogStyling::OnShow,this);
 
 	wxSizer *main_sizer = new wxBoxSizer(wxVERTICAL);
 	wxSizer *bottom_sizer = new wxBoxSizer(wxHORIZONTAL);
@@ -69,7 +74,7 @@ DialogStyling::DialogStyling(agi::Context *context)
 
 	{
 		wxStaticBoxSizer *styles_box = new wxStaticBoxSizer(wxVERTICAL, this, _("Styles available"));
-		style_list = new wxListBox(styles_box->GetStaticBox(), -1, wxDefaultPosition, wxSize(150, 180), to_wx(context->ass->GetStyles()));
+		style_list = new wxListBox(styles_box->GetStaticBox(), -1, wxDefaultPosition, wxSize(150, 180), to_wx(context->subtitleAccess->Read().GetStyles()));
 		styles_box->Add(style_list, 1, wxEXPAND, 0);
 		bottom_sizer->Add(styles_box, 1, wxEXPAND | wxRIGHT, 5);
 	}
@@ -150,15 +155,19 @@ DialogStyling::DialogStyling(agi::Context *context)
 	OnActiveLineChanged(c->selectionController->GetActiveLine());
 }
 
-DialogStyling::~DialogStyling () {
+DialogStyling::~DialogStyling() {
+	Unbind(wxEVT_SHOW,&DialogStyling::OnShow,this);
+	edit->End();
 }
 
-void DialogStyling::OnActiveLineChanged(AssDialogue *new_line) {
-	if (!new_line) return;
-	active_line = new_line;
+void DialogStyling::OnActiveLineChanged(AssDialogue *) try {
+	if(!edit->Alive())return;
+	edit->ResetActive();active_id=SubtitleDialogEdit::ActiveID(c);
+	auto active_line=edit->Find(active_id);
+	if(!active_line)return;
 
 	current_line_text->SetValue(to_wx(active_line->Text));
-	style_name->SetValue(to_wx(active_line->Style));
+	style_name->ChangeValue(to_wx(active_line->Style));
 	style_name->SetSelection(0, active_line->Style.get().size());
 	style_name->SetFocus();
 
@@ -167,31 +176,39 @@ void DialogStyling::OnActiveLineChanged(AssDialogue *new_line) {
 	if (auto_seek->IsChecked() && IsActive())
 		c->videoController->JumpToTime(active_line->Start);
 }
+catch (...) {edit->Invalidate();throw;}
 
-void DialogStyling::Commit(bool next) {
-	if (!c->ass->GetStyle(from_wx(style_name->GetValue()))) return;
-
-	active_line->Style = from_wx(style_name->GetValue());
-	c->ass->Commit(_("styling assistant"), AssFile::COMMIT_DIAG_META);
-
-	if (next) cmd::call("grid/line/next", c);
+void DialogStyling::Commit(bool next) try {
+	if(!edit->Alive() || !edit->HasStyle(from_wx(style_name->GetValue())))return;
+	auto original=edit->Find(active_id);if(!original)return;
+	auto candidate=*original;candidate.Style=from_wx(style_name->GetValue());
+	file_change_connection.Block();
+	BOOST_SCOPE_EXIT_ALL(this){file_change_connection.Unblock();};
+	if(!edit->Commit({candidate},_("styling assistant"),AssFile::COMMIT_DIAG_META)) {
+		wxMessageBox(_("The subtitle or style changed. Select the line again to restart."),_("Styling Assistant"),wxOK|wxICON_WARNING,this);
+		return;
+	}
+	if(next && edit->Alive())cmd::call("grid/line/next",c);
 }
 
+catch (...) {edit->Invalidate();throw;}
+
 void DialogStyling::OnActivate(wxActivateEvent &) {
-	if (!IsActive()) return;
+	if (!IsActive() || !edit->Alive()) return;
 
 	play_video->Enable(!!c->project->VideoProvider());
 	play_audio->Enable(!!c->project->AudioProvider());
 
-	style_list->Set(to_wx(c->ass->GetStyles()));
+	style_list->Set(to_wx(c->subtitleAccess->Read().GetStyles()));
 
-	if (auto_seek->IsChecked())
+	if (auto active_line=edit->Find(active_id); active_line && auto_seek->IsChecked())
 		c->videoController->JumpToTime(active_line->Start);
 
 	style_name->SetFocus();
 }
 
-void DialogStyling::OnStyleBoxModified(wxCommandEvent &) {
+void DialogStyling::OnStyleBoxModified(wxCommandEvent &) try {
+	if(!edit->Begin())return;
 	long from, to;
 	style_name->GetSelection(&from, &to);
 	wxString prefix = style_name->GetValue().Left(from).Lower();
@@ -217,6 +234,7 @@ void DialogStyling::OnStyleBoxModified(wxCommandEvent &) {
 	style_name->SetBackgroundColour(wxColour(255, 108, 108));
 	style_name->Refresh();
 }
+catch (...) {edit->Invalidate();throw;}
 
 void DialogStyling::OnListClicked(wxCommandEvent &evt) {
 	style_name->ChangeValue(style_list->GetString(evt.GetInt()));
@@ -231,17 +249,17 @@ void DialogStyling::OnListDoubleClicked(wxCommandEvent &evt) {
 }
 
 void DialogStyling::OnPlayVideoButton(wxCommandEvent &) {
-	c->videoController->PlayLine();
+	if(edit->Alive())c->videoController->PlayLine();
 	style_name->SetFocus();
 }
 
 void DialogStyling::OnPlayAudioButton(wxCommandEvent &) {
-	cmd::call("audio/play/selection", c);
+	if(edit->Alive())cmd::call("audio/play/selection", c);
 	style_name->SetFocus();
 }
 
 void DialogStyling::OnCharHook(wxKeyEvent &evt) {
-	hotkey::check("Styling Assistant", c, evt);
+	if(edit->Alive())hotkey::check("Styling Assistant", c, evt);
 }
 
 void DialogStyling::OnKeyDown(wxKeyEvent &evt) {
@@ -255,4 +273,9 @@ void DialogStyling::OnKeyDown(wxKeyEvent &evt) {
 	}
 	else
 		evt.Skip();
+}
+
+void DialogStyling::OnShow(wxShowEvent& event) {
+	if(!event.IsShown())edit->Invalidate();
+	event.Skip();
 }

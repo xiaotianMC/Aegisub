@@ -43,6 +43,9 @@ public:
         bool Current() const;
         // Data-only writeback: no mutable live pointers escape the session.
         void UpdateRows(std::vector<AssDialogueBase> const&);
+        // Video-property resampling only: complete same-ID/order rows, same-name
+        // style values and Script Info; never replace live nodes or project state.
+        void UpdateLayout(AssFile const&);
         int InsertBefore(int target_id, AssDialogueBase const&, AssStyle const* missing_style = nullptr);
         bool LinkAdjacent(int id, bool start_changed, int old_boundary, int threshold_ms);
         int Commit(wxString const&, int type, int amend_id = -1, int single_line_id = 0);

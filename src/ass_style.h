@@ -68,6 +68,8 @@ public:
 
 	/// Update the raw line data after one or more of the public members have been changed
 	void UpdateData();
+	// Exchange values only; intrusive list membership and node identity stay put.
+	void SwapData(AssStyle&) noexcept;
 
 	/// @brief Get a list of valid ASS font encodings
 	static void GetEncodings(wxArrayString &encodingStrings);

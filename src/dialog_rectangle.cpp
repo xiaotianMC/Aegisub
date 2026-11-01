@@ -10,6 +10,10 @@
 #include "include/aegisub/context.h"
 #include "shape_drawing.h"
 #include "selection_controller.h"
+#include "subtitle_dialog_edit.h"
+#include "async_video_provider.h"
+#include "project.h"
+#include <boost/scope_exit.hpp>
 
 #include <libaegisub/format.h>
 #include "utils.h"
@@ -36,7 +40,8 @@ std::optional<Drawing> ReadDrawing(const agi::Context *c, const AssDialogue *lin
     if (!line) return std::nullopt;
     Drawing rect;
     rect.blocks = line->ParseTags();
-    auto style = c->ass->GetStyle(line->Style);
+    AssStyle const* style=nullptr;
+    for(auto const& entry:c->subtitleAccess->Read().Styles)if(boost::iequals(entry.name,line->Style.get())){style=&entry;break;}
     if (!style) return std::nullopt;
     rect.color = style->primary;
     rect.scale_x = style->scalex;
@@ -85,7 +90,7 @@ std::optional<Drawing> ReadDrawing(const agi::Context *c, const AssDialogue *lin
         for (size_t i = 0; i < margins.size(); ++i)
             if (!margins[i]) margins[i] = style->Margin[i];
         int script_width, script_height;
-        c->ass->GetResolution(script_width, script_height);
+        c->subtitleAccess->Read().GetResolution(script_width, script_height);
         int horizontal = (alignment - 1) % 3, vertical = (alignment - 1) / 3;
         rect.x = horizontal == 0 ? margins[0] : horizontal == 2 ? script_width - margins[1]
             : (script_width + margins[0] - margins[1]) / 2;
@@ -104,15 +109,28 @@ std::optional<Drawing> ReadDrawing(const agi::Context *c, const AssDialogue *lin
 }
 
 bool CanEditDrawing(const agi::Context *c) {
-    return ReadDrawing(c, c->selectionController->GetActiveLine()).has_value();
+    auto id=SubtitleDialogEdit::ActiveID(c);
+    for(auto const& row:c->subtitleAccess->Read().Events)if(row.Id==id)return ReadDrawing(c,&row).has_value();
+    return false;
 }
 
 void EditDrawing(agi::Context *c) {
-    auto line = c->selectionController->GetActiveLine();
-    auto parsed = ReadDrawing(c, line);
+    SubtitleDialogEdit edit(c);edit.ResetActive();
+    if(edit.Rows().empty())return;
+    const AssDialogue original(edit.Rows().front());
+    auto parsed = ReadDrawing(c, &original);
     if (!parsed) return;
     auto& rect = *parsed;
-    const AssDialogue original(*line);
+    bool previewing=false;
+    auto restore=[&]() noexcept {
+        try {
+            if(previewing && edit.Alive())if(auto provider=c->project->VideoProvider())provider->LoadSubtitles(&c->subtitleAccess->Read());
+        } catch (...) { /* Cleanup must still release the edit task on allocation failure. */ }
+        previewing=false;
+    };
+    BOOST_SCOPE_EXIT_ALL(&edit,&restore){edit.End();restore();};
+    agi::signal::Connection file_changed=c->ass->AddCommitListener([&]{edit.Invalidate();});
+    agi::signal::Connection selection_changed=c->selectionController->AddActiveLineListener([&]{edit.Invalidate();});
     wxDialog dialog(c->parent, -1, _("Edit Shape"));
     auto layout = new wxBoxSizer(wxVERTICAL);
     auto fields = new wxFlexGridSizer(2, dialog.FromDIP(8), dialog.FromDIP(12));
@@ -145,7 +163,10 @@ void EditDrawing(agi::Context *c) {
     dialog.SetSizerAndFit(layout);
     dialog.CentreOnParent();
     const std::array controls{width, height, x, y, transparency};
+    auto preview_text=original.Text;
     auto update = [&](bool show_error) {
+      try {
+        if(!edit.Begin()){if(show_error)wxMessageBox(_("The subtitle or its dependencies changed. Reopen the shape editor."),_("Edit Shape"),wxOK|wxICON_WARNING,&dialog);return false;}
         std::array<double, 5> values;
         for (size_t i = 0; i < controls.size(); ++i) {
             auto ctrl = controls[i];
@@ -170,7 +191,7 @@ void EditDrawing(agi::Context *c) {
         bool position = std::abs(values[2] - rect.x) >= 0.00051 || std::abs(values[3] - rect.y) >= 0.00051;
         bool fill = new_color.r != rect.color.r || new_color.g != rect.color.g || new_color.b != rect.color.b;
         bool alpha = new_color.a != rect.color.a;
-        AssDialogue result(original);
+        AssDialogue result(static_cast<AssDialogueBase const&>(original));
         if (resize_x || resize_y || position || fill || alpha) {
             // Change the drawing coordinates themselves instead of adding
             // \\fscx/\\fscy. Any existing scale tags on both axes are baked
@@ -178,9 +199,8 @@ void EditDrawing(agi::Context *c) {
             // longer needs scale tags.
             if (resize_x || resize_y) {
                 double base_x = 100, base_y = 100;
-                if (auto style = c->ass->GetStyle(original.Style)) {
-                    base_x = style->scalex;
-                    base_y = style->scaley;
+                for(auto const& style:c->subtitleAccess->Read().Styles)if(boost::iequals(style.name,original.Style.get())) {
+                    base_x=style.scalex;base_y=style.scaley;break;
                 }
                 double scale_x = (resize_x ? values[0] : rect.width) * rect.scale_x / (rect.width * base_x);
                 double scale_y = (resize_y ? values[1] : rect.height) * rect.scale_y / (rect.height * base_y);
@@ -211,12 +231,12 @@ void EditDrawing(agi::Context *c) {
             if (alpha) rect.prefix->AddTag(agi::format("\\1a&H%02X&", (int)new_color.a));
             result.UpdateText(rect.blocks);
         }
-        if (line->Text != result.Text) {
-            line->Text = result.Text;
-            // An empty description refreshes all views without adding undo history.
-            c->ass->Commit("", AssFile::COMMIT_DIAG_TEXT, -1, line);
+        preview_text=result.Text;
+        if(auto provider=c->project->VideoProvider()) {
+            provider->PreviewSubtitles({AssDialogueBase(result)});previewing=true;
         }
         return true;
+      } catch (...) {edit.Invalidate();restore();throw;}
     };
     for (auto ctrl : controls) {
         ctrl->Bind(wxEVT_TEXT, [&](wxCommandEvent&) { update(false); });
@@ -226,13 +246,14 @@ void EditDrawing(agi::Context *c) {
     dialog.Bind(wxEVT_BUTTON, [&](wxCommandEvent&) {
         if (update(true)) dialog.EndModal(wxID_OK);
     }, wxID_OK);
-    if (dialog.ShowModal() != wxID_OK) {
-        if (line->Text != original.Text) {
-            line->Text = original.Text;
-            c->ass->Commit("", AssFile::COMMIT_DIAG_TEXT, -1, line);
-        }
-        return;
+    if (dialog.ShowModal() != wxID_OK) return;
+    if(!edit.Current())return;
+    // Reuse the independent, validated preview result.
+    auto candidate = AssDialogueBase(original);
+    candidate.Text = preview_text;
+    if(candidate.Text!=original.Text) {
+        file_changed.Block();
+        BOOST_SCOPE_EXIT_ALL(&file_changed){file_changed.Unblock();};
+        edit.Commit({candidate},_("edit shape"),AssFile::COMMIT_DIAG_TEXT);
     }
-    if (line->Text != original.Text)
-        c->ass->Commit(_("edit shape"), AssFile::COMMIT_DIAG_TEXT, -1, line);
 }

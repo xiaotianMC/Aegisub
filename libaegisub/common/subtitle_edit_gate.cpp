@@ -30,6 +30,12 @@ struct SubtitleEditGate::State {
 };
 SubtitleEditGate::RevisionToken::RevisionToken(std::shared_ptr<State> const& value, SubtitleRevision stamp)
 : state(value), revision(stamp) { }
+bool SubtitleEditGate::RevisionToken::Alive() const {
+    auto owner = state.lock();
+    if (!owner) return false;
+    std::lock_guard lock(owner->mutex);
+    return owner->alive;
+}
 bool SubtitleEditGate::RevisionToken::Current() const {
     auto s = state.lock();
     if (!s) return false;

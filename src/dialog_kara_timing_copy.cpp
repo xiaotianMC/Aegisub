@@ -30,6 +30,7 @@
 
 #include "ass_dialogue.h"
 #include "ass_file.h"
+#include "subtitle_dialog_edit.h"
 #include "ass_karaoke.h"
 #include "compat.h"
 #include "help_button.h"
@@ -78,7 +79,7 @@ class KaraokeLineMatchDisplay final : public wxControl {
 
 public:
 	/// Start processing a new line pair
-	void SetInputData(AssDialogue *src, AssDialogue *dst);
+	void SetInputData(AssDialogue const *src, AssDialogue const *dst);
 	/// Build and return the output line from the matched syllables
 	std::string GetOutputLine() const { return matcher.GetOutputLine(); }
 
@@ -299,7 +300,7 @@ void KaraokeLineMatchDisplay::OnPaint(wxPaintEvent &)
 	}
 }
 
-void KaraokeLineMatchDisplay::SetInputData(AssDialogue *src, AssDialogue *dst)
+void KaraokeLineMatchDisplay::SetInputData(AssDialogue const *src, AssDialogue const *dst)
 {
 	last_total_matchgroup_render_width = 0;
 	matcher.SetInputData(ParseKaraokeSyllables(src), dst ? dst->GetStrippedText() : "");
@@ -350,17 +351,18 @@ bool KaraokeLineMatchDisplay::UndoMatch()
 }
 
 class DialogKanjiTimer final : public wxDialog {
-	AssFile *subs;
+	SubtitleDialogEdit edit;
+	agi::signal::Connection file_changed;
 
 	KaraokeLineMatchDisplay *display;
 
 	wxComboBox *SourceStyle, *DestStyle;
 	wxCheckBox *Interpolate;
 
-	std::vector<std::pair<AssDialogue*, std::string>> LinesToChange;
+	std::vector<std::pair<int, std::string>> LinesToChange;
 
-	AssDialogue *currentSourceLine = nullptr;
-	AssDialogue *currentDestinationLine = nullptr;
+	int currentSourceLine = 0;
+	int currentDestinationLine = 0;
 
 	void OnClose(wxCommandEvent &event);
 	void OnStart(wxCommandEvent &event);
@@ -375,8 +377,8 @@ class DialogKanjiTimer final : public wxDialog {
 	void ResetForNewLine();
 	void TryAutoMatch();
 
-	AssDialogue *FindNextStyleMatch(AssDialogue *search_from, const std::string &search_style);
-	AssDialogue *FindPrevStyleMatch(AssDialogue *search_from, const std::string &search_style);
+	int FindNextStyleMatch(int search_from, const std::string &search_style);
+	int FindPrevStyleMatch(int search_from, const std::string &search_style);
 
 public:
 	DialogKanjiTimer(agi::Context *context);
@@ -384,7 +386,8 @@ public:
 
 DialogKanjiTimer::DialogKanjiTimer(agi::Context *c)
 : wxDialog(c->parent, -1, _("Kanji timer"))
-, subs(c->ass.get())
+, edit(c)
+, file_changed(c->ass->AddCommitListener([this]{edit.Invalidate();currentSourceLine=currentDestinationLine=0;display->SetInputData(nullptr,nullptr);}))
 {
 	SetIcons(GETICONS(kara_timing_copier));
 
@@ -408,7 +411,7 @@ DialogKanjiTimer::DialogKanjiTimer(agi::Context *c)
 	Interpolate = new wxCheckBox(DisplayBox,-1,_("Attempt to &interpolate kanji"),wxDefaultPosition,wxDefaultSize,wxALIGN_LEFT);
 	Interpolate->SetValue(OPT_GET("Tool/Kanji Timer/Interpolation")->GetBool());
 
-	wxArrayString styles = to_wx(subs->GetStyles());
+	wxArrayString styles = to_wx(c->subtitleAccess->Read().GetStyles());
 	SourceStyle = new wxComboBox(StylesBox, -1, "", wxDefaultPosition, wxSize(160, -1), styles, wxCB_READONLY);
 	DestStyle = new wxComboBox(StylesBox, -1, "", wxDefaultPosition, wxSize(160, -1), styles, wxCB_READONLY);
 
@@ -467,6 +470,7 @@ DialogKanjiTimer::DialogKanjiTimer(agi::Context *c)
 	Bind(wxEVT_KEY_DOWN, &DialogKanjiTimer::OnKeyDown, this);
 	display->Bind(wxEVT_KEY_DOWN, &DialogKanjiTimer::OnKeyDown, this);
 
+	Bind(wxEVT_CLOSE_WINDOW,[this](wxCloseEvent&){edit.End();LinesToChange.clear();EndModal(wxID_CANCEL);});
 	CloseKT->Bind(wxEVT_BUTTON, &DialogKanjiTimer::OnClose, this);
 	Start->Bind(wxEVT_BUTTON, &DialogKanjiTimer::OnStart, this);
 	Link->Bind(wxEVT_BUTTON, &DialogKanjiTimer::OnLink, this);
@@ -477,61 +481,77 @@ DialogKanjiTimer::DialogKanjiTimer(agi::Context *c)
 	AcceptLine->Bind(wxEVT_BUTTON, &DialogKanjiTimer::OnAccept, this);
 }
 
-void DialogKanjiTimer::OnClose(wxCommandEvent &) {
+void DialogKanjiTimer::OnClose(wxCommandEvent &) try {
 	OPT_SET("Tool/Kanji Timer/Interpolation")->SetBool(Interpolate->IsChecked());
 
-	for (auto& line : LinesToChange)
-		line.first->Text = line.second;
-
-	if (LinesToChange.size()) {
-		subs->Commit(_("kanji timing"), AssFile::COMMIT_DIAG_TEXT);
-		LinesToChange.clear();
+	BOOST_SCOPE_EXIT_ALL(this){edit.End();};
+	if(!LinesToChange.empty()) {
+		std::vector<AssDialogueBase> updates;updates.reserve(LinesToChange.size());
+		for(auto const& [id,text]:LinesToChange) {
+			auto original=edit.Find(id);if(!original){edit.Invalidate();return;}
+			auto row=*original;row.Text=text;updates.push_back(std::move(row));
+		}
+		file_changed.Block();
+		BOOST_SCOPE_EXIT_ALL(this){file_changed.Unblock();};
+		if(!edit.Commit(updates,_("kanji timing"),AssFile::COMMIT_DIAG_TEXT)) {
+			wxMessageBox(_("The subtitles or their dependencies changed. Start again before applying."),_("Kanji timer"),wxOK|wxICON_WARNING,this);return;
+		}
 	}
-	Close();
+	LinesToChange.clear();EndModal(wxID_OK);
 }
 
-void DialogKanjiTimer::OnStart(wxCommandEvent &) {
+catch (...) {edit.Invalidate();throw;}
+
+void DialogKanjiTimer::OnStart(wxCommandEvent &) try {
+	LinesToChange.clear();currentSourceLine=currentDestinationLine=0;edit.End();
 	if (SourceStyle->GetValue().empty() || DestStyle->GetValue().empty())
 		wxMessageBox(_("Select source and destination styles first."),_("Error"),wxICON_EXCLAMATION | wxOK);
 	else if (SourceStyle->GetValue() == DestStyle->GetValue())
 		wxMessageBox(_("The source and destination styles must be different."),_("Error"),wxICON_EXCLAMATION | wxOK);
 	else {
-		currentDestinationLine = currentSourceLine = &*subs->Events.begin();
+		edit.ResetAll();
+		if(edit.Rows().empty() || !edit.Begin())return;
+		currentDestinationLine=currentSourceLine=edit.Rows().front().Id;
 		auto sourceStyle = from_wx(SourceStyle->GetValue());
 		auto destStyle = from_wx(DestStyle->GetValue());
-		if (currentSourceLine->Style != sourceStyle)
+		if (edit.Find(currentSourceLine)->Style != sourceStyle)
 			currentSourceLine = FindNextStyleMatch(currentSourceLine, sourceStyle);
-		if (currentDestinationLine->Style != destStyle)
+		if (edit.Find(currentDestinationLine)->Style != destStyle)
 			currentDestinationLine = FindNextStyleMatch(currentDestinationLine, destStyle);
 		ResetForNewLine();
 	}
 	LinesToChange.clear();
 }
+catch (...) {edit.Invalidate();throw;}
 
-void DialogKanjiTimer::OnLink(wxCommandEvent &) {
+void DialogKanjiTimer::OnLink(wxCommandEvent &) try {
 	if (display->AcceptMatch())
 		TryAutoMatch();
 	else
 		wxBell();
 }
+catch (...) {edit.Invalidate();throw;}
 
-void DialogKanjiTimer::OnUnlink(wxCommandEvent &) {
+void DialogKanjiTimer::OnUnlink(wxCommandEvent &) try {
 	if (!display->UndoMatch())
 		wxBell();
 	// Don't auto-match here, undoing sets the selection to the undone match
 }
+catch (...) {edit.Invalidate();throw;}
 
-void DialogKanjiTimer::OnSkipSource(wxCommandEvent &) {
+void DialogKanjiTimer::OnSkipSource(wxCommandEvent &) try {
 	currentSourceLine = FindNextStyleMatch(currentSourceLine, from_wx(SourceStyle->GetValue()));
 	ResetForNewLine();
 }
+catch (...) {edit.Invalidate();throw;}
 
-void DialogKanjiTimer::OnSkipDest(wxCommandEvent &) {
+void DialogKanjiTimer::OnSkipDest(wxCommandEvent &) try {
 	currentDestinationLine = FindNextStyleMatch(currentDestinationLine, from_wx(DestStyle->GetValue()));
 	ResetForNewLine();
 }
+catch (...) {edit.Invalidate();throw;}
 
-void DialogKanjiTimer::OnGoBack(wxCommandEvent &) {
+void DialogKanjiTimer::OnGoBack(wxCommandEvent &) try {
 	if (LinesToChange.size())
 		LinesToChange.pop_back(); //If we go back, then take out the modified line we saved.
 
@@ -539,8 +559,9 @@ void DialogKanjiTimer::OnGoBack(wxCommandEvent &) {
 	currentDestinationLine = FindPrevStyleMatch(currentDestinationLine, from_wx(DestStyle->GetValue()));
 	ResetForNewLine();
 }
+catch (...) {edit.Invalidate();throw;}
 
-void DialogKanjiTimer::OnAccept(wxCommandEvent &) {
+void DialogKanjiTimer::OnAccept(wxCommandEvent &) try {
 	if (!currentDestinationLine) return;
 
 	if (display->GetRemainingSource() > 0)
@@ -553,12 +574,13 @@ void DialogKanjiTimer::OnAccept(wxCommandEvent &) {
 		ResetForNewLine();
 	}
 }
+catch (...) {edit.Invalidate();throw;}
 
-void DialogKanjiTimer::OnKeyDown(wxKeyEvent &event) {
+void DialogKanjiTimer::OnKeyDown(wxKeyEvent &event) try {
 	wxCommandEvent evt;
 	switch(event.GetKeyCode()) {
 		case WXK_ESCAPE:
-			OnClose(evt);
+			edit.End();LinesToChange.clear();EndModal(wxID_CANCEL);
 			break;
 		case WXK_BACK:
 			OnUnlink(evt);
@@ -585,16 +607,20 @@ void DialogKanjiTimer::OnKeyDown(wxKeyEvent &event) {
 			event.Skip();
 	}
 }
+catch (...) {edit.Invalidate();throw;}
 
 void DialogKanjiTimer::ResetForNewLine()
 {
 	if (!currentSourceLine || !currentDestinationLine)
 	{
-		currentSourceLine = currentDestinationLine = nullptr;
+		currentSourceLine = currentDestinationLine = 0;
 		wxBell();
 	}
 
-	display->SetInputData(currentSourceLine, currentDestinationLine);
+	auto source=edit.Find(currentSourceLine),destination=edit.Find(currentDestinationLine);
+	if(source && destination) {
+		AssDialogue src(*source),dst(*destination);display->SetInputData(&src,&dst);
+	} else display->SetInputData(nullptr,nullptr);
 
 	TryAutoMatch();
 
@@ -607,27 +633,23 @@ void DialogKanjiTimer::TryAutoMatch()
 		display->AutoMatchJapanese();
 }
 
-template<typename Iterator>
-static AssDialogue *find_next(Iterator from, Iterator to, std::string const& style_name) {
-	for (; from != to; ++from) {
-		if (from->Style == style_name && !from->Text.get().empty())
-			return &*from;
+int DialogKanjiTimer::FindNextStyleMatch(int id, const std::string& style) {
+	bool found=false;
+	for(auto const& row:edit.Rows()) {
+		if(found && row.Style==style && !row.Text.get().empty())return row.Id;
+		if(row.Id==id)found=true;
 	}
-
-	return nullptr;
+	return 0;
+}
+int DialogKanjiTimer::FindPrevStyleMatch(int id, const std::string& style) {
+	int previous=0;
+	for(auto const& row:edit.Rows()) {
+		if(row.Id==id)return previous;
+		if(row.Style==style && !row.Text.get().empty())previous=row.Id;
+	}
+	return 0;
 }
 
-AssDialogue *DialogKanjiTimer::FindNextStyleMatch(AssDialogue *search_from, const std::string &search_style)
-{
-	if (!search_from) return search_from;
-	return find_next(++subs->iterator_to(*search_from), subs->Events.end(), search_style);
-}
-
-AssDialogue *DialogKanjiTimer::FindPrevStyleMatch(AssDialogue *search_from, const std::string &search_style)
-{
-	if (!search_from) return search_from;
-	return find_next(EntryList<AssDialogue>::reverse_iterator(subs->iterator_to(*search_from)), subs->Events.rend(), search_style);
-}
 }
 
 void ShowKanjiTimerDialog(agi::Context *c) {

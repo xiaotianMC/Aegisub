@@ -22,6 +22,7 @@
 #include <wx/dialog.h>
 
 class AssDialogue;
+class SubtitleDialogEdit;
 class PersistLocation;
 class wxActivateEvent;
 class wxButton;
@@ -35,6 +36,8 @@ namespace agi { struct Context; }
 class DialogStyling final : public wxDialog {
 	agi::Context *c;
 	agi::signal::Connection active_line_connection;
+	agi::signal::Connection file_change_connection;
+	std::unique_ptr<SubtitleDialogEdit> edit;
 
 	wxButton *play_audio;
 	wxButton *play_video;
@@ -45,6 +48,7 @@ class DialogStyling final : public wxDialog {
 
 	void OnActivate(wxActivateEvent &evt);
 	void OnKeyDown(wxKeyEvent &evt);
+	void OnShow(wxShowEvent &evt);
 	void OnCharHook(wxKeyEvent &evt);
 	void OnListClicked(wxCommandEvent &evt);
 	void OnListDoubleClicked(wxCommandEvent &evt);
@@ -54,7 +58,7 @@ class DialogStyling final : public wxDialog {
 
 	void OnActiveLineChanged(AssDialogue *);
 
-	AssDialogue *active_line = nullptr;
+	int active_id = 0;
 
 	std::unique_ptr<PersistLocation> persist;
 
