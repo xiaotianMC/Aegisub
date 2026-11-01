@@ -15,6 +15,8 @@
 // Aegisub Project http://www.aegisub.org/
 
 #pragma once
+#include "ass_dialogue.h"
+#include <optional>
 
 #include <libaegisub/signal.h>
 
@@ -69,6 +71,8 @@ struct StringHash {
 /// actually updated until the line is committed (which if auto-commit timing
 /// changes is on, will happen as soon as the user adjusts the timing of the
 /// new syllable).
+class AudioEditSession;
+
 class AudioKaraoke final : public wxWindow, private agi::signal::ConnectionScope {
 	agi::Context *c; ///< Project context
 	agi::signal::Connection file_changed; ///< File changed slot
@@ -77,7 +81,9 @@ class AudioKaraoke final : public wxWindow, private agi::signal::ConnectionScope
 	agi::signal::Connection active_line_changed;
 
 	/// Currently active dialogue line
-	AssDialogue *active_line = nullptr;
+	std::optional<AssDialogueBase> active_line;
+	std::shared_ptr<AudioEditSession> edit;
+	agi::signal::Connection cache_changed;
 	/// Karaoke data
 	std::unique_ptr<agi::ass::Karaoke> kara;
 

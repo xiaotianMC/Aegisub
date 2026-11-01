@@ -218,19 +218,20 @@ bool AssFile::CompEnd(AssDialogue const& lft, AssDialogue const& rgt) {
 	return lft.End < rgt.End;
 }
 
-bool AssFile::LinkAdjacentLine(AssDialogue *line, bool start_changed, int old_boundary, int threshold_ms) {
+bool AssFile::LinkAdjacentLine(AssDialogue *line, bool start_changed, int old_boundary, int threshold_ms, bool exact_milliseconds) {
 	if (!line || threshold_ms <= 0) return false;
-	int new_boundary = start_changed ? line->Start : line->End;
+	auto milliseconds = [=](agi::Time time) { return exact_milliseconds ? time.GetMilliseconds() : static_cast<int>(time); };
+	int new_boundary = milliseconds(start_changed ? line->Start : line->End);
 	if (new_boundary == old_boundary) return false;
 
 	AssDialogue *adjacent = nullptr;
 	int smallest_gap = threshold_ms;
 	for (auto& candidate : Events) {
-		if (&candidate == line || candidate.Comment || candidate.End <= candidate.Start) continue;
+		if (&candidate == line || candidate.Comment || milliseconds(candidate.End) <= milliseconds(candidate.Start)) continue;
 
-		int gap = start_changed ? old_boundary - candidate.End : candidate.Start - old_boundary;
+		int gap = start_changed ? old_boundary - milliseconds(candidate.End) : milliseconds(candidate.Start) - old_boundary;
 		if (gap < 0 || gap >= smallest_gap) continue;
-		if (start_changed ? new_boundary < candidate.Start : new_boundary > candidate.End) continue;
+		if (start_changed ? new_boundary < milliseconds(candidate.Start) : new_boundary > milliseconds(candidate.End)) continue;
 
 		smallest_gap = gap;
 		adjacent = &candidate;

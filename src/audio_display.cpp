@@ -537,6 +537,7 @@ class AudioMarkerInteractionObject final : public AudioDisplayInteractionObject 
 	// Object-pair being interacted with
 	std::vector<AudioMarker*> markers;
 	AudioTimingController *timing_controller;
+	std::weak_ptr<void const> marker_lifetime;
 	// Audio display drag is happening on
 	AudioDisplay *display;
 	// Mouse button used to initiate the drag
@@ -550,13 +551,20 @@ public:
 	AudioMarkerInteractionObject(std::vector<AudioMarker*> markers, AudioTimingController *timing_controller, AudioDisplay *display, wxMouseButton button_used)
 	: markers(std::move(markers))
 	, timing_controller(timing_controller)
+	, marker_lifetime(timing_controller->MarkerLifetime())
 	, display(display)
 	, button_used(button_used)
 	{
 	}
+	~AudioMarkerInteractionObject() override {
+		if(!marker_lifetime.expired()) {
+			try { timing_controller->EndDrag(true); } catch (...) { }
+		}
+	}
 
 	bool OnMouseEvent(wxMouseEvent &event) override
 	{
+		if (marker_lifetime.expired()) return false;
 		if (event.Dragging())
 		{
 			timing_controller->OnMarkerDrag(
@@ -566,11 +574,17 @@ public:
 		}
 
 		// We lose the marker drag if the button used to initiate it goes up
-		return !event.ButtonUp(button_used);
+		if (event.ButtonUp(button_used)) {
+			timing_controller->EndDrag(false);
+			marker_lifetime.reset();
+			return false;
+		}
+		return true;
 	}
 
 	/// Get the position in milliseconds of this group of markers
-	int GetPosition() const { return markers.front()->GetPosition(); }
+	bool Current() const { return !marker_lifetime.expired(); }
+	int GetPosition() const { return marker_lifetime.expired() ? 0 : markers.front()->GetPosition(); }
 };
 
 AudioDisplay::AudioDisplay(wxWindow *parent, AudioController *controller, agi::Context *context)
@@ -602,6 +616,10 @@ AudioDisplay::AudioDisplay(wxWindow *parent, AudioController *controller, agi::C
 	Bind(wxEVT_PAINT, &AudioDisplay::OnPaint, this);
 	Bind(wxEVT_SIZE, &AudioDisplay::OnSize, this);
 	Bind(wxEVT_KILL_FOCUS, &AudioDisplay::OnFocus, this);
+	Bind(wxEVT_MOUSE_CAPTURE_LOST, [this](wxMouseCaptureLostEvent&) {
+		scroll_timer.Stop();
+		SetDraggedObject(nullptr);
+	});
 	Bind(wxEVT_SET_FOCUS, &AudioDisplay::OnFocus, this);
 	Bind(wxEVT_CHAR_HOOK, &AudioDisplay::OnKeyDown, this);
 	Bind(wxEVT_KEY_DOWN, &AudioDisplay::OnKeyDown, this);
@@ -611,6 +629,8 @@ AudioDisplay::AudioDisplay(wxWindow *parent, AudioController *controller, agi::C
 
 AudioDisplay::~AudioDisplay()
 {
+	// Cancel while our UI members and notification connections are still alive.
+	SetDraggedObject(nullptr);
 }
 
 void AudioDisplay::ScrollBy(int pixel_amount)
@@ -1126,10 +1146,13 @@ void AudioDisplay::OnMouseEvent(wxMouseEvent& event)
 	const int old_scroll_pos = scroll_left;
 	if (event.LeftDown() || event.RightDown())
 	{
+		if(!timing->BeginDrag())return;
 		const int timepos = TimeFromRelativeX(mouse_x);
-		std::vector<AudioMarker*> markers = event.LeftDown()
+		std::vector<AudioMarker*> markers;
+		try { markers = event.LeftDown()
 			? timing->OnLeftClick(timepos, event.CmdDown(), event.AltDown(), drag_sensitivity, snap_sensitivity)
 			: timing->OnRightClick(timepos, event.CmdDown(), drag_sensitivity, snap_sensitivity);
+		} catch (...) { timing->EndDrag(true); throw; }
 
 		// Clicking should never result in the audio display scrolling
 		ScrollPixelToLeft(old_scroll_pos);
@@ -1141,6 +1164,7 @@ void AudioDisplay::OnMouseEvent(wxMouseEvent& event)
 			SetDraggedObject(audio_marker.get());
 			return;
 		}
+		timing->EndDrag(false);
 	}
 }
 
@@ -1148,7 +1172,10 @@ bool AudioDisplay::ForwardMouseEvent(wxMouseEvent &event) {
 	// Handle any ongoing drag
 	if (dragged_object && HasCapture())
 	{
-		if (!dragged_object->OnMouseEvent(event))
+		bool handled;
+		try { handled = dragged_object->OnMouseEvent(event); }
+		catch (...) { SetDraggedObject(nullptr); scroll_timer.Stop(); throw; }
+		if (!handled)
 		{
 			scroll_timer.Stop();
 			SetDraggedObject(nullptr);
@@ -1232,6 +1259,7 @@ int AudioDisplay::GetDuration() const
 
 void AudioDisplay::OnAudioOpen(agi::AudioProvider *provider)
 {
+	SetDraggedObject(nullptr);
 	this->provider = provider;
 
 	if (!audio_renderer_provider)
@@ -1280,6 +1308,7 @@ void AudioDisplay::OnAudioOpen(agi::AudioProvider *provider)
 
 void AudioDisplay::OnTimingController()
 {
+	SetDraggedObject(nullptr);
 	AudioTimingController *timing_controller = controller->GetTimingController();
 	if (timing_controller)
 	{
@@ -1324,7 +1353,7 @@ void AudioDisplay::OnSelectionChanged()
 	TimeRange sel(controller->GetPrimaryPlaybackRange());
 	scrollbar->SetSelection(AbsoluteXFromTime(sel.begin()), AbsoluteXFromTime(sel.length()));
 
-	if (audio_marker)
+	if (audio_marker && audio_marker->Current())
 	{
 		if (!scroll_timer.IsRunning())
 		{
@@ -1349,7 +1378,7 @@ void AudioDisplay::OnSelectionChanged()
 
 void AudioDisplay::OnScrollTimer(wxTimerEvent &)
 {
-	if (!audio_marker) return;
+	if (!audio_marker || !audio_marker->Current()) { scroll_timer.Stop(); return; }
 
 	int rel_x = RelativeXFromTime(audio_marker->GetPosition());
 	int width = GetClientSize().GetWidth();
@@ -1381,5 +1410,8 @@ void AudioDisplay::OnStyleRangesChanged()
 
 void AudioDisplay::OnMarkerMoved()
 {
+	// Rebuilding a cache invalidates the borrow before deleting its markers.
+	// A drag currently dispatching an event is retired on its next event;
+	// never delete that event's receiver from inside a marker notification.
 	RefreshRect(wxRect(0, audio_top, GetClientSize().GetWidth(), audio_height), false);
 }

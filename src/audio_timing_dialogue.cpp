@@ -29,6 +29,8 @@
 
 #include "ass_dialogue.h"
 #include "ass_file.h"
+#include "audio_edit_session.h"
+#include <boost/scope_exit.hpp>
 #include "audio_marker.h"
 #include "audio_rendering_style.h"
 #include "audio_timing.h"
@@ -159,7 +161,7 @@ struct marker_ptr_cmp
 /// markers to the tracked dialogue line.
 class TimeableLine {
 	/// The current tracked dialogue line
-	AssDialogue *line = nullptr;
+	std::optional<AssDialogueBase> line;
 	/// The rendering style of this line
 	AudioRenderingStyle style;
 
@@ -199,7 +201,8 @@ public:
 	}
 
 	/// Get the tracked dialogue line
-	AssDialogue *GetLine() const { return line; }
+	AssDialogueBase const* GetLine() const { return line ? &*line : nullptr; }
+	void Clear() { line.reset(); marker1.SetPosition(0); marker2.SetPosition(0); }
 
 	/// Get the time range for this line
 	operator TimeRange() const { return TimeRange(*left_marker, *right_marker); }
@@ -244,30 +247,25 @@ public:
 	}
 
 	/// Apply any changes made here to the tracked dialogue line
-	void Apply()
-	{
-		if (line)
-		{
-			line->Start = left_marker->GetPosition();
-			line->End = right_marker->GetPosition();
-		}
+	AssDialogueBase Updated(AssDialogueBase row) const {
+		row.Start = left_marker->GetPosition(); row.End = right_marker->GetPosition(); return row;
 	}
 
 	/// Set the dialogue line which this is tracking and reset the markers to
 	/// the line's time range
 	/// @return Were the markers actually set to the line's time?
-	bool SetLine(AssDialogue *new_line)
+	bool SetLine(AssDialogueBase const* new_line)
 	{
 		if (!line || new_line->End > 0)
 		{
-			line = new_line;
-			marker1.SetPosition(new_line->Start);
-			marker2.SetPosition(new_line->End);
+			line = AssDialogueBase(*new_line);
+			marker1.SetPosition(new_line->Start.GetMilliseconds());
+			marker2.SetPosition(new_line->End.GetMilliseconds());
 			return true;
 		}
 		else
 		{
-			line = new_line;
+			line = AssDialogueBase(*new_line);
 			return false;
 		}
 	}
@@ -325,6 +323,8 @@ class AudioTimingControllerDialogue final : public AudioTimingController, privat
 
 	/// The owning project context
 	agi::Context *context;
+	AudioEditSession edit{context};
+	bool dragging = false;
 
 	/// The time which was clicked on for alt-dragging mode, or INT_MIN if not in alt-draging mode
 	int clicked_ms = INT_MIN;
@@ -352,7 +352,7 @@ class AudioTimingControllerDialogue final : public AudioTimingController, privat
 	void RegenerateSelectedLines();
 
 	/// Add a line to the list of timeable inactive lines
-	void AddInactiveLine(Selection const& sel, AssDialogue *diag);
+	void AddInactiveLine(Selection const& sel, AssDialogue const* diag);
 
 	/// Regenerate the list of active and inactive line markers
 	void RegenerateMarkers();
@@ -407,7 +407,13 @@ public:
 	TimeRange GetIdealVisibleTimeRange() const override { return active_line; }
 	TimeRange GetPrimaryPlaybackRange() const override { return active_line; }
 	TimeRange GetActiveLineRange() const override { return active_line; }
-	void Commit() override { DoCommit(true); }
+	void Commit() override { DoCommit(true); edit.End(); }
+	bool BeginDrag() override { if(!edit.Begin())return false;dragging=true;return true; }
+	void EndDrag(bool cancelled) override {
+		dragging = false;
+		if (cancelled) { active_line.Clear(); Revert(); }
+		else if (auto_commit->GetBool() || modified_lines.empty()) edit.End();
+	}
 
 	/// Constructor
 	/// @param c Project context
@@ -420,8 +426,8 @@ AudioTimingControllerDialogue::AudioTimingControllerDialogue(agi::Context *c)
 , video_position_provider(c)
 , context(c)
 , commit_connection(c->ass->AddCommitListener(&AudioTimingControllerDialogue::OnFileChanged, this))
-, inactive_line_mode_connection(OPT_SUB("Audio/Inactive Lines Display Mode", &AudioTimingControllerDialogue::RegenerateInactiveLines, this))
-, inactive_line_comment_connection(OPT_SUB("Audio/Display/Draw/Inactive Comments", &AudioTimingControllerDialogue::RegenerateInactiveLines, this))
+, inactive_line_mode_connection(OPT_SUB("Audio/Inactive Lines Display Mode", &AudioTimingControllerDialogue::Revert, this))
+, inactive_line_comment_connection(OPT_SUB("Audio/Display/Draw/Inactive Comments", &AudioTimingControllerDialogue::Revert, this))
 , active_line_connection(c->selectionController->AddActiveLineListener(&AudioTimingControllerDialogue::Revert, this))
 , selection_connection(c->selectionController->AddSelectionListener(&AudioTimingControllerDialogue::OnSelectedSetChanged, this))
 {
@@ -451,15 +457,11 @@ void AudioTimingControllerDialogue::GetMarkers(const TimeRange &range, AudioMark
 
 void AudioTimingControllerDialogue::OnSelectedSetChanged()
 {
-	RegenerateSelectedLines();
-	RegenerateInactiveLines();
+	Revert();
 }
 
-void AudioTimingControllerDialogue::OnFileChanged(int type) {
-	if (type & AssFile::COMMIT_DIAG_TIME)
-		Revert();
-	else if (type & AssFile::COMMIT_DIAG_ADDREM)
-		RegenerateInactiveLines();
+void AudioTimingControllerDialogue::OnFileChanged(int) {
+	Revert();
 }
 
 void AudioTimingControllerDialogue::GetRenderingStyles(AudioRenderingStyleRanges &ranges) const
@@ -473,15 +475,18 @@ void AudioTimingControllerDialogue::GetRenderingStyles(AudioRenderingStyleRanges
 
 void AudioTimingControllerDialogue::Next(NextMode mode)
 {
+	if(!edit.Begin())return;
 	if (mode == TIMING_UNIT)
 	{
 		context->selectionController->NextLine();
+		if (modified_lines.empty()) edit.End();
 		return;
 	}
 
 	int new_end_ms = *active_line.GetRightMarker();
 
 	cmd::call("grid/line/next/create", context);
+	if (!edit.Begin() || !active_line.GetLine()) return;
 
 	if (mode == LINE_RESET_DEFAULT || active_line.GetLine()->End == 0) {
 		const int default_duration = OPT_GET("Timing/Default Duration")->GetInt();
@@ -493,64 +498,80 @@ void AudioTimingControllerDialogue::Next(NextMode mode)
 		modified_lines.insert(&active_line);
 		UpdateSelection();
 	}
+	if (modified_lines.empty()) edit.End();
 }
 
 void AudioTimingControllerDialogue::Prev()
 {
+	if (!edit.Begin()) return;
 	context->selectionController->PrevLine();
+	if (modified_lines.empty()) edit.End();
 }
 
 void AudioTimingControllerDialogue::DoCommit(bool user_triggered)
 {
+	if(!edit.Begin())return;
+	BOOST_SCOPE_EXIT_ALL(this) { commit_connection.Unblock(); };
 	// Store back new times
 	if (modified_lines.size())
 	{
-		AssDialogue *single_line = modified_lines.size() == 1 ? (*modified_lines.begin())->GetLine() : nullptr;
-		int old_start = single_line ? static_cast<int>(single_line->Start) : 0;
-		int old_end = single_line ? static_cast<int>(single_line->End) : 0;
-		for (auto line : modified_lines)
-			line->Apply();
+		auto single_line = modified_lines.size() == 1 ? (*modified_lines.begin())->GetLine() : nullptr;
+		auto old_single = single_line ? edit.Read(single_line->Id) : std::optional<AssDialogueBase>{};
+		int old_start = old_single ? old_single->Start.GetMilliseconds() : 0;
+		int old_end = old_single ? old_single->End.GetMilliseconds() : 0;
+		std::vector<AssDialogueBase> updates;
+		for(auto line:modified_lines) {
+			auto live=edit.Read(line->GetLine()->Id);
+			if(!live){edit.End();return;}
+			updates.push_back(line->Updated(*live));
+		}
+		edit.Update(updates);
+		auto updated_single = single_line ? edit.Read(single_line->Id) : std::optional<AssDialogueBase>{};
 
 		bool linked_neighbor = false;
 		if (single_line && OPT_GET("Timing/Link Adjacent Lines")->GetBool()) {
-			bool start_changed = single_line->Start != old_start;
-			bool end_changed = single_line->End != old_end;
+			bool start_changed = updated_single->Start.GetMilliseconds() != old_start;
+			bool end_changed = updated_single->End.GetMilliseconds() != old_end;
 			if (start_changed != end_changed) {
 				auto old_boundary = start_changed ? old_start : old_end;
 				auto threshold_ms = static_cast<int>(OPT_GET("Timing/Adjacent Line Gap")->GetDouble() * 1000 + 0.5);
-				linked_neighbor = context->ass->LinkAdjacentLine(single_line, start_changed, old_boundary, threshold_ms);
+				linked_neighbor = edit.LinkAdjacent(single_line->Id, start_changed, old_boundary, threshold_ms);
 			}
 		}
 
 		commit_connection.Block();
 		if (user_triggered)
 		{
-			context->ass->Commit(_("timing"), AssFile::COMMIT_DIAG_TIME);
+			edit.Commit(_("timing"), AssFile::COMMIT_DIAG_TIME);
 			commit_id = -1; // never coalesce with a manually triggered commit
 		}
 		else
 		{
-			AssDialogue *amend = single_line && !linked_neighbor ? single_line : nullptr;
-			commit_id = context->ass->Commit(_("timing"), AssFile::COMMIT_DIAG_TIME, commit_id, amend);
+			int amend = single_line && !linked_neighbor ? single_line->Id : 0;
+			commit_id = edit.Commit(_("timing"), AssFile::COMMIT_DIAG_TIME, commit_id, amend);
 		}
 
 		commit_connection.Unblock();
 		modified_lines.clear();
-		if (linked_neighbor) {
-			RegenerateSelectedLines();
-			RegenerateInactiveLines();
-		}
+		auto refresh=[&](TimeableLine& line) { if(auto row=edit.Read(line.GetLine()->Id))line.SetLine(&*row); };
+		refresh(active_line);for(auto& line:selected_lines)refresh(line);for(auto& line:inactive_lines)refresh(line);
+		if(linked_neighbor) { RegenerateMarkers();AnnounceUpdatedStyleRanges(); }
+		if(!dragging && !user_triggered)edit.End();
 	}
 }
 
 void AudioTimingControllerDialogue::Revert()
 {
+	InvalidateMarkers();
+	edit.Refresh();
+	dragging = false;
+	modified_lines.clear();
 	commit_id = -1;
 
-	if (AssDialogue *line = context->selectionController->GetActiveLine())
+	if (auto line = edit.Active(active_line.GetLine() ? active_line.GetLine()->Id : 0))
 	{
 		modified_lines.clear();
-		if (active_line.SetLine(line))
+		if (active_line.SetLine(&*line))
 		{
 			AnnounceUpdatedPrimaryRange();
 			if (inactive_line_mode->GetInt() == 0)
@@ -562,6 +583,7 @@ void AudioTimingControllerDialogue::Revert()
 		}
 	}
 
+	else active_line.Clear();
 	RegenerateInactiveLines();
 	RegenerateSelectedLines();
 }
@@ -598,6 +620,7 @@ bool AudioTimingControllerDialogue::IsNearbyMarker(int ms, int sensitivity, bool
 
 std::vector<AudioMarker*> AudioTimingControllerDialogue::OnLeftClick(int ms, bool ctrl_down, bool alt_down, int sensitivity, int snap_range)
 {
+	if(!edit.Begin())return {};
 	assert(sensitivity >= 0);
 	assert(snap_range >= 0);
 
@@ -655,6 +678,7 @@ std::vector<AudioMarker*> AudioTimingControllerDialogue::OnLeftClick(int ms, boo
 
 std::vector<AudioMarker*> AudioTimingControllerDialogue::OnRightClick(int ms, bool, int, int snap_range)
 {
+	if(!edit.Begin())return {};
 	clicked_ms = INT_MIN;
 	std::vector<AudioMarker*> ret = GetRightMarkers();
 	SetMarkers(ret, ms, snap_range);
@@ -674,7 +698,10 @@ void AudioTimingControllerDialogue::UpdateSelection()
 
 void AudioTimingControllerDialogue::SetMarkers(std::vector<AudioMarker*> const& upd_markers, int ms, int snap_range)
 {
+	if(!active_line.GetLine() || !edit.Begin())return;
 	if (upd_markers.empty()) return;
+	for (auto marker : upd_markers)
+		if (std::find(markers.begin(), markers.end(), marker) == markers.end()) return;
 
 	int shift = clicked_ms != INT_MIN ? ms - clicked_ms : 0;
 	if (shift) clicked_ms = ms;
@@ -723,6 +750,7 @@ void AudioTimingControllerDialogue::SetMarkers(std::vector<AudioMarker*> const& 
 
 void AudioTimingControllerDialogue::RegenerateInactiveLines()
 {
+	InvalidateMarkers();
 	using pred = bool(*)(AssDialogue const&);
 	auto predicate = inactive_line_comments->GetBool()
 		? static_cast<pred>([](AssDialogue const&) { return true; })
@@ -737,34 +765,34 @@ void AudioTimingControllerDialogue::RegenerateInactiveLines()
 	{
 	case 1: // Previous line only
 	case 2: // Previous and next lines
-		if (AssDialogue *line = context->selectionController->GetActiveLine())
+		if (auto line = active_line.GetLine())
 		{
-			auto current_line = context->ass->iterator_to(*line);
-			if (current_line == context->ass->Events.end())
+			auto current_line = std::find_if(context->subtitleAccess->Read().Events.begin(), context->subtitleAccess->Read().Events.end(), [&](auto const& row) { return row.Id == line->Id; });
+			if (current_line == context->subtitleAccess->Read().Events.end())
 				break;
 
-			if (current_line != context->ass->Events.begin())
+			if (current_line != context->subtitleAccess->Read().Events.begin())
 			{
 				auto prev = current_line;
-				while (--prev != context->ass->Events.begin() && !predicate(*prev)) ;
+				while (--prev != context->subtitleAccess->Read().Events.begin() && !predicate(*prev)) ;
 				if (predicate(*prev))
 					AddInactiveLine(sel, &*prev);
 			}
 
 			if (mode == 2)
 			{
-				auto next = std::find_if(++current_line, context->ass->Events.end(), predicate);
-				if (next != context->ass->Events.end())
+				auto next = std::find_if(++current_line, context->subtitleAccess->Read().Events.end(), predicate);
+				if (next != context->subtitleAccess->Read().Events.end())
 					AddInactiveLine(sel, &*next);
 			}
 		}
 		break;
 	case 3: // All inactive lines
 	{
-		AssDialogue *active_line = context->selectionController->GetActiveLine();
-		for (auto& line : context->ass->Events)
+		auto active = active_line.GetLine();
+		for (auto const& line : context->subtitleAccess->Read().Events)
 		{
-			if (&line != active_line && predicate(line))
+			if ((!active || line.Id != active->Id) && predicate(line))
 				AddInactiveLine(sel, &line);
 		}
 		break;
@@ -782,9 +810,9 @@ void AudioTimingControllerDialogue::RegenerateInactiveLines()
 	RegenerateMarkers();
 }
 
-void AudioTimingControllerDialogue::AddInactiveLine(Selection const& sel, AssDialogue *diag)
+void AudioTimingControllerDialogue::AddInactiveLine(Selection const& sel, AssDialogue const* diag)
 {
-	if (sel.count(diag)) return;
+	if (std::find(sel.begin(), sel.end(), diag) != sel.end()) return;
 
 	inactive_lines.emplace_back(AudioStyle_Inactive, &style_inactive, &style_inactive);
 	inactive_lines.back().SetLine(diag);
@@ -792,13 +820,16 @@ void AudioTimingControllerDialogue::AddInactiveLine(Selection const& sel, AssDia
 
 void AudioTimingControllerDialogue::RegenerateSelectedLines()
 {
+	InvalidateMarkers();
 	bool was_empty = selected_lines.empty();
 	selected_lines.clear();
 
-	AssDialogue *active = context->selectionController->GetActiveLine();
-	for (auto line : context->selectionController->GetSelectedSet())
+	auto active = active_line.GetLine();
+	auto const& selected = context->selectionController->GetSelectedSet();
+	for (auto const& row : context->subtitleAccess->Read().Events)
 	{
-		if (line == active) continue;
+		auto line = &row;
+		if ((active && row.Id == active->Id) || std::find(selected.begin(), selected.end(), line) == selected.end()) continue;
 
 		selected_lines.emplace_back(AudioStyle_Selected, &style_inactive, &style_inactive);
 		selected_lines.back().SetLine(line);

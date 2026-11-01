@@ -25,6 +25,15 @@
 #include "dialog_manager.h"
 #include "compat.h"
 #include "utils.h"
+#include "audio_controller.h"
+#include "audio_timing.h"
+#include "audio_display.h"
+#include "audio_box.h"
+#include "audio_karaoke.h"
+#include "audio_edit_session.h"
+#include "ass_karaoke.h"
+#include "project.h"
+#include <libaegisub/ass/karaoke.h>
 #include <wx/frame.h>
 #include <wx/combobox.h>
 #include <wx/spinctrl.h>
@@ -37,6 +46,7 @@
 #include <wx/listbox.h>
 #include <wx/button.h>
 #include <wx/listctrl.h>
+#include <wx/panel.h>
 #include <fstream>
 #include <filesystem>
 
@@ -453,5 +463,346 @@ TEST_F(ordinary_edit, all_migrated_command_operators_reject_comparison_before_an
         EXPECT_EQ(id,c->selectionController->GetActiveLine()->Id);
     }
     cmd::PasteSubtitleLines(c.get(),"blocked\nblocked"); EXPECT_EQ(1u,c->ass->Events.size());
+}
+
+class audio_edit : public ordinary_edit {
+protected:
+    agi::ass::Karaoke karaoke;
+    agi::signal::Connection file_slot;
+    AudioTimingController* Timing() { return c->audioController->GetTimingController(); }
+    void SetUp() override {
+        ordinary_edit::SetUp();
+        OPT_SET("Audio/Auto/Commit")->SetBool(false);
+        OPT_SET("Audio/Snap/Enable")->SetBool(false);
+        OPT_SET("Audio/Auto/Scroll")->SetBool(false);
+        OPT_SET("Audio/Inactive Lines Display Mode")->SetInt(0);
+        OPT_SET("Timing/Link Adjacent Lines")->SetBool(false);
+        auto write=c->subtitleAccess->TryWrite();
+        auto& row=c->ass->Events.front();row.Start=1001;row.End=2002;
+        row.Text="{\\k50}ab{\\k50}cd";
+        c->ass->Commit("audio fixture",AssFile::COMMIT_NEW);
+        c->audioController->SetTimingController(CreateDialogueTimingController(c.get()));
+    }
+    void TearDown() override {
+        c->audioController->SetTimingController(nullptr);
+        ordinary_edit::TearDown();
+    }
+    void Karaoke() {
+        SetKaraokeLine(karaoke,&c->ass->Events.front(),true);
+        c->audioController->SetTimingController(CreateKaraokeTimingController(c.get(),&karaoke,file_slot));
+    }
+    AudioDisplay* Display() {
+        auto display=new AudioDisplay(window,c->audioController.get(),c.get());
+        c->project->LoadAudio("dummy-audio:silence?sr=44100&bd=16&ch=1&ln=441000");
+        display->SetSize(0,0,900,160);
+        return display;
+    }
+    void Mouse(AudioDisplay* display,wxEventType type,int ms,bool down=false) {
+        wxMouseEvent event(type);event.SetLeftDown(down);
+        event.SetPosition({display->RelativeXFromTime(ms),80});event.SetEventObject(display);
+        display->GetEventHandler()->ProcessEvent(event);
+    }
+};
+TEST_F(audio_edit, dialogue_manual_drag_cancel_never_writes_or_adds_history) {
+    auto description=c->subsController->GetUndoDescription();
+    auto token=Timing()->MarkerLifetime();
+    ASSERT_TRUE(Timing()->BeginDrag());
+    auto markers=Timing()->OnLeftClick(1001,false,false,5,0);ASSERT_EQ(1u,markers.size());
+    Timing()->OnMarkerDrag(markers,1103,0);
+    EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
+    EXPECT_FALSE(c->subtitleEditGate.TryBeginComparison());
+    Timing()->EndDrag(true);
+    EXPECT_TRUE(token.expired());
+    EXPECT_EQ(1001,Timing()->GetActiveLineRange().begin());
+    EXPECT_EQ(description,c->subsController->GetUndoDescription());
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+}
+TEST_F(audio_edit, dialogue_manual_commit_and_history_preserve_exact_milliseconds_and_identity) {
+    auto id=c->ass->Events.front().Id;
+    Timing()->ModifyStart(1);Timing()->Commit();
+    EXPECT_EQ(1011,c->ass->Events.front().Start.GetMilliseconds());
+    EXPECT_EQ(2002,c->ass->Events.front().End.GetMilliseconds());
+    c->subsController->Undo();EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
+    c->subsController->Redo();EXPECT_EQ(1011,c->ass->Events.front().Start.GetMilliseconds());
+    EXPECT_EQ(id,c->ass->Events.front().Id);
+    EXPECT_EQ(id,c->selectionController->GetActiveLine()->Id);
+}
+TEST_F(audio_edit, continuous_autocommit_drag_keeps_marker_borrow_and_coalesces_undo) {
+    OPT_SET("Audio/Auto/Commit")->SetBool(true);
+    ASSERT_TRUE(Timing()->BeginDrag());
+    auto markers=Timing()->OnLeftClick(1001,false,false,5,0);ASSERT_FALSE(markers.empty());
+    auto token=Timing()->MarkerLifetime();
+    Timing()->OnMarkerDrag(markers,1051,0);Timing()->OnMarkerDrag(markers,1101,0);
+    EXPECT_FALSE(token.expired());EXPECT_FALSE(c->subtitleEditGate.TryBeginComparison());
+    OPT_SET("Audio/Auto/Commit")->SetBool(false); // preference changed during a completed auto drag
+    Timing()->EndDrag(false);EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    EXPECT_EQ(1101,c->ass->Events.front().Start.GetMilliseconds());
+    c->subsController->Undo();EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
+    EXPECT_EQ("audio fixture",c->subsController->GetUndoDescription());
+    c->subsController->Redo();EXPECT_EQ(1101,c->ass->Events.front().Start.GetMilliseconds());
+}
+TEST_F(audio_edit, selection_change_invalidates_markers_and_releases_pending_task) {
+    AssDialogue* next;
+    {auto write=c->subtitleAccess->TryWrite();next=new AssDialogue;
+     next->Start=3001;next->End=4002;c->ass->Events.push_back(*next);c->ass->Commit("audio fixture",AssFile::COMMIT_NEW);}
+    ASSERT_TRUE(Timing()->BeginDrag());
+    auto markers=Timing()->OnLeftClick(1001,false,false,5,0);auto token=Timing()->MarkerLifetime();
+    Timing()->OnMarkerDrag(markers,1111,0);
+    c->selectionController->SetSelectionAndActive({next},next);
+    EXPECT_TRUE(token.expired());EXPECT_EQ(3001,Timing()->GetActiveLineRange().begin());
+    EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+}
+TEST_F(audio_edit, multiple_selected_rows_share_pending_lifetime_and_undo) {
+    AssDialogue* next;
+    {auto write=c->subtitleAccess->TryWrite();next=new AssDialogue;
+     next->Start=3001;next->End=4002;c->ass->Events.push_back(*next);c->ass->Commit("audio fixture",AssFile::COMMIT_NEW);
+     c->selectionController->SetSelectedSet({&c->ass->Events.front(),next});}
+    ASSERT_TRUE(Timing()->BeginDrag());
+    auto markers=Timing()->OnRightClick(4503,false,0,0);ASSERT_EQ(2u,markers.size());
+    Timing()->EndDrag(false);Timing()->Commit();
+    for(auto const& row:c->ass->Events)EXPECT_EQ(4503,row.End.GetMilliseconds());
+    c->subsController->Undo();EXPECT_EQ(2002,c->ass->Events.front().End.GetMilliseconds());
+    EXPECT_EQ(4002,c->ass->Events.back().End.GetMilliseconds());
+    EXPECT_EQ(2u,c->selectionController->GetSelectedSet().size());
+}
+TEST_F(audio_edit, comparison_rejects_dialogue_and_karaoke_cache_changes) {
+    auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);
+    auto original=Timing()->GetActiveLineRange();
+    EXPECT_FALSE(Timing()->BeginDrag());Timing()->ModifyStart(1);Timing()->AddLeadIn();Timing()->Commit();
+    EXPECT_EQ(original.begin(),Timing()->GetActiveLineRange().begin());
+    comparison.reset();Karaoke();
+    comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);
+    auto text=karaoke.GetText();original=Timing()->GetActiveLineRange();
+    EXPECT_FALSE(Timing()->BeginDrag());Timing()->AddLeadIn();Timing()->ModifyLength(1,false);Timing()->Commit();
+    EXPECT_EQ(text,karaoke.GetText());EXPECT_EQ(original.begin(),Timing()->GetActiveLineRange().begin());
+    EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
+}
+TEST_F(audio_edit, karaoke_lead_is_staged_cancelled_then_committed_with_undo) {
+    Karaoke();auto text=c->ass->Events.front().Text.get();
+    auto lead=OPT_GET("Audio/Lead/IN")->GetInt();
+    Timing()->AddLeadIn();EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
+    EXPECT_EQ(text,c->ass->Events.front().Text.get());EXPECT_FALSE(c->subtitleEditGate.TryBeginComparison());
+    Timing()->Revert();EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    EXPECT_EQ("audio fixture",c->subsController->GetUndoDescription());
+    Timing()->AddLeadIn();Timing()->Commit();
+    EXPECT_EQ(1001-lead,c->ass->Events.front().Start.GetMilliseconds());
+    EXPECT_EQ(2002,c->ass->Events.front().End.GetMilliseconds());
+    c->subsController->Undo();EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
+    EXPECT_EQ(text,c->ass->Events.front().Text.get());
+    c->subsController->Redo();EXPECT_EQ(1001-lead,c->ass->Events.front().Start.GetMilliseconds());
+}
+TEST_F(audio_edit, karaoke_drag_and_controller_switch_cancel_pending_cache) {
+    Karaoke();auto text=c->ass->Events.front().Text.get();
+    ASSERT_TRUE(Timing()->BeginDrag());
+    auto markers=Timing()->OnLeftClick(1500,false,false,10,0);ASSERT_EQ(1u,markers.size());
+    auto token=Timing()->MarkerLifetime();Timing()->OnMarkerDrag(markers,1600,0);
+    EXPECT_NE(text,karaoke.GetText());EXPECT_EQ(text,c->ass->Events.front().Text.get());
+    c->audioController->SetTimingController(CreateDialogueTimingController(c.get()));
+    EXPECT_TRUE(token.expired());EXPECT_EQ(text,c->ass->Events.front().Text.get());
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+}
+TEST_F(audio_edit, real_wx_audio_drag_release_and_destroyed_controller_borrow) {
+    auto display=Display();
+    Mouse(display,wxEVT_LEFT_DOWN,1001,true);EXPECT_TRUE(display->HasCapture());
+    Mouse(display,wxEVT_MOTION,1200,true);
+    EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
+    EXPECT_FALSE(c->subtitleEditGate.TryBeginComparison());
+    Mouse(display,wxEVT_LEFT_UP,1200);
+    Timing()->Commit();EXPECT_GT(c->ass->Events.front().Start.GetMilliseconds(),1100);
+    Mouse(display,wxEVT_LEFT_DOWN,1200,true);
+    auto token=Timing()->MarkerLifetime();
+    c->audioController->SetTimingController(CreateDialogueTimingController(c.get()));
+    EXPECT_TRUE(token.expired());EXPECT_FALSE(display->HasCapture());
+    Mouse(display,wxEVT_MOTION,1400,true); // no callback into the deleted controller
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    c->project->CloseAudio();
+}
+TEST_F(audio_edit, real_wx_display_destruction_discards_uncommitted_drag) {
+    auto display=Display();Mouse(display,wxEVT_LEFT_DOWN,1001,true);
+    Mouse(display,wxEVT_MOTION,1200,true);delete display;
+    EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    EXPECT_EQ("audio fixture",c->subsController->GetUndoDescription());c->project->CloseAudio();
+}
+TEST_F(audio_edit, real_wx_drag_exception_releases_task_and_capture) {
+    auto display=Display();Mouse(display,wxEVT_LEFT_DOWN,1001,true);
+    agi::signal::Connection observer=Timing()->AddMarkerMovedListener([] {throw std::runtime_error("marker observer");});
+    EXPECT_THROW(Mouse(display,wxEVT_MOTION,1200,true),std::runtime_error);
+    EXPECT_FALSE(display->HasCapture());
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
+    observer.Disconnect();c->project->CloseAudio();
+}
+TEST_F(audio_edit, stale_revision_missing_target_and_document_change_never_write_back) {
+    AudioEditSession edit(c.get());ASSERT_TRUE(edit.Begin());
+    auto row=c->ass->Events.front(); // independent AssDialogue copy
+    {auto scope=c->subtitleAccess->TryWrite();c->ass->Events.front().Start=1002;c->ass->Commit("other",AssFile::COMMIT_DIAG_TIME);}
+    EXPECT_FALSE(edit.Begin());
+    EXPECT_EQ(1002,c->ass->Events.front().Start.GetMilliseconds());
+    edit.Refresh();ASSERT_TRUE(edit.Begin());
+    row.Id+=100000;
+    EXPECT_THROW(edit.Update({row}),std::invalid_argument);
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    edit.Refresh();c->audioController->SetTimingController(nullptr);c->subtitleEditGate.Close();EXPECT_FALSE(edit.Begin());
+}
+TEST_F(audio_edit, outer_time_command_scope_is_reused_without_spurious_stale_rejection) {
+    (*cmd::get("time/lead/in"))(c.get());
+    EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
+    EXPECT_LT(Timing()->GetActiveLineRange().begin(),1001);
+    Timing()->Commit();EXPECT_LT(c->ass->Events.front().Start.GetMilliseconds(),1001);
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+}
+
+TEST_F(audio_edit, real_karaoke_split_buttons_cancel_apply_and_rebuild_after_history) {
+    c->audioBox=new AudioBox(window,c.get());
+    c->audioBox->SetSize(900,260);
+    c->project->LoadAudio("dummy-audio:silence?sr=44100&bd=16&ch=1&ln=441000");
+    c->karaoke->SetEnabled(true);
+    wxWindow* panel=nullptr;wxWindow* accept=nullptr;wxWindow* cancel=nullptr;
+    for(auto child:c->karaoke->GetChildren()) {
+        if(dynamic_cast<wxPanel*>(child))panel=child;
+        if(child->GetToolTipText()=="Commit splits")accept=child;
+        if(child->GetToolTipText()=="Discard all uncommitted splits")cancel=child;
+    }
+    ASSERT_NE(nullptr,panel);ASSERT_NE(nullptr,accept);ASSERT_NE(nullptr,cancel);
+    panel->SetSize(0,0,600,35);
+    auto click=[&] {wxMouseEvent event(wxEVT_LEFT_DOWN);event.SetPosition({25,10});event.SetEventObject(panel);panel->GetEventHandler()->ProcessEvent(event);};
+    auto text=c->ass->Events.front().Text.get();
+    click();EXPECT_TRUE(cancel->IsEnabled());EXPECT_FALSE(c->subtitleEditGate.TryBeginComparison());
+    EXPECT_EQ(text,c->ass->Events.front().Text.get());
+    button(cancel,cancel->GetId());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    EXPECT_EQ(text,c->ass->Events.front().Text.get());
+    auto token=Timing()->MarkerLifetime();
+    click();button(accept,accept->GetId());
+    EXPECT_NE(text,c->ass->Events.front().Text.get());EXPECT_TRUE(token.expired());
+    auto changed=c->ass->Events.front().Text.get();
+    EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
+    EXPECT_EQ(2002,c->ass->Events.front().End.GetMilliseconds());
+    c->subsController->Undo();EXPECT_EQ(text,c->ass->Events.front().Text.get());
+    c->subsController->Redo();EXPECT_EQ(changed,c->ass->Events.front().Text.get());
+    auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);
+    click();button(accept,accept->GetId());
+    EXPECT_EQ(changed,c->ass->Events.front().Text.get());
+    comparison.reset();c->project->CloseAudio();
+}
+TEST_F(audio_edit, audio_source_close_invalidates_active_drag_and_releases_registration) {
+    auto display=Display();Mouse(display,wxEVT_LEFT_DOWN,1001,true);
+    Mouse(display,wxEVT_MOTION,1200,true);auto token=Timing()->MarkerLifetime();
+    c->project->CloseAudio();
+    EXPECT_TRUE(token.expired());EXPECT_FALSE(display->HasCapture());
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
+}
+TEST_F(audio_edit, linked_neighbor_is_authorized_and_restored_by_undo) {
+    {auto write=c->subtitleAccess->TryWrite();auto other=new AssDialogue;
+     other->Start=2002;other->End=3003;c->ass->Events.push_back(*other);c->ass->Commit("audio fixture",AssFile::COMMIT_DIAG_ADDREM);}
+    OPT_SET("Timing/Link Adjacent Lines")->SetBool(true);
+    Timing()->ModifyLength(1,false);Timing()->Commit();
+    EXPECT_EQ(2012,c->ass->Events.front().End.GetMilliseconds());
+    EXPECT_EQ(2012,c->ass->Events.back().Start.GetMilliseconds());
+    c->subsController->Undo();EXPECT_EQ(2002,c->ass->Events.back().Start.GetMilliseconds());
+    EXPECT_EQ(2002,c->ass->Events.front().End.GetMilliseconds());
+    auto session=c->subtitleAccess->TryBeginInteraction({c->ass->Events.front().Id});ASSERT_TRUE(session);
+    EXPECT_THROW(session->LinkAdjacent(c->ass->Events.front().Id,false,2002,100),std::logic_error);
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+}
+
+TEST_F(audio_edit, real_wx_capture_lost_cancels_pending_drag) {
+    auto display=Display();Mouse(display,wxEVT_LEFT_DOWN,1001,true);
+    Mouse(display,wxEVT_MOTION,1200,true);display->ReleaseMouse();
+    wxMouseCaptureLostEvent lost(display->GetId());
+    display->GetEventHandler()->ProcessEvent(lost);
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
+    c->project->CloseAudio();
+}
+TEST_F(audio_edit, throwing_cancellation_observer_cannot_keep_destroyed_cache_borrower) {
+    Karaoke();ASSERT_TRUE(Timing()->BeginDrag());
+    auto token=Timing()->MarkerLifetime();
+    agi::signal::Connection throwing=Timing()->AddMarkerMovedListener([] {throw std::runtime_error("cancel");});
+    EXPECT_THROW(c->audioController->SetTimingController(nullptr),std::runtime_error);
+    EXPECT_EQ(nullptr,Timing());EXPECT_TRUE(token.expired());
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+}
+TEST_F(audio_edit, karaoke_continuous_auto_drag_coalesces_text_undo_without_rounding_row_times) {
+    OPT_SET("Audio/Auto/Commit")->SetBool(true);Karaoke();
+    auto text=c->ass->Events.front().Text.get();
+    ASSERT_TRUE(Timing()->BeginDrag());
+    auto markers=Timing()->OnLeftClick(1500,false,false,10,0);ASSERT_EQ(1u,markers.size());
+    auto token=Timing()->MarkerLifetime();
+    Timing()->OnMarkerDrag(markers,1600,0);Timing()->OnMarkerDrag(markers,1700,0);
+    EXPECT_FALSE(token.expired());EXPECT_FALSE(c->subtitleEditGate.TryBeginComparison());
+    Timing()->EndDrag(false);EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    EXPECT_NE(text,c->ass->Events.front().Text.get());
+    EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
+    EXPECT_EQ(2002,c->ass->Events.front().End.GetMilliseconds());
+    auto changed=c->ass->Events.front().Text.get();
+    c->subsController->Undo();EXPECT_EQ(text,c->ass->Events.front().Text.get());
+    EXPECT_EQ("audio fixture",c->subsController->GetUndoDescription());
+    c->subsController->Redo();EXPECT_EQ(changed,c->ass->Events.front().Text.get());
+}
+TEST_F(audio_edit, inactive_neighbor_cache_survives_undo_node_replacement) {
+    {auto write=c->subtitleAccess->TryWrite();auto other=new AssDialogue;
+     other->Start=3001;other->End=4002;c->ass->Events.push_back(*other);c->ass->Commit("audio fixture",AssFile::COMMIT_DIAG_ADDREM);}
+    OPT_SET("Audio/Inactive Lines Display Mode")->SetInt(2);
+    Timing()->ModifyStart(1);Timing()->Commit();
+    c->subsController->Undo();c->subsController->Redo();
+    EXPECT_EQ(1011,Timing()->GetActiveLineRange().begin());
+    AudioMarkerVector markers;Timing()->GetMarkers(TimeRange(0,5000),markers);
+    EXPECT_GE(markers.size(),4u);
+    Timing()->ModifyStart(1);Timing()->Commit();
+    EXPECT_EQ(1021,c->ass->Events.front().Start.GetMilliseconds());
+}
+
+TEST_F(audio_edit, no_op_navigation_and_boundary_commands_do_not_stale_audio_cache) {
+    {auto no_op=c->subtitleAccess->TryWrite();ASSERT_TRUE(no_op);}
+    (*cmd::get("time/prev"))(c.get());
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    Timing()->ModifyStart(1);Timing()->Commit();
+    EXPECT_EQ(1011,c->ass->Events.front().Start.GetMilliseconds());
+    Karaoke();auto text=c->ass->Events.front().Text.get();
+    (*cmd::get("time/prev"))(c.get());
+    (*cmd::get("time/start/increase"))(c.get()); // first syllable: no movable left boundary
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    (*cmd::get("time/next"))(c.get());
+    (*cmd::get("time/length/increase"))(c.get()); // last syllable: no movable right boundary
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    (*cmd::get("time/prev"))(c.get());
+    Timing()->ModifyLength(1,false);Timing()->Commit();
+    EXPECT_NE(text,c->ass->Events.front().Text.get());
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+}
+
+TEST_F(audio_edit, stale_pending_audio_task_stays_rejected_until_explicit_rebuild) {
+    Timing()->ModifyStart(1);
+    {auto foreign=c->subtitleEditGate.TryBeginWrite();ASSERT_TRUE(foreign);}
+    Timing()->Commit();Timing()->Commit();
+    EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    Timing()->Revert();Timing()->ModifyStart(1);Timing()->Commit();
+    EXPECT_EQ(1011,c->ass->Events.front().Start.GetMilliseconds());
+}
+
+TEST_F(audio_edit, karaoke_one_millisecond_lead_is_not_lost_to_tag_rounding) {
+    auto lead=OPT_GET("Audio/Lead/IN")->GetInt();
+    OPT_SET("Audio/Lead/IN")->SetInt(1);Karaoke();
+    Timing()->AddLeadIn();Timing()->Commit();
+    EXPECT_EQ(1000,c->ass->Events.front().Start.GetMilliseconds());
+    EXPECT_EQ(2002,c->ass->Events.front().End.GetMilliseconds());
+    c->subsController->Undo();EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
+    OPT_SET("Audio/Lead/IN")->SetInt(lead);
+}
+
+TEST_F(audio_edit, cancelling_an_untimed_row_cannot_be_committed_later) {
+    {auto scope=c->subtitleAccess->TryWrite();c->ass->Events.front().Start=0;c->ass->Events.front().End=0;
+     c->ass->Commit("audio fixture",AssFile::COMMIT_DIAG_TIME);}
+    ASSERT_TRUE(Timing()->BeginDrag());
+    auto markers=Timing()->OnRightClick(1500,false,0,0);ASSERT_FALSE(markers.empty());
+    Timing()->EndDrag(true);Timing()->Commit();
+    EXPECT_EQ(0,c->ass->Events.front().Start.GetMilliseconds());
+    EXPECT_EQ(0,c->ass->Events.front().End.GetMilliseconds());
+    EXPECT_EQ("audio fixture",c->subsController->GetUndoDescription());
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
 }
 }

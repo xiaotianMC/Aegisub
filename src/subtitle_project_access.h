@@ -43,7 +43,8 @@ public:
         bool Current() const;
         // Data-only writeback: no mutable live pointers escape the session.
         void UpdateRows(std::vector<AssDialogueBase> const&);
-        int Commit(wxString const&, int type, int amend_id = -1);
+        bool LinkAdjacent(int id, bool start_changed, int old_boundary, int threshold_ms);
+        int Commit(wxString const&, int type, int amend_id = -1, int single_line_id = 0);
         // Releases task registration; does not imply rollback or an Undo record.
         void End() noexcept { scope.reset(); }
     };

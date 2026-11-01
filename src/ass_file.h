@@ -206,7 +206,7 @@ public:
 	/// Compare based on end time
 	static bool CompEnd(AssDialogue const& lft, AssDialogue const& rgt);
 	/// Link a changed boundary to the nearest subtitle when the old gap is below the threshold
-	bool LinkAdjacentLine(AssDialogue *line, bool start_changed, int old_boundary, int threshold_ms);
+	bool LinkAdjacentLine(AssDialogue *line, bool start_changed, int old_boundary, int threshold_ms, bool exact_milliseconds = false);
 	/// Compare based on style name
 	static bool CompStyle(AssDialogue const& lft, AssDialogue const& rgt);
 	/// Compare based on actor name

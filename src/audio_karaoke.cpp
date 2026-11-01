@@ -20,6 +20,8 @@
 
 #include "ass_dialogue.h"
 #include "ass_file.h"
+#include "audio_edit_session.h"
+#include <boost/scope_exit.hpp>
 #include "ass_karaoke.h"
 #include "audio_box.h"
 #include "audio_controller.h"
@@ -59,6 +61,7 @@ AudioKaraoke::AudioKaraoke(wxWindow *parent, agi::Context *c)
 , file_changed(c->ass->AddCommitListener(&AudioKaraoke::OnFileChanged, this))
 , audio_opened(c->project->AddAudioProviderListener(&AudioKaraoke::OnAudioOpened, this))
 , active_line_changed(c->selectionController->AddActiveLineListener(&AudioKaraoke::OnActiveLineChanged, this))
+, edit(std::make_shared<AudioEditSession>(c))
 , kara(std::make_unique<agi::ass::Karaoke>())
 {
 	using std::bind;
@@ -95,21 +98,29 @@ AudioKaraoke::AudioKaraoke(wxWindow *parent, agi::Context *c)
 	accept_button->Enable(false);
 	cancel_button->Enable(false);
 	enabled = false;
+	cache_changed = kara->AddSyllablesChangedListener([this] {
+		if (enabled) { SetDisplayText(); split_area->Refresh(false); }
+	});
 }
 
 AudioKaraoke::~AudioKaraoke() {
+	// SetTimingController retires the borrower even when cancellation notifies
+	// a throwing observer. No exception may leave this widget destructor.
+	try { if (enabled) c->audioController->SetTimingController(nullptr); }
+	catch (...) { }
 }
 
-void AudioKaraoke::OnActiveLineChanged(AssDialogue *new_line) {
-	active_line = new_line;
+void AudioKaraoke::OnActiveLineChanged(AssDialogue *) {
+	active_line = edit->Active();
+	edit->Refresh();
 	if (enabled) {
 		LoadFromLine();
 		split_area->Refresh(false);
 	}
 }
 
-void AudioKaraoke::OnFileChanged(int type, const AssDialogue *changed) {
-	if (enabled && (type & AssFile::COMMIT_DIAG_FULL) && (!changed || changed == active_line)) {
+void AudioKaraoke::OnFileChanged(int type, const AssDialogue *) {
+	if (enabled && (type == AssFile::COMMIT_NEW || (type & (AssFile::COMMIT_DIAG_FULL|AssFile::COMMIT_EXTRADATA|AssFile::COMMIT_ORDER)))) {
 		LoadFromLine();
 		split_area->Refresh(false);
 	}
@@ -123,12 +134,13 @@ void AudioKaraoke::OnAudioOpened(agi::AudioProvider *provider) {
 }
 
 void AudioKaraoke::SetEnabled(bool en) {
+	if(!en)edit->Refresh();
 	enabled = en;
 
 	c->audioBox->ShowKaraokeBar(enabled);
 	if (enabled) {
 		LoadFromLine();
-		c->audioController->SetTimingController(CreateKaraokeTimingController(c, kara.get(), file_changed));
+		c->audioController->SetTimingController(CreateKaraokeTimingController(c, kara.get(), file_changed, edit));
 		Refresh(false);
 	}
 	else {
@@ -230,6 +242,7 @@ void AudioKaraoke::AddMenuItem(wxMenu &menu, std::string_view tag, wxString cons
 
 void AudioKaraoke::OnContextMenu(wxContextMenuEvent&) {
 	if (!enabled) return;
+	if (syl_start_points.empty()) return;
 
 	wxMenu context_menu(_("Karaoke tag"));
 	auto type = kara->GetTagType();
@@ -243,6 +256,7 @@ void AudioKaraoke::OnContextMenu(wxContextMenuEvent&) {
 
 void AudioKaraoke::OnMouse(wxMouseEvent &event) {
 	if (!enabled) return;
+	if (syl_start_points.empty()) return;
 
 	mouse_pos = event.GetX();
 
@@ -300,6 +314,8 @@ void AudioKaraoke::OnMouse(wxMouseEvent &event) {
 		return;
 	}
 
+	if(!edit->Begin())return;
+	edit->split_pending=true;
 	if (click_will_remove_split)
 		kara->RemoveSplit(syl + (click_left && !click_right));
 	else
@@ -330,7 +346,14 @@ void AudioKaraoke::OnScrollTimer(wxTimerEvent&) {
 void AudioKaraoke::LoadFromLine() {
 	scroll_x = 0;
 	scroll_timer.Stop();
-	SetKaraokeLine(*kara, active_line, true);
+	edit->Refresh();
+	active_line=edit->Active(active_line ? active_line->Id : 0);
+	if(!active_line) {
+		kara->SetLine({}, false, std::nullopt);
+		accept_button->Enable(false);cancel_button->Enable(false);return;
+	}
+	AssDialogue snapshot(*active_line);
+	SetKaraokeLine(*kara, &snapshot, true);
 	SetDisplayText();
 	accept_button->Enable(kara->GetText() != active_line->Text);
 	cancel_button->Enable(false);
@@ -396,7 +419,7 @@ void AudioKaraoke::SetDisplayText() {
 		char_x[i] =  i * char_width + (char_width - str_char_widths[i]) / 2;
 
 	// Calculate the positions of the syllable divider lines
-	syl_lines.resize(syl_start_points.size() - 1);
+	syl_lines.resize(syl_start_points.empty() ? 0 : syl_start_points.size() - 1);
 	for (size_t i = 1; i < syl_start_points.size(); ++i)
 		syl_lines[i - 1] = syl_start_points[i] * char_width + char_width / 2;
 
@@ -409,16 +432,30 @@ void AudioKaraoke::CancelSplit() {
 }
 
 void AudioKaraoke::AcceptSplit() {
-	active_line->Text = kara->GetText();
+	if (!active_line || !edit->Begin()) return;
+	auto row = edit->Read(active_line->Id);
+	if (!row) { edit->End(); return; }
+	row->Text = kara->GetText();
+	if (edit->pending_times) {
+		row->Start = edit->pending_times->first;
+		row->End = edit->pending_times->second;
+	}
+	int type = AssFile::COMMIT_DIAG_TEXT;
+	if (row->Start.GetMilliseconds() != active_line->Start.GetMilliseconds() ||
+		row->End.GetMilliseconds() != active_line->End.GetMilliseconds()) type |= AssFile::COMMIT_DIAG_TIME;
 	file_changed.Block();
-	c->ass->Commit(_("karaoke split"), AssFile::COMMIT_DIAG_TEXT);
-	file_changed.Unblock();
+	BOOST_SCOPE_EXIT_ALL(this) { file_changed.Unblock(); };
+	edit->Update({*row});
+	edit->Commit(_("karaoke split"), type);
+	edit->End();
+	LoadFromLine();
 
 	accept_button->Enable(false);
 	cancel_button->Enable(false);
 }
 
 void AudioKaraoke::SetTagType(std::string_view new_tag) {
+	if(!edit->Begin())return;
 	kara->SetTagType(new_tag);
 	AcceptSplit();
 }

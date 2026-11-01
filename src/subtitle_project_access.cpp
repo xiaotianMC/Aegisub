@@ -92,12 +92,33 @@ void SubtitleProjectAccess::Interaction::UpdateRows(std::vector<AssDialogueBase>
     }
     catch (...) { End(); throw; }
 }
-int SubtitleProjectAccess::Interaction::Commit(wxString const& description, int type, int amend_id) {
+bool SubtitleProjectAccess::Interaction::LinkAdjacent(int id,bool start,int old,int threshold) {
+    try {
+        if(!Current() || !std::binary_search(targets.begin(),targets.end(),id))throw std::logic_error("Invalid audio neighbor target");
+        auto state=owner.lock();scope->Lease();
+        // The existing helper may also change a neighbor. Require authorization
+        // for the complete live set before delegating its neighbor search.
+        std::vector<int> live_ids;
+        live_ids.reserve(state->file->Events.size());
+        for(auto const& row:state->file->Events) live_ids.push_back(row.Id);
+        std::sort(live_ids.begin(),live_ids.end());
+        if(live_ids!=targets)throw std::logic_error("Unauthorized or stale audio neighbor set");
+        for(auto& row:state->file->Events)if(row.Id==id)return state->file->LinkAdjacentLine(&row,start,old,threshold,true);
+        throw std::out_of_range("Audio target missing");
+    } catch (...) { End();throw; }
+}
+int SubtitleProjectAccess::Interaction::Commit(wxString const& description, int type, int amend_id, int single_line_id) {
     try {
         if (!Current()) throw std::logic_error("Stale subtitle interaction");
         auto state = owner.lock();
         scope->Lease();
-        auto id = state->file->Commit(description,type,amend_id);
+        AssDialogue *single=nullptr;
+        if(single_line_id) {
+            if(!std::binary_search(targets.begin(),targets.end(),single_line_id))throw std::logic_error("Unauthorized single line commit");
+            for(auto& row:state->file->Events)if(row.Id==single_line_id)single=&row;
+            if(!single)throw std::out_of_range("Commit target missing");
+        }
+        auto id = state->file->Commit(description,type,amend_id,single);
         auto next = state->gate->Capture();
         if (next.Revision().generation != revision.Revision().generation + 1)
             throw std::logic_error("Unexpected nested subtitle revision during interaction commit");

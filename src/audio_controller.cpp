@@ -30,6 +30,7 @@
 #include "audio_controller.h"
 
 #include "audio_timing.h"
+#include <exception>
 #include "include/aegisub/audio_player.h"
 #include "include/aegisub/context.h"
 #include "options.h"
@@ -111,6 +112,7 @@ void AudioController::OnAudioPlayerChanged()
 
 void AudioController::OnAudioProvider(agi::AudioProvider *new_provider)
 {
+	if (timing_controller) timing_controller->EndDrag(true);
 	provider = new_provider;
 	Stop();
 	player.reset();
@@ -119,6 +121,11 @@ void AudioController::OnAudioProvider(agi::AudioProvider *new_provider)
 
 void AudioController::SetTimingController(std::unique_ptr<AudioTimingController> new_controller)
 {
+	// Cancellation can notify UI observers. Even if one throws, retire the old
+	// controller before its borrowed Karaoke cache can be destroyed.
+	std::exception_ptr cancelled;
+	try { if (timing_controller) timing_controller->EndDrag(true); }
+	catch (...) { cancelled = std::current_exception(); }
 	timing_controller = std::move(new_controller);
 	if (timing_controller)
 		timing_controller_connection = timing_controller->AddUpdatedPrimaryRangeListener(&AudioController::OnTimingControllerUpdatedPrimaryRange, this);
@@ -126,6 +133,7 @@ void AudioController::SetTimingController(std::unique_ptr<AudioTimingController>
 		timing_controller_connection = agi::signal::Connection();
 
 	AnnounceTimingControllerChanged();
+	if (cancelled) std::rethrow_exception(cancelled);
 }
 
 void AudioController::OnTimingControllerUpdatedPrimaryRange()
