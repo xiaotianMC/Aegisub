@@ -1,6 +1,6 @@
 # C1-C1c 活动工程 Owner 与生命周期收口
 
-状态：实施中，尚未完成 C1-C1c，不具备据此开放 Apply Engine 的条件。
+状态：已按任务第十节暂停并提交阻断调查；尚未完成 C1-C1c，不具备进入 Apply Engine 的条件。
 
 ## 基线、安全检查与依赖顺序
 
@@ -113,3 +113,104 @@ Windows x64 Release 成功；应用111/111、模型48/48、基础436/436，共59
 提交名称：fix(compare): detach font collection worker input。
 
 Owner/Lua/Load/Close/完整安装及重绑定仍待后续，不据本批宣布C1-C1c完成。
+
+## 阻断调查与暂停决定（2026-11-02）
+
+执行用户任务第十节的明确停止条件：“如果某个子阶段发现原架构无法安全迁移，暂停并提交调查报告，不要用临时绕过方案强行完成。”此处暂停是上述任务要求；不是需要重复确认此前五项决定，也不是因为构建未通过或缺少推送权限。
+
+### 两项实际失败的生命周期诊断
+
+在 build 下单独构建诊断副本，复用生产应用对象、真实 SubsController/AssFile/Selection/编辑框入口及同一测试宿主，只添加两项诊断；没有改动正式测试源文件、测试数量或判定，也没有修改 signal.h。
+
+1. 比较会话期间调用生产 SubsController::Load。Load 确实抛出授权拒绝，但拒绝前已经 swap 候选、更新文件路径/Metadata、清空 Undo。诊断中当前 Text 从 must survive denied load 变成 replacement candidate；行ID从1变3；Undo描述从 modify text 变空。
+2. 新建一个抛异常的 Commit 观察者后调用生产 Load。抛异常后当前模型仍是 replacement candidate，并未恢复原文本；后续读取观察者的刷新计数为0。生产加载的局部旧模型会在异常展开后析构，因此仍未刷新、持有旧行/样式索引的观察者有悬空引用风险。诊断没有故意解引用悬空地址，也没有把可能的崩溃说成已实际发生。
+
+结果：两项诊断均失败，准确复现尚未满足的安全要求。**它们不是通过项，不计入595/595正常回归。** C1-C1c整体不满足“所有测试通过”的完成条件。
+
+诊断文件：build/c1c1c-lifecycle-probe.cpp、c1c1c-lifecycle-probe.exe、c1c1c-probe-build.cmd、c1c1c-lifecycle-probe.rsp；日志 build/c1c1c-probe-build.log 和 build/c1c1c-lifecycle-probe.log。全部在忽略的build目录和run_isolated.py生成的临时目录执行，无用户数据被改动。运行命令：
+
+```
+python tests/run_isolated.py build/c1c1c-lifecycle-probe.exe --output-root build/c1c1c-lifecycle-probe-data --gtest_filter=ordinary_edit.lifecycle_probe_*
+```
+
+诊断源码（保留以便复核/重建，而不是删除负向失败）：
+
+```cpp
+#include "O:/Aegisub-Native/tests/tests/ordinary_edit.cpp"
+
+TEST_F(ordinary_edit, lifecycle_probe_denied_load_must_preserve_live_model_and_history) {
+    Input("must survive denied load");auto id=c->ass->Events.front().Id;
+    auto undo=c->subsController->GetUndoDescription();
+    AssFile candidate;candidate.LoadDefault();candidate.Events.front().Text="replacement candidate";
+    auto path=agi::fs::path((std::filesystem::current_path()/"probe-candidate.ass").wstring());
+    SubtitleFormat::GetWriter(path)->WriteFile(&candidate,path,0,"utf-8");
+    auto session=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(session);
+    EXPECT_ANY_THROW(c->subsController->Load(path,"utf-8"));
+    EXPECT_EQ("must survive denied load",c->ass->Events.front().Text.get());
+    EXPECT_EQ(id,c->ass->Events.front().Id);
+    EXPECT_EQ(undo,c->subsController->GetUndoDescription());
+}
+TEST_F(ordinary_edit, lifecycle_probe_throwing_observer_must_not_leave_partially_published_load) {
+    Input("must survive observer failure");int refreshed=0;
+    agi::signal::Connection reader=c->ass->AddCommitListener([&](int,AssDialogue const*){++refreshed;});
+    agi::signal::Connection throwing=c->ass->AddCommitListener([](int,AssDialogue const*){throw std::runtime_error("probe observer");});
+    AssFile candidate;candidate.LoadDefault();candidate.Events.front().Text="replacement candidate";
+    auto path=agi::fs::path((std::filesystem::current_path()/"probe-observer.ass").wstring());
+    SubtitleFormat::GetWriter(path)->WriteFile(&candidate,path,0,"utf-8");
+    EXPECT_THROW(c->subsController->Load(path,"utf-8"),std::runtime_error);
+    EXPECT_EQ("must survive observer failure",c->ass->Events.front().Text.get());
+    EXPECT_EQ(1,refreshed);
+}
+
+```
+
+### 为什么不能直接把 Owner 改 private 后加授权包装
+
+- 当前实际链为 Project::DoLoadSubtitles -> SubsController::Load -> 独立解析 -> live swap -> 清历史 -> AssFile::Commit -> 私有历史OnCommit检查 -> 只读通知。只在OnCommit检查WriteLease显然过晚。
+- 只把检查提前、或给Load/Close统一加普通scope，能修复“被拒绝时已经写入”的第一项，却无法修复第二项的中途发布、历史与选择回滚、旧节点释放和观察者失败。
+- C0 SubtitleRebindBatch 现有实现会逐观察者记录明确确认，并在失败时持有retired数据、保持门禁封闭；但是当前生产 Commit/Load 没有接入这个协议。通用Signal遇异常中断，不能把整个Signal当成单个成功观察者、不能以“回调正常返回”冒充明确确认、也不能忽略抛异常后释放旧数据。
+- C0当前WriteLease登记绑定State及owner_active，没有每文档身份字段；Load/Close只做旧Commit失效代数，不能仅靠原租约或取消标记证明旧结果不会写入新文档。需要安装时的独立工程/文档身份校验与失效边界。
+- Lua目前的ProcessingComplete逐个应用pending undo point，直接依赖当前模型的节点和Extradata；Validate/IsActive/config及set_context的若干后台读取还借用Context。机械地改一个独立输入或为每一步加scope，不能证明整个结果批次在失败、取消、换文档时无部分发布，也不能解决同一个观察者失败问题。
+- 因此本次没有创建LegacyMutable、通用mutable AssFile回调、私有owner的公开替身或全局布尔锁来跨过这个边界。
+
+### 继续实施所需的最小架构前置
+
+建议先形成一个明确的“宿主模型安装及回滚”完整功能族，由Load/Close、Lua结果和可信历史恢复共用内部安装能力，再最终private Owner：
+
+1. 在独立输入中完整准备候选值、默认行/样式、ID和Extradata引用、Lua全部历史点、目标选择，以及安装失败时所需的原历史/Metadata/路径/模型状态，准备失败不碰live。
+2. 仅宿主线程通过绑定目标工程、文档身份、修订的私有安装能力进入发布。旧任务令牌明确失效；普通写授权不能伪造恢复或文档替换权限；不向业务返回live AssFile&。
+3. 对必须重绑定的具体观察者接入C0明确确认/失败保留协议。退役节点、历史和控制器状态由安装任务拥有，不能依赖Load局部变量或裸窗口存活；异常和关闭重入不能使该所有权提前消失。
+4. 规定并实现失败恢复：候选/首个历史点发布前拒绝保证原工程不变；发布中通知失败要保留足够状态，回滚或进入明确的失败恢复状态，不能继续开放普通写/比较。旧数据在全部必要观察者完成重绑定前不得释放。
+5. 对两项现有负向诊断改为正式应通过回归，再新增Lua取消/错误/多Undo点、旧工程结果、工程关闭、观察者失败重入/销毁及Save/AutoSave恢复验证。不得仅让当前正常595项继续通过就宣布该族完成。
+
+这属于后续编码必须先完成的内部发布能力，不是提前实现比较窗口或Apply Engine。本轮停止于该安全边界，等待复核后继续，不自动扩大为临时兼容绕过。
+
+## 当前交付总表与最终结论
+
+| 项目 | 本次实际状态 |
+| --- | --- |
+| 保存/CleanExtradata/一致性快照 | 已完成先行隔离；不修改内存字幕，不新增Undo；失败保持、保存重开验证通过 |
+| AutoSave/字体收集 | 已完成独立后台输入和已覆盖的退出/旧结果拒绝；完整工程切换/恢复验收尚未完成 |
+| UI State/Metadata | 已拆分值类型和活动更新入口；独立Metadata修订/脏状态/保存自动保存触发及ASS兼容重开通过；旧Owner旁路仍待封闭 |
+| Undo/Redo | 私有HistoryRestore、只读载荷及私有live历史注册完成；既有历史格式/恢复/合并/通知回归通过；最终owner借用与安装失败整体恢复仍待完成 |
+| Owner最终访问模型 | **未实现**；Context::ass仍公开mutable，不能宣称普通业务已无旁路 |
+| Lua | **未迁移**；仍有live引用、后台Context和逐点发布路径，上述调查已列明 |
+| Load/Close | **未完成**；两项实测负向失败，必须先补内部安装/回滚/重绑定能力 |
+| 编译期保护 | Snapshot独立模型可变、UI无Metadata字段、历史行const/恢复凭据非公开等已通过；Owner不可变等最终负例尚未满足 |
+| 运行时/功能回归 | 已完成四族的595/595正常回归通过；另2项生命周期诊断失败，不合并掩盖 |
+| 持久化 | Save、独立ASS重开、Metadata-only Save→Close→Load及AutoSave文件重开通过；绑定、样式、注释、UTF-8、标准ASS时间精度已测；完整自动保存恢复流程未完成 |
+| Windows | x64 Release实际构建成功 |
+| Linux/macOS CI | GitHub Actions按当前fork分支查询workflow_runs为空；未执行，不声称通过 |
+| 人工 | 实体键鼠、真实媒体/设备、HiDPI、多屏、完整主窗口重入和Lua生态脚本人工验收未执行 |
+| Apply Engine基础条件 | **尚未达到**；C1-C1c未完成 |
+
+已独立提交、普通推送并逐批核对一致：
+
+- 9c8b507103b83dba816febb275542eb0477c1c90 — fix(compare): isolate save snapshots and autosave results
+- 844bac5b3cfc570412360f0b0a66542f78780d33 — refactor(compare): separate project metadata from ui state
+- c67175fe1e49aeecf5ee61846986b1e17408b724 — refactor(compare): restrict live history restoration authority
+- ff46c1c5da5c0de605dcb3b3eea3d35a31fd39cc — fix(compare): detach font collection worker input
+
+暂停调查报告独立提交名称：docs(compare): record lifecycle publication blockers。该报告提交哈希以提交后实际远端核对为准，避免自引用哈希。
+
+最终检查三个用户保护文件SHA256与本轮开始完全一致；原有三个未提交/未跟踪项目均保留，不纳入提交。没有改signal.h、增加第三方依赖、改变Undo历史格式、引入永久mutable兼容入口、实现比较窗口、Apply Engine或移动端。
