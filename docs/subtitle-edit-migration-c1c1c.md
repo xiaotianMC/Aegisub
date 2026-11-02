@@ -101,3 +101,15 @@ Windows x64 Release 成功；应用110/110、模型48/48、基础436/436，共59
 提交名称：refactor(compare): restrict live history restoration authority。
 
 剩余不变：Owner、Load/Close和Lua模型发布/身份/重绑定、字体收集；公共mutable owner存在期间不声称普通业务所有绕过均被封闭。
+
+## 第四批：字体收集后台输入与窗口退出（C1-C1c-5 后台读取边界）
+
+第三批实提交c67175fe1e49aeecf5ee61846986b1e17408b724，普通推送/远端一致。其新增撤销测试首轮错误地把两个STARTACTION视作同组；按既有两组语义修正断言后完整复验，未改生产撤销粒度。
+
+修改 src/dialog_fonts_collector.cpp、tests/tests/ordinary_edit.cpp 及本报告。原 DialogFontsCollector 长期保存活动 AssFile* 和 Context 路径引用，将 live 模型直接传给公共后台队列，窗口退出仅靠禁用关闭按钮。本批在每次Start主线程取得 shared_ptr<const AssFile> 独立快照并传入worker，路径在宿主线程复制；窗口拥有自己的串行队列，析构等待队列退出，worker不再在事件目标销毁后继续投递。等待期间不持有模型/门禁互斥锁，不新增模型租约，独立字体读取在比较会话中可启动。
+
+Windows x64 Release 成功；应用111/111、模型48/48、基础436/436，共595/595。新增实际模型窗口和Start按钮后台路径测试：比较期间启动、不改变字幕修订；快照启动后编辑当前字幕、取消窗口和父窗口销毁均正常，当前文本保持后续编辑。其余594项保留。日志 build/c1c1c-fonts-{build,app,model,base}.log，差异检查通过。
+
+提交名称：fix(compare): detach font collection worker input。
+
+Owner/Lua/Load/Close/完整安装及重绑定仍待后续，不据本批宣布C1-C1c完成。

@@ -15,6 +15,7 @@
 // Aegisub Project http://www.aegisub.org/
 
 #include "font_file_lister.h"
+#include "subtitle_project_access.h"
 
 #include "compat.h"
 #include "dialog_manager.h"
@@ -56,8 +57,9 @@ enum class FcMode {
 };
 
 class DialogFontsCollector final : public wxDialog {
-	AssFile *subs;
-	agi::Path &path;
+    agi::Context *context;
+    agi::Path path;
+    std::unique_ptr<agi::dispatch::Queue> queue = agi::dispatch::Create();
 	FcMode mode = FcMode::CheckFontsOnly;
 
 	wxStyledTextCtrl *collection_log;
@@ -81,21 +83,22 @@ class DialogFontsCollector final : public wxDialog {
 
 public:
 	DialogFontsCollector(agi::Context *c);
+    ~DialogFontsCollector() override { queue->Sync([]{}); }
 };
 
 using color_str_pair = std::pair<int, wxString>;
 wxDEFINE_EVENT(EVT_ADD_TEXT, ValueEvent<color_str_pair>);
 wxDEFINE_EVENT(EVT_COLLECTION_DONE, wxThreadEvent);
 
-void FontsCollectorThread(AssFile *subs, agi::fs::path const& destination, FcMode oper, wxEvtHandler *collector) {
-	agi::dispatch::Background().Async([=]{
+void FontsCollectorThread(agi::dispatch::Queue& queue, std::shared_ptr<AssFile const> subs, agi::fs::path const& destination, FcMode oper, wxEvtHandler *collector) {
+	queue.Async([=]{
 		auto AppendText = [&](wxString text, int colour) {
 			collector->AddPendingEvent(ValueEvent<color_str_pair>(EVT_ADD_TEXT, -1, {colour, text.Clone()}));
 		};
 
 		std::vector<agi::fs::path> paths;
 		try {
-			paths = FontCollector(AppendText).GetFontPaths(subs);
+			paths = FontCollector(AppendText).GetFontPaths(subs.get());
 		}
 		catch (agi::EnvironmentError const& err) {
 			AppendText(fmt_tl("* An error occurred when enumerating the used fonts: %s.\n", err.GetMessage()), 2);
@@ -224,7 +227,7 @@ void FontsCollectorThread(AssFile *subs, agi::fs::path const& destination, FcMod
 
 DialogFontsCollector::DialogFontsCollector(agi::Context *c)
 : wxDialog(c->parent, -1, _("Fonts Collector"))
-, subs(c->ass.get())
+, context(c)
 , path(*c->path)
 {
 	SetIcons(GETICONS(font_collector_button));
@@ -298,6 +301,7 @@ DialogFontsCollector::DialogFontsCollector(agi::Context *c)
 }
 
 void DialogFontsCollector::OnStart(wxCommandEvent &) {
+    path = *context->path;
 	collection_log->SetReadOnly(false);
 	collection_log->ClearAll();
 	collection_log->SetReadOnly(true);
@@ -327,6 +331,7 @@ void DialogFontsCollector::OnStart(wxCommandEvent &) {
 	}
 
 	// Disable the UI while it runs as we don't support canceling
+    auto snapshot = std::shared_ptr<AssFile const>(context->subtitleAccess->Snapshot());
 	EnableCloseButton(false);
 	start_btn->Enable(false);
 	dest_browse_button->Enable(false);
@@ -335,7 +340,7 @@ void DialogFontsCollector::OnStart(wxCommandEvent &) {
 	collection_mode->Enable(false);
 	dest_label->Enable(false);
 
-	FontsCollectorThread(subs, dest_path, mode, GetEventHandler());
+	FontsCollectorThread(*queue, std::move(snapshot), dest_path, mode, GetEventHandler());
 }
 
 void DialogFontsCollector::OnBrowse(wxCommandEvent &) {

@@ -1780,3 +1780,19 @@ TEST_F(ordinary_edit, ordinary_scope_cannot_register_a_live_history_writer_or_ch
     c->subsController->Redo();EXPECT_EQ("same undo group",c->ass->Events.front().Text.get());
     EXPECT_EQ(description,c->subsController->GetUndoDescription());
 }
+
+TEST_F(ordinary_edit, font_collection_uses_snapshot_and_can_be_destroyed_with_worker_pending) {
+    auto action=OPT_GET("Tool/Fonts Collector/Action")->GetInt();OPT_SET("Tool/Fonts Collector/Action")->SetInt(0);
+    Input("font snapshot");auto revision=c->subtitleEditGate.Revision();
+    ShowFontsCollectorDialog(c.get());wxDialog* dialog=nullptr;wxButton* start=nullptr;
+    for(auto child:descendants(window))if(auto candidate=dynamic_cast<wxDialog*>(child);candidate && candidate->GetTitle()=="Fonts Collector")dialog=candidate;
+    ASSERT_NE(nullptr,dialog);
+    for(auto child:descendants(dialog))if(auto candidate=dynamic_cast<wxButton*>(child);candidate && candidate->GetLabel()=="&Start!")start=candidate;
+    ASSERT_NE(nullptr,start);
+    auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);
+    button(start,start->GetId());EXPECT_EQ(revision,c->subtitleEditGate.Revision());
+    comparison.reset();Input("edited while worker owns snapshot");
+    button(dialog,wxID_CANCEL); // unregisters; parent destruction drains the private worker queue
+    EXPECT_EQ("edited while worker owns snapshot",c->ass->Events.front().Text.get());
+    OPT_SET("Tool/Fonts Collector/Action")->SetInt(action);
+}
