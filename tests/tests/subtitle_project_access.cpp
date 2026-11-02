@@ -328,3 +328,72 @@ TEST(subtitle_project_access, live_history_registration_is_private_but_independe
     auto scope=access.TryWrite();ASSERT_TRUE(scope);
     access.Edit(scope->Lease()).Commit(wxString{},AssFile::COMMIT_NEW);
 }
+
+#include "../../src/subtitle_model_candidate.h"
+#include "../../src/subtitle_model_observers.h"
+TEST(model_installation_preparation, candidate_is_independent_complete_and_cancellable) {
+    AssFile source;source.Properties.active_row=200;source.Properties.export_encoding="utf-8";
+    SubtitleModelCandidate prepared(source);ASSERT_TRUE(prepared.Available());
+    EXPECT_TRUE(source.Events.empty());EXPECT_TRUE(source.Styles.empty());
+    EXPECT_EQ(1u,prepared.Read().Events.size());EXPECT_EQ(1u,prepared.Read().Styles.size());
+    EXPECT_EQ("utf-8",prepared.Read().Properties.export_encoding);EXPECT_EQ(0,prepared.Read().Properties.active_row);
+    EXPECT_EQ((std::set<int>{prepared.ActiveID()}),prepared.SelectedIDs());
+    prepared.Cancel();EXPECT_FALSE(prepared.Available());
+}
+TEST(model_installation_preparation, duplicate_ids_and_missing_extra_references_fail_before_source_changes) {
+    AssFile source;source.Events.push_back(*new AssDialogue);auto other=new AssDialogue;other->Id=source.Events.front().Id;source.Events.push_back(*other);
+    EXPECT_THROW(SubtitleModelCandidate{source},std::invalid_argument);
+    other->Id+=100000;source.Events.front().ExtradataIds=std::vector<uint32_t>{123};
+    EXPECT_THROW(SubtitleModelCandidate{source},std::invalid_argument);
+    EXPECT_EQ(2u,source.Events.size());EXPECT_EQ((std::vector<uint32_t>{123}),source.Events.front().ExtradataIds.get());
+}
+TEST(model_installation_preparation, stable_ids_bindings_and_input_nodes_remain_independent) {
+    AssFile source;source.Events.push_back(*new AssDialogue);auto a=&source.Events.front();auto b=new AssDialogue;source.Events.push_back(*b);
+    auto extra=source.AddExtradata("aegisub.enhanced.subtitle-binding","0:install");
+    a->ExtradataIds=std::vector<uint32_t>{extra};b->ExtradataIds=std::vector<uint32_t>{extra};source.Properties.active_row=1;
+    SubtitleModelCandidate prepared(source);EXPECT_NE(a,&prepared.Read().Events.front());
+    EXPECT_EQ(a->Id,prepared.Read().Events.front().Id);EXPECT_EQ(b->Id,prepared.ActiveID());
+    EXPECT_EQ((std::set<int>{a->Id,b->Id}),prepared.SelectedIDs());a->Text="source changed";
+    EXPECT_EQ("",prepared.Read().Events.front().Text.get());
+}
+TEST(model_installation_preparation, normal_observer_order_and_exceptions_are_preserved) {
+    SubtitleModelObservers<int> observers("normal");std::vector<int> seen;
+    agi::signal::Connection a=observers.Add([&](int value){seen.push_back(value);});
+    agi::signal::Connection b=observers.Add([&]{throw std::runtime_error("normal");});
+    EXPECT_THROW(observers(3),std::runtime_error);EXPECT_TRUE(seen.empty());
+    b.Disconnect();observers(4);EXPECT_EQ((std::vector<int>{4}),seen);
+}
+TEST(model_installation_preparation, explicit_acknowledgements_isolate_failures_and_retain_old_model) {
+    SubtitleModelObservers<int> observers("install");using Ticket=agi::SubtitleRebindBatch::Ticket;
+    std::vector<int> seen;bool fail=true;
+    agi::signal::Connection a=observers.Add([&](int,Ticket ticket){seen.push_back(1);ticket.Acknowledge(ticket.Revision());});
+    agi::signal::Connection b=observers.Add([&](int,Ticket ticket){seen.push_back(2);if(fail)throw std::runtime_error("observer");ticket.Acknowledge(ticket.Revision());});
+    agi::signal::Connection c=observers.Add([&](int,Ticket ticket){seen.push_back(3);ticket.Acknowledge(ticket.Revision());});
+    auto prepared=observers.PrepareObservers();prepared.Prepare();
+    agi::SubtitleEditGate gate;auto session=gate.TryBeginComparison();auto old=std::make_shared<AssFile>();std::weak_ptr<AssFile> lifetime=old;
+    agi::SubtitleRebindBatch batch(std::move(*session),old,prepared.Names());old.reset();
+    prepared.Dispatch(batch,0,7);EXPECT_EQ((std::vector<int>{3,2,1}),seen);EXPECT_FALSE(batch.Complete());
+    EXPECT_EQ(1u,batch.Pending().size());EXPECT_FALSE(lifetime.expired());EXPECT_FALSE(gate.TryBeginWrite());EXPECT_FALSE(gate.TryBeginComparison());
+    fail=false;prepared.Dispatch(batch,0,7);EXPECT_TRUE(batch.Complete());EXPECT_TRUE(lifetime.expired());EXPECT_TRUE(gate.TryBeginWrite());
+}
+TEST(model_installation_preparation, return_without_ack_is_not_success_and_unsubscription_withdraws_safely) {
+    SubtitleModelObservers<int> observers("legacy");int calls=0;
+    agi::signal::Connection listener=observers.Add([&](int){++calls;});auto prepared=observers.PrepareObservers();
+    agi::SubtitleEditGate gate;auto session=gate.TryBeginComparison();auto old=std::make_shared<AssFile>();
+    agi::SubtitleRebindBatch batch(std::move(*session),old,prepared.Names());
+    prepared.Dispatch(batch,0,1);EXPECT_EQ(1,calls);EXPECT_FALSE(batch.Complete());
+    EXPECT_THROW(observers.Add([]{}),std::logic_error);
+    listener.Disconnect();prepared.Dispatch(batch,0,1);EXPECT_EQ(1,calls);EXPECT_TRUE(batch.Complete());
+}
+TEST(model_installation_preparation, observer_prepare_failure_is_not_a_publication_or_revision_change) {
+    SubtitleModelObservers<> observers("prepare");using Ticket=agi::SubtitleRebindBatch::Ticket;
+    agi::signal::Connection listener=observers.Observe("failing",[]{throw std::runtime_error("prepare");},[](Ticket ticket){ticket.Acknowledge(ticket.Revision());});
+    agi::SubtitleEditGate gate;auto revision=gate.Revision();
+    {auto prepared=observers.PrepareObservers();EXPECT_THROW(prepared.Prepare(),std::runtime_error);}
+    EXPECT_EQ(revision,gate.Revision());EXPECT_TRUE(gate.TryBeginComparison());
+    agi::signal::Connection later=observers.Add([]{});
+}
+
+template<class T> concept PublicDocumentPublication = requires(T& value) { value.PublishDocumentRevision(); };
+static_assert(!PublicDocumentPublication<agi::SubtitleRebindBatch>);
+static_assert(std::is_same_v<decltype(std::declval<SubtitleModelCandidate const&>().Read()),AssFile const&>);

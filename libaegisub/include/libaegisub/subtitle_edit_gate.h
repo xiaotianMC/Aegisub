@@ -5,9 +5,12 @@
 #include <memory>
 #include <optional>
 
+class SubtitleModelInstallation;
+
 namespace agi {
 struct SubtitleRevision {
     uint64_t document = 0, generation = 0;
+    uint64_t document_epoch = 0; // New document within the same project State.
     bool operator==(SubtitleRevision const&) const = default;
 };
 class SubtitleRebindBatch;
@@ -60,6 +63,8 @@ public:
         friend class SubtitleRebindBatch;
         void RetainUntilRebound(std::shared_ptr<void const>);
         void FinishRebinding(SubtitleRevision);
+        SubtitleRevision PrepareDocumentRevision() const;
+        RevisionToken PublishDocumentRevision(SubtitleRevision);
     public:
         ComparisonSession(ComparisonSession&&) noexcept;
         ComparisonSession& operator=(ComparisonSession&&) noexcept;

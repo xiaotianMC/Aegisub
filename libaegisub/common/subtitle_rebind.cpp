@@ -39,13 +39,22 @@ void SubtitleRebindBatch::Ticket::Acknowledge(SubtitleRevision expected) {
     s->failures.at(observer) = nullptr;
 }
 SubtitleRebindBatch::SubtitleRebindBatch(SubtitleEditGate::ComparisonSession&& value,
-    std::shared_ptr<void const> retired, std::vector<std::string> observers)
+    std::shared_ptr<void const> retired, std::vector<std::string> observers, bool prepare_document)
 : state(std::make_shared<State>(value.Capture(), std::move(observers))), session(std::move(value)) {
     auto sorted = state->observers;
     std::sort(sorted.begin(), sorted.end());
     if (std::adjacent_find(sorted.begin(), sorted.end()) != sorted.end()) throw std::invalid_argument("Duplicate subtitle observer name");
+    if (prepare_document) prepared_document = session->PrepareDocumentRevision();
     state->retired = retired; // Also pins nodes if the document closes during a callback.
     session->RetainUntilRebound(std::move(retired));
+}
+SubtitleRevision SubtitleRebindBatch::PublishDocumentRevision() {
+    std::lock_guard lock(state->mutex);
+    if (!prepared_document || !state->active || state->in_flight)
+        throw std::logic_error("Document installation was not prepared or already published");
+    state->token = session->PublishDocumentRevision(*prepared_document);
+    prepared_document.reset();
+    return state->token.Revision();
 }
 SubtitleRebindBatch::~SubtitleRebindBatch() {
     std::lock_guard lock(state->mutex); state->active = false;

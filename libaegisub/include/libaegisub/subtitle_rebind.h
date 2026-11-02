@@ -14,19 +14,24 @@ class SubtitleRebindBatch {
     struct State;
     std::shared_ptr<State> state;
     std::optional<SubtitleEditGate::ComparisonSession> session;
+    std::optional<SubtitleRevision> prepared_document;
+    friend class ::SubtitleModelInstallation;
+    SubtitleRevision PublishDocumentRevision();
 public:
     class Ticket {
         std::weak_ptr<State> state;
-        size_t observer;
+        size_t observer = 0;
         Ticket(std::shared_ptr<State> const&, size_t);
         friend class SubtitleRebindBatch;
     public:
+        Ticket() = default; // Ordinary notifications carry no installation authority.
         bool Current() const;
         SubtitleRevision Revision() const;
         void Acknowledge(SubtitleRevision);
     };
     SubtitleRebindBatch(SubtitleEditGate::ComparisonSession&&,
-        std::shared_ptr<void const> retired, std::vector<std::string> observers);
+        std::shared_ptr<void const> retired, std::vector<std::string> observers,
+        bool prepare_document = false);
     SubtitleRebindBatch(SubtitleRebindBatch const&) = delete;
     SubtitleRebindBatch& operator=(SubtitleRebindBatch const&) = delete;
     ~SubtitleRebindBatch();

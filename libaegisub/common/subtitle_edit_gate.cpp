@@ -45,6 +45,7 @@ struct SubtitleEditGate::WriteLease::Registration {
     std::shared_ptr<State> state;
     bool enrolled = false;
     bool owner_active = false;
+    uint64_t document_epoch = 0;
     explicit Registration(std::shared_ptr<State> value) : state(std::move(value)) { }
     ~Registration() {
         if (!enrolled) return;
@@ -76,21 +77,23 @@ SubtitleEditGate::WriteLease::~WriteLease() { Release(); }
 bool SubtitleEditGate::WriteLease::Valid() const {
     if (!registration) return false;
     std::lock_guard lock(registration->state->mutex);
-    return registration->owner_active && registration->state->alive && !registration->state->comparison;
+    return registration->owner_active && registration->state->alive && !registration->state->comparison &&
+        registration->document_epoch == registration->state->revision.document_epoch;
 }
 SubtitleEditGate::WriteLease::Token::Token(std::shared_ptr<Registration> const& value) : registration(value) { }
 bool SubtitleEditGate::WriteLease::Token::Valid() const {
     auto r = registration.lock();
     if (!r) return false;
     std::lock_guard lock(r->state->mutex);
-    return r->owner_active && r->state->alive && !r->state->comparison;
+    return r->owner_active && r->state->alive && !r->state->comparison &&
+        r->document_epoch == r->state->revision.document_epoch;
 }
 std::shared_ptr<void const> SubtitleEditGate::WriteLease::Token::Hold() const {
     auto r = registration.lock();
     if (!r) throw std::logic_error("Expired subtitle write access");
     {
         std::lock_guard lock(r->state->mutex);
-        if (!r->owner_active || !r->state->alive || r->state->comparison)
+        if (!r->owner_active || !r->state->alive || r->state->comparison || r->document_epoch != r->state->revision.document_epoch)
             throw std::logic_error("Invalid subtitle write access");
     }
     return r;
@@ -127,6 +130,23 @@ SubtitleEditGate::RevisionToken SubtitleEditGate::ComparisonSession::Capture() c
     auto revision = Revision();
     return RevisionToken(registration->state, revision);
 }
+SubtitleRevision SubtitleEditGate::ComparisonSession::PrepareDocumentRevision() const {
+    auto next = Revision();
+    increment(next.generation);
+    increment(next.document_epoch);
+    return next;
+}
+SubtitleEditGate::RevisionToken SubtitleEditGate::ComparisonSession::PublishDocumentRevision(SubtitleRevision next) {
+    if (!registration) throw std::logic_error("Expired document installation session");
+    std::lock_guard lock(registration->state->mutex);
+    auto& s = *registration->state;
+    auto expected = s.revision;
+    increment(expected.generation);increment(expected.document_epoch);
+    if (!s.alive || s.comparison != registration->id || !s.rebinding || expected != next)
+        throw std::logic_error("Stale document installation revision");
+    s.revision = next;
+    return RevisionToken(registration->state, next);
+}
 void SubtitleEditGate::ComparisonSession::RetainUntilRebound(std::shared_ptr<void const> retired) {
     if (!registration || !retired) throw std::invalid_argument("Missing subtitle session or retired state");
     std::lock_guard lock(registration->state->mutex);
@@ -156,6 +176,7 @@ std::optional<SubtitleEditGate::WriteLease> SubtitleEditGate::TryBeginWrite() {
     if (state->writers == std::numeric_limits<uint64_t>::max()) throw std::overflow_error("Subtitle writer count exhausted");
     increment(state->revision.generation);
     ++state->writers; registration->enrolled = registration->owner_active = true;
+    registration->document_epoch = state->revision.document_epoch;
     return WriteLease(std::move(registration));
 }
 std::optional<SubtitleEditGate::ComparisonSession> SubtitleEditGate::TryBeginComparison() {
