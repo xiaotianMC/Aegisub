@@ -1765,3 +1765,18 @@ TEST_F(ordinary_edit, metadata_only_change_triggers_autosave_after_a_clean_manua
     EXPECT_EQ("metadata only",reopened.Properties.automation_settings.at("test"));
     OPT_SET("Path/Auto/Save")->SetString(old);
 }
+
+template<class T> concept PublicHistoryRestore = requires { typename T::HistoryRestore; };
+static_assert(!PublicHistoryRestore<SubsController>);
+TEST_F(ordinary_edit, ordinary_scope_cannot_register_a_live_history_writer_or_change_undo_granularity) {
+    auto scope=c->subtitleAccess->TryWrite();ASSERT_TRUE(scope);
+    EXPECT_THROW(c->ass->AddUndoManager([](AssFileCommit const&){}),std::logic_error);
+    scope.reset();Input("first history edit");Input("same undo group");
+    auto description=c->subsController->GetUndoDescription();
+    // Input emits STARTACTION, so each call retains its own existing Undo group.
+    c->subsController->Undo();EXPECT_EQ("first history edit",c->ass->Events.front().Text.get());
+    c->subsController->Undo();EXPECT_EQ("",c->ass->Events.front().Text.get());
+    c->subsController->Redo();EXPECT_EQ("first history edit",c->ass->Events.front().Text.get());
+    c->subsController->Redo();EXPECT_EQ("same undo group",c->ass->Events.front().Text.get());
+    EXPECT_EQ(description,c->subsController->GetUndoDescription());
+}

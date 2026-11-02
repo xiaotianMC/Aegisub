@@ -38,6 +38,7 @@
 #include <boost/intrusive/list.hpp>
 #include <map>
 #include <set>
+#include <stdexcept>
 #include <vector>
 
 class AssAttachment;
@@ -59,7 +60,7 @@ struct ExtradataEntry {
 struct AssFileCommit {
 	wxString const& message;
 	int *commit_id;
-	AssDialogue *single_line;
+	AssDialogue const* single_line;
 };
 
 struct ProjectMetadata {
@@ -87,6 +88,7 @@ struct ProjectProperties : ProjectMetadata, ProjectUIState {};
 
 class AssFile {
     friend class SubtitleProjectAccess;
+    friend class SubsController;
     friend class SelectionController;
     // Identity belongs to the live file, never copied or swapped into snapshots.
     agi::SubtitleEditGate *edit_gate = nullptr;
@@ -197,7 +199,12 @@ public:
     agi::signal::UnscopedConnection AddCommitListener(Args&&... args) const {
         return AnnounceCommit.Connect(std::forward<Args>(args)...);
     }
-	DEFINE_SIGNAL_ADDERS(PushState, AddUndoManager)
+    // Independent models may observe their own history. Live history registration
+    // belongs exclusively to SubsController, not to ordinary business code.
+    template<typename... Args> agi::signal::UnscopedConnection AddUndoManager(Args&&... args) {
+        if (edit_gate) throw std::logic_error("Live subtitle history is internal");
+        return PushState.Connect(std::forward<Args>(args)...);
+    }
 
 	/// @brief Flag the file as modified and push a copy onto the undo stack
 	/// @param desc        Undo description

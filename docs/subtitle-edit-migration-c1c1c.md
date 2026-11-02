@@ -85,3 +85,19 @@ Windows x64 Release 成功；应用109/109、模型47/47、基础436/436，共59
 提交名称：refactor(compare): separate project metadata from ui state。
 
 剩余：公开 Context owner、可信历史恢复、Lua 工作数据与结果发布、Load/Close 工程身份和观察者重绑定、字体收集后台输入尚未最终封闭。AssFile parser 使用成员指针只作用于独立目标，不作为活动工程修改入口；不能把本批 Metadata 分离当作整个 Owner 已私有化。
+
+## 第三批：可信历史恢复能力（C1-C1c-2 先行）
+
+第二批实提交844bac5b3cfc570412360f0b0a66542f78780d33，普通推送、本地/远端一致。
+
+实际调用链：AssFile::Commit -> PushState -> SubsController::OnCommit；Undo/Redo -> UndoInfo::Apply -> 模型重建/Commit/选择及文字选区恢复。原 AddUndoManager 对活动工程开放，AssFileCommit.single_line 为 mutable live 行。
+
+修改 src/ass_file.h、src/subs_controller.h/.cpp、tests/tests/subtitle_project_access.cpp、tests/tests/ordinary_edit.cpp 及本报告。独立 AssFile 继续允许自身 AddUndoManager；活动工程的普通注册一律拒绝，由 friend SubsController 在内部连接 PushState。提交载荷的行变为 const，普通业务不能从历史载荷写 live 行。Undo/Redo 在已有工程写授权和 history_action 之后创建私有 HistoryRestore，Apply 额外验证控制器/工程归属、授权存活、精确修订、非通知阶段。凭据类型不能被业务命名，也没有返回可变 AssFile 的回调或替代 API。
+
+保留现有 UndoInfo 的字段、模型重建顺序、旧节点保留、合并规则、描述和选择/文字选区恢复；OnCommit 仍是受信内部维护，按原顺序补默认行/样式、更新历史、联动保存，不变成普通观察者。该类仍借用旧 Context::ass，最终 Owner 私有化时收口内部借用，不能据本批宣布全工程已隔离。
+
+Windows x64 Release 成功；应用110/110、模型48/48、基础436/436，共594/594。新测试实际验证普通写授权不能注册活动历史回调、真实编辑Undo合并与Redo，独立模型历史仍可用；compile约束确认历史恢复凭据非公开、single_line仅const。已有592项及通知回调重入拒绝测试保留。日志 build/c1c1c-history-{build,app,model,base}.log。git diff --check通过。
+
+提交名称：refactor(compare): restrict live history restoration authority。
+
+剩余不变：Owner、Load/Close和Lua模型发布/身份/重绑定、字体收集；公共mutable owner存在期间不声称普通业务所有绕过均被封闭。

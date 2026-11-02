@@ -317,3 +317,14 @@ TEST(subtitle_project_access, metadata_and_ui_have_separate_revisions_dirty_stat
     });worker.join();
     access.Close();EXPECT_THROW(access.SetMetadata(Field::ExportEncoding,"utf-8"),std::logic_error);
 }
+
+static_assert(std::is_same_v<decltype(std::declval<AssFileCommit>().single_line),AssDialogue const*>);
+TEST(subtitle_project_access, live_history_registration_is_private_but_independent_history_stays_usable) {
+    AssFile independent;int notices=0;
+    agi::signal::Connection listener=independent.AddUndoManager([&](AssFileCommit const&){++notices;});
+    independent.Commit(wxString{},AssFile::COMMIT_NEW);EXPECT_EQ(1,notices);
+    AssFile live;agi::SubtitleEditGate gate;SubtitleProjectAccess access(live,gate);
+    EXPECT_THROW(live.AddUndoManager([](AssFileCommit const&){}),std::logic_error);
+    auto scope=access.TryWrite();ASSERT_TRUE(scope);
+    access.Edit(scope->Lease()).Commit(wxString{},AssFile::COMMIT_NEW);
+}

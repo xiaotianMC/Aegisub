@@ -18,6 +18,7 @@
 
 #include <libaegisub/fs.h>
 #include <libaegisub/signal.h>
+#include <libaegisub/subtitle_edit_gate.h>
 
 #include <boost/container/list.hpp>
 #include <cstdint>
@@ -41,6 +42,13 @@ class SubsController : private agi::signal::ConnectionScope {
 	agi::signal::Connection text_selection_connection;
 
 	struct UndoInfo;
+    // Private authority minted only after Undo/Redo has admitted a history action.
+    // No business API returns this capability or a mutable model reference.
+    struct HistoryRestore {
+        SubsController const* owner;
+        agi::SubtitleEditGate::WriteLease::Token authority;
+        agi::SubtitleEditGate::RevisionToken revision;
+    };
 	boost::container::list<UndoInfo> undo_stack;
 	boost::container::list<UndoInfo> redo_stack;
 

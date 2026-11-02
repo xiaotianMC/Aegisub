@@ -87,7 +87,10 @@ struct SubsController::UndoInfo {
 		UpdateTextSelection(c);
 	}
 
-	void Apply(agi::Context *c) const {
+	void Apply(agi::Context *c, HistoryRestore const& permission) const {
+        if (permission.owner->context != c || !permission.owner->history_action ||
+            !permission.authority.Valid() || !c->subtitleEditGate.Authorizes(permission.revision) || c->ass->IsNotifying())
+            throw std::logic_error("Invalid subtitle history restoration authority");
 		// Keep old dialogue lines alive until after the commit is complete
 		// since a bunch of stuff holds references to them
 		AssFile old;
@@ -141,7 +144,7 @@ struct SubsController::UndoInfo {
 
 SubsController::SubsController(agi::Context *context)
 : context(context)
-, undo_connection(context->ass->AddUndoManager(&SubsController::OnCommit, this))
+, undo_connection(context->ass->PushState.Connect(&SubsController::OnCommit, this))
 , text_selection_connection(context->textSelectionController->AddSelectionListener(&SubsController::OnTextSelectionChanged, this))
 , autosave_queue(agi::dispatch::Create())
 {
@@ -413,7 +416,8 @@ void SubsController::Undo() {
 	commit_id = undo_stack.back().commit_id;
 
 	text_selection_connection.Block();
-	undo_stack.back().Apply(context);
+    HistoryRestore permission{this, edit_scope->Lease().Capture(), context->subtitleEditGate.Capture()};
+	undo_stack.back().Apply(context, permission);
 	text_selection_connection.Unblock();
 }
 
@@ -428,7 +432,8 @@ void SubsController::Redo() {
 	commit_id = undo_stack.back().commit_id;
 
 	text_selection_connection.Block();
-	undo_stack.back().Apply(context);
+    HistoryRestore permission{this, edit_scope->Lease().Capture(), context->subtitleEditGate.Capture()};
+	undo_stack.back().Apply(context, permission);
 	text_selection_connection.Unblock();
 }
 
