@@ -76,7 +76,8 @@ class SubsEditBox final : public wxPanel {
 	std::list<ToolTipBinding> tool_tip_bindings;
 
 	/// Currently active dialogue line
-	AssDialogue const* line = nullptr;
+	int active_id = 0;
+    AssDialogue const* CurrentLine() const;
 	AssStyle const* active_style = nullptr;
 
 	/// Are the buttons currently split into two lines?

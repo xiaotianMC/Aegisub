@@ -99,8 +99,8 @@ struct SubsController::UndoInfo {
 
 		sort(begin(selection), end(selection));
 
-		AssDialogue *active_line = nullptr;
-		Selection new_sel;
+		int active = 0;
+        std::set<int> new_sel;
 
 		for (auto const& info : script_info)
 			c->ass->Info.push_back(*new AssInfo(info.first, info.second));
@@ -111,32 +111,26 @@ struct SubsController::UndoInfo {
 			auto copy = new AssDialogue(event);
 			c->ass->Events.push_back(*copy);
 			if (copy->Id == active_line_id)
-				active_line = copy;
+				active = copy->Id;
 			if (binary_search(begin(selection), end(selection), copy->Id))
-				new_sel.insert(copy);
+				new_sel.insert(copy->Id);
 		}
 		c->ass->Extradata = extradata;
 
 		c->ass->Commit("", AssFile::COMMIT_NEW);
-		c->selectionController->SetSelectionAndActive(std::move(new_sel), active_line);
+		c->selectionController->SetSelectionAndActiveIDs(std::move(new_sel), active);
 
 		c->textSelectionController->SetInsertionPoint(pos);
 		c->textSelectionController->SetSelection(sel_start, sel_end);
 	}
 
-	void UpdateActiveLine(const agi::Context *c) {
-		auto line = c->selectionController->ReadActiveLine();
-		if (line)
-			active_line_id = line->Id;
-	}
-
-	void UpdateSelection(const agi::Context *c) {
-		auto const& sel = c->selectionController->ReadSelectedSet();
-		selection.clear();
-		selection.reserve(sel.size());
-		for (const auto diag : sel)
-			selection.push_back(diag->Id);
-	}
+    void UpdateActiveLine(const agi::Context *c) {
+        if (auto id = c->selectionController->ActiveID()) active_line_id = id;
+    }
+    void UpdateSelection(const agi::Context *c) {
+        auto ids = c->selectionController->SelectedIDs();
+        selection.assign(ids.begin(), ids.end());
+    }
 
 	void UpdateTextSelection(const agi::Context *c) {
 		pos = c->textSelectionController->GetInsertionPoint();

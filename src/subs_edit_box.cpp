@@ -337,7 +337,14 @@ wxRadioButton *SubsEditBox::MakeRadio(wxString const& text, bool start, wxString
 	return ctrl;
 }
 
+AssDialogue const* SubsEditBox::CurrentLine() const {
+    for (auto const& row : c->subtitleAccess->Read().Events)
+        if (row.Id == active_id) return &row;
+    return nullptr;
+}
+
 void SubsEditBox::OnCommit(int type) {
+    auto line = CurrentLine();
 	wxEventBlocker blocker(this);
 
 	initial_times.clear();
@@ -365,6 +372,7 @@ void SubsEditBox::OnCommit(int type) {
 }
 
 void SubsEditBox::UpdateFields(int type, bool repopulate_lists) {
+    auto line = CurrentLine();
 	if (!line) return;
 
 	if (type & AssFile::COMMIT_DIAG_TIME) {
@@ -426,9 +434,9 @@ void SubsEditBox::PopulateList(wxComboBox *combo, boost::flyweight<std::string> 
 }
 
 void SubsEditBox::OnActiveLineChanged() {
-    auto new_line = c->selectionController->ReadActiveLine();
-	wxEventBlocker blocker(this);
-	line = new_line;
+    active_id = c->selectionController->ActiveID();
+    wxEventBlocker blocker(this);
+    SetControlsState(CurrentLine() != nullptr);
 	commit_id = -1;
 
 	UpdateFields(AssFile::COMMIT_DIAG_FULL, false);
@@ -464,6 +472,7 @@ void SubsEditBox::OnKeyDown(wxKeyEvent &event) {
 }
 
 void SubsEditBox::OnChange(wxStyledTextEvent &event) {
+    auto line = CurrentLine();
 	if (line && edit_ctrl->GetTextRaw().data() != line->Text.get()) {
 		if (event.GetModificationType() & wxSTC_STARTACTION)
 			commit_id = -1;
@@ -512,6 +521,7 @@ void SubsEditBox::CommitText(wxString const& desc) {
 }
 
 void SubsEditBox::CommitTimes(TimeField field) {
+    auto line = CurrentLine();
     auto write = c->subtitleAccess->TryWrite();
     if (!write) { wxEventBlocker blocker(this); UpdateFields(AssFile::COMMIT_DIAG_FULL, false); return; }
 	auto const& sel = c->selectionController->ReadSelectedSet();
@@ -651,6 +661,7 @@ void SubsEditBox::DoOnSplit(bool show_original) {
 }
 
 void SubsEditBox::UpdateStyleBox() {
+    auto line = CurrentLine();
 	if (!line) return;
 	wxString name = to_wx(line->Style);
 	style_box->Select(style_box->FindString(name, true));
@@ -658,8 +669,9 @@ void SubsEditBox::UpdateStyleBox() {
 }
 
 void SubsEditBox::OnStyleChange(wxCommandEvent &evt) {
+    auto line = CurrentLine();
 	SetSelectedRows(&AssDialogue::Style, new_value(style_box, evt), _("style change"), AssFile::COMMIT_DIAG_META);
-	active_style = c->subtitleAccess->Read().GetStyle(line->Style);
+	active_style = line ? c->subtitleAccess->Read().GetStyle(line->Style) : nullptr;
 	UpdateStyleBox();
 }
 

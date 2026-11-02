@@ -221,7 +221,9 @@ void BaseGrid::UpdateMaps() {
 	for (auto const& curdiag : context->subtitleAccess->Read().Events)
 		index_line_map.push_back(&curdiag);
 
-	SetColumnWidths();
+	if (auto active = context->selectionController->ReadActiveLine()) active_row = active->Row;
+    else active_row = -1;
+    SetColumnWidths();
 	AdjustScrollbar();
 	Refresh(false);
 }
@@ -231,7 +233,8 @@ void BaseGrid::OnActiveLineChanged() {
 	if (new_active) {
 		if (new_active->Row != active_row)
 			MakeRowVisible(new_active->Row);
-		extendRow = active_row = new_active->Row;
+		active_row = new_active->Row;
+        extend_id = new_active->Id;
 		Refresh(false);
 	}
 	else
@@ -248,26 +251,23 @@ void BaseGrid::MakeRowVisible(int row) {
 }
 
 void BaseGrid::SelectRow(int row, bool addToSelected, bool select) {
-    auto edit_scope = context->subtitleAccess->TryWrite();
-    if (!edit_scope) return;
 	if (row < 0 || (size_t)row >= index_line_map.size()) return;
 
-    auto rows = RowsForWrite(edit_scope->Lease());
-    AssDialogue *line = rows.at(row);
+    auto line = index_line_map.at(row);
 
 	if (!addToSelected) {
-		context->selectionController->SetSelectedSet(Selection{line});
+		context->selectionController->SetSelectedIDs({line->Id});
 		return;
 	}
 
-	bool selected = !!context->selectionController->ReadSelectedSet().count(line);
+	bool selected = context->selectionController->SelectedIDs().contains(line->Id);
 	if (select != selected) {
-		auto selection = context->selectionController->ReadSelectedSet();
+		auto selection = context->selectionController->SelectedIDs();
 		if (select)
-			selection.insert(line);
+			selection.insert(line->Id);
 		else
-			selection.erase(line);
-		context->selectionController->SetSelectedSet(std::move(selection));
+			selection.erase(line->Id);
+		context->selectionController->SetSelectedIDs(std::move(selection));
 	}
 }
 
@@ -492,8 +492,7 @@ void BaseGrid::OnMouseEvent(wxMouseEvent &event) {
 		return;
 	}
 
-    auto edit_scope = (dlg && (click || holding || dclick)) ? context->subtitleAccess->TryWrite() : std::optional<SubtitleProjectAccess::WriteScope>{};
-    if (dlg && (click || holding || dclick) && !edit_scope) return;
+    int extend_row = ExtendRow();
 	if (event.ButtonDown() && OPT_GET("Subtitle/Grid/Focus Allow")->GetBool())
 		SetFocus();
 
@@ -507,13 +506,13 @@ void BaseGrid::OnMouseEvent(wxMouseEvent &event) {
 		else {
 			// Only scroll if the mouse has moved to a different row to avoid
 			// scrolling on sloppy clicks
-			if (row != extendRow) {
+			if (row != extend_row) {
 				if (row <= yPos)
 					ScrollTo(yPos - 3);
 				// When dragging down we give a 3 row margin to make it easier
 				// to see what's going on, but we don't want to scroll down if
 				// the user clicks on the bottom row and drags up
-				else if (row > yPos + h / lineHeight - (row > extendRow ? 3 : 1))
+				else if (row > yPos + h / lineHeight - (row > extend_row ? 3 : 1))
 					ScrollTo(yPos + 3);
 			}
 		}
@@ -524,29 +523,29 @@ void BaseGrid::OnMouseEvent(wxMouseEvent &event) {
 	}
 
 	if ((click || holding || dclick) && dlg) {
-        auto rows = RowsForWrite(edit_scope->Lease());
+        auto const& rows = index_line_map;
         auto target = rows.at(row);
-		int old_extend = extendRow;
+        int old_extend = rows.at(extend_row)->Id;
 
-		// SetActiveLine will scroll the grid if the row is only half-visible,
+		// SetActiveID will scroll the grid if the row is only half-visible,
 		// but we don't want to scroll until the mouse moves or the button is
 		// released, to avoid selecting multiple lines on a click
 		int old_y_pos = yPos;
-		context->selectionController->SetActiveLine(target);
+		context->selectionController->SetActiveID(target->Id);
 		ScrollTo(old_y_pos);
-		extendRow = row;
+		extend_id = target->Id;
 
-		auto const& selection = context->selectionController->ReadSelectedSet();
+		auto selection = context->selectionController->SelectedIDs();
 
 		// Toggle selected
 		if (click && ctrl && !shift && !alt) {
 			// Ctrl+click on a bound row is the temporary single-line edit
 			// escape hatch; do not expand the binding group.
 			if (!GetSubtitleBinding(context->subtitleAccess->Read(), *target).empty()) {
-				context->selectionController->SetSelectionAndActive({target}, target, false);
+				context->selectionController->SetSelectionAndActiveIDs({target->Id}, target->Id, false);
 				return;
 			}
-			bool isSel = !!selection.count(target);
+			bool isSel = !!selection.count(target->Id);
 			if (isSel && selection.size() == 1) return;
 			SelectRow(row, true, !isSel);
 			return;
@@ -569,25 +568,25 @@ void BaseGrid::OnMouseEvent(wxMouseEvent &event) {
 		// Alt+click on a bound row also edits only that member.
 		if (click && !shift && !ctrl && alt) {
 			if (!GetSubtitleBinding(context->subtitleAccess->Read(), *target).empty())
-				context->selectionController->SetSelectionAndActive({target}, target, false);
+				context->selectionController->SetSelectionAndActiveIDs({target->Id}, target->Id, false);
 			return;
 		}
 
 		// Block select
 		if ((click && shift && !alt) || holding) {
-			extendRow = old_extend;
+			extend_id = old_extend;
 			int i1 = row;
-			int i2 = extendRow;
+			int i2 = ExtendRow();
 
 			if (i1 > i2)
 				std::swap(i1, i2);
 
 			// Toggle each
-			Selection newsel;
+			std::set<int> newsel;
 			if (ctrl) newsel = selection;
 			for (int i = i1; i <= i2; i++)
-				newsel.insert(rows.at(i));
-			context->selectionController->SetSelectedSet(std::move(newsel));
+				newsel.insert(rows.at(i)->Id);
+			context->selectionController->SetSelectedIDs(std::move(newsel));
 			return;
 		}
 
@@ -613,15 +612,13 @@ void BaseGrid::OnContextMenu(wxContextMenuEvent &evt) {
 	if (pos == wxDefaultPosition || ScreenToClient(pos).y > lineHeight) {
 		// Context actions target the row under the pointer, including an unselected rectangle.
 		if (pos != wxDefaultPosition) {
-            auto edit_scope = context->subtitleAccess->TryWrite();
-            if (!edit_scope) return;
-            auto rows = RowsForWrite(edit_scope->Lease());
+            auto const& rows = index_line_map;
 			int row = ScreenToClient(pos).y / lineHeight + yPos - 1;
 			if (auto line = static_cast<size_t>(row) < rows.size() ? rows[row] : nullptr) {
 				if (context->selectionController->ReadSelectedSet().count(line))
-					context->selectionController->SetActiveLine(line);
+					context->selectionController->SetActiveID(line->Id);
 				else
-					context->selectionController->SetSelectionAndActive({line}, line);
+					context->selectionController->SetSelectionAndActiveIDs({line->Id}, line->Id);
 			}
 		}
 		context_menu = menu::GetMenu("grid_context", (wxID_HIGHEST + 1) + 8000, context);
@@ -700,12 +697,10 @@ AssDialogue const* BaseGrid::GetDialogue(int n) const {
 	if (static_cast<size_t>(n) >= index_line_map.size()) return nullptr;
 	return index_line_map[n];
 }
-std::vector<AssDialogue*> BaseGrid::RowsForWrite(agi::SubtitleEditGate::WriteLease const& lease) const {
-    if (!context->subtitleEditGate.Authorizes(lease)) throw std::logic_error("Grid rows require write authorization");
-    std::vector<AssDialogue*> rows;
-    rows.reserve(index_line_map.size());
-    for (auto& row : context->ass->Events) rows.push_back(&row);
-    return rows;
+int BaseGrid::ExtendRow() const {
+    for (size_t i = 0; i < index_line_map.size(); ++i)
+        if (index_line_map[i]->Id == extend_id) return static_cast<int>(i);
+    return std::max(0, active_row);
 }
 
 bool BaseGrid::IsDisplayed(const AssDialogue *line) const {
@@ -771,15 +766,13 @@ void BaseGrid::OnKeyDown(wxKeyEvent &event) {
 		event.Skip();
 		return;
 	}
-    auto edit_scope = context->subtitleAccess->TryWrite();
-    if (!edit_scope) return;
-    auto rows = RowsForWrite(edit_scope->Lease());
+    auto const& rows = index_line_map;
 
 	auto active_line = context->selectionController->ReadActiveLine();
-    if (rows.empty()) { context->selectionController->SetActiveLine(nullptr); return; }
-	int old_extend = extendRow;
+    if (rows.empty()) { context->selectionController->SetActiveID(0); return; }
+	int old_extend = rows.at(ExtendRow())->Id;
 	int next = mid(0, (active_line ? active_line->Row : 0) + dir * step, GetRows() - 1);
-	context->selectionController->SetActiveLine(rows.at(next));
+	context->selectionController->SetActiveID(rows.at(next)->Id);
 
 	// Move selection
 	if (!ctrl && !shift && !alt) {
@@ -793,19 +786,19 @@ void BaseGrid::OnKeyDown(wxKeyEvent &event) {
 
 	// Shift-selection
 	if (shift && !ctrl && !alt) {
-		extendRow = old_extend;
+		extend_id = old_extend;
 		// Set range
 		int begin = next;
-		int end = extendRow;
+		int end = ExtendRow();
 		if (end < begin)
 			std::swap(begin, end);
 
 		// Select range
-		Selection newsel;
+		std::set<int> newsel;
 		for (int i = begin; i <= end; i++)
-			newsel.insert(rows.at(i));
+			newsel.insert(rows.at(i)->Id);
 
-		context->selectionController->SetSelectedSet(std::move(newsel));
+		context->selectionController->SetSelectedIDs(std::move(newsel));
 
 		MakeRowVisible(next);
 		return;

@@ -71,8 +71,8 @@ class DialogSpellChecker final : public wxDialog {
 	wxButton *add_button;      ///< Add word to currently active dictionary
 	wxButton *remove_button;   ///< Remove word from currently active dictionary
 
-	AssDialogue const* start_line = nullptr;  ///< The first line checked
-	AssDialogue const* active_line = nullptr; ///< The most recently checked line
+	int start_line_id = 0;  ///< The first line checked
+	int active_line_id = 0; ///< The most recently checked line
 	bool has_looped = false;            ///< Has the search already looped from the end to beginning?
 
 	/// Find the next misspelled word and close the dialog if there are none
@@ -249,32 +249,35 @@ bool DialogSpellChecker::FindNext() {
     if (!edit_scope) return false;
 	AssDialogue const* real_active_line = context->selectionController->ReadActiveLine();
 	// User has changed the active line; restart search from this position
-	if (real_active_line != active_line) {
-		active_line = real_active_line;
+	if (!real_active_line) return false;
+    bool start_exists = std::any_of(context->subtitleAccess->Read().Events.begin(), context->subtitleAccess->Read().Events.end(),
+        [&](auto const& row) { return row.Id == start_line_id; });
+    if (real_active_line->Id != active_line_id || !start_exists) {
+        active_line_id = real_active_line->Id;
 		has_looped = false;
-		start_line = active_line;
+		start_line_id = active_line_id;
 	}
 
 	int start_pos = context->textSelectionController->GetInsertionPoint();
 	int commit_id = -1;
 
-	if (CheckLine(active_line, start_pos, &commit_id, edit_scope->Lease()))
+	if (CheckLine(real_active_line, start_pos, &commit_id, edit_scope->Lease()))
 		return true;
 
-	auto it = context->ass->iterator_to(*real_active_line);
+	auto it = context->subtitleAccess->Read().iterator_to(*real_active_line);
 
 	// Note that it is deliberate that the start line is checked twice, as if
 	// the cursor is past the first misspelled word in the current line, that
 	// word should be hit last
-	while(!has_looped || active_line != start_line) {
+	while(!has_looped || active_line_id != start_line_id) {
 		// Wrap around to the beginning if we hit the end
-		if (++it == context->ass->Events.end()) {
-			it = context->ass->Events.begin();
+		if (++it == context->subtitleAccess->Read().Events.end()) {
+			it = context->subtitleAccess->Read().Events.begin();
 			has_looped = true;
 		}
 
-		active_line = &*it;
-		if (CheckLine(active_line, 0, &commit_id, edit_scope->Lease()))
+		active_line_id = it->Id;
+		if (CheckLine(&*it, 0, &commit_id, edit_scope->Lease()))
 			return true;
 	}
 
@@ -322,10 +325,10 @@ bool DialogSpellChecker::CheckLine(AssDialogue const* active_line, int start_pos
 			replace_word->Remove(0, -1);
 #endif
 
-            auto current = std::find_if(context->ass->Events.begin(), context->ass->Events.end(),
+            auto current = std::find_if(context->subtitleAccess->Read().Events.begin(), context->subtitleAccess->Read().Events.end(),
                 [&](AssDialogue const& row) { return row.Id == active_line->Id; });
-            if (current == context->ass->Events.end()) return false;
-            context->selectionController->SetSelectionAndActive({ &*current }, &*current);
+            if (current == context->subtitleAccess->Read().Events.end()) return false;
+            context->selectionController->SetSelectionAndActiveIDs({current->Id}, current->Id);
 			SetWord(word);
 			return true;
 		}

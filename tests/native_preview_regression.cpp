@@ -157,12 +157,12 @@ int main(int argc, char **argv) {
         // callers can still select a single member for a temporary edit.
         auto first = &*c.ass->Events.begin();
         auto second = &*std::next(c.ass->Events.begin());
-        c.selectionController->SetSelectionAndActive({first, second}, first);
+        c.selectionController->SetSelectionAndActiveIDs({first->Id,second->Id}, first->Id);
         cmd::call("subtitle/bind", &c);
         require(!GetSubtitleBinding(*c.ass, *first).empty(), "binding was not created");
-        c.selectionController->SetSelectedSet({first});
+        c.selectionController->SetSelectedIDs({first->Id});
         require(c.selectionController->ReadSelectedSet().size() == 2, "binding group did not expand the selection");
-        c.selectionController->SetSelectedSet({first}, false);
+        c.selectionController->SetSelectedIDs({first->Id}, false);
         require(c.selectionController->ReadSelectedSet().size() == 1, "single-line selection bypass did not work");
 
         // A duration edit through the normal multi-line editor must apply once
@@ -174,7 +174,7 @@ int main(int argc, char **argv) {
         require(time_edits.size() >= 3, "time editors missing");
         auto start_first = first->Start;
         auto start_second = second->Start;
-        c.selectionController->SetSelectionAndActive({first, second}, first);
+        c.selectionController->SetSelectionAndActiveIDs({first->Id,second->Id}, first->Id);
         auto duration = time_edits[2];
         duration->SetTime(agi::Time(3000));
         wxCommandEvent time_changed(wxEVT_TEXT, duration->GetId());
@@ -201,11 +201,11 @@ int main(int argc, char **argv) {
         grid_click(wxEVT_LEFT_UP);
         require(c.selectionController->ReadSelectedSet().size() == 2, "normal click did not expand the bound group");
 
-        c.selectionController->SetSelectionAndActive({first, second}, first);
+        c.selectionController->SetSelectionAndActiveIDs({first->Id,second->Id}, first->Id);
         cmd::call("subtitle/unbind", &c);
         require(GetSubtitleBinding(*c.ass, *first).empty() && GetSubtitleBinding(*c.ass, *second).empty(),
             "unbind did not clear the binding");
-        c.selectionController->SetSelectionAndActive({line}, line);
+        c.selectionController->SetSelectionAndActiveIDs({line->Id}, line->Id);
 
         c.project->LoadVideo("?dummy:24:120:640:360:48:160:240:");
         auto display = c.videoDisplay;

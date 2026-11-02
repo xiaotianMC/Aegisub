@@ -24,7 +24,7 @@ struct subtitle_selection : testing::Test {
         a->Row = 0; b->Row = 1; file.Events.push_back(*a); file.Events.push_back(*b);
         file.Extradata = {{0, "aegisub.enhanced.subtitle-binding", "0:002"}};
         a->ExtradataIds = std::vector<uint32_t>{0}; b->ExtradataIds = std::vector<uint32_t>{0};
-        selection.SetSelectionAndActive({a}, a, false);
+        selection.SetSelectionAndActiveIDs({a->Id}, a->Id, false);
     }
 };
 TEST_F(subtitle_selection, silent_install_does_not_expand_bindings_or_notify) {
@@ -38,7 +38,7 @@ TEST_F(subtitle_selection, silent_install_does_not_expand_bindings_or_notify) {
     EXPECT_EQ(b, selection.ReadActiveLine()); EXPECT_EQ(1u, selection.ReadSelectedLines().size());
     EXPECT_EQ(1, file.Properties.active_row); EXPECT_EQ(0, active); EXPECT_EQ(0, selected);
     EXPECT_THROW(selection.InstallSilent(*session, std::move(prepared)), std::logic_error);
-    session.reset(); selection.SetSelectedSet({a});
+    session.reset(); selection.SetSelectedIDs({a->Id});
     EXPECT_EQ(2u, selection.ReadSelectedSet().size()); // Ordinary binding behavior preserved.
 }
 TEST_F(subtitle_selection, preparation_failure_or_stale_install_keeps_original_selection) {
@@ -169,3 +169,13 @@ TEST(subtitle_selection_empty, empty_commit_does_not_invent_an_active_change) {
     selection.SetSelectionAndActiveIDs({},0);
     EXPECT_EQ(0,notices);
 }
+
+template<class T> concept HasGetActive = requires(T& s) { s.GetActiveLine(); };
+template<class T> concept HasGetSelected = requires(T& s) { s.GetSelectedSet(); };
+template<class T> concept HasGetSorted = requires(T& s) { s.GetSortedSelection(); };
+template<class T> concept HasSetActive = requires(T& s, AssDialogue* row) { s.SetActiveLine(row); };
+template<class T> concept HasSetSelected = requires(T& s, AssDialogue* row) { s.SetSelectedSet(Selection{row}); };
+template<class T> concept HasSetBoth = requires(T& s, AssDialogue* row) { s.SetSelectionAndActive(Selection{row},row); };
+static_assert(!HasGetActive<SelectionController> && !HasGetSelected<SelectionController> && !HasGetSorted<SelectionController>);
+static_assert(!HasSetActive<SelectionController> && !HasSetSelected<SelectionController> && !HasSetBoth<SelectionController>);
+static_assert(std::is_same_v<decltype(std::declval<SelectionController>().SelectedIDs()),std::set<int>>);

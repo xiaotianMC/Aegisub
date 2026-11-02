@@ -115,3 +115,74 @@
 - `tests/native_preview_regression.cpp`
 - `tests/tests/ordinary_edit.cpp`
 - `tests/tests/subtitle_selection.cpp`
+
+## 第二批：ID 调用链、跨回调状态与网格
+
+恢复工作时重新检查：账号 xiaotianMC，fork push=true/upstream=false；fork 开放 PR=0，上游开放 PR 已逐项列出检查，不合入；实时远端仍为424d70baa60645410630d8e6a2ac1e27832a3880。两个保护文件 SHA256 与开始时一致。暂停期间的第二批未提交源代码保持在原工作区继续完成。
+
+完成内容：
+
+- 删除三个旧 pointer-input setters。普通选择仅接受 IDs；没有 LegacyMutable、返回 mutable live 行的替代 getter 或永久兼容入口。每个旧 getter/setter 都有单独的编译期不存在检查，getter 返回 const 类型、SelectedIDs 返回值集合也通过类型检查。
+- BaseGrid 移除 RowsForWrite；SelectRow、鼠标选择、上下文菜单选行、键盘导航均不申请 WriteLease。只有号码列修改 Comment 保留受控写入。绑定组展开与 Ctrl/Alt 临时单行选择不变。
+- 网格范围锚点存行 ID，排序后按身份恢复；删除锚点时，在移动活动行前解析起点，退回移动前活动行。真实回归首次暴露移动后回退会缩成单行，已修复并复验。
+- 编辑框存 active_id，各同步回调重新取得 const 行；拼写扫描的当前行及循环起点存 IDs，起点消失时重新开始。InitialLineState 已使用 ID；音频、视觉和 B3 的长期行数据是已有独立快照，不改回 live 指针。
+- SubtitleRowListEdit 在独立副本上保留可变操作能力，结果直接按 IDs 安装选择，删除扫描当前工程取 mutable 行的桥接。Binding 与视觉特征选择也直接使用 IDs。
+- Select Lines、选择全部/可见、查找、历史恢复及项目最终选择安装迁移 IDs。Lua 只改 getter 和最终选择安装；Lua 对脚本公开的行号、后台处理和模型事务仍属 C1-C1c，没有提前迁移。
+- UndoInfo 的历史字段仍为原有 vector<int>/active_line_id；Apply 的模型重建、旧节点保留、Commit 和恢复文字选区次序未改，仅改选择恢复输入。保留原有空 Active 不覆盖历史 active_line_id 的行为。OnCommit 和 AddUndoManager 权限未扩大。
+
+实际修改文件（另含本报告）：
+
+- `src/auto4_lua.cpp`
+- `src/base_grid.cpp`
+- `src/base_grid.h`
+- `src/command/grid.cpp`
+- `src/command/subtitle.cpp`
+- `src/dialog_selection.cpp`
+- `src/dialog_spellchecker.cpp`
+- `src/project.cpp`
+- `src/search_replace_engine.cpp`
+- `src/selection_controller.cpp`
+- `src/selection_controller.h`
+- `src/subs_controller.cpp`
+- `src/subs_edit_box.cpp`
+- `src/subs_edit_box.h`
+- `src/subtitle_binding.cpp`
+- `src/subtitle_row_list_edit.h`
+- `src/visual_tool.cpp`
+- `tests/native_preview_regression.cpp`
+- `tests/tests/ordinary_edit.cpp`
+- `tests/tests/subtitle_selection.cpp`
+
+验证结果：
+
+| 检查 | 实际结果 |
+| --- | --- |
+| Windows x64 Release 主程序及测试目标 | 成功，build/c1c1b-callers-build.log |
+| 全部应用生产入口回归 | 104/104：普通37、音频24、视觉37、Selection UI6；build/c1c1b-callers-app.log |
+| 模型、比较、Selection、访问边界 | 45/45；build/c1c1b-callers-model.log |
+| 基础回归 | 436/436；build/c1c1b-callers-base.log |
+| 总计 | 585/585 |
+| 旧 getters/setters、RowsForWrite 生产声明/调用 | src 中无匹配；每个旧公共方法另有独立 C++ requires/static_assert 检查 |
+| 差异检查 | git diff --check 通过 |
+
+六个新增真实 Selection UI 测试使用生产 wx 键鼠/编辑框/查找/命令入口，验证比较会话内无需写租约的选择、绑定展开/修饰键/重复通知、排序与删除后的范围锚点、Undo/Redo 同 ID 重建后编辑框和网格恢复、已有授权的选择回调不能写入或重入历史、只读查找导航。最初新增测试误用私有 FindReplace，已改为公开 FindNext。自动审批曾拒绝可能误删测试尾部的编辑命令，命令未执行；改用精确补丁，全部原有测试保留。
+
+## 最终边界与交付
+
+第一批提交：424d70baa60645410630d8e6a2ac1e27832a3880，`refactor(compare): make selection state and observers read only`，579/579。第二批提交名称：`refactor(compare): route selection callers through stable row ids`，585/585。每批使用普通 push，提交哈希与远端的最终核对由交付时实际执行并在回复给出。
+
+本阶段已关闭 Selection 这条公开可变访问路径。普通选择是 UI 状态，不推进字幕修订、不新增 Undo；active_row 仍兼容写回原有 Properties UI 字段。持久化 Metadata 的独立修订/脏状态和完整 Properties 分离属于 C1-C1c，本阶段没有实现。
+
+仍存在、明确留给 C1-C1c 的路径：
+
+1. Context::ass 当前仍为公开 mutable owner。直接调用它可以绕过受控值 API；不能据本阶段宣布整个工程所有写入已被封闭。
+2. UndoInfo::Apply 在 Undo/Redo 已有 WriteScope 下执行可信模型重建；本阶段仅收口选择读取/恢复。其原始容器操作的内部 capability 及 owner 私有化留 c。
+3. OnCommit 经 TryWrite 后做可信历史维护，位于 PushState 而非普通通知阶段；保存联动与补默认行/样式仍用旧路径。AddUndoManager 的注册与 AssFileCommit.single_line 可变 payload 尚未最终私有化，不能把公共历史回调说成已安全封闭。
+4. 选择通知期间复用 IsNotifying，可拒绝 TryWrite、已有 WriteAccess、Interaction 写回及 Undo/Redo；允许同步嵌套选择导航。它不能阻止还持有 Context::ass 的旧代码直接写模型，最终 owner 封闭仍必需。
+5. Lua、Load/Close/Save（含保存副本清理）、字体收集输入隔离未在本阶段提前实现。Lua 原有脚本行号协议与后台原始模型参数属于下一阶段。
+
+保留的 const 行视图仅用于同步读取。BaseGrid 的 const 行绘制索引是 Commit 时重建的绘制缓存，选择/范围状态存 IDs；它不提供模型写权限。独立 AssFile、副本、解析器和导出模型的正常可变能力保留。signal.h、Context owner、Undo 历史格式和第三方依赖均未修改。
+
+验证范围：本次是 Windows 自动生产 wx 事件/模型/基础回归；没有声称执行实体键鼠、真实音视频设备、HiDPI/多屏、完整主窗口重入或 macOS/Linux 测试。上下文菜单选行、Lua 与 Load/Close 的机械接口适配经过主程序构建和调用链核查，未单独进行这些端到端人工操作。已有音频、视觉、Drawing、B3、保存重开等回归全部保留。native_preview_regression.cpp 是旧独立测试脚本源码，仅做接口适配，没有将它算入585项。此次没有新增持久化功能或移动端功能。
+
+用户原有差异清单、未跟踪 checkasm.wrap 及未跟踪 c1c1 调查报告不纳入任何提交，未修改它们。C1-C1b 交付后停止，等待复核，不自动执行 C1-C1c。

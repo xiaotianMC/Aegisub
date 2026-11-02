@@ -8,6 +8,7 @@
 #include "ass_info.h"
 #include "ass_style.h"
 #include "subtitle_project_access.h"
+#include "subtitle_row_list_edit.h"
 #include "selection_controller.h"
 #include "subs_controller.h"
 #include "subs_edit_box.h"
@@ -122,7 +123,7 @@ protected:
         auto write = c->subtitleAccess->TryWrite();
         c->ass->LoadDefault(); c->ass->Commit("", AssFile::COMMIT_NEW);
         auto line = &c->ass->Events.front();
-        c->selectionController->SetSelectionAndActive({line}, line);
+        c->selectionController->SetSelectionAndActiveIDs({line->Id}, line->Id);
     }
     void TearDown() override { delete window; c.reset(); }
     void Input(std::string const& value) {
@@ -154,7 +155,7 @@ TEST_F(ordinary_edit, real_metadata_and_millisecond_time_events_share_multiline_
         auto write=c->subtitleAccess->TryWrite();
         auto other=new AssDialogue; c->ass->Events.push_back(*other);
         c->ass->Commit("insert fixture", AssFile::COMMIT_DIAG_ADDREM);
-        c->selectionController->SetSelectedSet({&c->ass->Events.front(), other});
+        c->selectionController->SetSelectedIDs({(c->ass->Events.front()).Id,other->Id});
     }
     TimeEdit *start=nullptr; wxSpinCtrl *layer=nullptr; wxComboBox *actor=nullptr;
     for (auto child:box->GetChildren()) {
@@ -573,7 +574,7 @@ TEST_F(audio_edit, selection_change_invalidates_markers_and_releases_pending_tas
     ASSERT_TRUE(Timing()->BeginDrag());
     auto markers=Timing()->OnLeftClick(1001,false,false,5,0);auto token=Timing()->MarkerLifetime();
     Timing()->OnMarkerDrag(markers,1111,0);
-    c->selectionController->SetSelectionAndActive({next},next);
+    c->selectionController->SetSelectionAndActiveIDs({next->Id}, next->Id);
     EXPECT_TRUE(token.expired());EXPECT_EQ(3001,Timing()->GetActiveLineRange().begin());
     EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
     EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
@@ -582,7 +583,7 @@ TEST_F(audio_edit, multiple_selected_rows_share_pending_lifetime_and_undo) {
     AssDialogue* next;
     {auto write=c->subtitleAccess->TryWrite();next=new AssDialogue;
      next->Start=3001;next->End=4002;c->ass->Events.push_back(*next);c->ass->Commit("audio fixture",AssFile::COMMIT_NEW);
-     c->selectionController->SetSelectedSet({&c->ass->Events.front(),next});}
+     c->selectionController->SetSelectedIDs({(c->ass->Events.front()).Id,next->Id});}
     ASSERT_TRUE(Timing()->BeginDrag());
     auto markers=Timing()->OnRightClick(4503,false,0,0);ASSERT_EQ(2u,markers.size());
     Timing()->EndDrag(false);Timing()->Commit();
@@ -974,7 +975,7 @@ TEST_F(visual_edit, selection_change_and_delete_cancel_without_writing_other_row
      other->Text="{\\pos(300,300)}other";c->ass->Events.push_back(*other);c->ass->Commit("visual fixture",AssFile::COMMIT_DIAG_ADDREM);}
     Install<VisualToolDrag>();auto text=Text();auto other_id=other->Id;
     Mouse(wxEVT_LEFT_DOWN,100,100,true);Mouse(wxEVT_MOTION,150,150,true);
-    c->selectionController->SetSelectionAndActive({other},other);
+    c->selectionController->SetSelectionAndActiveIDs({other->Id}, other->Id);
     EXPECT_EQ(text,Text());EXPECT_FALSE(display->HasCapture());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
     Mouse(wxEVT_LEFT_DOWN,300,300,true);Mouse(wxEVT_MOTION,350,350,true);
     (*cmd::get("edit/line/delete"))(c.get());
@@ -1016,7 +1017,7 @@ TEST_F(visual_edit, multirow_position_changes_preserve_metadata_extras_and_bindi
      auto extra=c->ass->AddExtradata("unknown-test","opaque value");
      c->ass->Events.front().Actor="actor";c->ass->Events.front().Layer=7;c->ass->Events.front().ExtradataIds=std::vector<uint32_t>{extra};
      c->ass->Commit("visual fixture",AssFile::COMMIT_DIAG_ADDREM);
-     c->selectionController->SetSelectedSet({&c->ass->Events.front(),row});BindSelectedSubtitles(c.get());
+     c->selectionController->SetSelectedIDs({(c->ass->Events.front()).Id,row->Id});BindSelectedSubtitles(c.get());
      group=GetSubtitleBinding(*c->ass,c->ass->Events.front());}
     auto extras=c->ass->Extradata;Install<VisualToolDrag>();
     Drag(100,100,130,140);
@@ -1114,7 +1115,7 @@ TEST_F(visual_edit, replacing_document_content_invalidates_old_geometry_and_targ
      replacement.SetScriptInfo("PlayResX","640");replacement.SetScriptInfo("PlayResY","480");
      replacement.Events.front().Text="{\\pos(300,300)}new document";c->ass->swap(replacement);
      c->ass->Commit("new document",AssFile::COMMIT_NEW);
-     auto active=&c->ass->Events.front();c->selectionController->SetSelectionAndActive({active},active);}
+     auto active=&c->ass->Events.front();c->selectionController->SetSelectionAndActiveIDs({active->Id}, active->Id);}
     Mouse(wxEVT_LEFT_UP,160,170);
     EXPECT_NE(previous,c->ass->Events.front().Id);EXPECT_EQ("{\\pos(300,300)}new document",Text());
     EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
@@ -1137,7 +1138,7 @@ TEST_F(visual_edit, missing_target_without_commit_cannot_partially_write_other_r
     {auto write=c->subtitleAccess->TryWrite();c->ass->Events.erase_and_dispose(c->ass->Events.begin(),[](auto row){delete row;});}
     EXPECT_THROW(Mouse(wxEVT_LEFT_UP,160,170),std::out_of_range);
     EXPECT_EQ("untouched",Text());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
-    c->selectionController->SetSelectionAndActive({other},other);
+    c->selectionController->SetSelectionAndActiveIDs({other->Id}, other->Id);
 }
 class VisualAccessProbe : public VisualTool<VisualDraggableFeature> {
 public:
@@ -1534,4 +1535,137 @@ TEST_F(ordinary_edit, selection_notifications_refresh_real_editor_without_model_
     c->selectionController->SetActiveID(first);
     EXPECT_EQ("",std::string(editor->GetTextRaw().data()));
     EXPECT_EQ((std::set<int>{second}),c->selectionController->SelectedIDs());
+}
+
+namespace {
+class selection_ui : public ordinary_edit {
+protected:
+    BaseGrid* grid=nullptr;
+    int height=0;
+    std::vector<int> ids;
+    void SetUp() override {
+        ordinary_edit::SetUp();
+        grid=new BaseGrid(window,c.get());c->subsGrid=grid;
+        grid->SetSize(900,300);window->SetSize(1000,600);window->Show();
+        {
+            auto write=c->subtitleAccess->TryWrite();
+            auto& first=c->ass->Events.front();first.Text="first";first.Start=1000;
+            ids.push_back(first.Id);
+            for(int i=1;i<4;++i) {
+                auto row=new AssDialogue;row->Text=std::to_string(i);row->Start=(i+1)*1000;
+                c->ass->Events.push_back(*row);ids.push_back(row->Id);
+            }
+            c->ass->Commit("selection UI fixture",AssFile::COMMIT_DIAG_ADDREM|AssFile::COMMIT_DIAG_FULL);
+        }
+        c->selectionController->SetSelectionAndActiveIDs({ids[0]},ids[0],false);
+        wxFont font=*wxNORMAL_FONT;font.SetPointSize(OPT_GET("Subtitle/Grid/Font Size")->GetInt());
+        auto face=FontFace("Subtitle/Grid");if(!face.empty())font.SetFaceName(face);
+        wxClientDC dc(grid);dc.SetFont(font);height=dc.GetCharHeight()+4;
+    }
+    void TearDown() override {
+        if(grid->HasCapture())grid->ReleaseMouse();
+        c->subsGrid=nullptr;ordinary_edit::TearDown();
+    }
+    void Mouse(int row,bool ctrl=false,bool shift=false,bool alt=false) {
+        wxMouseEvent down(wxEVT_LEFT_DOWN);down.SetPosition({300,(row+1)*height+2});
+        down.SetControlDown(ctrl);down.SetShiftDown(shift);down.SetAltDown(alt);
+        down.SetEventObject(grid);grid->GetEventHandler()->ProcessEvent(down);
+        wxMouseEvent up(wxEVT_LEFT_UP);up.SetPosition(down.GetPosition());up.SetEventObject(grid);
+        grid->GetEventHandler()->ProcessEvent(up);
+    }
+    void Key(int key,bool shift=false,bool alt=false) {
+        wxKeyEvent event(wxEVT_KEY_DOWN);event.m_keyCode=key;event.SetShiftDown(shift);event.SetAltDown(alt);
+        event.SetEventObject(grid);grid->GetEventHandler()->ProcessEvent(event);
+    }
+};
+TEST_F(selection_ui, mouse_keyboard_and_select_all_are_pure_ui_during_comparison) {
+    auto before=c->subtitleEditGate.Revision();auto undo=c->subsController->GetUndoDescription();
+    auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);
+    Mouse(1);EXPECT_EQ(ids[1],c->selectionController->ActiveID());
+    EXPECT_EQ((std::set<int>{ids[1]}),c->selectionController->SelectedIDs());
+    EXPECT_EQ("1",std::string(editor->GetTextRaw().data()));
+    Mouse(3,true);EXPECT_EQ((std::set<int>{ids[1],ids[3]}),c->selectionController->SelectedIDs());
+    Key(WXK_UP,false,true);EXPECT_EQ(ids[2],c->selectionController->ActiveID());
+    EXPECT_EQ((std::set<int>{ids[1],ids[3]}),c->selectionController->SelectedIDs());
+    Key(WXK_UP);EXPECT_EQ((std::set<int>{ids[1]}),c->selectionController->SelectedIDs());
+    cmd::call("subtitle/select/all",c.get());EXPECT_EQ(4u,c->selectionController->SelectedIDs().size());
+    EXPECT_EQ(before,c->subtitleEditGate.Revision());EXPECT_EQ(undo,c->subsController->GetUndoDescription());
+}
+TEST_F(selection_ui, bound_row_modifiers_keep_single_member_and_repeat_notifications) {
+    {
+        auto write=c->subtitleAccess->TryWrite();
+        auto group=c->ass->AddExtradata("aegisub.enhanced.subtitle-binding","0:test");
+        c->ass->Events.front().ExtradataIds=std::vector<uint32_t>{group};
+        std::next(c->ass->Events.begin())->ExtradataIds=std::vector<uint32_t>{group};
+        c->ass->Commit("binding fixture",AssFile::COMMIT_EXTRADATA);
+    }
+    auto revision=c->subtitleEditGate.Revision();auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);
+    Mouse(0);EXPECT_EQ((std::set<int>{ids[0],ids[1]}),c->selectionController->SelectedIDs());
+    Mouse(1,true);EXPECT_EQ((std::set<int>{ids[1]}),c->selectionController->SelectedIDs());
+    Mouse(0,false,false,true);EXPECT_EQ((std::set<int>{ids[0]}),c->selectionController->SelectedIDs());
+    int notices=0;agi::signal::Connection selected=c->selectionController->AddSelectionListener([&]{++notices;});
+    Mouse(0);Mouse(0);EXPECT_EQ(2,notices);
+    EXPECT_EQ((std::set<int>{ids[0],ids[1]}),c->selectionController->SelectedIDs());
+    EXPECT_EQ(revision,c->subtitleEditGate.Revision());
+}
+TEST_F(selection_ui, range_anchor_survives_sort_by_identity_and_missing_anchor_is_safe) {
+    Mouse(1);Key(WXK_DOWN,true);
+    EXPECT_EQ((std::set<int>{ids[1],ids[2]}),c->selectionController->SelectedIDs());
+    {
+        auto write=c->subtitleAccess->TryWrite();
+        SubtitleRowListEdit staged(c.get());
+        staged.file.Events.reverse();staged.Commit("reverse fixture",AssFile::COMMIT_ORDER);
+    }
+    // Current row 2 moved to position 1; anchor row 1 moved to position 2.
+    Key(WXK_UP,true);
+    EXPECT_EQ(ids[3],c->selectionController->ActiveID());
+    EXPECT_EQ((std::set<int>{ids[3],ids[2],ids[1]}),c->selectionController->SelectedIDs());
+    {
+        auto write=c->subtitleAccess->TryWrite();SubtitleRowListEdit staged(c.get());
+        for(auto it=staged.file.Events.begin();it!=staged.file.Events.end();++it)if(it->Id==ids[1]) {
+            staged.file.Events.erase_and_dispose(it,[](auto row){delete row;});break;
+        }
+        staged.Commit("delete anchor fixture",AssFile::COMMIT_DIAG_ADDREM);
+    }
+    Key(WXK_DOWN,true);
+    EXPECT_EQ((std::set<int>{ids[3],ids[2]}),c->selectionController->SelectedIDs());
+}
+TEST_F(selection_ui, undo_redo_rebind_editor_grid_and_bound_selection_with_same_ids) {
+    c->selectionController->SetSelectionAndActiveIDs({ids[1],ids[2]},ids[2],false);
+    c->textSelectionController->SetSelection(0,1);
+    Input("both edited");
+    auto selected=c->selectionController->SelectedIDs();
+    std::vector<char> order;
+    agi::signal::Connection selection=c->selectionController->AddSelectionListener([&]{order.push_back('S');});
+    agi::signal::Connection active=c->selectionController->AddActiveLineListener([&]{order.push_back('A');});
+    c->subsController->Undo();
+    EXPECT_EQ((std::vector<char>{'S','A'}),order);EXPECT_EQ(selected,c->selectionController->SelectedIDs());
+    EXPECT_EQ(ids[2],c->selectionController->ActiveID());EXPECT_EQ("2",std::string(editor->GetTextRaw().data()));
+    order.clear();c->subsController->Redo();
+    EXPECT_EQ((std::vector<char>{'S','A'}),order);EXPECT_EQ(ids[2],c->selectionController->ActiveID());
+    EXPECT_EQ("both edited",std::string(editor->GetTextRaw().data()));
+    EXPECT_EQ(selected,c->selectionController->SelectedIDs());
+    Key(WXK_UP);EXPECT_EQ(ids[1],c->selectionController->ActiveID());
+}
+TEST_F(selection_ui, selection_listener_cannot_undo_or_commit_with_a_preexisting_scope) {
+    Input("history entry");auto before=c->subsController->GetUndoDescription();
+    auto scope=c->subtitleAccess->TryWrite();ASSERT_TRUE(scope);auto edit=c->subtitleAccess->Edit(scope->Lease());
+    auto revision=c->subtitleEditGate.Revision();int calls=0;
+    agi::signal::Connection observer=c->selectionController->AddSelectionListener([&]{
+        ++calls;c->subsController->Undo();c->subsController->Redo();
+        EXPECT_FALSE(c->subtitleAccess->TryWrite());
+        EXPECT_THROW(edit.Commit("reentry",AssFile::COMMIT_DIAG_META),std::logic_error);
+    });
+    c->selectionController->SetSelectedIDs({ids[0]});
+    EXPECT_EQ(1,calls);EXPECT_EQ(before,c->subsController->GetUndoDescription());
+    EXPECT_EQ("history entry",c->ass->Events.front().Text.get());EXPECT_EQ(revision,c->subtitleEditGate.Revision());
+}
+TEST_F(selection_ui, find_navigation_uses_ids_without_a_write_lease) {
+    SearchReplaceSettings settings{};settings.find="2";settings.field=SearchReplaceSettings::Field::TEXT;
+    settings.limit_to=SearchReplaceSettings::Limit::ALL;c->search->Configure(settings);
+    auto before=c->subtitleEditGate.Revision();auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);
+    EXPECT_TRUE(c->search->FindNext());EXPECT_EQ(ids[2],c->selectionController->ActiveID());
+    EXPECT_EQ((std::set<int>{ids[2]}),c->selectionController->SelectedIDs());
+    EXPECT_EQ(before,c->subtitleEditGate.Revision());
+}
 }

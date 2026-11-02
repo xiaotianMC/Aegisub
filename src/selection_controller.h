@@ -79,11 +79,6 @@ public:
     // Installs both values, announces Selection, then Active if it changed.
     void SetSelectionAndActiveIDs(std::set<int>, int, bool expand_bound_groups = true);
 
-    // Transitional read-only inputs, removed with the caller migration.
-    void SetActiveLine(AssDialogue const*);
-    void SetSelectedSet(Selection, bool expand_bound_groups = true);
-    void SetSelectionAndActive(Selection, AssDialogue const*, bool expand_bound_groups = true);
-
     class PreparedSelection {
         std::set<int> selection;
         int active = 0;

@@ -58,7 +58,8 @@ class BaseGrid final : public wxWindow {
 
 	/// Row from which the selection shrinks/grows from when selecting via the
 	/// keyboard, shift-clicking or dragging
-	int extendRow = -1;
+	int extend_id = 0;
+    int ExtendRow() const;
 
 	/// First row that is visible at the current scroll position
 	int yPos = 0;
@@ -89,7 +90,6 @@ class BaseGrid final : public wxWindow {
 	} row_colors;
 
 	std::vector<AssDialogue const*> index_line_map;  ///< Read-only drawing cache
-    std::vector<AssDialogue*> RowsForWrite(agi::SubtitleEditGate::WriteLease const&) const;
 
 	/// Connection for video seek event. Stored explicitly so that it can be
 	/// blocked if the relevant option is disabled

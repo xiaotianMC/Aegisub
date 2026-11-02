@@ -4,7 +4,7 @@
 #include "subtitle_row_edit.h"
 
 // Detached list for ordinary structural algorithms. It contains no live nodes.
-// Selection translation is a temporary bridge to the pre-C1-C1b UI API.
+// Mutable row pointers below belong exclusively to this independent file.
 class SubtitleRowListEdit {
     agi::Context* c;
     std::optional<SubtitleProjectAccess::WriteScope> scope;
@@ -54,12 +54,6 @@ public:
         for (auto row : chosen) ids.insert(row->Id);
         int active_id = current ? current->Id : 0;
         Apply();
-        Selection live;
-        AssDialogue* active_live = nullptr;
-        for (auto& row : c->ass->Events) {
-            if (ids.contains(row.Id)) live.insert(&row);
-            if (row.Id == active_id) active_live = &row;
-        }
-        c->selectionController->SetSelectionAndActive(std::move(live), active_live, expand);
+        c->selectionController->SetSelectionAndActiveIDs(std::move(ids), active_id, expand);
     }
 };

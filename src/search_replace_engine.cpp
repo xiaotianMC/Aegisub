@@ -195,7 +195,8 @@ bool SearchReplaceEngine::FindReplace(bool replace) {
 	auto matches = GetMatcher(settings);
 
 	AssDialogue const* line = context->selectionController->ReadActiveLine();
-	auto it = context->ass->iterator_to(*line);
+    if (!line) return false;
+	auto it = context->subtitleAccess->Read().iterator_to(*line);
 	size_t pos = 0;
 
 	auto replace_ms = bad_match;
@@ -230,7 +231,7 @@ bool SearchReplaceEngine::FindReplace(bool replace) {
 	// For non-text fields we just look for matching lines rather than each
 	// match within the line, so move to the next line
 	else if (settings.field != SearchReplaceSettings::Field::TEXT)
-		it = circular_next(it, context->ass->Events);
+		it = circular_next(it, context->subtitleAccess->Read().Events);
 
 	auto const& sel = context->selectionController->ReadSelectedSet();
 	bool selection_only = sel.size() > 1 && settings.limit_to == SearchReplaceSettings::Limit::SELECTED;
@@ -242,16 +243,16 @@ bool SearchReplaceEngine::FindReplace(bool replace) {
 		if (MatchState ms = matches(&*it, pos)) {
 			if (selection_only)
 				// We're cycling through the selection, so don't muck with it
-				context->selectionController->SetActiveLine(&*it);
+				context->selectionController->SetActiveID(it->Id);
 			else
-				context->selectionController->SetSelectionAndActive({ &*it }, &*it);
+				context->selectionController->SetSelectionAndActiveIDs({it->Id}, it->Id);
 
 			if (settings.field == SearchReplaceSettings::Field::TEXT)
 				context->textSelectionController->SetSelection(ms.start, ms.end);
 
 			return true;
 		}
-	} while (pos = 0, &*(it = circular_next(it, context->ass->Events)) != line);
+	} while (pos = 0, &*(it = circular_next(it, context->subtitleAccess->Read().Events)) != line);
 
 	// Replaced something and didn't find another match, so select the newly
 	// inserted text

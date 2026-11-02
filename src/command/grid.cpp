@@ -72,10 +72,11 @@ struct grid_line_next_create final : public Command {
 		if (tc)
 			tc->Commit();
 
-		AssDialogue const* cur = c->selectionController->ReadActiveLine();
-		c->selectionController->NextLine();
-		if (cur == c->selectionController->ReadActiveLine()) {
-            SubtitleRowListEdit staged(c);cur=staged.active;
+		auto previous = c->selectionController->ActiveID();
+        c->selectionController->NextLine();
+        if (previous == c->selectionController->ActiveID()) {
+            SubtitleRowListEdit staged(c);
+            auto cur = staged.active;
 			auto newline = new AssDialogue;
 			newline->Start = cur->End;
 			newline->End = cur->End + OPT_GET("Timing/Default Duration")->GetInt();

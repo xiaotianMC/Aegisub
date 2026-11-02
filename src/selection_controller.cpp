@@ -118,17 +118,6 @@ void SelectionController::SetSelectionAndActiveIDs(std::set<int> ids, int id, bo
     if (auto row = ReadActiveLine()) file->Properties.active_row = row->Row;
     Notify(true, changed);
 }
-void SelectionController::SetActiveLine(AssDialogue const* row) { SetActiveID(row ? row->Id : 0); }
-void SelectionController::SetSelectedSet(Selection rows, bool expand) {
-    std::set<int> ids;
-    for (auto row : rows) ids.insert(row->Id);
-    SetSelectedIDs(std::move(ids), expand);
-}
-void SelectionController::SetSelectionAndActive(Selection rows, AssDialogue const* row, bool expand) {
-    std::set<int> ids;
-    for (auto selected : rows) ids.insert(selected->Id);
-    SetSelectionAndActiveIDs(std::move(ids), row ? row->Id : 0, expand);
-}
 SelectionController::PreparedSelection::PreparedSelection(AssFile* owner, agi::SubtitleEditGate::RevisionToken revision)
 : owner(owner), revision(std::move(revision)) { }
 SelectionController::PreparedSelection::PreparedSelection(PreparedSelection&& other) noexcept

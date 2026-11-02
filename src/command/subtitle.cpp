@@ -410,9 +410,9 @@ struct subtitle_select_all final : public Command {
 	STR_HELP("Select all dialogue lines")
 
 	void operator()(agi::Context *c) override {
-		Selection sel;
-		boost::copy(c->ass->Events | agi::address_of, inserter(sel, sel.end()));
-		c->selectionController->SetSelectedSet(std::move(sel));
+		std::set<int> sel;
+        for (auto const& row : c->subtitleAccess->Read().Events) sel.insert(row.Id);
+        c->selectionController->SetSelectedIDs(std::move(sel));
 	}
 };
 
@@ -427,20 +427,20 @@ struct subtitle_select_visible final : public Command {
 	void operator()(agi::Context *c) override {
 		c->videoController->Stop();
 
-		Selection new_selection;
+		std::set<int> new_selection;
 		int frame = c->videoController->GetFrameN();
 
-		for (auto& diag : c->ass->Events) {
+		for (auto const& diag : c->subtitleAccess->Read().Events) {
 			if (c->videoController->FrameAtTime(diag.Start, agi::vfr::START) <= frame &&
 				c->videoController->FrameAtTime(diag.End, agi::vfr::END) >= frame)
 			{
 				if (new_selection.empty())
-					c->selectionController->SetActiveLine(&diag);
-				new_selection.insert(&diag);
+					c->selectionController->SetActiveID(diag.Id);
+				new_selection.insert(diag.Id);
 			}
 		}
 
-		c->selectionController->SetSelectedSet(std::move(new_selection));
+		c->selectionController->SetSelectedIDs(std::move(new_selection));
 	}
 
 	bool Validate(const agi::Context *c) override {

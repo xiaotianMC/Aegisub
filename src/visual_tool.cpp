@@ -280,27 +280,26 @@ void VisualToolBase::SelectLine(int id) {
 	if (!EditCurrent()) throw std::logic_error("Unauthorized visual selection");
 	changing_selection = true;
 	BOOST_SCOPE_EXIT_ALL(this) { changing_selection = false; };
-	for (auto& row : c->ass->Events) if (row.Id == id) { c->selectionController->SetActiveLine(&row); return; }
+	c->selectionController->SetActiveID(id);
 }
 void VisualToolBase::SelectFeature(int id, bool clear) {
 	if (!EditCurrent()) throw std::logic_error("Unauthorized visual selection");
 	changing_selection = true;
 	BOOST_SCOPE_EXIT_ALL(this) { changing_selection = false; };
-	auto selected = clear ? Selection{} : c->selectionController->ReadSelectedSet();
-	for (auto& row : c->ass->Events) if (row.Id == id) {
-		selected.insert(&row); c->selectionController->SetSelectedSet(std::move(selected)); return;
-	}
+	auto selected = clear ? std::set<int>{} : c->selectionController->SelectedIDs();
+    selected.insert(id);
+    c->selectionController->SetSelectedIDs(std::move(selected));
 }
 void VisualToolBase::DeselectFeature(int id) {
 	if (!EditCurrent()) throw std::logic_error("Unauthorized visual selection");
-	auto selected = c->selectionController->ReadSelectedSet();
+	auto selected = c->selectionController->SelectedIDs();
 	if (selected.size() <= 1) return;
-	for (auto& row : c->ass->Events) if (row.Id == id) selected.erase(&row);
+	selected.erase(id);
 	changing_selection = true;
 	BOOST_SCOPE_EXIT_ALL(this) { changing_selection = false; };
-	auto active = c->selectionController->ReadActiveLine();
-	if (!selected.count(active)) active = *selected.begin();
-	c->selectionController->SetSelectionAndActive(std::move(selected), active);
+	auto active = c->selectionController->ActiveID();
+    if (!selected.count(active)) active = *selected.begin();
+    c->selectionController->SetSelectionAndActiveIDs(std::move(selected), active);
 }
 int VisualToolBase::InsertDrawing(AssDialogueBase const& drawing, AssStyle const* style) {
 	if (!EditCurrent() || !active_line) throw std::logic_error("Stale drawing interaction");
@@ -310,9 +309,7 @@ int VisualToolBase::InsertDrawing(AssDialogueBase const& drawing, AssStyle const
 	BOOST_SCOPE_EXIT_ALL(this) { file_changed_connection.Unblock(); };
 	interaction->Commit(_("draw shape"), AssFile::COMMIT_DIAG_ADDREM | (style ? AssFile::COMMIT_STYLES : 0));
 	BOOST_SCOPE_EXIT_ALL(this) { interaction.reset(); };
-	for (auto& row : c->ass->Events) if (row.Id == id) {
-		c->selectionController->SetSelectionAndActive({&row}, &row); break;
-	}
+	c->selectionController->SetSelectionAndActiveIDs({id}, id);
 	return id;
 }
 

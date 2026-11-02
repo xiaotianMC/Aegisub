@@ -147,14 +147,14 @@ bool Project::DoLoadSubtitles(agi::fs::path const& path, std::string encoding, P
 		return false;
 	}
 
-	Selection sel;
-	AssDialogue *active_line = nullptr;
+	std::set<int> sel;
+    int active_id = 0;
 	if (!context->ass->Events.empty()) {
 		int row = mid<int>(0, properties.active_row, context->ass->Events.size() - 1);
-		active_line = &*std::next(context->ass->Events.begin(), row);
-		sel.insert(active_line);
+		active_id = std::next(context->ass->Events.begin(), row)->Id;
+        sel.insert(active_id);
 	}
-	context->selectionController->SetSelectionAndActive(std::move(sel), active_line);
+	context->selectionController->SetSelectionAndActiveIDs(std::move(sel), active_id);
 	context->subsGrid->ScrollTo(properties.scroll_position);
 
 	return true;
@@ -181,7 +181,7 @@ void Project::CloseSubtitles() {
 	context->path->SetToken("?script", "");
 	LoadUnloadFiles(context->ass->Properties);
 	auto line = &*context->ass->Events.begin();
-	context->selectionController->SetSelectionAndActive({line}, line);
+	context->selectionController->SetSelectionAndActiveIDs({line->Id}, line->Id);
 }
 
 void Project::LoadUnloadFiles(ProjectProperties properties) {

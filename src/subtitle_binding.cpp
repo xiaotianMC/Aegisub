@@ -95,8 +95,7 @@ void BindSelectedSubtitles(agi::Context *c) {
     staged.Commit(_("bind subtitles"), AssFile::COMMIT_EXTRADATA | AssFile::COMMIT_DIAG_META);
 
     // Selecting one member of the new group should now select all of them.
-    auto expanded = ExpandBoundSelection(*c->ass, selection);
-    c->selectionController->SetSelectedSet(std::move(expanded));
+    c->selectionController->SetSelectedIDs(std::move(ids));
 }
 
 void UnbindSelectedSubtitles(agi::Context *c) {

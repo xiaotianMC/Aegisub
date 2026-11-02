@@ -912,7 +912,7 @@ namespace {
 
 		// top of stack will be selected lines array, if any was returned
 		if (lua_istable(L, -1)) {
-			Selection sel;
+			std::set<int> sel;
 			lua_for_each(L, [&] {
 				if (!lua_isnumber(L, -1))
 					return;
@@ -929,23 +929,24 @@ namespace {
 				}
 
 				auto diag = static_cast<AssDialogue*>(curline);
-				sel.insert(diag);
+				sel.insert(diag->Id);
 				if (!active_line || active_idx == cur)
 					active_line = diag;
 			});
 
-			AssDialogue const* new_active = c->selectionController->ReadActiveLine();
+			auto current = c->selectionController->ReadActiveLine();
+            int new_active = current ? current->Id : 0;
 			if (active_line && (active_idx > 0 || !sel.count(new_active)))
-				new_active = active_line;
-			if (sel.empty())
-				sel.insert(new_active);
-			c->selectionController->SetSelectionAndActive(std::move(sel), new_active);
+				new_active = active_line->Id;
+			if (sel.empty() && new_active)
+                sel.insert(new_active);
+			c->selectionController->SetSelectionAndActiveIDs(std::move(sel), new_active);
 		}
 		else {
 			lua_pop(L, 1);
 
-			Selection new_sel;
-			AssDialogue const* new_active = nullptr;
+			std::set<int> new_sel;
+			int new_active = 0;
 
 			int prev = original_offset;
 			auto it = c->ass->Events.begin();
@@ -955,16 +956,16 @@ namespace {
 					++it;
 				}
 				if (it == c->ass->Events.end()) break;
-				new_sel.insert(&*it);
+				new_sel.insert(it->Id);
 				if (row == original_active)
-					new_active = &*it;
+					new_active = it->Id;
 			}
 
 			if (new_sel.empty() && !c->ass->Events.empty())
-				new_sel.insert(&c->ass->Events.front());
-			if (!new_sel.count(new_active))
-				new_active = *new_sel.begin();
-			c->selectionController->SetSelectionAndActive(std::move(new_sel), new_active);
+				new_sel.insert(c->ass->Events.front().Id);
+			if (!new_sel.empty() && !new_sel.count(new_active))
+                new_active = *new_sel.begin();
+			c->selectionController->SetSelectionAndActiveIDs(std::move(new_sel), new_active);
 		}
 
 		stackcheck.check_stack(0);
