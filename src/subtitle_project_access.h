@@ -104,6 +104,8 @@ public:
     SubtitleProjectAccess& operator=(SubtitleProjectAccess const&) = delete;
     ~SubtitleProjectAccess();
     AssFile const& Read() const;
+    // Independent, host-thread snapshot including Properties and stable row IDs.
+    std::unique_ptr<AssFile> Snapshot() const;
     AssFile const& Read(agi::SubtitleEditGate::RevisionToken const&) const;
     WriteAccess Edit(agi::SubtitleEditGate::WriteLease const&);
     void Close() noexcept;

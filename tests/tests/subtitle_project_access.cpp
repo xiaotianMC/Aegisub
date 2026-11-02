@@ -276,3 +276,19 @@ TEST(subtitle_project_access, ordinary_values_reject_silent_dependency_changes_a
     row->Start=0;candidate.Events.front().ExtradataIds=std::vector<uint32_t>{100};
     EXPECT_THROW(edit.UpdateValues(stamp,original,candidate,{0},AssFile::COMMIT_DIAG_FULL|AssFile::COMMIT_EXTRADATA),std::invalid_argument);EXPECT_EQ("",row->Text.get());
 }
+
+TEST(subtitle_project_access, snapshot_is_detached_complete_and_preserves_row_identity_without_revision) {
+    AssFile file;auto row=new AssDialogue;row->Row=0;file.Events.push_back(*row);
+    file.Properties.video_position=31;file.Properties.automation_settings["test"]="value";
+    auto id=row->Id;agi::SubtitleEditGate gate;SubtitleProjectAccess access(file,gate);
+    auto revision=gate.Revision();auto snapshot=access.Snapshot();
+    EXPECT_EQ(id,snapshot->Events.front().Id);EXPECT_NE(row,&snapshot->Events.front());
+    EXPECT_EQ(31,snapshot->Properties.video_position);EXPECT_EQ("value",snapshot->Properties.automation_settings.at("test"));
+    row->ExtradataIds = std::vector<uint32_t>{123};
+    auto saved = access.Snapshot();saved->CleanExtradata();
+    EXPECT_TRUE(saved->Events.front().ExtradataIds.get().empty());
+    EXPECT_EQ((std::vector<uint32_t>{123}),row->ExtradataIds.get());
+    snapshot->Events.front().Text="independent";snapshot->Properties.video_position=50;
+    EXPECT_EQ("",row->Text.get());EXPECT_EQ(31,file.Properties.video_position);EXPECT_EQ(revision,gate.Revision());
+    access.Close();EXPECT_THROW(access.Snapshot(),std::logic_error);
+}

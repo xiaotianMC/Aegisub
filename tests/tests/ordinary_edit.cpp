@@ -59,6 +59,8 @@
 #include <fstream>
 #include <chrono>
 #include <libaegisub/ass/karaoke.h>
+#include <libaegisub/path.h>
+#include <wx/app.h>
 #include <wx/frame.h>
 #include <wx/combobox.h>
 #include <wx/spinctrl.h>
@@ -1668,4 +1670,67 @@ TEST_F(selection_ui, find_navigation_uses_ids_without_a_write_lease) {
     EXPECT_EQ((std::set<int>{ids[2]}),c->selectionController->SelectedIDs());
     EXPECT_EQ(before,c->subtitleEditGate.Revision());
 }
+}
+
+TEST_F(ordinary_edit, save_cleans_only_independent_copy_and_keeps_ass_format_precision) {
+    {
+        auto write=c->subtitleAccess->TryWrite();auto& row=c->ass->Events.front();
+        row.Text=" 中 文 {\\i1} ";row.Comment=true;row.Start=1001;row.End=2345;
+        auto binding=c->ass->AddExtradata("aegisub.enhanced.subtitle-binding","0:save-test");
+        c->ass->AddExtradata("orphan","keep in memory");
+        row.ExtradataIds=std::vector<uint32_t>{binding,999999};
+        c->ass->Properties.video_zoom=1.25;c->ass->Properties.automation_settings["test"]="saved";
+        c->ass->Commit("save fixture",AssFile::COMMIT_DIAG_FULL|AssFile::COMMIT_EXTRADATA);
+    }
+    auto id=c->ass->Events.front().Id;auto refs=c->ass->Events.front().ExtradataIds.get();
+    auto revision=c->subtitleEditGate.Revision();auto undo=c->subsController->GetUndoDescription();
+    auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);
+    auto path=agi::fs::path((std::filesystem::current_path()/"snapshot-save.ass").wstring());
+    c->subsController->Save(path,"utf-8");
+    EXPECT_EQ(revision,c->subtitleEditGate.Revision());EXPECT_EQ(undo,c->subsController->GetUndoDescription());
+    EXPECT_EQ(refs,c->ass->Events.front().ExtradataIds.get());EXPECT_EQ(2u,c->ass->Extradata.size());
+    EXPECT_EQ(id,c->ass->Events.front().Id);
+    AssFile reopened;SubtitleFormat::GetReader(path,"utf-8")->ReadFile(&reopened,path,c->project->Timecodes(),"utf-8");
+    std::ifstream saved(path.string(),std::ios::binary);
+    std::string output((std::istreambuf_iterator<char>(saved)),{});
+    EXPECT_NE(std::string::npos,output.find(" 中 文 {\\i1} "));
+    // The existing ASS reader trims line-end space; ASS time serialization rounds to centiseconds.
+    EXPECT_EQ(" 中 文 {\\i1}",reopened.Events.front().Text.get());EXPECT_TRUE(reopened.Events.front().Comment);
+    EXPECT_EQ(1000,reopened.Events.front().Start.GetMilliseconds());EXPECT_EQ(2350,reopened.Events.front().End.GetMilliseconds());
+    EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());EXPECT_EQ(2345,c->ass->Events.front().End.GetMilliseconds());
+    ASSERT_EQ(1u,reopened.Extradata.size());EXPECT_EQ("aegisub.enhanced.subtitle-binding",reopened.Extradata.front().key);
+    EXPECT_EQ(1u,reopened.Events.front().ExtradataIds.get().size());EXPECT_NE(nullptr,reopened.GetStyle("Default"));
+    EXPECT_DOUBLE_EQ(1.25,reopened.Properties.video_zoom);
+}
+TEST_F(ordinary_edit, failed_save_leaves_filename_paths_dirty_state_model_and_history_intact) {
+    Input("unsaved");auto old=c->subsController->Filename();auto revision=c->subtitleEditGate.Revision();
+    auto undo=c->subsController->GetUndoDescription();auto script=c->path->Decode("?script");
+    auto path=agi::fs::path((std::filesystem::current_path()/"missing-parent"/"failed.ass").wstring());
+    EXPECT_ANY_THROW(c->subsController->Save(path,"utf-8"));
+    EXPECT_EQ(old,c->subsController->Filename());EXPECT_EQ(script,c->path->Decode("?script"));EXPECT_TRUE(c->subsController->IsModified());
+    EXPECT_EQ("unsaved",c->ass->Events.front().Text.get());EXPECT_EQ(revision,c->subtitleEditGate.Revision());EXPECT_EQ(undo,c->subsController->GetUndoDescription());
+}
+
+TEST_F(ordinary_edit, autosave_owns_complete_input_and_queued_completion_survives_controller_destruction) {
+    auto directory=std::filesystem::current_path()/"autosave-snapshot";
+    auto old_path=OPT_GET("Path/Auto/Save")->GetString();OPT_SET("Path/Auto/Save")->SetString(directory.string());
+    Input("automatic snapshot 中 文");
+    {
+        auto write=c->subtitleAccess->TryWrite();c->ass->Properties.video_zoom=1.75;
+        c->ass->Properties.export_encoding="utf-8";
+        auto id=c->ass->AddExtradata("aegisub.enhanced.subtitle-binding","0:auto");
+        c->ass->Events.front().ExtradataIds=std::vector<uint32_t>{id};c->ass->AddExtradata("orphan","not saved");
+        c->ass->Commit("auto fixture",AssFile::COMMIT_EXTRADATA);
+    }
+    c->subsController->RequestAutoSave();Input("later edit");
+    // The production destructor drains its serial worker and invalidates queued UI results.
+    c->subsController.reset();wxTheApp->ProcessPendingEvents();
+    std::vector<std::filesystem::path> outputs;
+    for(auto const& item:std::filesystem::directory_iterator(directory))outputs.push_back(item.path());
+    ASSERT_EQ(1u,outputs.size());AssFile reopened;agi::fs::path path(outputs.front().wstring());
+    SubtitleFormat::GetReader(path,"utf-8")->ReadFile(&reopened,path,c->project->Timecodes(),"utf-8");
+    EXPECT_EQ("automatic snapshot 中 文",reopened.Events.front().Text.get());EXPECT_EQ("later edit",c->ass->Events.front().Text.get());
+    EXPECT_DOUBLE_EQ(1.75,reopened.Properties.video_zoom);EXPECT_EQ("utf-8",reopened.Properties.export_encoding);
+    EXPECT_EQ(1u,reopened.Extradata.size());EXPECT_EQ(2u,c->ass->Extradata.size());
+    OPT_SET("Path/Auto/Save")->SetString(old_path);
 }

@@ -187,6 +187,14 @@ void SubtitleProjectAccess::Close() noexcept {
     if (state->file->edit_gate == &gate) state->file->edit_gate = nullptr;
 }
 AssFile const& SubtitleProjectAccess::Read() const { state->Check(); return *state->file; }
+std::unique_ptr<AssFile> SubtitleProjectAccess::Snapshot() const {
+    auto const& source = Read();
+    auto copy = std::make_unique<AssFile>(source);
+    copy->Properties = source.Properties;
+    auto original = source.Events.begin();
+    for (auto& row : copy->Events) row.Id = (original++)->Id;
+    return copy;
+}
 AssFile const& SubtitleProjectAccess::Read(agi::SubtitleEditGate::RevisionToken const& token) const {
     state->Check();
     if (!gate.Authorizes(token)) throw std::logic_error("Stale subtitle observer");

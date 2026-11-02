@@ -148,10 +148,11 @@ SubsController::SubsController(agi::Context *context)
 	autosave_timer_changed(&autosave_timer);
 	BindConnection(OPT_SUB("App/Auto/Save", [this] { autosave_timer_changed(&autosave_timer); }));
 	BindConnection(OPT_SUB("App/Auto/Save Every Seconds", [this] { autosave_timer_changed(&autosave_timer); }));
-	autosave_timer.Bind(wxEVT_TIMER, [this](wxTimerEvent&) { AutoSave(); });
+	autosave_timer.Bind(wxEVT_TIMER, [this](wxTimerEvent&) { RequestAutoSave(); });
 }
 
 SubsController::~SubsController() {
+	autosave_lifetime.reset();
 	// Make sure there are no autosaves in progress
 	autosave_queue->Sync([]{ });
 }
@@ -167,6 +168,7 @@ ProjectProperties SubsController::Load(agi::fs::path const& filename, const char
 	SubtitleFormat::GetReader(filename, charset)->ReadFile(&temp, filename, context->project->Timecodes(), charset);
 
 	context->ass->swap(temp);
+    autosave_lifetime = std::make_shared<int>(0);
 	auto props = context->ass->Properties;
 
 	SetFileName(filename);
@@ -198,7 +200,15 @@ void SubsController::Save(agi::fs::path const& filename, const char *encoding) {
 	if (!writer)
 		throw agi::InvalidInputException("Unknown file type.");
 
+	auto snapshot = context->subtitleAccess->Snapshot();
+    snapshot->Properties = context->project->PropertiesForSave(filename);
+    snapshot->CleanExtradata();
+    // No live metadata or dirty-state changes precede successful output.
+    writer->WriteFile(snapshot.get(), filename, 0, encoding);
 	int old_autosaved_commit_id = autosaved_commit_id, old_saved_commit_id = saved_commit_id;
+    auto old_filename = this->filename;
+    auto old_properties = context->subtitleAccess->Read().Properties;
+    auto old_script_path = context->path->Decode("?script");
 	try {
 		autosaved_commit_id = saved_commit_id = commit_id;
 
@@ -207,13 +217,14 @@ void SubsController::Save(agi::fs::path const& filename, const char *encoding) {
 		this->filename = filename;
 		context->project->SetSubtitlesFilename(filename);
 
-		context->ass->CleanExtradata();
-		writer->WriteFile(context->ass.get(), filename, 0, encoding);
 		FileSave();
 	}
 	catch (...) {
 		autosaved_commit_id = old_autosaved_commit_id;
 		saved_commit_id = old_saved_commit_id;
+        this->filename = old_filename;
+        context->path->SetToken("?script", old_script_path);
+        context->ass->Properties = std::move(old_properties);
 		throw;
 	}
 
@@ -221,6 +232,7 @@ void SubsController::Save(agi::fs::path const& filename, const char *encoding) {
 }
 
 void SubsController::Close() {
+    autosave_lifetime = std::make_shared<int>(0);
 	undo_stack.clear();
 	redo_stack.clear();
 	autosaved_commit_id = saved_commit_id = commit_id + 1;
@@ -248,7 +260,7 @@ int SubsController::TryToClose(bool allow_cancel) const {
 	return result;
 }
 
-void SubsController::AutoSave() {
+void SubsController::RequestAutoSave() {
 	if (commit_id == autosaved_commit_id)
 		return;
 
@@ -260,18 +272,22 @@ void SubsController::AutoSave() {
 	if (name.empty())
 		name = from_wx(_("Untitled"));
 
-	autosaved_commit_id = commit_id;
-	auto frame = context->frame;
-	auto subs_copy = new AssFile(*context->ass);
-	autosave_queue->Async([subs_copy, name, directory, frame] {
+	auto previous = autosaved_commit_id;
+    auto version = commit_id;
+    auto subs_copy = std::shared_ptr<AssFile>(context->subtitleAccess->Snapshot());
+    subs_copy->CleanExtradata();
+    std::weak_ptr<int> lifetime = autosave_lifetime;
+    autosaved_commit_id = version;
+	autosave_queue->Async([this, subs_copy, name, directory, lifetime, previous, version] {
 		wxString msg;
-		std::unique_ptr<AssFile> subs(subs_copy);
+        bool succeeded = false;
 
 		try {
 			agi::fs::CreateDirectory(directory);
 			auto path = directory /  agi::format("%s.%s.AUTOSAVE.ass", name.string(),
 			                                     agi::util::strftime("%Y-%m-%d-%H-%M-%S"));
-			SubtitleFormat::GetWriter(path)->WriteFile(subs.get(), path, 0);
+			SubtitleFormat::GetWriter(path)->WriteFile(subs_copy.get(), path, 0);
+            succeeded = true;
 			msg = fmt_tl("File backup saved as \"%s\".", path);
 		}
 		catch (const agi::Exception& err) {
@@ -281,8 +297,10 @@ void SubsController::AutoSave() {
 			msg = _("Unhandled exception when attempting to autosave file.");
 		}
 
-		agi::dispatch::Main().Async([frame, msg] {
-			frame->StatusTimeout(msg);
+		agi::dispatch::Main().Async([this, lifetime, previous, version, succeeded, msg] {
+            if (lifetime.expired()) return;
+            if (!succeeded && autosaved_commit_id == version) autosaved_commit_id = previous;
+            if (context->frame) context->frame->StatusTimeout(msg);
 		});
 	});
 }

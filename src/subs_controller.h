@@ -60,6 +60,8 @@ class SubsController : private agi::signal::ConnectionScope {
 
 	/// Queue which autosaves are performed on
 	std::unique_ptr<agi::dispatch::Queue> autosave_queue;
+    // Replaced on document replacement; expired before waiting for workers.
+    std::shared_ptr<int> autosave_lifetime = std::make_shared<int>(0);
 
 	/// A new file has been opened (filename)
 	agi::signal::Signal<agi::fs::path> FileOpen;
@@ -73,7 +75,6 @@ class SubsController : private agi::signal::ConnectionScope {
 	void SetFileName(agi::fs::path const& file);
 
 	/// Autosave the file if there have been any chances since the last autosave
-	void AutoSave();
 
 	void OnCommit(AssFileCommit c);
 	void OnActiveLineChanged();
@@ -105,6 +106,7 @@ public:
 	/// @param file Path to save to
 	/// @param encoding Encoding to use, or empty to let the writer decide (which usually means "App/Save Charset")
 	void Save(agi::fs::path const& file, const char *encoding="");
+    void RequestAutoSave();
 
 	/// Close the currently open file (i.e. open a new blank file)
 	void Close();

@@ -340,8 +340,6 @@ std::vector<ExtradataEntry> AssFile::GetExtradata(std::vector<uint32_t> const& i
 }
 
 void AssFile::CleanExtradata() {
-	if (Extradata.empty()) return;
-
 	std::unordered_set<uint32_t> ids_used;
 	for (auto& line : Events) {
 		if (line.ExtradataIds.get().empty()) continue;

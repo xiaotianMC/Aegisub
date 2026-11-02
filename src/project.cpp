@@ -15,6 +15,7 @@
 // Aegisub Project http://www.aegisub.org/
 
 #include "project.h"
+#include "subtitle_project_access.h"
 
 #include "ass_dialogue.h"
 #include "ass_file.h"
@@ -71,6 +72,18 @@ void Project::UpdateRelativePaths() {
 	context->ass->Properties.video_file     = context->path->MakeRelative(video_file, "?script"sv).generic_string();
 	context->ass->Properties.timecodes_file = context->path->MakeRelative(timecodes_file, "?script"sv).generic_string();
 	context->ass->Properties.keyframes_file = context->path->MakeRelative(keyframes_file, "?script"sv).generic_string();
+}
+
+ProjectProperties Project::PropertiesForSave(agi::fs::path const& path) const {
+    using namespace std::string_view_literals;
+    auto properties = context->subtitleAccess->Read().Properties;
+    agi::Path paths(*context->path);
+    paths.SetToken("?script", path.parent_path());
+    properties.audio_file = paths.MakeRelative(audio_file, "?script"sv).generic_string();
+    properties.video_file = paths.MakeRelative(video_file, "?script"sv).generic_string();
+    properties.timecodes_file = paths.MakeRelative(timecodes_file, "?script"sv).generic_string();
+    properties.keyframes_file = paths.MakeRelative(keyframes_file, "?script"sv).generic_string();
+    return properties;
 }
 
 void Project::ReloadAudio() {
