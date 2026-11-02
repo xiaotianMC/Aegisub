@@ -57,16 +57,16 @@ VisualToolBase::VisualToolBase(VideoDisplay *parent, agi::Context *context)
 , line_color_primary_opt(OPT_GET("Colour/Visual Tools/Lines Primary"))
 , line_color_secondary_opt(OPT_GET("Colour/Visual Tools/Lines Secondary"))
 , shaded_area_alpha_opt(OPT_GET("Colour/Visual Tools/Shaded Area Alpha"))
-, file_changed_connection(c->subtitleAccess->Read().AddCommitListener(&VisualToolBase::OnCommit, this))
+, file_changed_connection(c->subtitleAccess->Read().AddCommitListener("visual_tool.AddCommitListener", [this](int type, AssDialogue const*, SubtitleModelRebindTicket ticket) { OnCommit(type); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime)))
 {
 	SetResolutions();
 	RefreshRows();
 	active_line = GetActiveDialogueLine();
-	connections.push_back(c->selectionController->AddActiveLineListener(&VisualToolBase::OnActiveLineChanged, this));
+	connections.push_back(c->selectionController->AddActiveLineListener("visual_tool.AddActiveLineListener", [this](SubtitleModelRebindTicket ticket) { OnActiveLineChanged(); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime)));
 	connections.push_back(c->videoController->AddSeekListener(&VisualToolBase::OnSeek, this));
 	parent->Bind(wxEVT_MOUSE_CAPTURE_LOST, &VisualToolBase::OnMouseCaptureLost, this);
 	parent->Bind(wxEVT_CHAR_HOOK, &VisualToolBase::OnKeyDown, this);
-	connections.push_back(c->selectionController->AddSelectionListener(&VisualToolBase::OnSelectionChanged, this));
+	connections.push_back(c->selectionController->AddSelectionListener("visual_tool.AddSelectionListener", [this](SubtitleModelRebindTicket ticket) { OnSelectionChanged(); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime)));
 }
 
 VisualToolBase::~VisualToolBase() {

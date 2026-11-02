@@ -20,6 +20,7 @@
 #include "ass_dialogue.h"
 #include "ass_file.h"
 #include "subtitle_project_access.h"
+#include "subtitle_model_candidate.h"
 #include <boost/scope_exit.hpp>
 #include "ass_info.h"
 #include "ass_style.h"
@@ -41,6 +42,7 @@
 #include <libaegisub/util.h>
 
 #include <wx/msgdlg.h>
+#include <limits>
 
 namespace {
 	void autosave_timer_changed(wxTimer *timer) {
@@ -65,6 +67,14 @@ struct SubsController::UndoInfo {
 	mutable std::vector<int> selection;
 	int active_line_id = 0;
 	int pos = 0, sel_start = 0, sel_end = 0;
+
+    UndoInfo(AssFile const& file, int id, std::set<int> const& selected, int active)
+    : commit_id(id), attachments(file.Attachments), extradata(file.Extradata),
+      selection(selected.begin(),selected.end()), active_line_id(active) {
+        for (auto const& info : file.Info) script_info.emplace_back(info.Key(),info.Value());
+        styles.assign(file.Styles.begin(),file.Styles.end());
+        events.assign(file.Events.begin(),file.Events.end());
+    }
 
 	UndoInfo(const agi::Context *c, wxString const& d, int commit_id)
 	: undo_description(d)
@@ -142,16 +152,148 @@ struct SubsController::UndoInfo {
 	}
 };
 
+struct SubtitleModelInstallation::Pending {
+    std::shared_ptr<AssFile> retired;
+    SubtitleModelObservers<int,AssDialogue const*>::Prepared commits;
+    SubtitleModelObservers<>::Prepared selected_observers, active_observers;
+    std::vector<std::string> names;
+    size_t selection_offset=0, active_offset=0;
+    std::unique_ptr<agi::SubtitleRebindBatch> batch;
+    boost::container::list<SubsController::UndoInfo> undo, redo;
+    std::set<int> selected;
+    int active, old_active;
+    agi::fs::path filename;
+    agi::Path paths;
+    ProjectMetadata saved_metadata;
+    std::shared_ptr<int> autosave_lifetime=std::make_shared<int>(0);
+    int old_commit, old_saved, old_auto, old_next;
+    uint64_t old_metadata, old_auto_metadata;
+    bool published=false;
+    Pending(SubsController& owner, SubtitleModelCandidate&& candidate, agi::fs::path const& path)
+    : retired(std::move(candidate.file)),
+      commits(owner.context->ass->AnnounceCommit.PrepareObservers()),
+      selected_observers(owner.context->selectionController->AnnounceSelectedSetChanged.PrepareObservers()),
+      active_observers(owner.context->selectionController->AnnounceActiveLineChanged.PrepareObservers()),
+      selected(candidate.selected), active(candidate.active), old_active(owner.context->selectionController->ActiveID()),
+      filename(path), paths(*owner.context->path), saved_metadata(retired->Properties),
+      old_commit(owner.commit_id),old_saved(owner.saved_commit_id),old_auto(owner.autosaved_commit_id),old_next(owner.next_commit_id),
+      old_metadata(owner.context->subtitleAccess->MetadataRevision()),old_auto_metadata(owner.autosaved_metadata_revision) {
+        candidate.consumed=true;
+        paths.SetToken("?script",path.parent_path());
+        if (old_next==std::numeric_limits<int>::max() || old_metadata==std::numeric_limits<uint64_t>::max())
+            throw std::overflow_error("Document history or metadata identity exhausted");
+        undo.emplace_back(*retired,old_next,selected,active);
+        names=commits.Names();
+        selection_offset=names.size();
+        auto selection_names=selected_observers.Names();names.insert(names.end(),selection_names.begin(),selection_names.end());
+        active_offset=names.size();
+        auto active_names=active_observers.Names();names.insert(names.end(),active_names.begin(),active_names.end());
+    }
+};
+SubtitleModelInstallation::SubtitleModelInstallation(SubsController& value) : owner(value) {}
+SubtitleModelInstallation::~SubtitleModelInstallation() = default;
+void SubtitleModelInstallation::CheckThread() const {
+    if (thread != std::this_thread::get_id()) throw std::logic_error("Model installation requires host thread");
+}
+bool SubtitleModelInstallation::Busy() const noexcept {
+    return state==State::Preparing || state==State::Prepared || state==State::Authorizing ||
+        state==State::Publishing || state==State::Rebinding || state==State::Recovering;
+}
+void SubtitleModelInstallation::Begin() {
+    CheckThread();
+    if (Busy() || state==State::RecoveryBlocked || owner.context->subtitleEditGate.NeedsRebinding())
+        throw std::logic_error("Another model installation is active or recovery is blocked");
+    owner.context->subtitleAccess->Read();
+    expected=owner.context->subtitleEditGate.Capture();
+    metadata_revision=owner.context->subtitleAccess->MetadataRevision();
+    cancelled=false;state=State::Preparing;
+}
+void SubtitleModelInstallation::Abort() noexcept {
+    if (state==State::RecoveryBlocked || state==State::Committed) return;
+    owner.context->ass->installing=false;
+    state=State::Aborting;pending.reset();expected.reset();
+}
+void SubtitleModelInstallation::Install(SubtitleModelCandidate&& candidate, agi::fs::path const& path) {
+    CheckThread();
+    if (state!=State::Preparing || !candidate.Available()) throw std::logic_error("Invalid or cancelled installation candidate");
+    pending=std::make_unique<Pending>(owner,std::move(candidate),path);state=State::Prepared;
+    auto c=owner.context;
+    state=State::Authorizing;
+    if (!c->subtitleEditGate.Authorizes(*expected) || metadata_revision!=c->subtitleAccess->MetadataRevision())
+        throw std::logic_error("Stale model installation input");
+    auto session=c->subtitleEditGate.TryBeginComparison();
+    if (!session) throw std::logic_error("Model installation requires no active writer or comparison");
+    c->ass->installing=true;
+    pending->commits.Prepare();pending->selected_observers.Prepare();pending->active_observers.Prepare();
+    if (cancelled || !c->subtitleEditGate.Authorizes(*expected) || metadata_revision!=c->subtitleAccess->MetadataRevision())
+        throw std::logic_error("Model installation cancelled or changed during preparation");
+    pending->batch=std::make_unique<agi::SubtitleRebindBatch>(std::move(*session),pending->retired,pending->names,true);
+    state=State::Publishing;
+    c->ass->installing=true;
+    try {
+        pending->batch->PublishDocumentRevision();
+        c->ass->swap(*pending->retired);
+        owner.undo_stack.swap(pending->undo);owner.redo_stack.swap(pending->redo);
+        owner.filename.swap(pending->filename);c->path->swap(pending->paths);
+        std::swap(c->subtitleAccess->saved_metadata,pending->saved_metadata);
+        c->subtitleAccess->metadata_revision=pending->old_metadata+1;
+        owner.commit_id=owner.saved_commit_id=owner.autosaved_commit_id=pending->old_next;
+        owner.next_commit_id=pending->old_next+1;
+        owner.autosaved_metadata_revision=c->subtitleAccess->metadata_revision;
+        owner.autosave_lifetime.swap(pending->autosave_lifetime);pending->autosave_lifetime.reset();
+        c->selectionController->selection.swap(pending->selected);
+        c->selectionController->active_id=pending->active;
+        c->selectionController->model_replaced=false;
+        pending->published=true;
+        Confirm();
+    }
+    catch (...) {
+        c->ass->installing=false;state=State::RecoveryBlocked;throw;
+    }
+    c->ass->installing=false;
+    if (state!=State::Committed) throw std::runtime_error("Model installation is RecoveryBlocked; inspect pending observers and retry or close host");
+    pending.reset();
+}
+void SubtitleModelInstallation::Confirm() {
+    state=State::Rebinding;
+    auto c=owner.context;
+    bool previous=c->ass->notifying;c->ass->notifying=true;
+    try {
+        pending->commits.Dispatch(*pending->batch,0,AssFile::COMMIT_NEW,nullptr);
+        c->selectionController->model_replaced=false;
+        pending->selected_observers.Dispatch(*pending->batch,pending->selection_offset);
+        pending->active_observers.Dispatch(*pending->batch,pending->active_offset);
+    }
+    catch (...) {c->ass->notifying=previous;state=State::RecoveryBlocked;throw;}
+    c->ass->notifying=previous;
+    state=pending->batch->Complete()?State::Committed:State::RecoveryBlocked;
+}
+bool SubtitleModelInstallation::Retry() {
+    CheckThread();
+    if (state!=State::RecoveryBlocked || !pending || !pending->published) throw std::logic_error("No published installation to recover");
+    state=State::Recovering;owner.context->ass->installing=true;
+    try {Confirm();} catch (...) {owner.context->ass->installing=false;state=State::RecoveryBlocked;throw;}
+    owner.context->ass->installing=false;
+    if (state!=State::Committed) return false;
+    pending.reset();return true;
+}
+std::vector<std::string> SubtitleModelInstallation::PendingObservers() const {
+    CheckThread();return pending && pending->batch?pending->batch->Pending():std::vector<std::string>{};
+}
+
 SubsController::SubsController(agi::Context *context)
 : context(context)
 , undo_connection(context->ass->PushState.Connect(&SubsController::OnCommit, this))
 , text_selection_connection(context->textSelectionController->AddSelectionListener(&SubsController::OnTextSelectionChanged, this))
 , autosave_queue(agi::dispatch::Create())
 {
+    installation.reset(new SubtitleModelInstallation(*this));
 	autosave_timer_changed(&autosave_timer);
 	BindConnection(OPT_SUB("App/Auto/Save", [this] { autosave_timer_changed(&autosave_timer); }));
 	BindConnection(OPT_SUB("App/Auto/Save Every Seconds", [this] { autosave_timer_changed(&autosave_timer); }));
-	autosave_timer.Bind(wxEVT_TIMER, [this](wxTimerEvent&) { RequestAutoSave(); });
+	autosave_timer.Bind(wxEVT_TIMER, [this](wxTimerEvent&) {
+        if (!IsInstalling() && !this->context->subtitleEditGate.NeedsRebinding()) RequestAutoSave();
+    });
 }
 
 SubsController::~SubsController() {
@@ -159,31 +301,37 @@ SubsController::~SubsController() {
 	// Make sure there are no autosaves in progress
 	autosave_queue->Sync([]{ });
 }
+SubtitleModelInstallation::State SubsController::InstallationStatus() const { installation->CheckThread();return installation->state; }
+bool SubsController::IsInstalling() const { return installation->Busy(); }
+std::vector<std::string> SubsController::PendingInstallationObservers() const { return installation->PendingObservers(); }
+void SubsController::CancelModelInstallation() { installation->CheckThread();installation->cancelled=true; }
+bool SubsController::RetryModelInstallation() {
+    if (!installation->Retry()) return false;
+    SetFileName(filename);FileOpen(filename);return true;
+}
+bool SubsController::DeferHostClose(wxCloseEvent& event) {
+    if (!IsInstalling()) return false;
+    CancelModelInstallation();
+    if (event.CanVeto()) event.Veto();else event.Skip(false);
+    return true;
+}
 
 void SubsController::SetSelectionController(SelectionController *selection_controller) {
-	active_line_connection = selection_controller->AddActiveLineListener(&SubsController::OnActiveLineChanged, this);
-	selection_connection = selection_controller->AddSelectionListener(&SubsController::OnSelectionChanged, this);
+	active_line_connection = selection_controller->AddActiveLineListener("subs_controller.AddActiveLineListener", [this](SubtitleModelRebindTicket ticket) { OnActiveLineChanged(); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime));
+	selection_connection = selection_controller->AddSelectionListener("subs_controller.AddSelectionListener", [this](SubtitleModelRebindTicket ticket) { OnSelectionChanged(); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime));
 }
 
 ProjectProperties SubsController::Load(agi::fs::path const& filename, const char *charset) {
-	AssFile temp;
-
-	SubtitleFormat::GetReader(filename, charset)->ReadFile(&temp, filename, context->project->Timecodes(), charset);
-
-	context->ass->swap(temp);
-    ++context->subtitleAccess->metadata_revision;
-    context->subtitleAccess->MarkMetadataSaved(context->ass->Properties);
-    autosaved_metadata_revision = context->subtitleAccess->MetadataRevision();
-    autosave_lifetime = std::make_shared<int>(0);
-	auto props = context->ass->Properties;
-
-	SetFileName(filename);
-
-	// Push the initial state of the file onto the undo stack
-	undo_stack.clear();
-	redo_stack.clear();
-	autosaved_commit_id = saved_commit_id = commit_id + 1;
-	context->ass->Commit("", AssFile::COMMIT_NEW);
+    installation->Begin();
+    BOOST_SCOPE_EXIT_ALL(this) { installation->Abort(); };
+    auto candidate=[&] {
+        AssFile temp;
+        SubtitleFormat::GetReader(filename, charset)->ReadFile(&temp, filename, context->project->Timecodes(), charset);
+        return SubtitleModelCandidate(temp);
+    }(); // Release the parser's independent copy before publication/notification.
+    auto props=candidate.Read().Properties;
+    installation->Install(std::move(candidate),filename);
+    SetFileName(filename); // Post-commit peripheral bookkeeping, not publication authority.
 
 	// Save backup of file
 	if (CanSave() && OPT_GET("App/Auto/Backup")->GetBool()) {
@@ -202,6 +350,7 @@ ProjectProperties SubsController::Load(agi::fs::path const& filename, const char
 }
 
 void SubsController::Save(agi::fs::path const& filename, const char *encoding) {
+    if (IsInstalling() || context->subtitleEditGate.NeedsRebinding()) throw std::logic_error("Cannot save an incomplete model installation");
 	const SubtitleFormat *writer = SubtitleFormat::GetWriter(filename);
 	if (!writer)
 		throw agi::InvalidInputException("Unknown file type.");
@@ -244,6 +393,7 @@ void SubsController::Save(agi::fs::path const& filename, const char *encoding) {
 }
 
 void SubsController::Close() {
+    if (IsInstalling() || context->subtitleEditGate.NeedsRebinding()) throw std::logic_error("Cannot replace a document during installation recovery");
     autosave_lifetime = std::make_shared<int>(0);
 	undo_stack.clear();
 	redo_stack.clear();
@@ -276,6 +426,7 @@ int SubsController::TryToClose(bool allow_cancel) const {
 }
 
 void SubsController::RequestAutoSave() {
+    if (IsInstalling() || context->subtitleEditGate.NeedsRebinding()) throw std::logic_error("Cannot autosave an incomplete model installation");
 	if (commit_id == autosaved_commit_id && context->subtitleAccess->MetadataRevision() == autosaved_metadata_revision)
 		return;
 
@@ -326,6 +477,7 @@ void SubsController::RequestAutoSave() {
 }
 
 bool SubsController::CanSave() const {
+    if (IsInstalling() || context->subtitleEditGate.NeedsRebinding()) return false;
 	try {
 		return SubtitleFormat::GetWriter(filename)->CanSave(context->ass.get());
 	}

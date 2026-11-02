@@ -91,10 +91,10 @@ BaseGrid::BaseGrid(wxWindow* parent, agi::Context *context)
 	OnHighlightVisibleChange(*OPT_GET("Subtitle/Grid/Highlight Subtitles in Frame"));
 
 	connections = agi::signal::make_vector({
-		context->subtitleAccess->Read().AddCommitListener(&BaseGrid::OnSubtitlesCommit, this),
+		context->subtitleAccess->Read().AddCommitListener("base_grid.AddCommitListener", [this](int type, AssDialogue const*, SubtitleModelRebindTicket ticket) { OnSubtitlesCommit(type); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime)),
 
-		context->selectionController->AddActiveLineListener(&BaseGrid::OnActiveLineChanged, this),
-		context->selectionController->AddSelectionListener([&]{ Refresh(false); }),
+		context->selectionController->AddActiveLineListener("base_grid.AddActiveLineListener", [this](SubtitleModelRebindTicket ticket) { OnActiveLineChanged(); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime)),
+		context->selectionController->AddSelectionListener("base_grid.AddSelectionListener", [&](SubtitleModelRebindTicket ticket){ Refresh(false); if (ticket.Current()) ticket.Acknowledge(ticket.Revision());}, std::weak_ptr<void const>(model_observer_lifetime)),
 
 		OPT_SUB("Subtitle/Grid/Font Face", &BaseGrid::UpdateStyle, this),
 		OPT_SUB("Subtitle/Grid/Font Size", &BaseGrid::UpdateStyle, this),

@@ -28,6 +28,7 @@
 // Aegisub Project http://www.aegisub.org/
 
 #pragma once
+#include <memory>
 
 #include "tooltip_binding.h"
 
@@ -66,6 +67,10 @@ template<class Base> class Placeholder;
 ///
 /// Controls the text edit and all surrounding controls
 class SubsEditBox final : public wxPanel {
+protected:
+    // Declared first: expires only after all owned bindings/cache members are destroyed.
+    std::shared_ptr<int> model_observer_lifetime = std::make_shared<int>(0);
+private:
 	enum TimeField {
 		TIME_START = 0,
 		TIME_END,

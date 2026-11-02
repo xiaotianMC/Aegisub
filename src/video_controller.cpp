@@ -51,9 +51,9 @@ VideoController::VideoController(agi::Context *c)
 : context(c)
 , playAudioOnStep(OPT_GET("Audio/Plays When Stepping Video"))
 , connections(agi::signal::make_vector({
-	context->subtitleAccess->Read().AddCommitListener(&VideoController::OnSubtitlesCommit, this),
+	context->subtitleAccess->Read().AddCommitListener("video_controller.AddCommitListener", [this](int type, AssDialogue const* line, SubtitleModelRebindTicket ticket) { OnSubtitlesCommit(type, line); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime)),
 	context->project->AddVideoProviderListener(&VideoController::OnNewVideoProvider, this),
-	context->selectionController->AddActiveLineListener(&VideoController::OnActiveLineChanged, this),
+	context->selectionController->AddActiveLineListener("video_controller.AddActiveLineListener", [this](SubtitleModelRebindTicket ticket) { OnActiveLineChanged(); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime)),
 }))
 {
 	Bind(EVT_VIDEO_ERROR, &VideoController::OnVideoError, this);

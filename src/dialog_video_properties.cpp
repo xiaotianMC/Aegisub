@@ -530,9 +530,10 @@ bool update_layout_res(AssFile *file, const VideoPropertyValues *new_provider, w
 }
 
 void UpdateVideoProperties(agi::Context *c, const AsyncVideoProvider *new_provider) {
+    auto model_observer_lifetime = std::make_shared<int>(0); // Outlives the draft and both connections.
     SubtitleDialogEdit edit(c);
     VideoPropertyValues video(*new_provider);
-    agi::signal::Connection changed=c->subtitleAccess->Read().AddCommitListener([&]{edit.Invalidate();});
+    agi::signal::Connection changed=c->subtitleAccess->Read().AddCommitListener("dialog_video_properties.AddCommitListener", [&](SubtitleModelRebindTicket ticket){edit.Invalidate();if (ticket.Current()) ticket.Acknowledge(ticket.Revision());}, std::weak_ptr<void const>(model_observer_lifetime));
     struct Cancelled {};
     auto step=[&](auto calculate,wxString const& description) {
         if(!edit.Alive() || c->project->VideoProvider()!=new_provider)throw Cancelled{};

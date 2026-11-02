@@ -253,11 +253,11 @@ SubsEditBox::SubsEditBox(wxWindow *parent, agi::Context *context)
 	wxSizeEvent evt;
 	OnSize(evt);
 
-	file_changed_slot = c->subtitleAccess->Read().AddCommitListener(&SubsEditBox::OnCommit, this);
+	file_changed_slot = c->subtitleAccess->Read().AddCommitListener("subs_edit_box.AddCommitListener", [this](int type, AssDialogue const*, SubtitleModelRebindTicket ticket) { OnCommit(type); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime));
 	connections = agi::signal::make_vector({
 		context->project->AddTimecodesListener(&SubsEditBox::UpdateFrameTiming, this),
-		context->selectionController->AddActiveLineListener(&SubsEditBox::OnActiveLineChanged, this),
-		context->selectionController->AddSelectionListener(&SubsEditBox::OnSelectedSetChanged, this),
+		context->selectionController->AddActiveLineListener("subs_edit_box.AddActiveLineListener", [this](SubtitleModelRebindTicket ticket) { OnActiveLineChanged(); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime)),
+		context->selectionController->AddSelectionListener("subs_edit_box.AddSelectionListener", [this](SubtitleModelRebindTicket ticket) { OnSelectedSetChanged(); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime)),
 		context->initialLineState->AddChangeListener(&SubsEditBox::OnLineInitialTextChanged, this),
 	 });
 

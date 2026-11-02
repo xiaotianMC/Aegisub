@@ -67,6 +67,7 @@ Project::Project(agi::Context *c) : context(c) {
 Project::~Project() { }
 
 void Project::UpdateRelativePaths() {
+    if (host_lifetime==HostLifetime::Closing) return; // Provider teardown must not edit a sealed installation.
 	using namespace std::string_view_literals;
 	context->subtitleAccess->SetMetadata(SubtitleProjectAccess::MetadataField::AudioFile, context->path->MakeRelative(audio_file, "?script"sv).generic_string());
 	context->subtitleAccess->SetMetadata(SubtitleProjectAccess::MetadataField::VideoFile, context->path->MakeRelative(video_file, "?script"sv).generic_string());

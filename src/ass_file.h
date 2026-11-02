@@ -30,6 +30,7 @@
 #pragma once
 
 #include "ass_entry.h"
+#include "subtitle_model_observers.h"
 
 #include <libaegisub/fs.h>
 #include <libaegisub/signal.h>
@@ -90,14 +91,17 @@ class AssFile {
     friend class SubtitleProjectAccess;
     friend class SubsController;
     friend class SelectionController;
+    friend class SubtitleModelInstallation;
     // Identity belongs to the live file, never copied or swapped into snapshots.
     agi::SubtitleEditGate *edit_gate = nullptr;
     bool notifying = false;
 	/// A set of changes has been committed to the file (AssFile::COMMITType)
-	mutable agi::signal::Signal<int, const AssDialogue*> AnnounceCommit;
+	SubtitleModelObservers<int, const AssDialogue*> AnnounceCommit{"commit"};
+    bool installing = false;
 	agi::signal::Signal<AssFileCommit> PushState;
 public:
     bool IsNotifying() const noexcept { return notifying; }
+    bool IsInstalling() const noexcept { return installing; }
 	/// The lines in the file
 	std::vector<AssInfo> Info;
 	EntryList<AssStyle> Styles;
@@ -198,6 +202,10 @@ public:
 	template<typename... Args>
     agi::signal::UnscopedConnection AddCommitListener(Args&&... args) const {
         return AnnounceCommit.Connect(std::forward<Args>(args)...);
+    }
+    template<class F> agi::signal::UnscopedConnection AddInstallationObserver(std::string name, std::function<void()> prepare, F callback,
+            std::optional<std::weak_ptr<void const>> owner_lifetime = std::nullopt) const {
+        return AnnounceCommit.Observe(std::move(name),std::move(prepare),std::move(callback),std::move(owner_lifetime));
     }
     // Independent models may observe their own history. Live history registration
     // belongs exclusively to SubsController, not to ordinary business code.

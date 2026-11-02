@@ -19,7 +19,7 @@
 #include "selection_controller.h"
 
 InitialLineState::InitialLineState(agi::Context *c)
-: active_line_connection(c->selectionController->AddActiveLineListener(&InitialLineState::OnActiveLineChanged, this)), context(c)
+: active_line_connection(c->selectionController->AddActiveLineListener("initial_line_state.AddActiveLineListener", [this](SubtitleModelRebindTicket ticket) { OnActiveLineChanged(); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime))), context(c)
 {
 	OnActiveLineChanged();
 }

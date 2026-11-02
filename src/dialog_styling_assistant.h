@@ -34,6 +34,10 @@ class wxTextCtrl;
 namespace agi { struct Context; }
 
 class DialogStyling final : public wxDialog {
+protected:
+    // Declared first: expires only after all owned bindings/cache members are destroyed.
+    std::shared_ptr<int> model_observer_lifetime = std::make_shared<int>(0);
+private:
 	agi::Context *c;
 	agi::signal::Connection active_line_connection;
 	agi::signal::Connection file_change_connection;

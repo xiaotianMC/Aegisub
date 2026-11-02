@@ -200,10 +200,13 @@ void SubtitleProjectAccess::NotifyMetadataChanged() {
 }
 void SubtitleProjectAccess::UpdateUIState(ProjectUIState const& value) {
     state->Check();
+    if (state->file->IsInstalling() && !state->file->IsNotifying())
+        throw std::logic_error("Observer preparation cannot change project UI state");
     static_cast<ProjectUIState&>(state->file->Properties) = value;
 }
 void SubtitleProjectAccess::SetMetadata(MetadataField field, std::string value) {
     state->Check();
+    if (state->file->IsInstalling() || gate.NeedsRebinding()) throw std::logic_error("Metadata is sealed during installation");
     std::string* target = nullptr;
     auto& properties = state->file->Properties;
     switch (field) {
@@ -229,6 +232,7 @@ std::string SubtitleProjectAccess::AutomationSetting(std::string const& key) con
 }
 void SubtitleProjectAccess::SetAutomationSetting(std::string key, std::string value) {
     state->Check();
+    if (state->file->IsInstalling() || gate.NeedsRebinding()) throw std::logic_error("Metadata is sealed during installation");
     if (AutomationSetting(key) == value) return;
     if (metadata_revision == UINT64_MAX) throw std::overflow_error("Project metadata revision exhausted");
     state->file->Properties.automation_settings[std::move(key)] = std::move(value);++metadata_revision;

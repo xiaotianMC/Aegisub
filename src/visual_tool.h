@@ -15,6 +15,7 @@
 // Aegisub Project http://www.aegisub.org/
 
 #pragma once
+#include <memory>
 
 #include "gl_wrap.h"
 #include "vector2d.h"
@@ -46,6 +47,10 @@ namespace agi {
 /// functionality as possible is implemented here to avoid having four copies
 /// of each method for no good reason (and four times as many error messages)
 class VisualToolBase {
+protected:
+    // Declared first: expires only after all owned bindings/cache members are destroyed.
+    std::shared_ptr<int> model_observer_lifetime = std::make_shared<int>(0);
+private:
 	std::map<int, std::unique_ptr<AssDialogue>> rows;
 	std::vector<AssDialogue*> ordered_rows; // borrows only our owned snapshots
 	std::optional<agi::SubtitleEditGate::RevisionToken> cache_revision;

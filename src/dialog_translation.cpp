@@ -66,8 +66,8 @@ static bool bad_block(std::unique_ptr<AssDialogueBlock> &block) {
 DialogTranslation::DialogTranslation(agi::Context *c)
 : wxDialog(c->parent, -1, _("Translation Assistant"), wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER | wxMINIMIZE_BOX)
 , c(c)
-, file_change_connection(c->subtitleAccess->Read().AddCommitListener(&DialogTranslation::OnExternalCommit, this))
-, active_line_connection(c->selectionController->AddActiveLineListener(&DialogTranslation::OnActiveLineChanged, this))
+, file_change_connection(c->subtitleAccess->Read().AddCommitListener("dialog_translation.AddCommitListener", [this](int type, AssDialogue const*, SubtitleModelRebindTicket ticket) { OnExternalCommit(type); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime)))
+, active_line_connection(c->selectionController->AddActiveLineListener("dialog_translation.AddActiveLineListener", [this](SubtitleModelRebindTicket ticket) { OnActiveLineChanged(ticket.Current()); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime)))
 , edit(std::make_unique<SubtitleDialogEdit>(c))
 , line_count(c->subtitleAccess->Read().Events.size())
 {
@@ -182,7 +182,7 @@ DialogTranslation::~DialogTranslation() {
 	edit->End();
 }
 
-void DialogTranslation::OnActiveLineChanged() try {
+void DialogTranslation::OnActiveLineChanged(bool installing) try {
 	if (switching_lines || !edit->Alive()) return;
 	edit->ResetActive();
 	if(edit->Rows().empty()){edit->Invalidate();return;}
@@ -190,7 +190,7 @@ void DialogTranslation::OnActiveLineChanged() try {
 	blocks = active_line->ParseTags();
 	cur_block = 0;
 
-	if (bad_block(blocks[cur_block]) && !NextBlock()) {
+	if (!installing && bad_block(blocks[cur_block]) && !NextBlock()) {
 		wxMessageBox(_("No more lines to translate."));
 		EndModal(1);
 	}

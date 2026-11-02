@@ -112,7 +112,7 @@ FrameMain::FrameMain()
 #endif
 
 	StartupLog("Initializing context controls");
-	BindConnection(context->subtitleAccess->Read().AddCommitListener(&FrameMain::UpdateTitle, this));
+	BindConnection(context->subtitleAccess->Read().AddCommitListener("frame_main.AddCommitListener", [this](int, AssDialogue const*, SubtitleModelRebindTicket ticket) { UpdateTitle(); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime)));
     BindConnection(context->subtitleAccess->AddMetadataListener(&FrameMain::UpdateTitle, this));
 	BindConnection(context->subsController->AddFileOpenListener(&FrameMain::OnSubtitlesOpen, this));
 	BindConnection(context->subsController->AddFileSaveListener(&FrameMain::UpdateTitle, this));
@@ -165,10 +165,18 @@ FrameMain::FrameMain()
 }
 
 FrameMain::~FrameMain () {
+    context->project->BeginHostShutdown();
 	context->project->CloseAudio();
 	context->project->CloseVideo();
 
 	DestroyChildren();
+}
+bool FrameMain::Destroy() {
+    if (context && context->subsController && context->subsController->IsInstalling()) {
+        context->subsController->CancelModelInstallation();
+        return false; // Also cover direct deferred Destroy, not just close events.
+    }
+    return wxFrame::Destroy();
 }
 
 void FrameMain::EnableToolBar(agi::OptionValue const& opt) {
@@ -312,6 +320,7 @@ BEGIN_EVENT_TABLE(FrameMain, wxFrame)
 END_EVENT_TABLE()
 
 void FrameMain::OnCloseWindow(wxCloseEvent &event) {
+    if (context->subsController->DeferHostClose(event)) return;
 	wxEventBlocker blocker(this, wxEVT_CLOSE_WINDOW);
 
 	context->videoController->Stop();

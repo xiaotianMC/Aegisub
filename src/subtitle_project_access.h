@@ -13,6 +13,7 @@
 // Legacy Context::ass remains a migration gap; this facade exposes no mutable pointer.
 class SubtitleProjectAccess {
     friend class SubsController;
+    friend class SubtitleModelInstallation;
     struct State;
     struct ActiveWrite;
     std::shared_ptr<State> state;

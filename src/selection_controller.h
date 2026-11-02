@@ -28,9 +28,11 @@
 // Aegisub Project http://www.aegisub.org/
 
 #pragma once
+#include <memory>
 
 #include <libaegisub/signal.h>
 #include <libaegisub/subtitle_edit_gate.h>
+#include "subtitle_model_observers.h"
 
 #include <set>
 #include <vector>
@@ -46,8 +48,13 @@ namespace agi { struct Context; }
 // Selection changes are UI state and require no subtitle WriteLease. Returned
 // row views are read-only and valid only until the next model mutation.
 class SelectionController {
-    agi::signal::Signal<> AnnounceActiveLineChanged;
-    agi::signal::Signal<> AnnounceSelectedSetChanged;
+protected:
+    // Declared first: expires only after all owned bindings/cache members are destroyed.
+    std::shared_ptr<int> model_observer_lifetime = std::make_shared<int>(0);
+private:
+    friend class SubtitleModelInstallation;
+    SubtitleModelObservers<> AnnounceActiveLineChanged{"active"};
+    SubtitleModelObservers<> AnnounceSelectedSetChanged{"selection"};
     AssFile *file;
     agi::SubtitleEditGate *gate;
     agi::SubtitleEditGate::RevisionToken lifetime;

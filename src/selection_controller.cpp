@@ -30,9 +30,10 @@
 SelectionController::SelectionController(agi::Context *c) : SelectionController(*c->ass, c->subtitleEditGate) { }
 SelectionController::SelectionController(AssFile& model, agi::SubtitleEditGate& edit_gate)
 : file(&model), gate(&edit_gate), lifetime(edit_gate.Capture()),
-  commit_connection(model.AddCommitListener([this](int type, AssDialogue const*) {
+  commit_connection(model.AddCommitListener("selection_controller.AddCommitListener", [this](int type, AssDialogue const*, SubtitleModelRebindTicket ticket) {
       if (type == AssFile::COMMIT_NEW) model_replaced = true;
-  })) { }
+      if (ticket.Current()) ticket.Acknowledge(ticket.Revision());
+  }, std::weak_ptr<void const>(model_observer_lifetime))) { }
 
 void SelectionController::Check() const {
     if (owner_thread != std::this_thread::get_id() || !lifetime.Alive())
@@ -42,6 +43,7 @@ int SelectionController::ActiveID() const { Check(); return active_id; }
 std::set<int> SelectionController::SelectedIDs() const { Check(); return selection; }
 Selection SelectionController::Validate(std::set<int> const& ids) const {
     Check();
+    if (file->IsInstalling() || gate->NeedsRebinding()) throw std::logic_error("Selection cannot change during model installation");
     std::set<int> seen;
     Selection rows;
     for (auto const& row : file->Events) {

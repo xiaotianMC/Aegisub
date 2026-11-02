@@ -100,11 +100,11 @@ VideoBox::VideoBox(wxWindow *parent, bool isDetached, agi::Context *context)
 	UpdateTimeBoxes();
 
 	connections = agi::signal::make_vector({
-		context->subtitleAccess->Read().AddCommitListener(&VideoBox::UpdateTimeBoxes, this),
+		context->subtitleAccess->Read().AddCommitListener("video_box.AddCommitListener", [this](int, AssDialogue const*, SubtitleModelRebindTicket ticket) { UpdateTimeBoxes(); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime)),
 		context->project->AddKeyframesListener(&VideoBox::UpdateTimeBoxes, this),
 		context->project->AddTimecodesListener(&VideoBox::UpdateTimeBoxes, this),
 		context->project->AddVideoProviderListener(&VideoBox::UpdateTimeBoxes, this),
-		context->selectionController->AddSelectionListener(&VideoBox::UpdateTimeBoxes, this),
+		context->selectionController->AddSelectionListener("video_box.AddSelectionListener", [this](SubtitleModelRebindTicket ticket) { UpdateTimeBoxes(); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime)),
 		context->videoController->AddSeekListener(&VideoBox::UpdateTimeBoxes, this),
 	});
 }

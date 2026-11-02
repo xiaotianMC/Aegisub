@@ -45,7 +45,7 @@ static const DraggableFeatureType DRAG_END = DRAG_BIG_CIRCLE;
 VisualToolDrag::VisualToolDrag(VideoDisplay *parent, agi::Context *context)
 : VisualTool<VisualToolDragDraggableFeature>(parent, context)
 {
-	connections.push_back(c->selectionController->AddSelectionListener(&VisualToolDrag::OnSelectedSetChanged, this));
+	connections.push_back(c->selectionController->AddSelectionListener("visual_tool_drag.AddSelectionListener", [this](SubtitleModelRebindTicket ticket) { OnSelectedSetChanged(); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime)));
 	selection = selected_ids;
 }
 

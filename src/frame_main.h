@@ -43,6 +43,10 @@ namespace agi { class AudioProvider; }
 namespace agi { struct Context; class OptionValue; }
 
 class FrameMain : public wxFrame, private agi::signal::ConnectionScope {
+protected:
+    // Declared first: expires only after all owned bindings/cache members are destroyed.
+    std::shared_ptr<int> model_observer_lifetime = std::make_shared<int>(0);
+private:
 	friend class AegisubApp;
 
 	std::unique_ptr<agi::Context> context;
@@ -84,6 +88,7 @@ class FrameMain : public wxFrame, private agi::signal::ConnectionScope {
 public:
 	FrameMain();
 	~FrameMain();
+    bool Destroy() override;
 
 	/// Set the status bar text
 	/// @param text New status bar text

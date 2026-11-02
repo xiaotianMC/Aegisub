@@ -378,12 +378,14 @@ TEST(model_installation_preparation, explicit_acknowledgements_isolate_failures_
 }
 TEST(model_installation_preparation, return_without_ack_is_not_success_and_unsubscription_withdraws_safely) {
     SubtitleModelObservers<int> observers("legacy");int calls=0;
-    agi::signal::Connection listener=observers.Add([&](int){++calls;});auto prepared=observers.PrepareObservers();
+    auto owner=std::make_shared<int>(0);
+    agi::signal::Connection listener=observers.Observe("owned",[]{},[&](int){++calls;},std::weak_ptr<void const>(owner));auto prepared=observers.PrepareObservers();
     agi::SubtitleEditGate gate;auto session=gate.TryBeginComparison();auto old=std::make_shared<AssFile>();
     agi::SubtitleRebindBatch batch(std::move(*session),old,prepared.Names());
     prepared.Dispatch(batch,0,1);EXPECT_EQ(1,calls);EXPECT_FALSE(batch.Complete());
     EXPECT_THROW(observers.Add([]{}),std::logic_error);
-    listener.Disconnect();prepared.Dispatch(batch,0,1);EXPECT_EQ(1,calls);EXPECT_TRUE(batch.Complete());
+    listener.Disconnect();prepared.Dispatch(batch,0,1);EXPECT_EQ(1,calls);EXPECT_FALSE(batch.Complete());
+    owner.reset();prepared.Dispatch(batch,0,1);EXPECT_TRUE(batch.Complete());
 }
 TEST(model_installation_preparation, observer_prepare_failure_is_not_a_publication_or_revision_change) {
     SubtitleModelObservers<> observers("prepare");using Ticket=agi::SubtitleRebindBatch::Ticket;

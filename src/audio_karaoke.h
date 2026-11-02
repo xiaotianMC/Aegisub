@@ -74,6 +74,10 @@ struct StringHash {
 class AudioEditSession;
 
 class AudioKaraoke final : public wxWindow, private agi::signal::ConnectionScope {
+protected:
+    // Declared first: expires only after all owned bindings/cache members are destroyed.
+    std::shared_ptr<int> model_observer_lifetime = std::make_shared<int>(0);
+private:
 	agi::Context *c; ///< Project context
 	agi::signal::Connection file_changed; ///< File changed slot
 	agi::signal::Connection audio_opened; ///< Audio opened connection

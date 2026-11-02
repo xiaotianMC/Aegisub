@@ -1796,3 +1796,225 @@ TEST_F(ordinary_edit, font_collection_uses_snapshot_and_can_be_destroyed_with_wo
     EXPECT_EQ("edited while worker owns snapshot",c->ass->Events.front().Text.get());
     OPT_SET("Tool/Fonts Collector/Action")->SetInt(action);
 }
+
+namespace {
+class model_installation : public ordinary_edit {
+protected:
+    using State=SubtitleModelInstallation::State;
+    using Ticket=SubtitleModelRebindTicket;
+    agi::fs::path Candidate(std::string const& name,bool bad_extra=false) {
+        AssFile source;source.LoadDefault();source.Events.front().Text="new 模型";source.Events.front().Comment=true;
+        source.Properties.export_encoding="utf-8";source.Properties.video_zoom=1.5;
+        auto id=source.AddExtradata("aegisub.enhanced.subtitle-binding","0:installed");
+        source.Events.front().ExtradataIds=std::vector<uint32_t>{bad_extra?999999:id};
+        auto path=agi::fs::path((std::filesystem::current_path()/(name+".ass")).wstring());
+        SubtitleFormat::GetWriter(path)->WriteFile(&source,path,0,"utf-8");return path;
+    }
+    std::vector<std::string> Contents() {
+        auto const& file=c->subtitleAccess->Read();std::vector<std::string> values;
+        for(auto const& info:file.Info)values.push_back(std::string(info.Key())+"="+std::string(info.Value()));
+        for(auto const& style:file.Styles)values.push_back(style.GetEntryData());
+        for(auto const& row:file.Events)values.push_back(std::to_string(row.Id)+":"+std::to_string(row.Row)+":"+
+            std::to_string(row.Start.GetMilliseconds())+":"+std::to_string(row.End.GetMilliseconds())+":"+row.GetEntryData());
+        for(auto const& extra:file.Extradata)values.push_back(std::to_string(extra.id)+":"+extra.key+":"+extra.value);
+        for(auto const& attachment:file.Attachments)values.push_back(attachment.GetEntryData());
+        values.push_back(std::to_string(file.next_extradata_id));return values;
+    }
+    struct Envelope {
+        std::vector<std::string> content;ProjectProperties properties;
+        agi::SubtitleRevision revision;uint64_t metadata;
+        std::set<int> selected;int active;
+        wxString undo,redo;agi::fs::path filename,script;
+        bool modified,metadata_dirty,undo_empty,redo_empty;
+    };
+    Envelope Capture() {
+        return {Contents(),c->ass->Properties,c->subtitleEditGate.Revision(),c->subtitleAccess->MetadataRevision(),
+            c->selectionController->SelectedIDs(),c->selectionController->ActiveID(),c->subsController->GetUndoDescription(),
+            c->subsController->GetRedoDescription(),c->subsController->Filename(),c->path->Decode("?script"),
+            c->subsController->IsModified(),c->subtitleAccess->MetadataDirty(),c->subsController->IsUndoStackEmpty(),c->subsController->IsRedoStackEmpty()};
+    }
+    void Unchanged(Envelope const& before) {
+        EXPECT_EQ(before.content,Contents());EXPECT_EQ(static_cast<ProjectMetadata const&>(before.properties),static_cast<ProjectMetadata const&>(c->ass->Properties));
+        auto const& ui=c->ass->Properties;EXPECT_EQ(before.properties.active_row,ui.active_row);EXPECT_EQ(before.properties.scroll_position,ui.scroll_position);
+        EXPECT_EQ(before.properties.video_position,ui.video_position);EXPECT_EQ(before.properties.video_zoom,ui.video_zoom);
+        EXPECT_EQ(before.properties.ar_mode,ui.ar_mode);EXPECT_EQ(before.properties.ar_value,ui.ar_value);
+        EXPECT_EQ(before.revision,c->subtitleEditGate.Revision());EXPECT_EQ(before.metadata,c->subtitleAccess->MetadataRevision());
+        EXPECT_EQ(before.selected,c->selectionController->SelectedIDs());EXPECT_EQ(before.active,c->selectionController->ActiveID());
+        EXPECT_EQ(before.undo,c->subsController->GetUndoDescription());EXPECT_EQ(before.redo,c->subsController->GetRedoDescription());
+        EXPECT_EQ(before.filename,c->subsController->Filename());EXPECT_EQ(before.script,c->path->Decode("?script"));
+        EXPECT_EQ(before.modified,c->subsController->IsModified());EXPECT_EQ(before.metadata_dirty,c->subtitleAccess->MetadataDirty());
+        EXPECT_EQ(before.undo_empty,c->subsController->IsUndoStackEmpty());EXPECT_EQ(before.redo_empty,c->subsController->IsRedoStackEmpty());
+    }
+};
+TEST_F(model_installation, production_load_denied_by_comparison_preserves_complete_host_state) {
+    Input("one");Input("two");c->subsController->Undo();
+    c->subtitleAccess->SetAutomationSetting("keep","metadata");
+    auto path=Candidate("denied-load");auto before=Capture();auto old=c->selectionController->ReadActiveLine();int notices=0;
+    agi::signal::Connection listener=c->ass->AddCommitListener([&](int,AssDialogue const*,Ticket t){++notices;if(t.Current())t.Acknowledge(t.Revision());});
+    auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);
+    EXPECT_THROW(c->subsController->Load(path,"utf-8"),std::logic_error);Unchanged(before);
+    EXPECT_EQ(old,c->selectionController->ReadActiveLine());EXPECT_EQ(0,notices);EXPECT_EQ("one",std::string(editor->GetTextRaw().data()));
+    comparison.reset();c->subsController->Redo();EXPECT_EQ("two",c->ass->Events.front().Text.get());
+}
+TEST_F(model_installation, production_observer_failure_is_recovery_blocked_and_retries_explicitly) {
+    Input("retained old row");auto old=c->selectionController->ReadActiveLine();auto path=Candidate("observer-failure");
+    bool fail=true;std::vector<int> order;
+    agi::signal::Connection reader=c->ass->AddCommitListener([&](int,AssDialogue const*,Ticket t){order.push_back(1);EXPECT_EQ("new 模型",c->ass->Events.front().Text.get());t.Acknowledge(t.Revision());});
+    agi::signal::Connection throwing=c->ass->AddCommitListener([&](int,AssDialogue const*,Ticket t){order.push_back(2);if(fail)throw std::runtime_error("observer failure");old=nullptr;t.Acknowledge(t.Revision());});
+    agi::signal::Connection normal=c->ass->AddCommitListener([&](int,AssDialogue const*,Ticket t){order.push_back(3);t.Acknowledge(t.Revision());});
+    EXPECT_THROW(c->subsController->Load(path,"utf-8"),std::runtime_error);
+    EXPECT_EQ((std::vector<int>{3,2,1}),order);EXPECT_EQ(State::RecoveryBlocked,c->subsController->InstallationStatus());
+    ASSERT_NE(nullptr,old);EXPECT_EQ("retained old row",old->Text.get());EXPECT_EQ(1u,c->subsController->PendingInstallationObservers().size());
+    EXPECT_FALSE(c->subtitleAccess->TryWrite());EXPECT_FALSE(c->subtitleEditGate.TryBeginComparison());EXPECT_FALSE(c->subsController->CanSave());
+    EXPECT_THROW(c->subsController->Save(path,"utf-8"),std::logic_error);
+    EXPECT_THROW(c->subsController->RequestAutoSave(),std::logic_error);
+    EXPECT_THROW(c->subsController->Close(),std::logic_error);
+    EXPECT_THROW(c->subsController->Load(path,"utf-8"),std::logic_error);
+    EXPECT_FALSE(c->subsController->RetryModelInstallation());EXPECT_EQ("retained old row",old->Text.get());
+    fail=false;EXPECT_TRUE(c->subsController->RetryModelInstallation());EXPECT_EQ(nullptr,old);
+    EXPECT_EQ(State::Committed,c->subsController->InstallationStatus());EXPECT_FALSE(c->subtitleEditGate.NeedsRebinding());
+    EXPECT_TRUE(c->subsController->PendingInstallationObservers().empty());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    reader.Disconnect();throwing.Disconnect();normal.Disconnect();
+    Input("new edit");c->subsController->Undo();EXPECT_EQ("new 模型",c->ass->Events.front().Text.get());
+    c->subsController->Redo();EXPECT_EQ("new edit",c->ass->Events.front().Text.get());
+}
+TEST_F(model_installation, successful_install_invalidates_old_document_and_saves_reopened_data) {
+    Input("old");auto old=c->subtitleEditGate.Capture();auto path=Candidate("successful-install");
+    c->subsController->Load(path,"utf-8");auto next=c->subtitleEditGate.Revision();
+    EXPECT_EQ(old.Revision().document,next.document);EXPECT_EQ(old.Revision().document_epoch+1,next.document_epoch);
+    EXPECT_EQ(old.Revision().generation+1,next.generation);EXPECT_FALSE(old.Current());
+    EXPECT_THROW(c->subtitleAccess->Read(old),std::logic_error);
+    EXPECT_THROW(c->selectionController->ReadActiveLine(old),std::logic_error);
+    EXPECT_FALSE(c->subsController->IsModified());EXPECT_TRUE(c->subsController->IsUndoStackEmpty());
+    EXPECT_EQ((std::set<int>{c->ass->Events.front().Id}),c->selectionController->SelectedIDs());
+    EXPECT_EQ(c->ass->Events.front().Id,c->selectionController->ActiveID());EXPECT_EQ("new 模型",std::string(editor->GetTextRaw().data()));
+    c->subsController->Save(path,"utf-8");AssFile reopened;SubtitleFormat::GetReader(path,"utf-8")->ReadFile(&reopened,path,c->project->Timecodes(),"utf-8");
+    EXPECT_EQ("new 模型",reopened.Events.front().Text.get());EXPECT_TRUE(reopened.Events.front().Comment);
+    EXPECT_EQ("aegisub.enhanced.subtitle-binding",reopened.Extradata.front().key);EXPECT_NE(nullptr,reopened.GetStyle("Default"));
+}
+TEST_F(model_installation, active_writer_and_prepare_failure_or_cancel_preserve_original_state) {
+    Input("protected");auto path=Candidate("prepare-failure");
+    {
+        auto scope=c->subtitleAccess->TryWrite();ASSERT_TRUE(scope);auto before=Capture();
+        EXPECT_THROW(c->subsController->Load(path,"utf-8"),std::logic_error);Unchanged(before);
+    }
+    for(bool cancel:{false,true}) {
+        auto before=Capture();
+        agi::signal::Connection observer=c->ass->AddInstallationObserver("prepare-stop",[&]{
+            EXPECT_FALSE(c->subtitleAccess->TryWrite());
+            EXPECT_THROW(c->subtitleAccess->SetAutomationSetting("keep","blocked"),std::logic_error);
+            auto ui=c->subtitleAccess->UIState();ui.video_zoom=9;
+            EXPECT_THROW(c->subtitleAccess->UpdateUIState(ui),std::logic_error);
+            if(cancel)c->subsController->CancelModelInstallation();else throw std::runtime_error("prepare failure");
+        },[](int,AssDialogue const*,Ticket t){t.Acknowledge(t.Revision());});
+        EXPECT_ANY_THROW(c->subsController->Load(path,"utf-8"));Unchanged(before);
+    }
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+}
+TEST_F(model_installation, invalid_candidate_and_missing_input_do_not_publish_or_change_revisions) {
+    Input("untouched");auto before=Capture();auto bad=Candidate("invalid-extra",true);
+    EXPECT_THROW(c->subsController->Load(bad,"utf-8"),std::invalid_argument);Unchanged(before);
+    auto missing=agi::fs::path((std::filesystem::current_path()/"missing-install-input.ass").wstring());
+    EXPECT_ANY_THROW(c->subsController->Load(missing,"utf-8"));Unchanged(before);
+}
+TEST_F(model_installation, observer_reentry_and_real_host_close_event_cannot_destroy_publication_stack) {
+    auto path=Candidate("reentrant-load");bool closed=false,visited=false;
+    window->Bind(wxEVT_CLOSE_WINDOW,[&](wxCloseEvent& event){if(c->subsController->DeferHostClose(event)){closed=true;return;}event.Skip();});
+    agi::signal::Connection observer=c->ass->AddCommitListener([&](int,AssDialogue const*,Ticket t){
+        visited=true;EXPECT_FALSE(window->Close());EXPECT_TRUE(closed);
+        EXPECT_THROW(c->subsController->Load(path,"utf-8"),std::logic_error);
+        EXPECT_THROW(c->subsController->RetryModelInstallation(),std::logic_error);
+        EXPECT_THROW(c->selectionController->SetActiveID(0),std::logic_error);
+        EXPECT_FALSE(c->subtitleAccess->TryWrite());t.Acknowledge(t.Revision());
+    });
+    c->subsController->Load(path,"utf-8");EXPECT_TRUE(visited);EXPECT_EQ(State::Committed,c->subsController->InstallationStatus());
+    wxCloseEvent normal(wxEVT_CLOSE_WINDOW);EXPECT_FALSE(c->subsController->DeferHostClose(normal));
+}
+TEST_F(model_installation, observer_self_destruction_withdraws_only_after_reference_release) {
+    auto path=Candidate("destroyed-observer");bool destroyed=false;
+    struct Borrower {
+        std::shared_ptr<int> lifetime=std::make_shared<int>(0); // Declared first, released after every borrowed field.
+        AssDialogue const* row;bool& destroyed;agi::signal::Connection connection;
+        Borrower(AssDialogue const* row,bool& destroyed):row(row),destroyed(destroyed){}
+        ~Borrower(){row=nullptr;destroyed=true;}
+    };
+    auto borrower=std::make_unique<Borrower>(c->selectionController->ReadActiveLine(),destroyed);
+    borrower->connection=c->ass->AddInstallationObserver("owned borrower",[]{},[&](int,AssDialogue const*,Ticket){borrower.reset();},std::weak_ptr<void const>(borrower->lifetime));
+    c->subsController->Load(path,"utf-8");EXPECT_TRUE(destroyed);EXPECT_FALSE(borrower);EXPECT_EQ(State::Committed,c->subsController->InstallationStatus());
+}
+TEST_F(model_installation, background_installation_is_rejected_before_any_host_access) {
+    auto path=Candidate("background-install");auto before=Capture();
+    std::thread worker([&]{EXPECT_THROW(c->subsController->Load(path,"utf-8"),std::logic_error);});worker.join();Unchanged(before);
+}
+TEST_F(model_installation, missing_ack_and_disconnection_cannot_release_an_owners_old_reference) {
+    Input("borrowed until owner releases");auto old=c->selectionController->ReadActiveLine();auto path=Candidate("missing-ack");
+    auto lifetime=std::make_shared<int>(0);int called=0;
+    agi::signal::Connection observer=c->ass->AddInstallationObserver("no acknowledgement",[]{},
+        [&](int,AssDialogue const*,Ticket){++called;},std::weak_ptr<void const>(lifetime));
+    EXPECT_THROW(c->subsController->Load(path,"utf-8"),std::runtime_error);
+    EXPECT_EQ(1,called);EXPECT_EQ(State::RecoveryBlocked,c->subsController->InstallationStatus());
+    observer.Disconnect();EXPECT_FALSE(c->subsController->RetryModelInstallation());
+    EXPECT_EQ("borrowed until owner releases",old->Text.get());EXPECT_EQ(1,called);
+    old=nullptr;lifetime.reset();EXPECT_TRUE(c->subsController->RetryModelInstallation());
+    EXPECT_EQ(State::Committed,c->subsController->InstallationStatus());
+}
+TEST_F(model_installation, owner_destroyed_during_prepare_releases_its_old_reference_before_withdrawal) {
+    auto path=Candidate("prepare-destruction");bool destroyed=false,called=false;
+    struct Borrower {
+        std::shared_ptr<int> lifetime=std::make_shared<int>(0);
+        AssDialogue const* row;bool& destroyed;agi::signal::Connection connection;
+        Borrower(AssDialogue const* row,bool& destroyed):row(row),destroyed(destroyed){}
+        ~Borrower(){row=nullptr;destroyed=true;}
+    };
+    auto borrower=std::make_unique<Borrower>(c->selectionController->ReadActiveLine(),destroyed);
+    borrower->connection=c->ass->AddInstallationObserver("prepare destroys owner",[&]{borrower.reset();},
+        [&](int,AssDialogue const*,Ticket){called=true;},std::weak_ptr<void const>(borrower->lifetime));
+    c->subsController->Load(path,"utf-8");EXPECT_TRUE(destroyed);EXPECT_FALSE(called);
+    EXPECT_EQ(State::Committed,c->subsController->InstallationStatus());
+}
+TEST_F(model_installation, repeated_load_keeps_selection_before_active_and_rejects_old_task_writeback) {
+    auto scope=c->subtitleAccess->TryWrite();ASSERT_TRUE(scope);auto task=c->subtitleAccess->Edit(scope->Lease());scope.reset();
+    auto path=Candidate("repeat-install");std::vector<int> order;
+    agi::signal::Connection selected=c->selectionController->AddSelectionListener([&](Ticket t){order.push_back(1);if(t.Current())t.Acknowledge(t.Revision());});
+    agi::signal::Connection active=c->selectionController->AddActiveLineListener([&](Ticket t){order.push_back(2);if(t.Current())t.Acknowledge(t.Revision());});
+    auto revision=c->subtitleEditGate.Revision();
+    for(int i=1;i<=2;++i) {
+        order.clear();c->subsController->Load(path,"utf-8");
+        EXPECT_EQ((std::vector<int>{1,2}),order);EXPECT_EQ(revision.document_epoch+i,c->subtitleEditGate.Revision().document_epoch);
+        EXPECT_THROW(task.SetDialogueField(c->ass->Events.front().Id,&AssDialogueBase::Text,std::string("old task")),std::logic_error);
+        EXPECT_EQ("new 模型",c->ass->Events.front().Text.get());EXPECT_TRUE(c->subsController->IsUndoStackEmpty());
+    }
+    order.clear();auto ids=c->selectionController->SelectedIDs();c->selectionController->SetSelectedIDs(ids);
+    c->selectionController->SetSelectedIDs(ids);EXPECT_EQ((std::vector<int>{1,1}),order);
+}
+TEST_F(model_installation, real_grid_audio_and_long_lived_dialogs_rebind_and_edit_the_installed_document) {
+    Input("old dialog input");auto path=Candidate("ui-observers");
+    c->subsGrid=new BaseGrid(window,c.get());c->audioBox=new AudioBox(window,c.get());
+    c->project->LoadAudio("dummy-audio:silence?sr=44100&bd=16&ch=1&ln=441000");
+    {
+        DialogStyling styling(c.get());DialogTranslation translation(c.get());
+        c->subsController->Load(path,"utf-8");
+        EXPECT_EQ(State::Committed,c->subsController->InstallationStatus());
+        EXPECT_TRUE(c->subsController->PendingInstallationObservers().empty());
+        EXPECT_EQ("new 模型",std::string(editor->GetTextRaw().data()));
+        EXPECT_NE(nullptr,c->audioController->GetTimingController());
+        Input("edited new UI model");c->subsController->Undo();EXPECT_EQ("new 模型",c->ass->Events.front().Text.get());
+        c->subsController->Redo();EXPECT_EQ("edited new UI model",c->ass->Events.front().Text.get());
+    }
+    c->project->CloseAudio();c->subsGrid=nullptr;c->audioBox=nullptr;
+}
+}
+TEST_F(visual_edit, production_load_rebinds_real_visual_cache_and_renderer_before_next_gesture) {
+    Install<VisualToolDrag>();auto old_id=c->ass->Events.front().Id;
+    AssFile source;source.LoadDefault();source.Events.front().Start=0;source.Events.front().End=5000;
+    source.SetScriptInfo("PlayResX","640");source.SetScriptInfo("PlayResY","480");
+    source.Events.front().Text="{\\pos(100,100)\\bord7}new visual model";
+    auto path=agi::fs::path((std::filesystem::current_path()/"visual-install.ass").wstring());
+    SubtitleFormat::GetWriter(path)->WriteFile(&source,path,0,"utf-8");
+    c->subsController->Load(path,"utf-8");EXPECT_EQ(SubtitleModelInstallation::State::Committed,c->subsController->InstallationStatus());
+    EXPECT_NE(old_id,c->ass->Events.front().Id);EXPECT_EQ(source.Events.front().Text.get(),Text());EXPECT_FALSE(FrameData().empty());
+    auto before=Text();Mouse(wxEVT_LEFT_DOWN,100,100,true);ASSERT_TRUE(display->HasCapture());
+    Mouse(wxEVT_MOTION,150,160,true);Mouse(wxEVT_LEFT_UP,150,160);EXPECT_NE(before,Text());
+    c->subsController->Undo();EXPECT_EQ(before,Text());c->subsController->Redo();EXPECT_NE(before,Text());
+}
+static_assert(!std::is_constructible_v<SubtitleModelInstallation,SubsController&>);

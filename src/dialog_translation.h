@@ -35,6 +35,10 @@ class wxStyledTextCtrl;
 
 /// Assistant for translating subtitles in one language to another language
 class DialogTranslation final : public wxDialog {
+protected:
+    // Declared first: expires only after all owned bindings/cache members are destroyed.
+    std::shared_ptr<int> model_observer_lifetime = std::make_shared<int>(0);
+private:
 	agi::Context *c;
 
 	agi::signal::Connection file_change_connection;
@@ -70,7 +74,7 @@ class DialogTranslation final : public wxDialog {
 
 	void UpdateDisplay();
 
-	void OnActiveLineChanged();
+	void OnActiveLineChanged(bool installing = false);
 
 public:
 	DialogTranslation(agi::Context *context);

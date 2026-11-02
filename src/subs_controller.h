@@ -15,16 +15,19 @@
 // Aegisub Project http://www.aegisub.org/
 
 #pragma once
+#include <memory>
 
 #include <libaegisub/fs.h>
 #include <libaegisub/signal.h>
 #include <libaegisub/subtitle_edit_gate.h>
+#include "subtitle_model_installation.h"
 
 #include <boost/container/list.hpp>
 #include <cstdint>
 #include <wx/timer.h>
 
 class SelectionController;
+class wxCloseEvent;
 namespace agi {
 	namespace dispatch {
 		class Queue;
@@ -35,6 +38,12 @@ struct AssFileCommit;
 struct ProjectProperties;
 
 class SubsController : private agi::signal::ConnectionScope {
+protected:
+    // Declared first: expires only after all owned bindings/cache members are destroyed.
+    std::shared_ptr<int> model_observer_lifetime = std::make_shared<int>(0);
+private:
+    friend class SubtitleModelInstallation;
+    std::unique_ptr<SubtitleModelInstallation> installation;
 	agi::Context *context;
 	agi::signal::Connection undo_connection;
 	agi::signal::Connection active_line_connection;
@@ -92,6 +101,12 @@ class SubsController : private agi::signal::ConnectionScope {
 	void OnTextSelectionChanged();
 
 public:
+    SubtitleModelInstallation::State InstallationStatus() const;
+    bool IsInstalling() const;
+    std::vector<std::string> PendingInstallationObservers() const;
+    void CancelModelInstallation();
+    bool RetryModelInstallation();
+    bool DeferHostClose(wxCloseEvent&);
 	SubsController(agi::Context *context);
 	~SubsController();
 

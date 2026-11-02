@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <limits>
 #include <memory>
+#include <iterator>
 
 class SubtitleModelInstallation;
 // Immutable prepared input. All mutable source nodes remain independent of live.
@@ -35,6 +36,7 @@ public:
         }
         int row_number=0;
         for (auto& row : file->Events) {
+            if (row_number==std::numeric_limits<int>::max()) throw std::overflow_error("Candidate row count exhausted");
             if (row.Id <= 0 || !ids.insert(row.Id).second) throw std::invalid_argument("Invalid candidate row identity");
             row.Row=row_number++;
             for (auto id : row.ExtradataIds.get())

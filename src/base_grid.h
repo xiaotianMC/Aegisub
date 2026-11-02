@@ -48,6 +48,10 @@ class GridColumn;
 class WidthHelper;
 
 class BaseGrid final : public wxWindow {
+protected:
+    // Declared first: expires only after all owned bindings/cache members are destroyed.
+    std::shared_ptr<int> model_observer_lifetime = std::make_shared<int>(0);
+private:
 	std::vector<agi::signal::Connection> connections;
 	int lineHeight = 1;     ///< Height of a line in pixels in the current font
 	bool holding = false;   ///< Is a drag selection in process?

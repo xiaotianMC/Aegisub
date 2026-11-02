@@ -56,8 +56,8 @@ static void add_hotkey(wxSizer *sizer, wxWindow *parent, const char *command, wx
 DialogStyling::DialogStyling(agi::Context *context)
 : wxDialog(context->parent, -1, _("Styling Assistant"), wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER | wxMINIMIZE_BOX)
 , c(context)
-, active_line_connection(context->selectionController->AddActiveLineListener(&DialogStyling::OnActiveLineChanged, this))
-, file_change_connection(context->subtitleAccess->Read().AddCommitListener([this]{edit->Invalidate();}))
+, active_line_connection(context->selectionController->AddActiveLineListener("dialog_styling_assistant.AddActiveLineListener", [this](SubtitleModelRebindTicket ticket) { OnActiveLineChanged(); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime)))
+, file_change_connection(context->subtitleAccess->Read().AddCommitListener("dialog_styling_assistant.AddCommitListener", [this](SubtitleModelRebindTicket ticket){edit->Invalidate();if (ticket.Current()) ticket.Acknowledge(ticket.Revision());}, std::weak_ptr<void const>(model_observer_lifetime)))
 , edit(std::make_unique<SubtitleDialogEdit>(context))
 {
 	SetIcons(GETICONS(styling_toolbutton));

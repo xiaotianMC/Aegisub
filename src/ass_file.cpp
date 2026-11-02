@@ -203,6 +203,7 @@ AssStyle const* AssFile::GetStyle(std::string const& name) const {
 }
 
 int AssFile::Commit(wxString const& desc, int type, int amend_id, AssDialogue *single_line) {
+    if (installing || (edit_gate && edit_gate->NeedsRebinding())) throw std::logic_error("Model installation has not completed");
     if (edit_gate) edit_gate->NoteLegacyCommit();
 	if (type == COMMIT_NEW || (type & COMMIT_DIAG_ADDREM) || (type & COMMIT_ORDER)) {
 		int i = 0;

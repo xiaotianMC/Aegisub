@@ -31,6 +31,7 @@
 #include "timeedit_ctrl.h"
 
 #include <libaegisub/ass/time.h>
+#include <memory>
 #include <libaegisub/fs.h>
 #include <libaegisub/io.h>
 #include <libaegisub/log.h>
@@ -52,6 +53,10 @@
 
 namespace {
 class DialogShiftTimes final : public wxDialog {
+protected:
+    // Declared first: expires only after all owned bindings/cache members are destroyed.
+    std::shared_ptr<int> model_observer_lifetime = std::make_shared<int>(0);
+private:
 	agi::Context *context;
 
 	agi::fs::path history_filename;
@@ -138,7 +143,7 @@ DialogShiftTimes::DialogShiftTimes(agi::Context *context)
 , context(context)
 , history_filename(config::path->Decode("?user/shift_history.json"))
 , timecodes_loaded_slot(context->project->AddTimecodesListener(&DialogShiftTimes::OnTimecodesLoaded, this))
-, selected_set_changed_slot(context->selectionController->AddSelectionListener(&DialogShiftTimes::OnSelectedSetChanged, this))
+, selected_set_changed_slot(context->selectionController->AddSelectionListener("dialog_shift_times.AddSelectionListener", [this](SubtitleModelRebindTicket ticket) { OnSelectedSetChanged(); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime)))
 {
 	SetIcons(GETICONS(shift_times_toolbutton));
 

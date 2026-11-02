@@ -79,6 +79,10 @@
 
 namespace {
 class DialogStyleManager final : public wxDialog {
+protected:
+    // Declared first: expires only after all owned bindings/cache members are destroyed.
+    std::shared_ptr<int> model_observer_lifetime = std::make_shared<int>(0);
+private:
 	agi::Context *c; ///< Project context
 	std::unique_ptr<PersistLocation> persist;
 
@@ -261,8 +265,8 @@ int get_single_sel(wxListBox *lb) {
 DialogStyleManager::DialogStyleManager(agi::Context *context)
 : wxDialog(context->parent, -1, _("Styles Manager"))
 , c(context)
-, commit_connection(c->subtitleAccess->Read().AddCommitListener(&DialogStyleManager::LoadCurrentStyles, this))
-, active_line_connection(c->selectionController->AddActiveLineListener(&DialogStyleManager::OnActiveLineChanged, this))
+, commit_connection(c->subtitleAccess->Read().AddCommitListener("dialog_style_manager.AddCommitListener", [this](int type, AssDialogue const*, SubtitleModelRebindTicket ticket) { LoadCurrentStyles(type); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime)))
+, active_line_connection(c->selectionController->AddActiveLineListener("dialog_style_manager.AddActiveLineListener", [this](SubtitleModelRebindTicket ticket) { OnActiveLineChanged(); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime)))
 , font_list(std::async(std::launch::async, []() -> wxArrayString {
 	wxArrayString fontList = wxFontEnumerator::GetFacenames();
 	fontList.Sort();

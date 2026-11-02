@@ -116,6 +116,7 @@ bool CanEditDrawing(const agi::Context *c) {
 }
 
 void EditDrawing(agi::Context *c) {
+    auto model_observer_lifetime = std::make_shared<int>(0); // Outlives the draft and both connections.
     SubtitleDialogEdit edit(c);edit.ResetActive();
     if(edit.Rows().empty())return;
     const AssDialogue original(edit.Rows().front());
@@ -130,8 +131,8 @@ void EditDrawing(agi::Context *c) {
         previewing=false;
     };
     BOOST_SCOPE_EXIT_ALL(&edit,&restore){edit.End();restore();};
-    agi::signal::Connection file_changed=c->subtitleAccess->Read().AddCommitListener([&]{edit.Invalidate();});
-    agi::signal::Connection selection_changed=c->selectionController->AddActiveLineListener([&]{edit.Invalidate();});
+    agi::signal::Connection file_changed=c->subtitleAccess->Read().AddCommitListener("dialog_rectangle.AddCommitListener", [&](SubtitleModelRebindTicket ticket){edit.Invalidate();if (ticket.Current()) ticket.Acknowledge(ticket.Revision());}, std::weak_ptr<void const>(model_observer_lifetime));
+    agi::signal::Connection selection_changed=c->selectionController->AddActiveLineListener("dialog_rectangle.AddActiveLineListener", [&](SubtitleModelRebindTicket ticket){edit.Invalidate();if (ticket.Current()) ticket.Acknowledge(ticket.Revision());}, std::weak_ptr<void const>(model_observer_lifetime));
     wxDialog dialog(c->parent, -1, _("Edit Shape"));
     auto layout = new wxBoxSizer(wxVERTICAL);
     auto fields = new wxFlexGridSizer(2, dialog.FromDIP(8), dialog.FromDIP(12));

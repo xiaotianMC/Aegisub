@@ -9,6 +9,9 @@
 #include <stdexcept>
 #include <tuple>
 #include <type_traits>
+#include <optional>
+
+using SubtitleModelRebindTicket = agi::SubtitleRebindBatch::Ticket;
 
 // Project-local registration, not a replacement for the generic Signal contract.
 // Ordinary delivery retains reverse registration order and exception propagation.
@@ -25,6 +28,7 @@ private:
         std::string name;
         agi::signal::Signal<Args..., Ticket> signal;
         std::weak_ptr<Subscriber> subscriber;
+        std::optional<std::weak_ptr<void const>> owner_lifetime;
     };
     struct State {
         std::vector<std::shared_ptr<Slot>> slots;
@@ -60,7 +64,7 @@ public:
         explicit Prepared(std::shared_ptr<State> const& value) : state(value) {
             if (state->frozen == std::numeric_limits<size_t>::max()) throw std::overflow_error("Observer preparation count exhausted");
             for (auto it=value->slots.rbegin(); it!=value->slots.rend(); ++it)
-                if (!(*it)->subscriber.expired()) slots.push_back(*it);
+                if (!(*it)->subscriber.expired() || ((*it)->owner_lifetime && !(*it)->owner_lifetime->expired())) slots.push_back(*it);
             ++state->frozen;
         }
     public:
@@ -76,28 +80,31 @@ public:
         void Prepare() const {
             if (!state->alive) throw std::logic_error("Installation observer registry closed");
             for (auto const& slot : slots)
-                if (auto subscriber=slot->subscriber.lock()) subscriber->prepare();
+                if (!slot->owner_lifetime || !slot->owner_lifetime->expired())
+                    if (auto subscriber=slot->subscriber.lock()) subscriber->prepare();
         }
         void Dispatch(agi::SubtitleRebindBatch& batch, size_t offset, Args... args) const {
             for (size_t i=0; i<slots.size(); ++i) {
                 auto slot=slots[i];
                 batch.Dispatch(offset+i, [&](Ticket ticket) {
                     if (!state->alive) throw std::logic_error("Installation observer registry closed");
-                    slot->signal(args..., ticket);
-                    // Only completed unsubscription withdraws the observer. A live
-                    // subscriber's successful return NEVER acknowledges its ticket.
-                    if (slot->subscriber.expired()) ticket.Acknowledge(ticket.Revision());
+                    if (!slot->owner_lifetime || !slot->owner_lifetime->expired()) slot->signal(args..., ticket);
+                    // Disconnect alone is NOT proof of releasing borrowed nodes.
+                    // Only an explicitly supplied, expired owner lifetime withdraws.
+                    if (slot->owner_lifetime && slot->owner_lifetime->expired()) ticket.Acknowledge(ticket.Revision());
                 });
             }
         }
     };
     Prepared PrepareObservers() const { return Prepared(state); }
 
-    template<class F> agi::signal::UnscopedConnection Observe(std::string name, std::function<void()> prepare, F callback) const {
+    template<class F> agi::signal::UnscopedConnection Observe(std::string name, std::function<void()> prepare, F callback,
+            std::optional<std::weak_ptr<void const>> owner_lifetime = std::nullopt) const {
         if (state->frozen) throw std::logic_error("Cannot subscribe during model installation");
         if (state->sequence == std::numeric_limits<uint64_t>::max()) throw std::overflow_error("Observer identity exhausted");
         auto slot=std::make_shared<Slot>();
         slot->name=prefix+":"+std::to_string(++state->sequence)+":"+name;
+        slot->owner_lifetime=std::move(owner_lifetime);
         auto subscriber=std::make_shared<Subscriber>();
         subscriber->prepare=std::move(prepare);
         subscriber->callback=[callback=std::move(callback)](Args... args, Ticket ticket) mutable { Invoke(callback,ticket,args...); };
@@ -112,6 +119,15 @@ public:
     template<class F> agi::signal::UnscopedConnection Add(F callback) const {
         return Observe("subscriber", []{}, std::move(callback));
     }
+    template<class F> agi::signal::UnscopedConnection Add(std::string name, F callback) const {
+        return Observe(std::move(name), []{}, std::move(callback));
+    }
+    template<class F> agi::signal::UnscopedConnection Add(std::string name, F callback, std::weak_ptr<void const> owner) const {
+        return Observe(std::move(name), []{}, std::move(callback),std::move(owner));
+    }
+    template<class... Callbacks> agi::signal::UnscopedConnection Connect(Callbacks&&... callbacks) const {
+        return Add(std::forward<Callbacks>(callbacks)...);
+    }
     template<class Method, class Object> agi::signal::UnscopedConnection Add(Method method, Object* object) const {
         return Add([method,object](auto&&... args) -> decltype(std::invoke(method,object,std::forward<decltype(args)>(args)...)) {
             return std::invoke(method,object,std::forward<decltype(args)>(args)...);
@@ -119,7 +135,8 @@ public:
     }
     void operator()(Args... args) const {
         auto slots=state->slots;
-        for (auto it=slots.rbegin(); it!=slots.rend(); ++it) (*it)->signal(args...,Ticket{});
-        std::erase_if(state->slots, [](auto const& slot){return slot->subscriber.expired();});
+        for (auto it=slots.rbegin(); it!=slots.rend(); ++it)
+            if (!(*it)->owner_lifetime || !(*it)->owner_lifetime->expired()) (*it)->signal(args...,Ticket{});
+        std::erase_if(state->slots, [](auto const& slot){return slot->subscriber.expired() && (!slot->owner_lifetime || slot->owner_lifetime->expired());});
     }
 };

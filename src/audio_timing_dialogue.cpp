@@ -43,6 +43,7 @@
 #include "utils.h"
 
 #include <list>
+#include <memory>
 
 #include <libaegisub/ass/time.h>
 
@@ -287,6 +288,10 @@ void DialogueTimingMarker::SetPosition(int new_position) {
 /// as the active line starts/ends can optionally be dragged along with the
 /// active line's markers, updating those lines as well.
 class AudioTimingControllerDialogue final : public AudioTimingController, private agi::signal::ConnectionScope {
+protected:
+    // Declared first: expires only after all owned bindings/cache members are destroyed.
+    std::shared_ptr<int> model_observer_lifetime = std::make_shared<int>(0);
+private:
 	/// The rendering style for the active line's start marker
 	Pen style_left{"Colour/Audio Display/Line boundary Start", "Audio/Line Boundaries Thickness"};
 	/// The rendering style for the active line's end marker
@@ -426,11 +431,11 @@ AudioTimingControllerDialogue::AudioTimingControllerDialogue(agi::Context *c)
 , keyframes_provider(c, "Audio/Display/Draw/Keyframes in Dialogue Mode")
 , video_position_provider(c)
 , context(c)
-, commit_connection(c->subtitleAccess->Read().AddCommitListener(&AudioTimingControllerDialogue::OnFileChanged, this))
+, commit_connection(c->subtitleAccess->Read().AddCommitListener("audio_timing_dialogue.AddCommitListener", [this](int type, AssDialogue const*, SubtitleModelRebindTicket ticket) { OnFileChanged(type); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime)))
 , inactive_line_mode_connection(OPT_SUB("Audio/Inactive Lines Display Mode", &AudioTimingControllerDialogue::Revert, this))
 , inactive_line_comment_connection(OPT_SUB("Audio/Display/Draw/Inactive Comments", &AudioTimingControllerDialogue::Revert, this))
-, active_line_connection(c->selectionController->AddActiveLineListener(&AudioTimingControllerDialogue::Revert, this))
-, selection_connection(c->selectionController->AddSelectionListener(&AudioTimingControllerDialogue::OnSelectedSetChanged, this))
+, active_line_connection(c->selectionController->AddActiveLineListener("audio_timing_dialogue.AddActiveLineListener", [this](SubtitleModelRebindTicket ticket) { Revert(); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime)))
+, selection_connection(c->selectionController->AddSelectionListener("audio_timing_dialogue.AddSelectionListener", [this](SubtitleModelRebindTicket ticket) { OnSelectedSetChanged(); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime)))
 {
 	BindConnection(keyframes_provider.AddMarkerMovedListener([this]{ AnnounceMarkerMoved(); }));
 	BindConnection(video_position_provider.AddMarkerMovedListener([this]{ AnnounceMarkerMoved(); }));

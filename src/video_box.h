@@ -28,6 +28,7 @@
 // Aegisub Project http://www.aegisub.org/
 
 #pragma once
+#include <memory>
 
 #include <libaegisub/signal.h>
 
@@ -40,6 +41,10 @@ class wxTextCtrl;
 /// @class VideoBox
 /// @brief The box containing the video display and associated controls
 class VideoBox final : public wxPanel {
+protected:
+    // Declared first: expires only after all owned bindings/cache members are destroyed.
+    std::shared_ptr<int> model_observer_lifetime = std::make_shared<int>(0);
+private:
 	std::vector<agi::signal::Connection> connections;
 	agi::Context *context;     ///< Project context
 	wxTextCtrl *VideoPosition; ///< Current frame/time

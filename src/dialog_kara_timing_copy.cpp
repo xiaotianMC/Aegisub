@@ -44,6 +44,7 @@
 #include <libaegisub/unicode.h>
 
 #include <deque>
+#include <memory>
 #include <vector>
 #include <wx/checkbox.h>
 #include <wx/combobox.h>
@@ -352,6 +353,10 @@ bool KaraokeLineMatchDisplay::UndoMatch()
 }
 
 class DialogKanjiTimer final : public wxDialog {
+protected:
+    // Declared first: expires only after all owned bindings/cache members are destroyed.
+    std::shared_ptr<int> model_observer_lifetime = std::make_shared<int>(0);
+private:
 	SubtitleDialogEdit edit;
 	agi::signal::Connection file_changed;
 
@@ -388,7 +393,7 @@ public:
 DialogKanjiTimer::DialogKanjiTimer(agi::Context *c)
 : wxDialog(c->parent, -1, _("Kanji timer"))
 , edit(c)
-, file_changed(c->subtitleAccess->Read().AddCommitListener([this]{edit.Invalidate();currentSourceLine=currentDestinationLine=0;display->SetInputData(nullptr,nullptr);}))
+, file_changed(c->subtitleAccess->Read().AddCommitListener("dialog_kara_timing_copy.AddCommitListener", [this](SubtitleModelRebindTicket ticket){edit.Invalidate();currentSourceLine=currentDestinationLine=0;display->SetInputData(nullptr,nullptr);if (ticket.Current()) ticket.Acknowledge(ticket.Revision());}, std::weak_ptr<void const>(model_observer_lifetime)))
 {
 	SetIcons(GETICONS(kara_timing_copier));
 

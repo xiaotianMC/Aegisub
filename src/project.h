@@ -31,6 +31,10 @@ namespace agi { struct Context; }
 struct ProjectProperties;
 
 class Project : private agi::signal::ConnectionScope {
+    friend class FrameMain;
+    enum class HostLifetime { Open, Closing };
+    HostLifetime host_lifetime = HostLifetime::Open;
+    void BeginHostShutdown() noexcept { host_lifetime=HostLifetime::Closing; }
 	std::unique_ptr<agi::AudioProvider> audio_provider;
 	std::unique_ptr<AsyncVideoProvider> video_provider;
 	agi::vfr::Framerate timecodes;
