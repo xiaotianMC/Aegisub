@@ -93,7 +93,7 @@ void VideoController::OnActiveLineChanged() {
 }
 
 void VideoController::RequestFrame() {
-	context->ass->Properties.video_position = frame_n;
+	{ auto ui = context->subtitleAccess->UIState(); ui.video_position = frame_n; context->subtitleAccess->UpdateUIState(ui); }
 	provider->RequestFrame(frame_n, TimeAtFrame(frame_n));
 }
 
@@ -204,16 +204,16 @@ double VideoController::GetARFromType(AspectRatio type) const {
 void VideoController::SetAspectRatio(double value) {
 	ar_type = AspectRatio::Custom;
 	ar_value = mid(.5, value, 5.);
-	context->ass->Properties.ar_mode = (int)ar_type;
-	context->ass->Properties.ar_value = ar_value;
+	{ auto ui = context->subtitleAccess->UIState(); ui.ar_mode = (int)ar_type; context->subtitleAccess->UpdateUIState(ui); }
+	{ auto ui = context->subtitleAccess->UIState(); ui.ar_value = ar_value; context->subtitleAccess->UpdateUIState(ui); }
 	ARChange(ar_type, ar_value);
 }
 
 void VideoController::SetAspectRatio(AspectRatio type) {
 	ar_value = mid(.5, GetARFromType(type), 5.);
 	ar_type = type;
-	context->ass->Properties.ar_mode = (int)ar_type;
-	context->ass->Properties.ar_value = ar_value;
+	{ auto ui = context->subtitleAccess->UIState(); ui.ar_mode = (int)ar_type; context->subtitleAccess->UpdateUIState(ui); }
+	{ auto ui = context->subtitleAccess->UIState(); ui.ar_value = ar_value; context->subtitleAccess->UpdateUIState(ui); }
 	ARChange(ar_type, ar_value);
 }
 

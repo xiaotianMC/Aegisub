@@ -292,3 +292,28 @@ TEST(subtitle_project_access, snapshot_is_detached_complete_and_preserves_row_id
     EXPECT_EQ("",row->Text.get());EXPECT_EQ(31,file.Properties.video_position);EXPECT_EQ(revision,gate.Revision());
     access.Close();EXPECT_THROW(access.Snapshot(),std::logic_error);
 }
+
+template<class T> concept HasMetadataInUI = requires(T ui) { ui.export_encoding; };
+static_assert(!HasMetadataInUI<ProjectUIState>);
+TEST(subtitle_project_access, metadata_and_ui_have_separate_revisions_dirty_state_and_readonly_notifications) {
+    AssFile file;agi::SubtitleEditGate gate;SubtitleProjectAccess access(file,gate);
+    auto revision=gate.Revision();auto comparison=gate.TryBeginComparison();ASSERT_TRUE(comparison);
+    auto ui=access.UIState();ui.video_zoom=2;ui.scroll_position=7;access.UpdateUIState(ui);
+    EXPECT_EQ(revision,gate.Revision());EXPECT_EQ(0u,access.MetadataRevision());EXPECT_FALSE(access.MetadataDirty());
+    EXPECT_EQ("",access.AutomationSetting("missing"));EXPECT_TRUE(file.Properties.automation_settings.empty());
+    int notices=0;agi::signal::Connection listener=access.AddMetadataListener([&] {
+        ++notices;EXPECT_FALSE(access.TryWrite());EXPECT_TRUE(file.IsNotifying());
+    });
+    using Field=SubtitleProjectAccess::MetadataField;
+    access.SetMetadata(Field::ExportEncoding,"utf-8");access.SetMetadata(Field::ExportEncoding,"utf-8");
+    EXPECT_EQ(1,notices);EXPECT_EQ(1u,access.MetadataRevision());EXPECT_TRUE(access.MetadataDirty());
+    access.SetMetadata(Field::ExportEncoding,"");EXPECT_FALSE(access.MetadataDirty());
+    access.SetAutomationSetting("test","value");EXPECT_EQ("value",access.AutomationSetting("test"));
+    EXPECT_EQ(3u,access.MetadataRevision());EXPECT_EQ(revision,gate.Revision());
+    EXPECT_THROW(access.SetMetadata(static_cast<Field>(999),"bad"),std::invalid_argument);
+    std::thread worker([&]{
+        EXPECT_THROW(access.UpdateUIState(ui),std::logic_error);
+        EXPECT_THROW(access.SetAutomationSetting("test","worker"),std::logic_error);
+    });worker.join();
+    access.Close();EXPECT_THROW(access.SetMetadata(Field::ExportEncoding,"utf-8"),std::logic_error);
+}

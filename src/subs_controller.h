@@ -20,6 +20,7 @@
 #include <libaegisub/signal.h>
 
 #include <boost/container/list.hpp>
+#include <cstdint>
 #include <wx/timer.h>
 
 class SelectionController;
@@ -49,6 +50,7 @@ class SubsController : private agi::signal::ConnectionScope {
 	int saved_commit_id = 0;
 	/// Last autosaved version of this file
 	int autosaved_commit_id = 0;
+    uint64_t autosaved_metadata_revision = 0;
 	/// Version to use for the next commit
 	/// Needed to handle Save -> Undo -> Edit, which would result in the file
 	/// being marked unmodified if we reused commit IDs
@@ -95,7 +97,7 @@ public:
 	agi::fs::path Filename() const;
 
 	/// Does the file have unsaved changes?
-	bool IsModified() const { return commit_id != saved_commit_id; };
+	bool IsModified() const;
 
 	/// @brief Load from a file
 	/// @param file File name

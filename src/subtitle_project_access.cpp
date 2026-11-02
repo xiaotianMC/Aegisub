@@ -49,6 +49,7 @@ std::optional<SubtitleProjectAccess::WriteScope> SubtitleProjectAccess::TryWrite
 }
 SubtitleProjectAccess::SubtitleProjectAccess(AssFile& file, agi::SubtitleEditGate& gate)
 : state(std::make_shared<State>(&file)), gate(gate) {
+    saved_metadata = file.Properties;
     if (file.edit_gate) throw std::logic_error("Subtitle file already belongs to a project");
     file.edit_gate = &gate;
     state->gate = &gate;
@@ -187,6 +188,52 @@ void SubtitleProjectAccess::Close() noexcept {
     if (state->file->edit_gate == &gate) state->file->edit_gate = nullptr;
 }
 AssFile const& SubtitleProjectAccess::Read() const { state->Check(); return *state->file; }
+uint64_t SubtitleProjectAccess::MetadataRevision() const { state->Check(); return metadata_revision; }
+bool SubtitleProjectAccess::MetadataDirty() const { return saved_metadata != static_cast<ProjectMetadata const&>(Read().Properties); }
+ProjectUIState SubtitleProjectAccess::UIState() const { return Read().Properties; }
+void SubtitleProjectAccess::NotifyMetadataChanged() {
+    bool previous = state->file->notifying;
+    state->file->notifying = true;
+    try { metadata_changed(); }
+    catch (...) { state->file->notifying = previous; throw; }
+    state->file->notifying = previous;
+}
+void SubtitleProjectAccess::UpdateUIState(ProjectUIState const& value) {
+    state->Check();
+    static_cast<ProjectUIState&>(state->file->Properties) = value;
+}
+void SubtitleProjectAccess::SetMetadata(MetadataField field, std::string value) {
+    state->Check();
+    std::string* target = nullptr;
+    auto& properties = state->file->Properties;
+    switch (field) {
+        case MetadataField::AutomationScripts: target = &properties.automation_scripts; break;
+        case MetadataField::ExportFilters: target = &properties.export_filters; break;
+        case MetadataField::ExportEncoding: target = &properties.export_encoding; break;
+        case MetadataField::StyleStorage: target = &properties.style_storage; break;
+        case MetadataField::AudioFile: target = &properties.audio_file; break;
+        case MetadataField::VideoFile: target = &properties.video_file; break;
+        case MetadataField::TimecodesFile: target = &properties.timecodes_file; break;
+        case MetadataField::KeyframesFile: target = &properties.keyframes_file; break;
+    }
+    if (!target) throw std::invalid_argument("Unknown project metadata field");
+    if (*target == value) return;
+    if (metadata_revision == UINT64_MAX) throw std::overflow_error("Project metadata revision exhausted");
+    *target = std::move(value);++metadata_revision;
+    NotifyMetadataChanged();
+}
+std::string SubtitleProjectAccess::AutomationSetting(std::string const& key) const {
+    auto const& settings = Read().Properties.automation_settings;
+    auto found = settings.find(key);
+    return found == settings.end() ? std::string{} : found->second;
+}
+void SubtitleProjectAccess::SetAutomationSetting(std::string key, std::string value) {
+    state->Check();
+    if (AutomationSetting(key) == value) return;
+    if (metadata_revision == UINT64_MAX) throw std::overflow_error("Project metadata revision exhausted");
+    state->file->Properties.automation_settings[std::move(key)] = std::move(value);++metadata_revision;
+    NotifyMetadataChanged();
+}
 std::unique_ptr<AssFile> SubtitleProjectAccess::Snapshot() const {
     auto const& source = Read();
     auto copy = std::make_unique<AssFile>(source);

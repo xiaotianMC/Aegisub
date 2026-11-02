@@ -1,3 +1,4 @@
+#include "subtitle_project_access.h"
 // Copyright (c) 2005, Rodrigo Braz Monteiro, Niels Martin Hansen
 // All rights reserved.
 //
@@ -174,14 +175,15 @@ DialogExport::DialogExport(agi::Context *c)
 }
 
 DialogExport::~DialogExport() {
-	c->ass->Properties.export_filters.clear();
+	std::string filters;
 	for (size_t i = 0; i < filter_list->GetCount(); ++i) {
 		if (filter_list->IsChecked(i)) {
-			if (!c->ass->Properties.export_filters.empty())
-				c->ass->Properties.export_filters += "|";
-			c->ass->Properties.export_filters += from_wx(filter_list->GetString(i));
+			if (!filters.empty())
+				filters += "|";
+			filters += from_wx(filter_list->GetString(i));
 		}
 	}
+    c->subtitleAccess->SetMetadata(SubtitleProjectAccess::MetadataField::ExportFilters, std::move(filters));
 }
 
 void DialogExport::OnProcess(wxCommandEvent &) {
@@ -197,7 +199,7 @@ void DialogExport::OnProcess(wxCommandEvent &) {
 
 	try {
 		wxBusyCursor busy;
-		c->ass->Properties.export_encoding = from_wx(charset_list->GetStringSelection());
+		c->subtitleAccess->SetMetadata(SubtitleProjectAccess::MetadataField::ExportEncoding, from_wx(charset_list->GetStringSelection()));
 		exporter.Export(filename, charset_list->GetStringSelection().utf8_str().data(), &d);
 	}
 	catch (agi::UserCancelException const&) { }

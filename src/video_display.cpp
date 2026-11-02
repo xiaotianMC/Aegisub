@@ -1,3 +1,4 @@
+#include "subtitle_project_access.h"
 // Copyright (c) 2005-2010, Rodrigo Braz Monteiro
 // All rights reserved.
 //
@@ -374,7 +375,7 @@ void VideoDisplay::PositionVideo(bool preserveContentSize) {
 		// We must use content_height before content zoom has been applied to it
 		windowZoomValue = double(content_height) / vidH;
 		zoomBox->ChangeValue(fmt_wx("%g%%", windowZoomValue * 100.));
-		con->ass->Properties.video_zoom = windowZoomValue;
+		{ auto ui = con->subtitleAccess->UIState(); ui.video_zoom = windowZoomValue; con->subtitleAccess->UpdateUIState(ui); }
 	}
 
 	if (preserveContentSize)
@@ -638,7 +639,7 @@ void VideoDisplay::SetWindowZoom(double value) {
 	if (selIndex < zoomBox->GetCount())
 		zoomBox->SetSelection(selIndex);
 	zoomBox->ChangeValue(fmt_wx("%g%%", windowZoomValue * 100.));
-	con->ass->Properties.video_zoom = windowZoomValue;
+	{ auto ui = con->subtitleAccess->UIState(); ui.video_zoom = windowZoomValue; con->subtitleAccess->UpdateUIState(ui); }
 	FitClientSizeToVideo();
 }
 
@@ -691,7 +692,7 @@ void VideoDisplay::SetWindowZoomFromBox(wxCommandEvent &) {
 	int sel = zoomBox->GetSelection();
 	if (sel != wxNOT_FOUND) {
 		windowZoomValue = (sel + 1) * .125;
-		con->ass->Properties.video_zoom = windowZoomValue;
+		{ auto ui = con->subtitleAccess->UIState(); ui.video_zoom = windowZoomValue; con->subtitleAccess->UpdateUIState(ui); }
 		FitClientSizeToVideo();
 	}
 }

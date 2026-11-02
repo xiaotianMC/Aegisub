@@ -449,7 +449,7 @@ void BaseGrid::OnSize(wxSizeEvent &) {
 void BaseGrid::OnScroll(wxScrollEvent &event) {
 	int newPos = event.GetPosition();
 	if (yPos != newPos) {
-		context->ass->Properties.scroll_position = yPos = newPos;
+		{ yPos = newPos; auto ui = context->subtitleAccess->UIState(); ui.scroll_position = yPos; context->subtitleAccess->UpdateUIState(ui); }
 		Refresh(false);
 	}
 }
@@ -637,7 +637,7 @@ void BaseGrid::OnContextMenu(wxContextMenuEvent &evt) {
 void BaseGrid::ScrollTo(int y) {
 	int nextY = mid(0, y, GetRows() - 1);
 	if (yPos != nextY) {
-		context->ass->Properties.scroll_position = yPos = nextY;
+		{ yPos = nextY; auto ui = context->subtitleAccess->UIState(); ui.scroll_position = yPos; context->subtitleAccess->UpdateUIState(ui); }
 		scrollBar->SetThumbPosition(yPos);
 		Refresh(false);
 	}
@@ -663,7 +663,7 @@ void BaseGrid::AdjustScrollbar() {
 	int drawPerScreen = clientSize.GetHeight() / lineHeight;
 	int rows = GetRows();
 
-	context->ass->Properties.scroll_position = yPos = mid(0, yPos, rows - 1);
+	{ yPos = mid(0, yPos, rows - 1); auto ui = context->subtitleAccess->UIState(); ui.scroll_position = yPos; context->subtitleAccess->UpdateUIState(ui); }
 
 	scrollBar->SetScrollbar(yPos, drawPerScreen, rows + drawPerScreen - 1, drawPerScreen - 2, true);
 	scrollBar->Thaw();

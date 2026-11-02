@@ -1,3 +1,4 @@
+#include "subtitle_project_access.h"
 // Copyright (c) 2006, Niels Martin Hansen
 // All rights reserved.
 //
@@ -185,7 +186,7 @@ namespace Automation4 {
 		config_dialog = GenerateConfigDialog(parent, c);
 
 		if (config_dialog) {
-			std::string const& val = c->ass->Properties.automation_settings[GetScriptSettingsIdentifier()];
+			auto val = c->subtitleAccess->AutomationSetting(GetScriptSettingsIdentifier());
 			if (!val.empty())
 				config_dialog->Unserialise(val);
 			return config_dialog->CreateWindow(parent);
@@ -196,7 +197,7 @@ namespace Automation4 {
 
 	void ExportFilter::LoadSettings(bool, agi::Context *c) {
 		if (config_dialog)
-			c->ass->Properties.automation_settings[GetScriptSettingsIdentifier()] = config_dialog->Serialise();
+			c->subtitleAccess->SetAutomationSetting(GetScriptSettingsIdentifier(), config_dialog->Serialise());
 	}
 
 	// ProgressSink
@@ -471,7 +472,7 @@ namespace Automation4 {
 
 			scripts_string += scriptfn;
 		}
-		context->ass->Properties.automation_scripts = std::move(scripts_string);
+		context->subtitleAccess->SetMetadata(SubtitleProjectAccess::MetadataField::AutomationScripts, std::move(scripts_string));
 	}
 
 	// ScriptFactory

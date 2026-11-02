@@ -168,6 +168,9 @@ ProjectProperties SubsController::Load(agi::fs::path const& filename, const char
 	SubtitleFormat::GetReader(filename, charset)->ReadFile(&temp, filename, context->project->Timecodes(), charset);
 
 	context->ass->swap(temp);
+    ++context->subtitleAccess->metadata_revision;
+    context->subtitleAccess->MarkMetadataSaved(context->ass->Properties);
+    autosaved_metadata_revision = context->subtitleAccess->MetadataRevision();
     autosave_lifetime = std::make_shared<int>(0);
 	auto props = context->ass->Properties;
 
@@ -209,6 +212,8 @@ void SubsController::Save(agi::fs::path const& filename, const char *encoding) {
     auto old_filename = this->filename;
     auto old_properties = context->subtitleAccess->Read().Properties;
     auto old_script_path = context->path->Decode("?script");
+    auto old_saved_metadata = context->subtitleAccess->saved_metadata;
+    auto old_auto_metadata = autosaved_metadata_revision;
 	try {
 		autosaved_commit_id = saved_commit_id = commit_id;
 
@@ -216,6 +221,8 @@ void SubsController::Save(agi::fs::path const& filename, const char *encoding) {
 		// relative to the script in the header
 		this->filename = filename;
 		context->project->SetSubtitlesFilename(filename);
+        context->subtitleAccess->MarkMetadataSaved(snapshot->Properties);
+        autosaved_metadata_revision = context->subtitleAccess->MetadataRevision();
 
 		FileSave();
 	}
@@ -225,6 +232,8 @@ void SubsController::Save(agi::fs::path const& filename, const char *encoding) {
         this->filename = old_filename;
         context->path->SetToken("?script", old_script_path);
         context->ass->Properties = std::move(old_properties);
+        context->subtitleAccess->saved_metadata = std::move(old_saved_metadata);
+        autosaved_metadata_revision = old_auto_metadata;
 		throw;
 	}
 
@@ -240,6 +249,9 @@ void SubsController::Close() {
 	AssFile blank;
 	blank.swap(*context->ass);
 	context->ass->LoadDefault(true, OPT_GET("Subtitle Format/ASS/Default Style Catalog")->GetString());
+    ++context->subtitleAccess->metadata_revision;
+    context->subtitleAccess->MarkMetadataSaved(context->ass->Properties);
+    autosaved_metadata_revision = context->subtitleAccess->MetadataRevision();
 	context->ass->Commit("", AssFile::COMMIT_NEW);
 	FileOpen(filename);
 }
@@ -261,7 +273,7 @@ int SubsController::TryToClose(bool allow_cancel) const {
 }
 
 void SubsController::RequestAutoSave() {
-	if (commit_id == autosaved_commit_id)
+	if (commit_id == autosaved_commit_id && context->subtitleAccess->MetadataRevision() == autosaved_metadata_revision)
 		return;
 
 	auto directory = context->path->Decode(OPT_GET("Path/Auto/Save")->GetString());
@@ -273,12 +285,15 @@ void SubsController::RequestAutoSave() {
 		name = from_wx(_("Untitled"));
 
 	auto previous = autosaved_commit_id;
+    auto previous_metadata = autosaved_metadata_revision;
+    auto metadata_version = context->subtitleAccess->MetadataRevision();
     auto version = commit_id;
     auto subs_copy = std::shared_ptr<AssFile>(context->subtitleAccess->Snapshot());
     subs_copy->CleanExtradata();
     std::weak_ptr<int> lifetime = autosave_lifetime;
     autosaved_commit_id = version;
-	autosave_queue->Async([this, subs_copy, name, directory, lifetime, previous, version] {
+    autosaved_metadata_revision = metadata_version;
+	autosave_queue->Async([this, subs_copy, name, directory, lifetime, previous, version, previous_metadata, metadata_version] {
 		wxString msg;
         bool succeeded = false;
 
@@ -297,9 +312,11 @@ void SubsController::RequestAutoSave() {
 			msg = _("Unhandled exception when attempting to autosave file.");
 		}
 
-		agi::dispatch::Main().Async([this, lifetime, previous, version, succeeded, msg] {
+		agi::dispatch::Main().Async([this, lifetime, previous, version, previous_metadata, metadata_version, succeeded, msg] {
             if (lifetime.expired()) return;
-            if (!succeeded && autosaved_commit_id == version) autosaved_commit_id = previous;
+            if (!succeeded && autosaved_commit_id == version && autosaved_metadata_revision == metadata_version) {
+                autosaved_commit_id = previous;autosaved_metadata_revision = previous_metadata;
+            }
             if (context->frame) context->frame->StatusTimeout(msg);
 		});
 	});
@@ -312,6 +329,9 @@ bool SubsController::CanSave() const {
 	catch (...) {
 		return false;
 	}
+}
+bool SubsController::IsModified() const {
+    return commit_id != saved_commit_id || context->subtitleAccess->MetadataDirty();
 }
 
 void SubsController::SetFileName(agi::fs::path const& path) {

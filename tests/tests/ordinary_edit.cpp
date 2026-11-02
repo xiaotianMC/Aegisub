@@ -1734,3 +1734,34 @@ TEST_F(ordinary_edit, autosave_owns_complete_input_and_queued_completion_survive
     EXPECT_EQ(1u,reopened.Extradata.size());EXPECT_EQ(2u,c->ass->Extradata.size());
     OPT_SET("Path/Auto/Save")->SetString(old_path);
 }
+
+TEST_F(ordinary_edit, metadata_only_save_close_reopen_has_independent_dirty_state_and_compatible_ass_fields) {
+    using Field=SubtitleProjectAccess::MetadataField;
+    auto path=agi::fs::path((std::filesystem::current_path()/"metadata-only.ass").wstring());
+    c->subsController->Save(path,"utf-8");ASSERT_FALSE(c->subsController->IsModified());
+    auto revision=c->subtitleEditGate.Revision();auto undo=c->subsController->GetUndoDescription();
+    auto ui=c->subtitleAccess->UIState();ui.video_zoom=1.5;c->subtitleAccess->UpdateUIState(ui);
+    EXPECT_FALSE(c->subsController->IsModified());
+    c->subtitleAccess->SetMetadata(Field::ExportEncoding,"utf-8");c->subtitleAccess->SetAutomationSetting("test","some settings");
+    EXPECT_TRUE(c->subsController->IsModified());EXPECT_EQ(revision,c->subtitleEditGate.Revision());EXPECT_EQ(undo,c->subsController->GetUndoDescription());
+    auto bad=agi::fs::path((std::filesystem::current_path()/"no-parent-metadata"/"failed.ass").wstring());
+    EXPECT_ANY_THROW(c->subsController->Save(bad,"utf-8"));EXPECT_TRUE(c->subtitleAccess->MetadataDirty());
+    c->subsController->Save(path,"utf-8");EXPECT_FALSE(c->subsController->IsModified());
+    c->subsController->Close();c->subsController->Load(path,"utf-8");
+    auto id=c->ass->Events.front().Id;c->selectionController->SetSelectionAndActiveIDs({id},id);
+    EXPECT_FALSE(c->subsController->IsModified());EXPECT_EQ("utf-8",c->ass->Properties.export_encoding);
+    EXPECT_EQ("some settings",c->subtitleAccess->AutomationSetting("test"));EXPECT_DOUBLE_EQ(1.5,c->ass->Properties.video_zoom);
+}
+TEST_F(ordinary_edit, metadata_only_change_triggers_autosave_after_a_clean_manual_save) {
+    auto root=std::filesystem::current_path()/"metadata-autosave";
+    auto old=OPT_GET("Path/Auto/Save")->GetString();OPT_SET("Path/Auto/Save")->SetString(root.string());
+    c->subsController->Save(agi::fs::path((std::filesystem::current_path()/"clean-metadata.ass").wstring()),"utf-8");
+    auto revision=c->subtitleEditGate.Revision();
+    c->subtitleAccess->SetAutomationSetting("test","metadata only");c->subsController->RequestAutoSave();
+    EXPECT_EQ(revision,c->subtitleEditGate.Revision());c->subsController.reset();wxTheApp->ProcessPendingEvents();
+    std::vector<std::filesystem::path> files;for(auto const& item:std::filesystem::directory_iterator(root))files.push_back(item.path());
+    ASSERT_EQ(1u,files.size());AssFile reopened;agi::fs::path path(files.front().wstring());
+    SubtitleFormat::GetReader(path,"utf-8")->ReadFile(&reopened,path,c->project->Timecodes(),"utf-8");
+    EXPECT_EQ("metadata only",reopened.Properties.automation_settings.at("test"));
+    OPT_SET("Path/Auto/Save")->SetString(old);
+}

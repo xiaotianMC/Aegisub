@@ -68,10 +68,10 @@ Project::~Project() { }
 
 void Project::UpdateRelativePaths() {
 	using namespace std::string_view_literals;
-	context->ass->Properties.audio_file     = context->path->MakeRelative(audio_file, "?script"sv).generic_string();
-	context->ass->Properties.video_file     = context->path->MakeRelative(video_file, "?script"sv).generic_string();
-	context->ass->Properties.timecodes_file = context->path->MakeRelative(timecodes_file, "?script"sv).generic_string();
-	context->ass->Properties.keyframes_file = context->path->MakeRelative(keyframes_file, "?script"sv).generic_string();
+	context->subtitleAccess->SetMetadata(SubtitleProjectAccess::MetadataField::AudioFile, context->path->MakeRelative(audio_file, "?script"sv).generic_string());
+	context->subtitleAccess->SetMetadata(SubtitleProjectAccess::MetadataField::VideoFile, context->path->MakeRelative(video_file, "?script"sv).generic_string());
+	context->subtitleAccess->SetMetadata(SubtitleProjectAccess::MetadataField::TimecodesFile, context->path->MakeRelative(timecodes_file, "?script"sv).generic_string());
+	context->subtitleAccess->SetMetadata(SubtitleProjectAccess::MetadataField::KeyframesFile, context->path->MakeRelative(keyframes_file, "?script"sv).generic_string());
 }
 
 ProjectProperties Project::PropertiesForSave(agi::fs::path const& path) const {
@@ -437,9 +437,9 @@ void Project::CloseVideo() {
 	video_provider.reset();
 	SetPath(video_file, "?video", "", "");
 	video_has_subtitles = false;
-	context->ass->Properties.ar_mode = 0;
-	context->ass->Properties.ar_value = 0.0;
-	context->ass->Properties.video_position = 0;
+	{ auto ui = context->subtitleAccess->UIState(); ui.ar_mode = 0; context->subtitleAccess->UpdateUIState(ui); }
+	{ auto ui = context->subtitleAccess->UIState(); ui.ar_value = 0.0; context->subtitleAccess->UpdateUIState(ui); }
+	{ auto ui = context->subtitleAccess->UIState(); ui.video_position = 0; context->subtitleAccess->UpdateUIState(ui); }
 }
 
 void Project::DoLoadTimecodes(agi::fs::path const& path) {

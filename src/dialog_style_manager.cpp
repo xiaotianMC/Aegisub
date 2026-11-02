@@ -428,7 +428,7 @@ void DialogStyleManager::UpdateStorage() {
 
 void DialogStyleManager::OnChangeCatalog() {
 	std::string catalog(from_wx(CatalogList->GetStringSelection()));
-	c->ass->Properties.style_storage = catalog;
+	c->subtitleAccess->SetMetadata(SubtitleProjectAccess::MetadataField::StyleStorage, catalog);
 	Store.LoadCatalog(catalog);
 	UpdateStorage();
 }

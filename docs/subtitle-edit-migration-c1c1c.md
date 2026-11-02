@@ -49,3 +49,39 @@
 未执行 Linux/macOS CI或人工实体键鼠/真实设备/HiDPI验收；不存在新增移动端实现。人工与自动验证分别记录。最终 Owner、历史、Lua、Load/Close、Properties、编译期负例、端到端关闭重开及 CI 结果随后续批次补齐。
 
 提交名称：fix(compare): isolate save snapshots and autosave results。普通推送与远端哈希由实际提交后的核对结果记录，不使用强制推送。
+
+## 第二批：UI State / Metadata 分离（C1-C1c-6）
+
+第一批实提交并普通推送：9c8b507103b83dba816febb275542eb0477c1c90，本地与远端一致。
+
+ProjectProperties 逻辑拆成 ProjectMetadata 和 ProjectUIState，独立 AssFile 保留扁平字段兼容现有解析/写出。活动工程 UI 更新仅接收 UI 值类型，Metadata 使用限定字段 enum 和专用自动化设置接口，不接受通用 Properties 成员指针。访问均校验宿主线程和存活；UI 不推进字幕或 Metadata 修订，Metadata 只推进自身修订。Metadata 按已保存值判脏，恢复原值可清除脏状态；字幕历史/Undo 格式保持不变。
+
+迁移媒体相对路径、脚本列表、导出偏好、样式库名及自动化设置；视频/网格的显示状态不再直接写混合 Properties。Selection 内部 active_row UI 写回保持原语义。Metadata 通知无可变 payload，通知期间沿用现有只读阶段，主窗口标题订阅独立通知。IsModified 合并字幕历史与 Metadata 脏状态。Save 成功记录实际保存的 Metadata；Load/Close 重设保存基线；自动保存同时检查字幕 commit_id 和 Metadata 修订，Metadata-only 改动不再被漏过。
+
+发现并修复原有自动化设置持久化缺口：ASS writer 原先不写 map，parser 原先多保留键名前一个空格。本批使用原有 Automation Settings 前缀键格式写出并准确取键名，不引入新 ASS 格式。
+
+Windows x64 Release 成功；应用109/109、模型47/47、基础436/436，共592/592。新增真实 Save→Close→Load（非仅独立读取）检验 Metadata/显示状态保存重开、失败保留 Metadata 脏状态；Metadata-only 自动保存实际文件重开；UI/Metadata 独立修订/通知/无读取插入/线程及关闭拒绝、UI 类型不含 Metadata 的编译约束。现有589项保留。日志 build/c1c1c-metadata-{build,app,model,base}.log。git diff --check 通过。
+
+实际修改文件（另含报告）：
+
+- `src/ass_file.h`
+- `src/ass_parser.cpp`
+- `src/auto4_base.cpp`
+- `src/base_grid.cpp`
+- `src/dialog_export.cpp`
+- `src/dialog_style_manager.cpp`
+- `src/frame_main.cpp`
+- `src/project.cpp`
+- `src/subs_controller.cpp`
+- `src/subs_controller.h`
+- `src/subtitle_format_ass.cpp`
+- `src/subtitle_project_access.cpp`
+- `src/subtitle_project_access.h`
+- `src/video_controller.cpp`
+- `src/video_display.cpp`
+- `tests/tests/ordinary_edit.cpp`
+- `tests/tests/subtitle_project_access.cpp`
+
+提交名称：refactor(compare): separate project metadata from ui state。
+
+剩余：公开 Context owner、可信历史恢复、Lua 工作数据与结果发布、Load/Close 工程身份和观察者重绑定、字体收集后台输入尚未最终封闭。AssFile parser 使用成员指针只作用于独立目标，不作为活动工程修改入口；不能把本批 Metadata 分离当作整个 Owner 已私有化。

@@ -62,7 +62,7 @@ struct AssFileCommit {
 	AssDialogue *single_line;
 };
 
-struct ProjectProperties {
+struct ProjectMetadata {
 	std::string automation_scripts;
 	std::string export_filters;
 	std::string export_encoding;
@@ -72,8 +72,9 @@ struct ProjectProperties {
 	std::string timecodes_file;
 	std::string keyframes_file;
 	std::map<std::string, std::string> automation_settings;
-
-	// UI State
+    bool operator==(ProjectMetadata const&) const = default;
+};
+struct ProjectUIState {
 	double video_zoom = 0.;
 	double ar_value = 0.;
 	int scroll_position = 0;
@@ -81,6 +82,8 @@ struct ProjectProperties {
 	int ar_mode = 0;
 	int video_position = 0;
 };
+// Independent readers/writers retain the existing flattened ASS property names.
+struct ProjectProperties : ProjectMetadata, ProjectUIState {};
 
 class AssFile {
     friend class SubtitleProjectAccess;

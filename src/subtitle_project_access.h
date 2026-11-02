@@ -12,11 +12,27 @@
 // Incremental live-model boundary. Detached AssFiles keep their existing API.
 // Legacy Context::ass remains a migration gap; this facade exposes no mutable pointer.
 class SubtitleProjectAccess {
+    friend class SubsController;
     struct State;
     struct ActiveWrite;
     std::shared_ptr<State> state;
     agi::SubtitleEditGate& gate;
+    uint64_t metadata_revision = 0;
+    ProjectMetadata saved_metadata;
+    agi::signal::Signal<> metadata_changed;
+    void NotifyMetadataChanged();
+    void MarkMetadataSaved(ProjectMetadata const& value) { saved_metadata = value; }
 public:
+    enum class MetadataField { AutomationScripts, ExportFilters, ExportEncoding, StyleStorage,
+        AudioFile, VideoFile, TimecodesFile, KeyframesFile };
+    uint64_t MetadataRevision() const;
+    bool MetadataDirty() const;
+    ProjectUIState UIState() const;
+    void UpdateUIState(ProjectUIState const&);
+    void SetMetadata(MetadataField, std::string);
+    std::string AutomationSetting(std::string const&) const;
+    void SetAutomationSetting(std::string, std::string);
+    DEFINE_SIGNAL_ADDERS(metadata_changed, AddMetadataListener)
     // A synchronous ordinary edit, including nested commands and notifications.
     // Shares a C0 lease, never the gate's internal mutex.
     class WriteScope {

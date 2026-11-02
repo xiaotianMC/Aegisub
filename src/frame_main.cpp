@@ -113,6 +113,7 @@ FrameMain::FrameMain()
 
 	StartupLog("Initializing context controls");
 	BindConnection(context->subtitleAccess->Read().AddCommitListener(&FrameMain::UpdateTitle, this));
+    BindConnection(context->subtitleAccess->AddMetadataListener(&FrameMain::UpdateTitle, this));
 	BindConnection(context->subsController->AddFileOpenListener(&FrameMain::OnSubtitlesOpen, this));
 	BindConnection(context->subsController->AddFileSaveListener(&FrameMain::UpdateTitle, this));
 	BindConnection(context->project->AddAudioProviderListener(&FrameMain::OnAudioOpen, this));
