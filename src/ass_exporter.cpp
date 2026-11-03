@@ -38,6 +38,7 @@
 #include "ass_file.h"
 #include "compat.h"
 #include "include/aegisub/context.h"
+#include "subtitle_project_access.h"
 #include "project.h"
 #include "subtitle_format.h"
 
@@ -81,7 +82,7 @@ std::vector<std::string> AssExporter::GetAllFilterNames() const {
 }
 
 void AssExporter::Export(agi::fs::path const& filename, const char *charset, wxWindow *export_dialog) {
-	AssFile subs(*c->ass);
+	AssFile subs(c->subtitleAccess->Read());
 
 	for (auto filter : filters) {
 		filter->LoadSettings(is_default, c);

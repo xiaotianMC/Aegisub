@@ -51,6 +51,7 @@
 #include "project.h"
 #include "selection_controller.h"
 #include "subs_controller.h"
+#include "subtitle_project_access.h"
 #include "video_controller.h"
 #include "utils.h"
 #include "version.h"
@@ -106,11 +107,37 @@ namespace {
 		return c;
 	}
 
+	/// Document values captured on the host thread when a macro starts, so the
+	/// script (on a worker thread) never reads the live document or controller.
+	struct RunSnapshot {
+		AssFile const* file;
+		agi::fs::path filename;
+	};
+
+	void set_run_snapshot(lua_State *L, RunSnapshot const* snapshot)
+	{
+		if (snapshot)
+			push_value(L, (void *)snapshot);
+		else
+			lua_pushnil(L);
+		lua_setfield(L, LUA_REGISTRYINDEX, "run_snapshot");
+	}
+
+	RunSnapshot const* get_run_snapshot(lua_State *L)
+	{
+		lua_getfield(L, LUA_REGISTRYINDEX, "run_snapshot");
+		auto snapshot = lua_islightuserdata(L, -1) ? static_cast<RunSnapshot const*>(lua_touserdata(L, -1)) : nullptr;
+		lua_pop(L, 1);
+		return snapshot;
+	}
+
 	int get_file_name(lua_State *L)
 	{
 		const agi::Context *c = get_context(L);
-		if (c && !c->subsController->Filename().empty())
-			push_value(L, c->subsController->Filename().filename());
+		auto snapshot = get_run_snapshot(L);
+		auto filename = snapshot ? snapshot->filename : c ? c->subsController->Filename() : agi::fs::path();
+		if (c && !filename.empty())
+			push_value(L, filename.filename());
 		else
 			lua_pushnil(L);
 		return 1;
@@ -336,8 +363,10 @@ namespace {
 		if (!c)
 			lua_pushnil(L);
 		else {
+			auto snapshot = get_run_snapshot(L);
+			auto const& properties = snapshot ? snapshot->file->Properties : c->subtitleAccess->Read().Properties;
 			lua_createtable(L, 0, 14);
-#define PUSH_FIELD(name) set_field(L, #name, c->ass->Properties.name)
+#define PUSH_FIELD(name) set_field(L, #name, properties.name)
 			PUSH_FIELD(automation_scripts);
 			PUSH_FIELD(export_filters);
 			PUSH_FIELD(export_encoding);
@@ -349,13 +378,15 @@ namespace {
 			PUSH_FIELD(ar_mode);
 			PUSH_FIELD(video_position);
 #undef PUSH_FIELD
-			set_field(L, "audio_file", c->path->MakeAbsolute(c->ass->Properties.audio_file, "?script"));
-			set_field(L, "video_file", c->path->MakeAbsolute(c->ass->Properties.video_file, "?script"));
-			set_field(L, "timecodes_file", c->path->MakeAbsolute(c->ass->Properties.timecodes_file, "?script"));
-			set_field(L, "keyframes_file", c->path->MakeAbsolute(c->ass->Properties.keyframes_file, "?script"));
+			set_field(L, "audio_file", c->path->MakeAbsolute(properties.audio_file, "?script"));
+			set_field(L, "video_file", c->path->MakeAbsolute(properties.video_file, "?script"));
+			set_field(L, "timecodes_file", c->path->MakeAbsolute(properties.timecodes_file, "?script"));
+			set_field(L, "keyframes_file", c->path->MakeAbsolute(properties.keyframes_file, "?script"));
 		}
 		return 1;
 	}
+
+	class LuaScript;
 
 	class LuaFeature {
 		int myid = 0;
@@ -381,6 +412,8 @@ namespace {
 	void LuaThreadedCall(lua_State *L, int nargs, int nresults, std::string const& title, wxWindow *parent, bool can_open_config);
 
 	class LuaCommand final : public cmd::Command, private LuaFeature {
+		/// Owning script; read without touching the Lua state
+		LuaScript *script;
 		std::string cmd_name;
 		wxString display;
 		wxString help;
@@ -430,6 +463,10 @@ namespace {
 		std::vector<cmd::Command*> macros;
 		std::vector<std::unique_ptr<ExportFilter>> filters;
 
+		/// A macro of this script is running on a worker thread; the Lua state
+		/// must not be used from the host thread until it returns.
+		bool running = false;
+
 		/// load script and create internal structures etc.
 		void Create();
 		/// destroy internal structures, unreg features and delete environment
@@ -448,7 +485,13 @@ namespace {
 		static LuaScript* GetScriptObject(lua_State *L);
 
 		// Script implementation
-		void Reload() override { Create(); }
+		void Reload() override {
+			if (running) {
+				wxLogError(fmt_tl("Cannot reload Automation script \"%s\" while one of its macros is running.", name));
+				return;
+			}
+			Create();
+		}
 
 		std::string GetName() const override { return name; }
 		std::string GetDescription() const override { return description; }
@@ -459,6 +502,9 @@ namespace {
 
 		std::vector<cmd::Command*> GetMacros() const override { return macros; }
 		std::vector<ExportFilter*> GetFilters() const override;
+
+		bool Running() const { return running; }
+		void SetRunning(bool value) { running = value; }
 	};
 
 	LuaScript::LuaScript(agi::fs::path const& filename)
@@ -768,6 +814,7 @@ namespace {
 
 	LuaCommand::LuaCommand(lua_State *L)
 	: LuaFeature(L)
+	, script(LuaScript::GetScriptObject(L))
 	, display(check_wxstring(L, 1))
 	, help(get_wxstring(L, 2))
 	, cmd_type(cmd::COMMAND_NORMAL)
@@ -805,19 +852,20 @@ namespace {
 		// store the table in the registry
 		RegisterFeature();
 
-		LuaScript::GetScriptObject(L)->RegisterCommand(this);
+		script->RegisterCommand(this);
 	}
 
 	LuaCommand::~LuaCommand()
 	{
 		UnregisterFeature();
-		LuaScript::GetScriptObject(L)->UnregisterCommand(this);
+		script->UnregisterCommand(this);
 	}
 
 	static std::vector<int> selected_rows(const agi::Context *c)
 	{
 		auto const& sel = c->selectionController->ReadSelectedSet();
-		int offset = c->ass->Info.size() + c->ass->Styles.size();
+		auto const& subs = c->subtitleAccess->Read();
+		int offset = subs.Info.size() + subs.Styles.size();
 		std::vector<int> rows;
 		rows.reserve(sel.size());
 		for (auto line : sel)
@@ -829,6 +877,8 @@ namespace {
 	bool LuaCommand::Validate(const agi::Context *c)
 	{
 		if (!(cmd_type & cmd::COMMAND_VALIDATE)) return true;
+		// The Lua state is in use by a running macro of this script
+		if (script->Running()) return false;
 
 		set_context(L, c);
 
@@ -836,11 +886,12 @@ namespace {
 		lua_pushcclosure(L, add_stack_trace, 0);
 
 		GetFeatureFunction("validate");
-		auto subsobj = new LuaAssFile(L, c->ass.get());
+		auto const& subs = c->subtitleAccess->Read();
+		auto subsobj = new LuaAssFile(L, subs);
 
 		push_value(L, selected_rows(c));
 		if (auto active_line = c->selectionController->ReadActiveLine())
-			push_value(L, active_line->Row + c->ass->Info.size() + c->ass->Styles.size() + 1);
+			push_value(L, active_line->Row + subs.Info.size() + subs.Styles.size() + 1);
 		else
 			lua_pushnil(L);
 
@@ -869,111 +920,165 @@ namespace {
 	void LuaCommand::operator()(agi::Context *c)
 	{
 		LuaStackcheck stackcheck(L);
+		if (script->Running()) {
+			wxLogError(fmt_tl("Macro \"%s\" is already running.", from_wx(StrDisplay(c))));
+			return;
+		}
+
+		// The script runs on a private, independent work model. Nothing is
+		// written to the document until the host has validated the complete
+		// result against the revision captured here.
+		std::optional<LuaSubtitleTransaction> transaction;
+		try {
+			transaction.emplace(c->subsController->BeginLuaTransaction());
+		}
+		catch (LuaSubtitleRejected const& e) {
+			wxLogError(fmt_tl("Cannot run macro \"%s\": %s", from_wx(StrDisplay(c)), e.what()));
+			return;
+		}
+		AssFile& work = transaction->Work();
+		RunSnapshot snapshot{&work, c->subsController->Filename()};
+
 		set_context(L, c);
+		set_run_snapshot(L, &snapshot);
+		BOOST_SCOPE_EXIT_ALL(&) { set_run_snapshot(L, nullptr); };
 		stackcheck.check_stack(0);
 
 		GetFeatureFunction("run");
-		auto subsobj = new LuaAssFile(L, c->ass.get(), true, true);
+		auto subsobj = new LuaAssFile(L, work, &work, true, true);
 
-		int original_offset = c->ass->Info.size() + c->ass->Styles.size() + 1;
-		auto original_sel = selected_rows(c);
+		// Row numbers of the original selection, computed on the work model
+		// (identical to the document at this point) exactly as before.
+		int original_offset = work.Info.size() + work.Styles.size() + 1;
+		std::vector<int> original_sel;
 		int original_active = 0;
-		if (auto active_line = c->selectionController->ReadActiveLine())
-			original_active = active_line->Row + original_offset;
+		for (auto const& line : work.Events) {
+			if (transaction->SelectedIDs().count(line.Id))
+				original_sel.push_back(line.Row + original_offset);
+			if (line.Id == transaction->ActiveID())
+				original_active = line.Row + original_offset;
+		}
+		sort(begin(original_sel), end(original_sel));
+		int start_active_id = transaction->ActiveID();
 
 		push_value(L, original_sel);
 		push_value(L, original_active);
 
+		script->SetRunning(true);
 		try {
 			LuaThreadedCall(L, 3, 2, from_wx(StrDisplay(c)), c->parent, true);
 		}
 		catch (agi::UserCancelException const&) {
+			script->SetRunning(false);
 			subsobj->Cancel();
 			stackcheck.check_stack(0);
 			return;
 		}
+		script->SetRunning(false);
 
-		auto lines = subsobj->ProcessingComplete(StrDisplay(c));
+		auto result = subsobj->TakeMacroResult(StrDisplay(c));
+		auto lines = result.final_lines;
 
-		AssDialogue *active_line = nullptr;
+		// Read the return values before anything can fail
+		std::optional<int> returned_active;
+		if (lua_isnumber(L, -1))
+			returned_active = lua_tointeger(L, -1);
+		stackcheck.check_stack(2);
+		lua_pop(L, 1);
+		std::optional<std::vector<int>> returned_rows;
+		if (lua_istable(L, -1)) {
+			returned_rows.emplace();
+			lua_for_each(L, [&] {
+				if (lua_isnumber(L, -1))
+					returned_rows->push_back(lua_tointeger(L, -1));
+			});
+		}
+		else
+			lua_pop(L, 1);
+		stackcheck.check_stack(0);
+
+		std::optional<LuaSubtitlePublication> publication;
+		try {
+			publication.emplace(c->subsController->PrepareLuaPublication(std::move(*transaction), std::move(result)));
+		}
+		catch (LuaSubtitleRejected const& e) {
+			wxLogError(fmt_tl("The result of macro \"%s\" was discarded: %s", from_wx(StrDisplay(c)), e.what()));
+			return;
+		}
+		auto const& final_ids = publication->FinalEventIds();
+
 		int active_idx = original_active;
-
-		// Check for a new active row
-		if (lua_isnumber(L, -1)) {
-			active_idx = lua_tointeger(L, -1);
+		if (returned_active) {
+			active_idx = *returned_active;
 			if (active_idx < 1 || active_idx > (int)lines.size()) {
 				wxLogError(fmt_tl("Active row %d is out of bounds (must be 1-%u)", active_idx, lines.size()));
 				active_idx = original_active;
 			}
 		}
 
-		stackcheck.check_stack(2);
-		lua_pop(L, 1);
-
-		// top of stack will be selected lines array, if any was returned
-		if (lua_istable(L, -1)) {
-			std::set<int> sel;
-			lua_for_each(L, [&] {
-				if (!lua_isnumber(L, -1))
-					return;
-				int cur = lua_tointeger(L, -1);
+		std::set<int> new_sel;
+		int new_active = 0;
+		if (returned_rows) {
+			AssDialogue const* active_line = nullptr;
+			for (int cur : *returned_rows) {
 				if (cur < 1 || cur > (int)lines.size()) {
 					wxLogError(fmt_tl("Selected row %d is out of bounds (must be 1-%u)", cur, lines.size()));
-					throw LuaForEachBreak();
+					break;
 				}
 
-				AssEntry *curline = lines[cur - 1];
-				if (typeid(*curline) != typeid(AssDialogue)) {
+				AssEntry const* curline = lines[cur - 1];
+				if (!curline || typeid(*curline) != typeid(AssDialogue)) {
 					wxLogError(fmt_tl("Selected row %d is not a dialogue line", cur));
-					throw LuaForEachBreak();
+					break;
 				}
 
-				auto diag = static_cast<AssDialogue*>(curline);
-				sel.insert(diag->Id);
+				auto diag = static_cast<AssDialogue const*>(curline);
+				new_sel.insert(diag->Id);
 				if (!active_line || active_idx == cur)
 					active_line = diag;
-			});
+			}
 
-			auto current = c->selectionController->ReadActiveLine();
-            int new_active = current ? current->Id : 0;
-			if (active_line && (active_idx > 0 || !sel.count(new_active)))
+			// The previous active line, if it is still in the document
+			if (std::find(final_ids.begin(), final_ids.end(), start_active_id) != final_ids.end())
+				new_active = start_active_id;
+			if (active_line && (active_idx > 0 || !new_sel.count(new_active)))
 				new_active = active_line->Id;
-			if (sel.empty() && new_active)
-                sel.insert(new_active);
-			c->selectionController->SetSelectionAndActiveIDs(std::move(sel), new_active);
+			if (new_sel.empty() && new_active)
+				new_sel.insert(new_active);
 		}
 		else {
-			lua_pop(L, 1);
-
-			std::set<int> new_sel;
-			int new_active = 0;
-
 			int prev = original_offset;
-			auto it = c->ass->Events.begin();
+			size_t it = 0;
 			for (int row : original_sel) {
-				while (row > prev && it != c->ass->Events.end()) {
+				while (row > prev && it != final_ids.size()) {
 					++prev;
 					++it;
 				}
-				if (it == c->ass->Events.end()) break;
-				new_sel.insert(it->Id);
+				if (it == final_ids.size()) break;
+				new_sel.insert(final_ids[it]);
 				if (row == original_active)
-					new_active = it->Id;
+					new_active = final_ids[it];
 			}
 
-			if (new_sel.empty() && !c->ass->Events.empty())
-				new_sel.insert(c->ass->Events.front().Id);
+			if (new_sel.empty() && !final_ids.empty())
+				new_sel.insert(final_ids.front());
 			if (!new_sel.empty() && !new_sel.count(new_active))
-                new_active = *new_sel.begin();
-			c->selectionController->SetSelectionAndActiveIDs(std::move(new_sel), new_active);
+				new_active = *new_sel.begin();
 		}
 
-		stackcheck.check_stack(0);
+		try {
+			c->subsController->PublishLua(std::move(*publication), std::move(new_sel), new_active);
+		}
+		catch (LuaSubtitleRejected const& e) {
+			wxLogError(fmt_tl("The result of macro \"%s\" was discarded: %s", from_wx(StrDisplay(c)), e.what()));
+		}
 	}
 
 	bool LuaCommand::IsActive(const agi::Context *c)
 	{
 		if (!(cmd_type & cmd::COMMAND_TOGGLE)) return false;
+		// The Lua state is in use by a running macro of this script
+		if (script->Running()) return false;
 
 		LuaStackcheck stackcheck(L);
 
@@ -981,10 +1086,11 @@ namespace {
 		stackcheck.check_stack(0);
 
 		GetFeatureFunction("isactive");
-		auto subsobj = new LuaAssFile(L, c->ass.get());
+		auto const& subs = c->subtitleAccess->Read();
+		auto subsobj = new LuaAssFile(L, subs);
 		push_value(L, selected_rows(c));
 		if (auto active_line = c->selectionController->ReadActiveLine())
-			push_value(L, active_line->Row + c->ass->Info.size() + c->ass->Styles.size() + 1);
+			push_value(L, active_line->Row + subs.Info.size() + subs.Styles.size() + 1);
 
 		int err = lua_pcall(L, 3, 1, 0);
 		subsobj->ProcessingComplete();
@@ -1050,7 +1156,7 @@ namespace {
 
 		// The entire point of an export filter is to modify the file, but
 		// setting undo points makes no sense
-		auto subsobj = new LuaAssFile(L, subs, true);
+		auto subsobj = new LuaAssFile(L, *subs, subs, true);
 		assert(lua_isuserdata(L, -1));
 		stackcheck.check_stack(2);
 
@@ -1088,7 +1194,7 @@ namespace {
 		GetFeatureFunction("config");
 
 		// prepare function call
-		auto subsobj = new LuaAssFile(L, c->ass.get());
+		auto subsobj = new LuaAssFile(L, c->subtitleAccess->Read());
 		// stored options
 		lua_newtable(L); // TODO, nothing for now
 

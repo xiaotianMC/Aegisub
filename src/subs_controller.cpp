@@ -43,6 +43,8 @@
 
 #include <wx/msgdlg.h>
 #include <limits>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace {
 	void autosave_timer_changed(wxTimer *timer) {
@@ -74,6 +76,24 @@ struct SubsController::UndoInfo {
         for (auto const& info : file.Info) script_info.emplace_back(info.Key(),info.Value());
         styles.assign(file.Styles.begin(),file.Styles.end());
         events.assign(file.Events.begin(),file.Events.end());
+    }
+
+    // A prepared Lua history step: the same fields an ordinary Commit records,
+    // taken from independent values instead of the live model. Selection, active
+    // line and text selection are captured from the host as OnCommit does.
+    UndoInfo(const agi::Context *c, wxString const& d, int commit_id, std::vector<AssInfo> const& info,
+             std::vector<AssStyle const*> const& step_styles, std::vector<AssDialogue const*> const& step_events,
+             std::vector<ExtradataEntry> const& step_extradata)
+    : undo_description(d), commit_id(commit_id), attachments(c->ass->Attachments), extradata(step_extradata) {
+        script_info.reserve(info.size());
+        for (auto const& entry : info) script_info.emplace_back(entry.Key(), entry.Value());
+        styles.reserve(step_styles.size());
+        for (auto style : step_styles) styles.push_back(*style);
+        events.reserve(step_events.size());
+        for (auto event : step_events) events.push_back(*event);
+        UpdateActiveLine(c);
+        UpdateSelection(c);
+        UpdateTextSelection(c);
     }
 
 	UndoInfo(const agi::Context *c, wxString const& d, int commit_id)
@@ -639,4 +659,305 @@ agi::fs::path SubsController::Filename() const {
 #else
 	return from_wx(_("untitled"));
 #endif
+}
+
+// ---- C1-C1c-9: Lua macro transactions ------------------------------------
+
+LuaSubtitleTransaction::LuaSubtitleTransaction() = default;
+LuaSubtitleTransaction::LuaSubtitleTransaction(LuaSubtitleTransaction&&) noexcept = default;
+LuaSubtitleTransaction& LuaSubtitleTransaction::operator=(LuaSubtitleTransaction&&) noexcept = default;
+LuaSubtitleTransaction::~LuaSubtitleTransaction() = default;
+
+struct LuaSubtitlePublication::Data {
+    std::optional<LuaSubtitleTransaction> transaction; // keeps the work model (original values) alive
+    LuaSubtitleResult result;           // owns the nodes the script created
+    std::optional<agi::SubtitleEditGate::ComparisonSession> session; // exclusive borrow
+    bool modifies = false;
+    int type = 0;
+    std::vector<int> final_ids;
+
+    // Prepared final document; nodes are live originals or created nodes.
+    std::vector<AssInfo> info;
+    std::vector<AssStyle*> styles;
+    std::vector<AssDialogue*> events;
+    std::unordered_set<AssEntry const*> adopted;            // pool nodes that become live
+    std::vector<std::unique_ptr<AssEntry>> normalisation;   // default style/line nodes
+
+    // Prepared history.
+    boost::container::list<SubsController::UndoInfo> history;
+    int last_commit_id = 0, next_commit_id = 0;
+    bool pushed = false;
+    size_t undo_depth = 2;
+
+    // Retired state, owned from the commit point until destruction.
+    std::vector<AssStyle*> retired_styles;
+    std::vector<AssDialogue*> retired_events;
+    bool retired_owned = false;
+    boost::container::list<SubsController::UndoInfo> retired_undo, retired_redo;
+
+    ~Data() {
+        if (!retired_owned) return;
+        for (auto style : retired_styles) delete style;
+        for (auto event : retired_events) delete event;
+    }
+};
+
+LuaSubtitlePublication::LuaSubtitlePublication() = default;
+LuaSubtitlePublication::LuaSubtitlePublication(LuaSubtitlePublication&&) noexcept = default;
+LuaSubtitlePublication& LuaSubtitlePublication::operator=(LuaSubtitlePublication&&) noexcept = default;
+LuaSubtitlePublication::~LuaSubtitlePublication() = default;
+std::vector<int> const& LuaSubtitlePublication::FinalEventIds() const { return data->final_ids; }
+bool LuaSubtitlePublication::Modifies() const { return data && data->modifies; }
+
+LuaSubtitleTransaction SubsController::BeginLuaTransaction() {
+    installation->CheckThread();
+    auto& gate = context->subtitleEditGate;
+    if (IsInstalling() || gate.NeedsRebinding())
+        throw LuaSubtitleRejected("The subtitles are being replaced or are blocked for recovery");
+    // Refuse to start while any writer, interaction or comparison is registered:
+    // its result could never be published. Nothing is held while the script runs.
+    if (!gate.TryBeginComparison())
+        throw LuaSubtitleRejected("The subtitles are being edited or compared");
+    LuaSubtitleTransaction transaction;
+    transaction.owner = this;
+    transaction.expected = gate.Capture();
+    transaction.work = context->subtitleAccess->Snapshot();
+    transaction.selected = context->selectionController->SelectedIDs();
+    transaction.active = context->selectionController->ActiveID();
+    return transaction;
+}
+
+LuaSubtitlePublication SubsController::PrepareLuaPublication(LuaSubtitleTransaction&& transaction, LuaSubtitleResult&& result) {
+    installation->CheckThread();
+    if (transaction.owner != this || !transaction.work || !transaction.expected)
+        throw std::logic_error("Foreign or consumed Lua transaction");
+    LuaSubtitlePublication publication;
+    publication.data = std::make_unique<LuaSubtitlePublication::Data>();
+    auto& d = *publication.data;
+    d.transaction.emplace(std::move(transaction));
+    d.result = std::move(result);
+    auto& gate = context->subtitleEditGate;
+    auto& live = *context->ass;
+    AssFile const& work = *d.transaction->work;
+
+    auto current = [&] {
+        if (IsInstalling() || gate.NeedsRebinding())
+            throw LuaSubtitleRejected("The subtitles are being replaced or are blocked for recovery");
+        if (!gate.Authorizes(*d.transaction->expected))
+            throw LuaSubtitleRejected("The subtitles were changed or replaced while the macro was running");
+    };
+    current();
+    d.modifies = !d.result.steps.empty();
+    if (!d.modifies) {
+        for (auto const& line : live.Events) d.final_ids.push_back(line.Id);
+        return publication;
+    }
+    d.session = gate.TryBeginComparison();
+    if (!d.session) throw LuaSubtitleRejected("The subtitles are being edited or compared");
+    current(); // no writer can register while the exclusive borrow is held
+
+    // Original lines map back to the live nodes they were copied from; the token
+    // guarantees the live lists are exactly what was snapshotted.
+    std::unordered_map<AssEntry const*, AssEntry*> nodes;
+    {
+        if (std::distance(work.Styles.begin(), work.Styles.end()) != std::distance(live.Styles.begin(), live.Styles.end()) ||
+            std::distance(work.Events.begin(), work.Events.end()) != std::distance(live.Events.begin(), live.Events.end()))
+            throw std::logic_error("Lua work model does not match its source document");
+        auto ls = live.Styles.begin();
+        for (auto const& style : work.Styles) nodes.emplace(&style, &*ls++);
+        auto le = live.Events.begin();
+        for (auto const& event : work.Events) {
+            if (event.Id != le->Id) throw std::logic_error("Lua work model does not match its source document");
+            nodes.emplace(&event, &*le++);
+        }
+    }
+    std::unordered_set<AssEntry const*> created;
+    for (auto const& node : d.result.pool) created.insert(node.get());
+
+    struct StepValues {
+        std::vector<AssInfo> info;
+        std::vector<AssStyle const*> styles;
+        std::vector<AssDialogue const*> events;
+    };
+    auto values = [&](std::vector<AssEntry const*> const& lines) {
+        StepValues v;
+        size_t original_info = 0;
+        for (auto line : lines) {
+            if (!line) {
+                // An untouched Script Info entry. Resolved for every step, so an undo
+                // point taken before the first Script Info edit keeps the header.
+                if (original_info >= work.Info.size()) throw std::logic_error("Lua Script Info placeholder out of range");
+                v.info.push_back(work.Info[original_info++]);
+                continue;
+            }
+            if (!nodes.count(line) && !created.count(line))
+                throw LuaSubtitleRejected("Lua result references a line it does not own");
+            switch (line->Group()) {
+                case AssEntryGroup::INFO: v.info.push_back(*static_cast<AssInfo const*>(line)); break;
+                case AssEntryGroup::STYLE: v.styles.push_back(static_cast<AssStyle const*>(line)); break;
+                case AssEntryGroup::DIALOGUE: v.events.push_back(static_cast<AssDialogue const*>(line)); break;
+                default: throw LuaSubtitleRejected("Lua result contains an unsupported line type");
+            }
+        }
+        return v;
+    };
+
+    // Extradata only grows during a run: the live entries must be an unchanged prefix.
+    if (work.Extradata.size() < live.Extradata.size() || work.next_extradata_id < live.next_extradata_id)
+        throw LuaSubtitleRejected("Lua extradata does not extend the document's extradata");
+    for (size_t i = 0; i < work.Extradata.size(); ++i) {
+        auto const& e = work.Extradata[i];
+        if (i < live.Extradata.size()) {
+            auto const& l = live.Extradata[i];
+            if (e.id != l.id || e.key != l.key || e.value != l.value)
+                throw LuaSubtitleRejected("Lua extradata does not extend the document's extradata");
+        }
+        else if ((i > 0 && e.id <= work.Extradata[i - 1].id) || e.id >= work.next_extradata_id)
+            throw LuaSubtitleRejected("Lua extradata identifiers are not unique");
+    }
+    auto extradata_exists = [&](uint32_t id) {
+        return std::binary_search(work.Extradata.begin(), work.Extradata.end(), id,
+            [](auto const& a, auto const& b) {
+                if constexpr (std::is_same_v<std::decay_t<decltype(a)>, uint32_t>) return a < b.id;
+                else return a.id < b;
+            });
+    };
+
+    // Final document: last step, with the empty-file normalisation every commit applies.
+    auto final_values = values(d.result.steps.back().lines);
+    if (final_values.styles.empty()) {
+        d.normalisation.push_back(std::make_unique<AssStyle>());
+        final_values.styles.push_back(static_cast<AssStyle const*>(d.normalisation.back().get()));
+    }
+    if (final_values.events.empty()) {
+        auto line = std::make_unique<AssDialogue>();
+        line->Row = 0;
+        final_values.events.push_back(line.get());
+        d.normalisation.push_back(std::move(line));
+    }
+    for (auto const& node : d.normalisation) created.insert(node.get());
+    d.info = final_values.info;
+    std::unordered_map<AssEntry const*, AssEntry*> owned;
+    for (auto const& node : d.result.pool) owned.emplace(node.get(), node.get());
+    for (auto const& node : d.normalisation) owned.emplace(node.get(), node.get());
+    std::unordered_set<AssEntry const*> used;
+    std::set<int> ids;
+    auto adopt = [&](AssEntry const* line) -> AssEntry* {
+        if (!used.insert(line).second) throw LuaSubtitleRejected("Lua result contains the same line twice");
+        if (auto it = nodes.find(line); it != nodes.end()) return it->second;
+        auto it = owned.find(line);
+        if (it == owned.end()) throw LuaSubtitleRejected("Lua result references a line it does not own");
+        d.adopted.insert(line);
+        return it->second;
+    };
+    for (auto style : final_values.styles) d.styles.push_back(static_cast<AssStyle*>(adopt(style)));
+    for (auto event : final_values.events) {
+        auto line = static_cast<AssDialogue*>(adopt(event));
+        if (line->Id <= 0 || !ids.insert(line->Id).second) throw LuaSubtitleRejected("Lua result has duplicate line identities");
+        if (!nodes.count(event))
+            for (auto id : line->ExtradataIds.get())
+                if (!extradata_exists(id)) throw LuaSubtitleRejected("Lua result references missing extradata");
+        d.events.push_back(line);
+        d.final_ids.push_back(line->Id);
+    }
+    std::unordered_set<AssEntry const*> kept(d.styles.begin(), d.styles.end());
+    kept.insert(d.events.begin(), d.events.end());
+    for (auto& style : live.Styles) if (!kept.count(&style)) d.retired_styles.push_back(&style);
+    for (auto& event : live.Events) if (!kept.count(&event)) d.retired_events.push_back(&event);
+
+    // History: replay the rules of ProcessingComplete + OnCommit as values.
+    // Each non-empty undo point is one step; an empty description (with history
+    // present) records nothing; amend id -1 never coalesces; every recorded
+    // step gets the empty-file normalisation; Extradata is the final set, as the
+    // legacy run had already written it into the document before any commit.
+    int next = next_commit_id;
+    size_t stack = undo_stack.size();
+    for (size_t i = 0; i < d.result.steps.size(); ++i) {
+        auto const& step = d.result.steps[i];
+        d.type |= step.type;
+        if (!step.commit || (step.description.empty() && stack > 0)) continue;
+        bool last = i + 1 == d.result.steps.size();
+        StepValues v = last ? final_values : values(step.lines);
+        std::vector<std::unique_ptr<AssEntry>> defaults;
+        if (!last && v.styles.empty()) {
+            defaults.push_back(std::make_unique<AssStyle>());
+            v.styles.push_back(static_cast<AssStyle const*>(defaults.back().get()));
+        }
+        if (!last && v.events.empty()) {
+            auto line = std::make_unique<AssDialogue>();
+            line->Row = 0;
+            v.events.push_back(line.get());
+            defaults.push_back(std::move(line));
+        }
+        if (next == std::numeric_limits<int>::max()) throw std::overflow_error("Document history exhausted");
+        d.history.emplace_back(context, step.description, next, v.info, v.styles, v.events, work.Extradata);
+        d.last_commit_id = next++;
+        d.pushed = true;
+        ++stack;
+    }
+    d.next_commit_id = next;
+    d.undo_depth = static_cast<size_t>(std::max<int64_t>(OPT_GET("Limits/Undo Levels")->GetInt(), 2));
+    return publication;
+}
+
+void SubsController::PublishLua(LuaSubtitlePublication&& publication, std::set<int> selection, int active) {
+    installation->CheckThread();
+    auto d = std::move(publication.data);
+    if (!d) throw std::logic_error("Consumed Lua publication");
+    auto& gate = context->subtitleEditGate;
+    if (!gate.Authorizes(*d->transaction->expected) || IsInstalling() || gate.NeedsRebinding())
+        throw LuaSubtitleRejected("The subtitles were changed or replaced while the macro was running");
+    if (!d->modifies) {
+        context->selectionController->SetSelectionAndActiveIDs(std::move(selection), active);
+        return;
+    }
+    if (!d->session || !gate.Authorizes(*d->session))
+        throw LuaSubtitleRejected("The subtitles are being edited or compared");
+
+    auto& live = *context->ass;
+    auto& work = *d->transaction->work;
+    // Throws before any change if the revision space is exhausted.
+    d->session->AdvanceRevision();
+
+    // ---- commit point: no allocation, nothing below throws ----
+    live.Info.swap(d->info);
+    live.Styles.clear();
+    for (auto style : d->styles) live.Styles.push_back(*style);
+    live.Events.clear();
+    int row = 0;
+    for (auto event : d->events) { event->Row = row++; live.Events.push_back(*event); }
+    live.Extradata.swap(work.Extradata);
+    live.next_extradata_id = work.next_extradata_id;
+    d->retired_owned = true;
+    for (auto& node : d->result.pool) if (d->adopted.count(node.get())) (void)node.release();
+    for (auto& node : d->normalisation) if (d->adopted.count(node.get())) (void)node.release();
+    if (d->pushed) {
+        redo_stack.swap(d->retired_redo);
+        undo_stack.splice(undo_stack.end(), d->history);
+        while (undo_stack.size() > d->undo_depth)
+            d->retired_undo.splice(d->retired_undo.end(), undo_stack, undo_stack.begin());
+        commit_id = d->last_commit_id;
+        next_commit_id = d->next_commit_id;
+    }
+    // ---- end of commit point ----
+
+    // Ordinary commit notification semantics, once for the whole run. If an
+    // observer throws, the retired nodes are parked so observers that were not
+    // refreshed cannot reach freed memory.
+    try {
+        bool previous = live.notifying;
+        live.notifying = true;
+        BOOST_SCOPE_EXIT_ALL(&) { live.notifying = previous; };
+        live.AnnounceCommit(d->type, nullptr);
+        context->selectionController->SetSelectionAndActiveIDs(std::move(selection), active);
+    }
+    catch (...) {
+        d->session.reset();
+        lua_retired_after_failure.push_back(std::shared_ptr<void>(std::move(d)));
+        throw;
+    }
+    bool pushed = d->pushed;
+    d.reset(); // releases the exclusive borrow and the retired state
+    if (pushed && undo_stack.size() > 1 && OPT_GET("App/Auto/Save on Every Change")->GetBool() && !filename.empty() && CanSave())
+        Save(filename);
 }

@@ -21,10 +21,12 @@
 #include <libaegisub/signal.h>
 #include <libaegisub/subtitle_edit_gate.h>
 #include "subtitle_model_installation.h"
+#include "subtitle_lua_transaction.h"
 
 #include <boost/container/list.hpp>
 #include <cstdint>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 #include <wx/timer.h>
@@ -46,7 +48,11 @@ protected:
     std::shared_ptr<int> model_observer_lifetime = std::make_shared<int>(0);
 private:
     friend class SubtitleModelInstallation;
+    friend class LuaSubtitlePublication;
     std::unique_ptr<SubtitleModelInstallation> installation;
+    /// Retired Lua publication state whose commit notification threw: kept so
+    /// observers that were not refreshed never see freed nodes; freed on destruction.
+    std::vector<std::shared_ptr<void>> lua_retired_after_failure;
 	agi::Context *context;
 	agi::signal::Connection undo_connection;
 	agi::signal::Connection active_line_connection;
@@ -173,6 +179,16 @@ public:
 
 	DEFINE_SIGNAL_ADDERS(FileOpen, AddFileOpenListener)
 	DEFINE_SIGNAL_ADDERS(FileSave, AddFileSaveListener)
+
+    /// C1-C1c-9 Lua macro transaction (host thread only). Begin snapshots the
+    /// document into a private work model and rejects a run while an installation,
+    /// recovery, comparison or other writer is active. Prepare validates a result
+    /// against the start revision and builds the complete model and history
+    /// without touching the live document; Publish installs it in one step on the
+    /// same document. Rejections throw LuaSubtitleRejected and change nothing.
+    LuaSubtitleTransaction BeginLuaTransaction();
+    LuaSubtitlePublication PrepareLuaPublication(LuaSubtitleTransaction&&, LuaSubtitleResult&&);
+    void PublishLua(LuaSubtitlePublication&&, std::set<int> selection, int active);
 
 	/// @brief Undo the last set of changes to the file
 	void Undo();

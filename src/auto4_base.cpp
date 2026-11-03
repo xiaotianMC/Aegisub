@@ -371,7 +371,7 @@ namespace Automation4 {
 		bool was_empty = scripts.empty();
 		scripts.clear();
 
-		auto const& local_scripts = context->ass->Properties.automation_scripts;
+		auto const& local_scripts = context->subtitleAccess->Read().Properties.automation_scripts;
 
 		// Tuples of (raw script path, base path, resolved path)
 		using PathTuple = std::tuple<std::string, agi::fs::path, agi::fs::path>;
