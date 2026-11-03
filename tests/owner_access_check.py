@@ -161,7 +161,8 @@ else:
             if skip: skip = False; continue
             if a in ("-o", "-MF", "-MQ", "-MT"): skip = True; continue
             low = a.lower()
-            if a in ("-c", "/c", "-MD", "-MMD", "/showIncludes") or low.startswith(("/fo", "-fo", "/fd", "/yu", "/yc", "/fp")):
+            # Keep /Yu and /Fp: MSVC's /FI may name a header supplied only by the PCH.
+            if a in ("-c", "/c", "-MD", "-MMD", "/showIncludes") or low.startswith(("/fo", "-fo", "/fd", "/yc")):
                 continue
             if Path(a).as_posix().endswith(args.reference_tu): continue
             base.append(a)
@@ -171,7 +172,8 @@ else:
             def compiles(name, body):
                 path = Path(tmp) / f"{name}.cpp"
                 path.write_text(PRELUDE + CONTROL + body + "\n", encoding="utf-8")
-                result = subprocess.run(base + [str(path)], cwd=entry["directory"], capture_output=True, text=True)
+                result = subprocess.run(base + [str(path)], cwd=entry["directory"], capture_output=True,
+                                        text=True, errors="backslashreplace")
                 return result.returncode == 0, (result.stdout + result.stderr)
             ok, log = compiles("control", "")
             if not ok:
