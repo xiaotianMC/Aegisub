@@ -109,6 +109,7 @@ endif
 
 compare_runner = executable('subtitle-compare-tests',
     'support/main.cpp', 'tests/subtitle_compare.cpp', 'tests/subtitle_project_access.cpp', 'tests/subtitle_selection.cpp',
+    'tests/subtitle_owner_access.cpp',
     '../src/ass_attachment.cpp', '../src/ass_dialogue.cpp', '../src/ass_entry.cpp',
     '../src/ass_file.cpp', '../src/ass_override.cpp', '../src/ass_parser.cpp',
     '../src/ass_style.cpp', '../src/ass_style_storage.cpp', '../src/subtitle_compare.cpp',

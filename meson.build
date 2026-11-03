@@ -615,4 +615,9 @@ if get_option('tests')
         win_subsystem: 'console')
     test('ordinary editing integration', find_program('tests/run_isolated.py'),
         args: [ordinary_runner, '--output-root', meson.current_build_dir() / 'ordinary-data'])
+    # C1-C1c-10: API scan plus real compile-failure cases for the live-model owner.
+    # Borrows a production compile command from compile_commands.json (Ninja backend).
+    test('live model owner access', find_program('tests/owner_access_check.py'),
+        args: ['--source-root', meson.project_source_root(), '--build-root', meson.project_build_root()],
+        depends: aegisub, timeout: 600)
 endif
