@@ -60,6 +60,7 @@
 #include <chrono>
 #include <libaegisub/ass/karaoke.h>
 #include <libaegisub/path.h>
+#include <libaegisub/mru.h>
 #include <wx/app.h>
 #include <wx/frame.h>
 #include <wx/combobox.h>
@@ -2113,6 +2114,24 @@ TEST_F(document_lifecycle, load_follow_up_failures_are_reported_after_commit_and
     EXPECT_FALSE(c->subtitleEditGate.NeedsRebinding());EXPECT_TRUE(c->subtitleAccess->TryWrite());
     failing.Disconnect();OPT_SET("App/Auto/Backup")->SetBool(false);
     c->subsController->Load(path,"utf-8");EXPECT_TRUE(c->subsController->LastPeripheralErrors().empty()); // cleared per installation
+
+    // A real MRU persistence failure must not suppress backup or FileOpen, or
+    // turn an already committed installation into a failed load.
+    agi::MRUManager blocked_mru(Local("backup-blocker/mru.json"), "{}", config::opt);
+    auto original_mru=config::mru;config::mru=&blocked_mru;
+    BOOST_SCOPE_EXIT_ALL(&) { config::mru=original_mru; };
+    auto good_backup=Local("mru-failure-backup");
+    OPT_SET("App/Auto/Backup")->SetBool(true);
+    OPT_SET("Path/Auto/Backup")->SetString(good_backup.string());
+    auto previous_opened=opened;
+    EXPECT_NO_THROW(c->subsController->Load(path,"utf-8"));
+    EXPECT_EQ(State::Committed,c->subsController->InstallationStatus());
+    ASSERT_EQ(1u,c->subsController->LastPeripheralErrors().size());
+    EXPECT_NE(std::string::npos,c->subsController->LastPeripheralErrors().front().find("Recent files"));
+    EXPECT_EQ(previous_opened+1,opened);
+    EXPECT_TRUE(std::filesystem::exists(std::filesystem::path((good_backup/(path.stem().string()+".ORIGINAL"+path.extension().string())).wstring())));
+    EXPECT_EQ(path,c->subsController->Filename());EXPECT_TRUE(c->subsController->CanSave());
+    EXPECT_FALSE(c->subtitleEditGate.NeedsRebinding());
 }
 TEST_F(document_lifecycle, project_entries_distinguish_parse_failure_recovery_blocked_and_follow_up_warnings) {
     RecordMessages messages;Input("kept");auto before=Capture();
