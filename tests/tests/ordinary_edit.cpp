@@ -77,6 +77,7 @@
 #include <wx/panel.h>
 #include <fstream>
 #include <filesystem>
+#include <boost/scope_exit.hpp>
 
 namespace {
 class AcceptMessages : public wxModalDialogHook {
@@ -2002,6 +2003,219 @@ TEST_F(model_installation, real_grid_audio_and_long_lived_dialogs_rebind_and_edi
         c->subsController->Redo();EXPECT_EQ("edited new UI model",c->ass->Events.front().Text.get());
     }
     c->project->CloseAudio();c->subsGrid=nullptr;c->audioBox=nullptr;
+}
+
+// C1-C1c-8: Load/Close lifecycle business migration.
+class RecordMessages : public wxModalDialogHook {
+public:
+    std::vector<wxString> messages;
+    RecordMessages() { Register(); }
+    int Enter(wxDialog* dialog) override {
+        if(auto message=dynamic_cast<wxMessageDialog*>(dialog)){messages.push_back(message->GetMessage());return wxID_OK;}
+        return wxID_NONE;
+    }
+    void Exit(wxDialog*) override {}
+};
+class document_lifecycle : public model_installation {
+protected:
+    std::vector<agi::fs::path> Recent() { auto list=config::mru->Get("Subtitle");return list?*list:std::vector<agi::fs::path>{}; }
+    static void Ack(Ticket& t) { if(t.Current())t.Acknowledge(t.Revision()); }
+    agi::fs::path Local(std::string const& name) { return agi::fs::path((std::filesystem::current_path()/name).wstring()); }
+};
+TEST_F(document_lifecycle, production_close_installs_blank_document_with_new_identity_and_clean_history) {
+    auto path=Candidate("close-source");c->subsController->Load(path,"utf-8");
+    Input("edited before close");c->subtitleAccess->SetAutomationSetting("keep","metadata");
+    ASSERT_TRUE(c->subsController->IsModified());
+    auto scope=c->subtitleAccess->TryWrite();ASSERT_TRUE(scope);auto task=c->subtitleAccess->Edit(scope->Lease());scope.reset();
+    auto old=c->subtitleEditGate.Capture();auto recent=Recent();
+    int opened=0;agi::fs::path opened_path="unset";std::vector<int> order;
+    agi::signal::Connection open=c->subsController->AddFileOpenListener([&](agi::fs::path const& p){++opened;opened_path=p;});
+    agi::signal::Connection commit=c->ass->AddCommitListener([&](int type,AssDialogue const*,Ticket t){order.push_back(type==AssFile::COMMIT_NEW?0:-1);Ack(t);});
+    agi::signal::Connection selected=c->selectionController->AddSelectionListener([&](Ticket t){order.push_back(1);Ack(t);});
+    agi::signal::Connection active=c->selectionController->AddActiveLineListener([&](Ticket t){order.push_back(2);Ack(t);});
+    c->subsController->Close();
+    EXPECT_EQ(State::Committed,c->subsController->InstallationStatus());EXPECT_TRUE(c->subsController->LastPeripheralErrors().empty());
+    EXPECT_EQ((std::vector<int>{0,1,2}),order); // one COMMIT_NEW, then Selection before Active, each exactly once
+    auto next=c->subtitleEditGate.Revision();
+    EXPECT_EQ(old.Revision().document,next.document);EXPECT_EQ(old.Revision().document_epoch+1,next.document_epoch);
+    EXPECT_EQ(old.Revision().generation+1,next.generation);EXPECT_FALSE(old.Current());
+    EXPECT_THROW(c->subtitleAccess->Read(old),std::logic_error);
+    EXPECT_THROW(task.SetDialogueField(c->ass->Events.front().Id,&AssDialogueBase::Text,std::string("old task")),std::logic_error);
+    ASSERT_EQ(1u,c->ass->Events.size());EXPECT_EQ("",c->ass->Events.front().Text.get());EXPECT_NE(nullptr,c->ass->GetStyle("Default"));
+    EXPECT_TRUE(c->ass->Extradata.empty());EXPECT_EQ("",std::string(editor->GetTextRaw().data()));
+    AssFile blank;blank.LoadDefault(true,OPT_GET("Subtitle Format/ASS/Default Style Catalog")->GetString());
+    EXPECT_EQ(static_cast<ProjectMetadata const&>(blank.Properties),static_cast<ProjectMetadata const&>(c->ass->Properties));
+    EXPECT_EQ((std::set<int>{c->ass->Events.front().Id}),c->selectionController->SelectedIDs());
+    EXPECT_EQ(c->ass->Events.front().Id,c->selectionController->ActiveID());
+    EXPECT_FALSE(c->subsController->IsModified());EXPECT_FALSE(c->subtitleAccess->MetadataDirty());
+    EXPECT_TRUE(c->subsController->IsUndoStackEmpty());EXPECT_TRUE(c->subsController->IsRedoStackEmpty());
+    EXPECT_NE(path,c->subsController->Filename());EXPECT_NE(path.parent_path(),c->path->Decode("?script"));
+    EXPECT_EQ(1,opened);EXPECT_TRUE(opened_path.empty());EXPECT_EQ(recent,Recent()); // closing never adds an empty MRU entry
+    Input("after close");EXPECT_TRUE(c->subsController->IsModified());
+    c->subsController->Undo();EXPECT_EQ("",c->ass->Events.front().Text.get());EXPECT_TRUE(c->subsController->IsUndoStackEmpty());
+    c->subsController->Redo();EXPECT_EQ("after close",c->ass->Events.front().Text.get());
+}
+TEST_F(document_lifecycle, production_close_denied_by_comparison_or_writer_preserves_complete_host_state) {
+    auto path=Candidate("close-denied");c->subsController->Load(path,"utf-8");
+    Input("one");Input("two");c->subsController->Undo();c->subtitleAccess->SetAutomationSetting("keep","metadata");
+    int opened=0,notices=0;auto old=c->selectionController->ReadActiveLine();
+    agi::signal::Connection open=c->subsController->AddFileOpenListener([&](agi::fs::path const&){++opened;});
+    agi::signal::Connection commit=c->ass->AddCommitListener([&](int,AssDialogue const*,Ticket t){++notices;Ack(t);});
+    auto before=Capture();
+    {
+        auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);
+        EXPECT_THROW(c->subsController->Close(),std::logic_error);Unchanged(before);
+    }
+    {
+        auto scope=c->subtitleAccess->TryWrite();ASSERT_TRUE(scope);auto held=Capture(); // acquiring a writer advances generation
+        EXPECT_THROW(c->subsController->Close(),std::logic_error);Unchanged(held);
+    }
+    EXPECT_EQ(old,c->selectionController->ReadActiveLine());EXPECT_EQ(0,opened);EXPECT_EQ(0,notices);
+    EXPECT_EQ(State::Aborting,c->subsController->InstallationStatus());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    c->subsController->Redo();EXPECT_EQ("two",c->ass->Events.front().Text.get());EXPECT_EQ(path,c->subsController->Filename());
+}
+TEST_F(document_lifecycle, close_recovery_blocked_runs_follow_up_work_exactly_once_after_explicit_retry) {
+    auto path=Candidate("close-recovery");c->subsController->Load(path,"utf-8");Input("kept by retired model");
+    auto old=c->selectionController->ReadActiveLine();auto recent=Recent();bool fail=true;int opened=0;
+    agi::signal::Connection open=c->subsController->AddFileOpenListener([&](agi::fs::path const&){++opened;});
+    agi::signal::Connection throwing=c->ass->AddCommitListener([&](int,AssDialogue const*,Ticket t){if(fail)throw std::runtime_error("observer failure");old=nullptr;Ack(t);});
+    EXPECT_THROW(c->subsController->Close(),SubtitleModelRecoveryBlocked);
+    EXPECT_EQ(State::RecoveryBlocked,c->subsController->InstallationStatus());EXPECT_EQ(0,opened);
+    ASSERT_NE(nullptr,old);EXPECT_EQ("kept by retired model",old->Text.get());
+    EXPECT_FALSE(c->subtitleAccess->TryWrite());EXPECT_FALSE(c->subsController->CanSave());
+    EXPECT_THROW(c->subsController->Close(),std::logic_error);
+    EXPECT_THROW(c->subsController->Load(path,"utf-8"),std::logic_error);
+    EXPECT_FALSE(c->subsController->RetryModelInstallation());EXPECT_EQ(0,opened);
+    fail=false;EXPECT_TRUE(c->subsController->RetryModelInstallation());EXPECT_EQ(nullptr,old);
+    EXPECT_EQ(State::Committed,c->subsController->InstallationStatus());EXPECT_EQ(1,opened);
+    EXPECT_TRUE(c->subsController->LastPeripheralErrors().empty());EXPECT_EQ(recent,Recent());
+    EXPECT_FALSE(c->subsController->IsModified());EXPECT_TRUE(c->subsController->IsUndoStackEmpty());
+    EXPECT_THROW(c->subsController->RetryModelInstallation(),std::logic_error);EXPECT_EQ(1,opened); // plan consumed once
+    c->subsController->Load(path,"utf-8");EXPECT_EQ(2,opened);ASSERT_FALSE(Recent().empty());EXPECT_EQ(path,Recent().front());
+}
+TEST_F(document_lifecycle, load_follow_up_failures_are_reported_after_commit_and_do_not_suppress_later_steps) {
+    auto backup=OPT_GET("App/Auto/Backup")->GetBool();auto backup_path=OPT_GET("Path/Auto/Backup")->GetString();
+    BOOST_SCOPE_EXIT_ALL(&) { OPT_SET("App/Auto/Backup")->SetBool(backup);OPT_SET("Path/Auto/Backup")->SetString(backup_path); };
+    auto blocker=std::filesystem::current_path()/"backup-blocker";std::ofstream(blocker)<<"file, not a directory";
+    OPT_SET("App/Auto/Backup")->SetBool(true);OPT_SET("Path/Auto/Backup")->SetString((blocker/"nested").string());
+    int opened=0;agi::signal::Connection open=c->subsController->AddFileOpenListener([&](agi::fs::path const&){++opened;});
+    auto path=Candidate("follow-up");auto epoch=c->subtitleEditGate.Revision().document_epoch;
+    EXPECT_NO_THROW(c->subsController->Load(path,"utf-8"));
+    EXPECT_EQ(State::Committed,c->subsController->InstallationStatus());EXPECT_EQ(epoch+1,c->subtitleEditGate.Revision().document_epoch);
+    ASSERT_EQ(1u,c->subsController->LastPeripheralErrors().size());
+    EXPECT_NE(std::string::npos,c->subsController->LastPeripheralErrors().front().find("Backup"));
+    EXPECT_EQ(1,opened);EXPECT_EQ(path,c->subsController->Filename());ASSERT_FALSE(Recent().empty());EXPECT_EQ(path,Recent().front());
+    EXPECT_EQ(path.parent_path().string(),OPT_GET("Path/Last/Subtitles")->GetString());
+    EXPECT_EQ("new 模型",c->ass->Events.front().Text.get());EXPECT_TRUE(c->subsController->CanSave());
+    agi::signal::Connection failing=c->subsController->AddFileOpenListener([&](agi::fs::path const&){throw std::runtime_error("listener failure");});
+    EXPECT_NO_THROW(c->subsController->Load(path,"utf-8"));EXPECT_EQ(epoch+2,c->subtitleEditGate.Revision().document_epoch);
+    EXPECT_EQ(2u,c->subsController->LastPeripheralErrors().size());EXPECT_EQ(State::Committed,c->subsController->InstallationStatus());
+    EXPECT_FALSE(c->subtitleEditGate.NeedsRebinding());EXPECT_TRUE(c->subtitleAccess->TryWrite());
+    failing.Disconnect();OPT_SET("App/Auto/Backup")->SetBool(false);
+    c->subsController->Load(path,"utf-8");EXPECT_TRUE(c->subsController->LastPeripheralErrors().empty()); // cleared per installation
+}
+TEST_F(document_lifecycle, project_entries_distinguish_parse_failure_recovery_blocked_and_follow_up_warnings) {
+    RecordMessages messages;Input("kept");auto before=Capture();
+    auto unsupported=Local("unsupported.qqq");std::ofstream(std::filesystem::path(unsupported.wstring()))<<"not subtitles";
+    c->project->LoadSubtitles(unsupported,"utf-8");ASSERT_EQ(1u,messages.messages.size());Unchanged(before);
+    c->project->LoadSubtitles(Local("missing-project-input.ass"),"utf-8");ASSERT_EQ(2u,messages.messages.size());
+    EXPECT_TRUE(messages.messages.back().Contains("not found"));Unchanged(before);
+    auto path=Candidate("project-recovery");bool fail=true;
+    agi::signal::Connection throwing=c->ass->AddCommitListener([&](int,AssDialogue const*,Ticket t){if(fail)throw std::runtime_error("observer failure");Ack(t);});
+    c->project->LoadSubtitles(path,"utf-8");ASSERT_EQ(3u,messages.messages.size());
+    EXPECT_TRUE(messages.messages.back().Contains("Close Aegisub to recover"));EXPECT_EQ(State::RecoveryBlocked,c->subsController->InstallationStatus());
+    EXPECT_NO_THROW(c->project->CloseSubtitles());ASSERT_EQ(4u,messages.messages.size());
+    EXPECT_TRUE(messages.messages.back().Contains("Close Aegisub to recover"));EXPECT_EQ(State::RecoveryBlocked,c->subsController->InstallationStatus());
+    fail=false;EXPECT_TRUE(c->subsController->RetryModelInstallation());throwing.Disconnect();
+    agi::signal::Connection failing=c->subsController->AddFileOpenListener([&](agi::fs::path const&){throw std::runtime_error("listener failure");});
+    auto second=Candidate("project-warning");c->project->LoadSubtitles(second,"utf-8");ASSERT_EQ(5u,messages.messages.size());
+    EXPECT_TRUE(messages.messages.back().StartsWith("The subtitles were opened"));EXPECT_TRUE(messages.messages.back().Contains("listener failure"));
+    EXPECT_EQ(State::Committed,c->subsController->InstallationStatus());EXPECT_EQ(second,c->subsController->Filename());
+    EXPECT_EQ((std::set<int>{c->ass->Events.front().Id}),c->selectionController->SelectedIDs());
+}
+TEST_F(document_lifecycle, project_close_reports_rejection_without_throwing_then_closes_once) {
+    RecordMessages messages;auto path=Candidate("project-close");c->subsController->Load(path,"utf-8");Input("kept");
+    int opened=0;agi::signal::Connection open=c->subsController->AddFileOpenListener([&](agi::fs::path const&){++opened;});
+    auto before=Capture();
+    {
+        auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);
+        EXPECT_NO_THROW(c->project->CloseSubtitles());ASSERT_EQ(1u,messages.messages.size());Unchanged(before);EXPECT_EQ(0,opened);
+    }
+    std::vector<int> order;
+    agi::signal::Connection selected=c->selectionController->AddSelectionListener([&](Ticket t){order.push_back(1);Ack(t);});
+    agi::signal::Connection active=c->selectionController->AddActiveLineListener([&](Ticket t){order.push_back(2);Ack(t);});
+    c->project->CloseSubtitles();EXPECT_EQ(1u,messages.messages.size());EXPECT_EQ(1,opened);
+    EXPECT_EQ((std::vector<int>{1,2}),order); // no second selection announcement after the installation
+    EXPECT_EQ("",c->ass->Events.front().Text.get());EXPECT_FALSE(c->subsController->IsModified());
+    EXPECT_EQ(c->ass->Events.front().Id,c->selectionController->ActiveID());
+}
+TEST_F(document_lifecycle, project_load_announces_installed_selection_once) {
+    RecordMessages messages;auto path=Candidate("project-selection");std::vector<int> order;
+    agi::signal::Connection selected=c->selectionController->AddSelectionListener([&](Ticket t){order.push_back(1);Ack(t);});
+    agi::signal::Connection active=c->selectionController->AddActiveLineListener([&](Ticket t){order.push_back(2);Ack(t);});
+    c->project->LoadSubtitles(path,"utf-8");EXPECT_TRUE(messages.messages.empty());
+    EXPECT_EQ((std::vector<int>{1,2}),order);EXPECT_EQ(path,c->subsController->Filename());
+    EXPECT_EQ((std::set<int>{c->ass->Events.front().Id}),c->selectionController->SelectedIDs());
+}
+TEST_F(document_lifecycle, open_close_reload_save_and_reopen_keep_path_mru_and_metadata_consistent) {
+    auto a=Candidate("cycle-a");c->subsController->Load(a,"utf-8");
+    EXPECT_EQ(a,Recent().front());EXPECT_EQ(a.parent_path(),c->path->Decode("?script"));
+    EXPECT_EQ(a.parent_path().string(),OPT_GET("Path/Last/Subtitles")->GetString());
+    Input("edited a");c->subtitleAccess->SetAutomationSetting("cycle","kept");c->subsController->Save(a,"utf-8");
+    EXPECT_FALSE(c->subsController->IsModified());
+    c->subsController->Close();EXPECT_NE(a,c->subsController->Filename());EXPECT_FALSE(c->subsController->IsModified());
+    EXPECT_EQ(a,Recent().front());
+    c->subsController->Load(a,"utf-8");EXPECT_EQ("edited a",c->ass->Events.front().Text.get());
+    EXPECT_TRUE(c->subsController->IsUndoStackEmpty());EXPECT_FALSE(c->subsController->IsModified());EXPECT_FALSE(c->subtitleAccess->MetadataDirty());
+    Input("second edit");auto b=Local("cycle-b.ass");c->subsController->Save(b,"utf-8");
+    EXPECT_EQ(b,c->subsController->Filename());EXPECT_EQ(b,Recent().front());EXPECT_EQ(b.parent_path(),c->path->Decode("?script"));
+    AssFile reopened;SubtitleFormat::GetReader(b,"utf-8")->ReadFile(&reopened,b,c->project->Timecodes(),"utf-8");
+    EXPECT_EQ("second edit",reopened.Events.front().Text.get());EXPECT_TRUE(reopened.Events.front().Comment);
+    ASSERT_EQ(1u,reopened.Extradata.size());EXPECT_EQ("aegisub.enhanced.subtitle-binding",reopened.Extradata.front().key);
+    c->subsController->Close();c->subsController->Load(b,"utf-8");EXPECT_EQ("second edit",c->ass->Events.front().Text.get());
+}
+TEST_F(document_lifecycle, explicit_retry_with_real_grid_and_dialogs_repeats_rebinding_without_duplicate_side_effects) {
+    Input("old dialog input");auto path=Candidate("retry-ui");c->subsGrid=new BaseGrid(window,c.get());
+    {
+        DialogStyling styling(c.get());DialogTranslation translation(c.get());
+        bool fail=true;int opened=0;auto recent=Recent();
+        agi::signal::Connection open=c->subsController->AddFileOpenListener([&](agi::fs::path const&){++opened;});
+        agi::signal::Connection throwing=c->ass->AddCommitListener([&](int,AssDialogue const*,Ticket t){if(fail)throw std::runtime_error("observer failure");Ack(t);});
+        auto metadata=c->subtitleAccess->MetadataRevision();
+        EXPECT_THROW(c->subsController->Load(path,"utf-8"),SubtitleModelRecoveryBlocked);
+        auto published=c->subtitleAccess->MetadataRevision();auto revision=c->subtitleEditGate.Revision();
+        EXPECT_EQ(metadata+1,published);EXPECT_EQ(0,opened);EXPECT_EQ(recent,Recent());
+        EXPECT_FALSE(c->subsController->RetryModelInstallation()); // every fixed observer dispatched again
+        EXPECT_EQ(published,c->subtitleAccess->MetadataRevision());EXPECT_EQ(revision,c->subtitleEditGate.Revision());EXPECT_EQ(0,opened);
+        fail=false;EXPECT_TRUE(c->subsController->RetryModelInstallation());
+        EXPECT_EQ(published,c->subtitleAccess->MetadataRevision());EXPECT_EQ(revision,c->subtitleEditGate.Revision());
+        EXPECT_EQ(1,opened);EXPECT_EQ(path,Recent().front());EXPECT_TRUE(c->subsController->IsUndoStackEmpty());
+        EXPECT_FALSE(c->subsController->IsModified());EXPECT_FALSE(c->subtitleAccess->MetadataDirty());
+        EXPECT_EQ(c->ass->Events.front().Id,c->selectionController->ActiveID());EXPECT_EQ("new 模型",std::string(editor->GetTextRaw().data()));
+        Input("edited after retry");c->subsController->Undo();EXPECT_EQ("new 模型",c->ass->Events.front().Text.get());
+        c->subsController->Redo();EXPECT_EQ("edited after retry",c->ass->Events.front().Text.get());
+    }
+    c->subsGrid=nullptr;
+}
+TEST_F(document_lifecycle, autosave_result_completing_after_close_cannot_touch_the_new_document) {
+    auto save=OPT_GET("Path/Auto/Save")->GetString();OPT_SET("Path/Auto/Save")->SetString((std::filesystem::current_path()/"autosave").string());
+    BOOST_SCOPE_EXIT_ALL(&) { OPT_SET("Path/Auto/Save")->SetString(save); };
+    auto path=Candidate("autosave-close");c->subsController->Load(path,"utf-8");Input("pending autosave");
+    c->subsController->RequestAutoSave();c->subsController->Close();Input("new document edit");
+    EXPECT_TRUE(c->subsController->IsModified());
+    for(int i=0;i<200 && wxTheApp->HasPendingEvents();++i)wxTheApp->ProcessPendingEvents();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));wxTheApp->ProcessPendingEvents();
+    EXPECT_EQ("new document edit",c->ass->Events.front().Text.get());EXPECT_TRUE(c->subsController->IsModified());
+    c->subsController->Undo();EXPECT_EQ("",c->ass->Events.front().Text.get());EXPECT_FALSE(c->subsController->IsModified());
+}
+TEST_F(document_lifecycle, lua_local_scripts_reload_is_post_commit_follow_up_not_isolated_work) {
+    // Boundary record: automation still reads the live document from its FileOpen listener.
+    // It runs only after the installation is Committed and is not migrated by C1-C1c-8.
+    auto path=Candidate("lua-boundary");int opened=0;
+    agi::signal::Connection open=c->subsController->AddFileOpenListener([&](agi::fs::path const&){
+        ++opened;EXPECT_EQ(State::Committed,c->subsController->InstallationStatus());EXPECT_FALSE(c->subtitleEditGate.NeedsRebinding());
+    });
+    c->subsController->Load(path,"utf-8");EXPECT_EQ(1,opened);EXPECT_TRUE(c->subsController->LastPeripheralErrors().empty());
 }
 }
 TEST_F(visual_edit, production_load_rebinds_real_visual_cache_and_renderer_before_next_gesture) {

@@ -251,7 +251,7 @@ void SubtitleModelInstallation::Install(SubtitleModelCandidate&& candidate, agi:
         c->ass->installing=false;state=State::RecoveryBlocked;throw;
     }
     c->ass->installing=false;
-    if (state!=State::Committed) throw std::runtime_error("Model installation is RecoveryBlocked; inspect pending observers and retry or close host");
+    if (state!=State::Committed) throw SubtitleModelRecoveryBlocked();
     pending.reset();
 }
 void SubtitleModelInstallation::Confirm() {
@@ -307,7 +307,55 @@ std::vector<std::string> SubsController::PendingInstallationObservers() const { 
 void SubsController::CancelModelInstallation() { installation->CheckThread();installation->cancelled=true; }
 bool SubsController::RetryModelInstallation() {
     if (!installation->Retry()) return false;
-    SetFileName(filename);FileOpen(filename);return true;
+    RunPostCommitPlan(); // The plan of the recovered installation; consumed exactly once.
+    return true;
+}
+void SubsController::InstallDocument(SubtitleModelCandidate&& candidate, PostCommitPlan plan) {
+    post_commit_plan=std::move(plan);
+    try {
+        installation->Install(std::move(candidate),post_commit_plan->path);
+    }
+    catch (...) {
+        // Only a published-but-unconfirmed installation keeps its follow-up work
+        // for an explicit retry; every other failure published nothing.
+        if (installation->state!=SubtitleModelInstallation::State::RecoveryBlocked) post_commit_plan.reset();
+        throw;
+    }
+    RunPostCommitPlan();
+}
+void SubsController::RunPostCommitPlan() {
+    peripheral_errors.clear();
+    if (!post_commit_plan) return;
+    auto plan=std::move(*post_commit_plan);post_commit_plan.reset();
+    // The document is already Committed here. A failing step is reported, never
+    // rethrown as a load failure, and does not suppress the remaining steps.
+    auto step=[this](wxString const& name, auto&& work) {
+        std::string error;
+        try { work(); return; }
+        catch (agi::Exception const& e) { error=e.GetMessage(); }
+        catch (std::exception const& e) { error=e.what(); }
+        catch (...) { error=from_wx(_("Unknown error")); }
+        peripheral_errors.push_back(from_wx(name)+": "+error);
+    };
+    if (plan.kind==PostCommitPlan::Kind::LoadedFile) {
+        step(_("Recent files"),[&] {
+            config::mru->Add("Subtitle", plan.path);
+            OPT_SET("Path/Last/Subtitles")->SetString(plan.path.parent_path().string());
+        });
+        step(_("Backup of original file"),[&] {
+            if (!CanSave() || !OPT_GET("App/Auto/Backup")->GetBool()) return;
+            auto path_str = OPT_GET("Path/Auto/Backup")->GetString();
+            agi::fs::path path;
+            if (path_str.empty())
+                path = plan.path.parent_path();
+            else
+                path = context->path->Decode(path_str);
+            agi::fs::CreateDirectory(path);
+            agi::fs::Copy(plan.path, path/(plan.path.stem().string() + ".ORIGINAL" + plan.path.extension().string()));
+        });
+    }
+    // Ordinary Signal semantics: a throwing listener stops later FileOpen listeners.
+    step(_("Subtitle open notification"),[&] { FileOpen(plan.path); });
 }
 bool SubsController::DeferHostClose(wxCloseEvent& event) {
     if (!IsInstalling()) return false;
@@ -330,22 +378,9 @@ ProjectProperties SubsController::Load(agi::fs::path const& filename, const char
         return SubtitleModelCandidate(temp);
     }(); // Release the parser's independent copy before publication/notification.
     auto props=candidate.Read().Properties;
-    installation->Install(std::move(candidate),filename);
-    SetFileName(filename); // Post-commit peripheral bookkeeping, not publication authority.
-
-	// Save backup of file
-	if (CanSave() && OPT_GET("App/Auto/Backup")->GetBool()) {
-		auto path_str = OPT_GET("Path/Auto/Backup")->GetString();
-		agi::fs::path path;
-		if (path_str.empty())
-			path = filename.parent_path();
-		else
-			path = context->path->Decode(path_str);
-		agi::fs::CreateDirectory(path);
-		agi::fs::Copy(filename, path/(filename.stem().string() + ".ORIGINAL" + filename.extension().string()));
-	}
-
-	FileOpen(filename);
+    // Filename, ?script, metadata baseline, history and selection are published
+    // by the installation; MRU, backup and FileOpen run after it is Committed.
+    InstallDocument(std::move(candidate),{PostCommitPlan::Kind::LoadedFile,filename});
 	return props;
 }
 
@@ -393,20 +428,18 @@ void SubsController::Save(agi::fs::path const& filename, const char *encoding) {
 }
 
 void SubsController::Close() {
-    if (IsInstalling() || context->subtitleEditGate.NeedsRebinding()) throw std::logic_error("Cannot replace a document during installation recovery");
-    autosave_lifetime = std::make_shared<int>(0);
-	undo_stack.clear();
-	redo_stack.clear();
-	autosaved_commit_id = saved_commit_id = commit_id + 1;
-	filename.clear();
-	AssFile blank;
-	blank.swap(*context->ass);
-	context->ass->LoadDefault(true, OPT_GET("Subtitle Format/ASS/Default Style Catalog")->GetString());
-    ++context->subtitleAccess->metadata_revision;
-    context->subtitleAccess->MarkMetadataSaved(context->ass->Properties);
-    autosaved_metadata_revision = context->subtitleAccess->MetadataRevision();
-	context->ass->Commit("", AssFile::COMMIT_NEW);
-	FileOpen(filename);
+    // Closing replaces the document with a blank one through the same host
+    // installation as Load: same authorization, document epoch, observer
+    // confirmation and RecoveryBlocked semantics. Begin rejects active
+    // installation/recovery exactly as the legacy guard did.
+    installation->Begin();
+    BOOST_SCOPE_EXIT_ALL(this) { installation->Abort(); };
+    auto candidate=[] {
+        AssFile blank;
+        blank.LoadDefault(true, OPT_GET("Subtitle Format/ASS/Default Style Catalog")->GetString());
+        return SubtitleModelCandidate(blank);
+    }();
+    InstallDocument(std::move(candidate),{PostCommitPlan::Kind::ClosedFile,{}});
 }
 
 int SubsController::TryToClose(bool allow_cancel) const {

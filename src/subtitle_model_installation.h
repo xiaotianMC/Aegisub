@@ -4,12 +4,19 @@
 #include <libaegisub/fs.h>
 #include <libaegisub/subtitle_edit_gate.h>
 #include <memory>
+#include <stdexcept>
 #include <thread>
 #include <string>
 #include <vector>
 
 class SubsController;
 class SubtitleModelCandidate;
+// Thrown when a candidate was published but observer confirmation is incomplete.
+// This is neither success nor "nothing changed": the host stays sealed until an
+// explicit retry confirms every observer or the host is closed.
+struct SubtitleModelRecoveryBlocked : std::runtime_error {
+    SubtitleModelRecoveryBlocked() : std::runtime_error("Model installation is RecoveryBlocked; inspect pending observers and retry or close host") {}
+};
 // The object itself is the host capability: only SubsController can construct it
 // or submit a candidate. Ordinary leases and comparison sessions cannot publish.
 class SubtitleModelInstallation {

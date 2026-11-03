@@ -56,6 +56,10 @@ class Project : private agi::signal::ConnectionScope {
 
 	void ShowError(wxString const& message);
 	void ShowError(std::string const& message);
+	/// Report a RecoveryBlocked document installation; false if not blocked.
+	bool ReportRecoveryBlocked(wxString const& title);
+	/// Warn about failed post-commit work of a Committed document installation.
+	void ReportPeripheralErrors(wxString const& heading);
 
 	bool DoLoadSubtitles(agi::fs::path const& path, std::string encoding, ProjectProperties &properties);
 	void DoLoadAudio(agi::fs::path const& path, bool quiet);

@@ -107,6 +107,32 @@ void Project::ShowError(std::string const& message) {
 	ShowError(to_wx(message));
 }
 
+bool Project::ReportRecoveryBlocked(wxString const& title) {
+	if (context->subsController->InstallationStatus() != SubtitleModelInstallation::State::RecoveryBlocked)
+		return false;
+	wxMessageBox(_("The new subtitles were installed, but some parts of the interface could not switch to them.\n\nEditing, saving and opening files are disabled to protect the document. Close Aegisub to recover."),
+		title, wxOK | wxICON_ERROR | wxCENTER, context->parent);
+	return true;
+}
+
+void Project::ReportPeripheralErrors(wxString const& heading) {
+	auto const& errors = context->subsController->LastPeripheralErrors();
+	if (errors.empty()) return;
+	wxString message = heading;
+	for (auto const& error : errors)
+		message += "\n" + to_wx(error);
+	wxMessageBox(message, _("Warning"), wxOK | wxICON_WARNING | wxCENTER, context->parent);
+}
+
+namespace {
+wxString current_exception_message() {
+	try { throw; }
+	catch (agi::Exception const& e) { return to_wx(e.GetMessage()); }
+	catch (std::exception const& e) { return to_wx(std::string(e.what())); }
+	catch (...) { return _("Unknown error"); }
+}
+}
+
 void Project::SetPath(agi::fs::path& var, const char *token, const char *mru, agi::fs::path const& value) {
 	var = value;
 	if (*token)
@@ -142,34 +168,28 @@ bool Project::DoLoadSubtitles(agi::fs::path const& path, std::string encoding, P
 	try {
 		properties = context->subsController->Load(path, encoding.c_str());
 	}
-	catch (agi::UserCancelException const&) { return false; }
-	catch (agi::fs::FileNotFound const&) {
-		config::mru->Remove("Subtitle", path);
-		ShowError(fmt_tl("%s not found.", path.string()));
-		return false;
-	}
-	catch (agi::Exception const& e) {
-		ShowError(e.GetMessage());
-		return false;
-	}
-	catch (std::exception const& e) {
-		ShowError(std::string(e.what()));
-		return false;
-	}
 	catch (...) {
-		ShowError(_("Unknown error"));
+		// Published but unconfirmed: neither a successful load nor "unchanged".
+		if (ReportRecoveryBlocked(_("Error loading file")))
+			return false;
+		// Every other failure happened before publication; the open document,
+		// its history, metadata and path are unchanged.
+		try { throw; }
+		catch (agi::UserCancelException const&) { }
+		catch (agi::fs::FileNotFound const&) {
+			config::mru->Remove("Subtitle", path);
+			ShowError(fmt_tl("%s not found.", path.string()));
+		}
+		catch (...) { ShowError(current_exception_message()); }
 		return false;
 	}
 
-	std::set<int> sel;
-    int active_id = 0;
-	if (!context->ass->Events.empty()) {
-		int row = mid<int>(0, properties.active_row, context->ass->Events.size() - 1);
-		active_id = std::next(context->ass->Events.begin(), row)->Id;
-        sel.insert(active_id);
-	}
-	context->selectionController->SetSelectionAndActiveIDs(std::move(sel), active_id);
-	context->subsGrid->ScrollTo(properties.scroll_position);
+	// The document is Committed: the installation already set its selection and
+	// active line from the stored active row, so it is not re-announced here.
+	// Failed follow-up work is a warning, not a load failure.
+	ReportPeripheralErrors(_("The subtitles were opened, but some follow-up steps failed:"));
+	if (context->subsGrid)
+		context->subsGrid->ScrollTo(properties.scroll_position);
 
 	return true;
 }
@@ -191,11 +211,17 @@ void Project::SetSubtitlesFilename(agi::fs::path path) {
 }
 
 void Project::CloseSubtitles() {
-	context->subsController->Close();
-	context->path->SetToken("?script", "");
+	try {
+		context->subsController->Close();
+	}
+	catch (...) {
+		if (!ReportRecoveryBlocked(_("Error closing subtitles")))
+			wxMessageBox(current_exception_message(), _("Error closing subtitles"), wxOK | wxICON_ERROR | wxCENTER, context->parent);
+		return;
+	}
+	// The installation already cleared ?script and selected the blank line.
+	ReportPeripheralErrors(_("The subtitles were closed, but some follow-up steps failed:"));
 	LoadUnloadFiles(context->ass->Properties);
-	auto line = &*context->ass->Events.begin();
-	context->selectionController->SetSelectionAndActiveIDs({line->Id}, line->Id);
 }
 
 void Project::LoadUnloadFiles(ProjectProperties properties) {

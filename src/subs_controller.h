@@ -24,6 +24,9 @@
 
 #include <boost/container/list.hpp>
 #include <cstdint>
+#include <optional>
+#include <string>
+#include <vector>
 #include <wx/timer.h>
 
 class SelectionController;
@@ -93,6 +96,21 @@ private:
 	/// Set the filename, updating things like the MRU and last used path
 	void SetFileName(agi::fs::path const& file);
 
+    /// Peripheral work that belongs to a document installation but runs only
+    /// after it is Committed (never part of publication or its authority).
+    /// Kept until the installation commits so an explicit retry runs it once.
+    struct PostCommitPlan {
+        enum class Kind { LoadedFile, ClosedFile } kind;
+        agi::fs::path path;
+    };
+    std::optional<PostCommitPlan> post_commit_plan;
+    std::vector<std::string> peripheral_errors;
+    /// Run the stored plan exactly once. Each step is isolated: a failure is
+    /// recorded in peripheral_errors and later steps still run.
+    void RunPostCommitPlan();
+    /// Install a prepared document candidate and run its post-commit plan.
+    void InstallDocument(SubtitleModelCandidate&& candidate, PostCommitPlan plan);
+
 	/// Autosave the file if there have been any chances since the last autosave
 
 	void OnCommit(AssFileCommit c);
@@ -106,6 +124,10 @@ public:
     std::vector<std::string> PendingInstallationObservers() const;
     void CancelModelInstallation();
     bool RetryModelInstallation();
+    /// Errors from the post-commit work of the most recent Committed document
+    /// installation (Load, Close or a successful retry). Non-empty means the
+    /// document WAS installed but MRU/backup/FileOpen follow-up work failed.
+    std::vector<std::string> const& LastPeripheralErrors() const { return peripheral_errors; }
     bool DeferHostClose(wxCloseEvent&);
 	SubsController(agi::Context *context);
 	~SubsController();
