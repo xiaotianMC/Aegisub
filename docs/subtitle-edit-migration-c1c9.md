@@ -1,6 +1,6 @@
 # C1-C1c-9 Lua 隔离与事务化执行：调查与迁移记录
 
-状态：**C1-C1c-9a（调查与设计）已完成；9b–9e 尚未开始，生产代码未修改。** 不能据本记录宣称 Lua 已隔离。正式设计见 [lua-isolation-design.md](lua-isolation-design.md)。
+状态：**C1-C1c-9a–9e 代码与 Linux 自动验证完成；Windows x64 Release 未执行，人工验收未执行。** 因此本阶段的完成条件 17（Windows 构建）尚未满足，不能宣布 C1-C1c-9 完成。正式设计见 [lua-isolation-design.md](lua-isolation-design.md)。第 1–6 节是 9a 调查记录（实施前状态），第 7 节起是实施结果。
 
 ## 1. 基线、环境与保护文件
 
@@ -88,25 +88,96 @@ API 不做样式引用、重复样式名校验；替换行一律获得新行 ID�
 
 外部副作用（文件、剪贴板、状态栏、对话框、日志）不属于字幕事务，执行即生效。
 
-## 7. 分批计划
+## 7. 实施结果（9b–9e）
 
-| 批次 | 内容 | 提交 |
-| --- | --- | --- |
-| 9a（本批） | 调查、设计、测试计划 | docs(compare): investigate lua isolation and design transactional execution |
-| 9b | 先写旧行为刻画测试；工作模型/只读绑定/暂存 Extradata/启动时捕获；LuaAssFile 不再接触活动模型 | refactor(compare): isolate lua subtitle execution |
-| 9c | `LuaPublication`：令牌与原子独占授权、结构校验、noexcept 提交点、单次通知、选择/活动行、取消与异常 | refactor(compare): publish lua subtitle transactions |
-| 9d | 多 Undo 点历史准备、OnCommit 规则复现、ID/Extradata 映射与校验 | fix(compare): preserve lua undo and extradata semantics |
-| 9e | 过滤器/配置入口、运行时守卫、异常包装、仓库 Automation 脚本回归、性能、旁路审计、最终报告 | test(compare): verify lua isolation and compatibility |
+### 7.1 架构
 
-## 8. 测试计划
+| 部分 | 实现 |
+| --- | --- |
+| 工作模型 | `SubsController::BeginLuaTransaction`：宿主线程、非安装/恢复封闭；用一次 ComparisonSession 探测拒绝任何写登记/Interaction/比较；捕获 `RevisionToken`；`Snapshot()` 深复制（行 ID、Properties、Extradata、`next_extradata_id`）；记录选择/活动行 ID。运行期间不持租约、会话或互斥锁 |
+| Lua 绑定 | `LuaAssFile(source const&, target*)`：宏读写工作模型；Validate/IsActive/过滤器配置以 const 方式同步读活动模型，`target=nullptr`；导出过滤器读写自身独立副本。`lines` 改为 const 指针，活动节点不可能被写 |
+| 节点所有权 | 原行属工作模型；脚本新建的样式/对白行在 `allocated_lines`，Script Info 副本与新条目在 `info_entries`；完成、取消、过滤器应用均无删除队列，无重复释放 |
+| 运行快照 | 宏运行时 `project_properties`、`file_name` 读取启动时捕获值（registry `run_snapshot`），工作线程不再读活动 AssFile/SubsController |
+| 结果 | `LuaAssFile::TakeMacroResult`：Undo 点、最后修改、最终行表、所有新建节点（`LuaSubtitleResult`），对象随即过期 |
+| 准备 | `PrepareLuaPublication`：再次检查令牌 → 取得 ComparisonSession 独占借用 → 在借用内复核令牌；工作原行按位置映射回活动节点（复核行 ID）；校验节点归属、重复节点、行 ID 唯一、Extradata 前缀/唯一/新行引用存在；补默认样式/行；按 OnCommit 规则准备全部历史条目；计算退役节点。全部在独立数据上完成 |
+| 发布 | `PublishLua`：`AdvanceRevision`（可能抛出的最后一步）→ noexcept 交换 Info/Extradata、重建 intrusive 链表、重排行号、splice 历史、清 Redo、Undo Levels 截断、commit_id → 一次 `AnnounceCommit` → 安装选择 → 释放借用 → 按条件最多一次 `Save on Every Change` |
+| 观察者异常 | 提交点后模型与历史已一致；按普通 Commit 语义向上传播；退役节点与历史移入 `lua_retired_after_failure`，随 SubsController 析构释放，未刷新的观察者不会触及已释放内存 |
+| 运行守卫 | `LuaScript::running`：运行中 Validate/IsActive 返回 false，不碰 Lua 状态；Reload 拒绝；`LuaCommand` 保存脚本指针，判断不读 registry |
+| C ABI | `delete/deleterange/insert/append/script_resolution` 与 ipairs 迭代器改经 `exception_wrapper` |
 
-- 刻画（9b 首项，旧代码上先通过）：真实 `LuaScript` 从隔离目录加载临时脚本，经 `cmd::get(...)->operator()` 运行；断言每步描述、Undo/Redo 后完整数据、行 ID、Extradata、选择/活动行、脏状态。需先确认测试宿主下 `DialogProgress` 模态与 automation include 路径可用（Linux GTK 下拖动类测试受限，见 c1c1c8 报告）。
-- 兼容：第 10.1 节列出的全部当前 API 能力；`automation/autoload` 7 个脚本加载及可在无音视频时运行的宏（strip-tags、cleantags、select-overlaps、karaoke-auto-leadin、kara-templater 等）。
-- 事务：编译错误、运行错误、`aegisub.cancel()`、用户取消、C++ 回调异常、转换失败、ID/Extradata 冲突、授权拒绝、令牌过期、RecoveryBlocked、观察者异常、过期 userdata；每项比对完整状态包（文本、ID、顺序、Styles、Info、Extradata、Selection、Active、Undo/Redo、Metadata、路径、脏状态、修订令牌）。
-- 生命周期：运行中 Load/Close/New/重载/普通编辑/比较会话 → 拒绝发布；保存后重开；Undo/Redo。
-- 性能：1000/5000/10000 行、大量 Extradata/Styles、只读宏、多 Undo 点；分阶段耗时与峰值/历史内存。
-- 平台：Linux 实际运行；Windows x64 Release 须在 Windows 工作区执行，未执行不得标记通过。
+Lua 发布不调用 `AssFile::Commit`，不推进 document_epoch，不触发 FileOpen/MRU，不清空 Undo（Redo 按原规则清空）。
 
-## 9. 本批验证
+### 7.2 与旧实现的差异（均已在测试中逐项断言）
 
-只新增两份文档，没有修改生产代码或测试，未重新构建或运行测试（二进制与 C1-C1c-8 交付时相同）。`git diff --check` 通过；保护文件哈希开始/结束一致。提交仅保留在本地，**未推送**，等待负责人确认设计第 8 节后进入 9b。
+| 差异 | 性质 |
+| --- | --- |
+| 多步运行只发一次 Commit 通知（类型为各步按位或） | 已批准的有意差异 |
+| `Save on Every Change` 按最终状态最多保存一次 | 已批准的有意差异 |
+| 宏显示名为空：仍不生成历史，但发通知并重排行号 | 已批准的有意差异（防止悬空节点） |
+| 首次修改 Script Info 前的 Undo 点：旧实现撤销后 Script Info 全部丢失（实测 4 条 → 0 条），现保留原 Script Info | 缺陷修复 |
+| 失败/取消后 Extradata 不再残留；只读回调不再写活动 Extradata | 缺陷修复 |
+| 比较会话或其他写任务期间：旧实现第一步写入后抛异常（部分写入），现启动即拒绝、零修改 | 缺陷修复 |
+| 字幕对象方法错误现带原始消息，原为 “C++ exception” | 缺陷修复 |
+| 运行期间文档被修改、替换或开始比较：结果被拒绝并记录错误 | 新保护 |
+| 中间步骤间不再穿插观察者引起的选择调整 | 通知合并的副作用 |
+
+ID、Undo 步数、描述、每步完整数据、空/重复 Undo 点、选择返回、Redo 顺序、脏状态与旧实现一致，由刻画测试锁定（8 项刻画测试先在未修改代码上通过，日志 `build/c1c9-premigration-lua.log`）。
+
+### 7.3 修改文件
+
+- 新增：`src/subtitle_lua_transaction.h`、`tests/tests/lua_isolation.cpp`
+- 修改：`src/auto4_lua.h`、`src/auto4_lua.cpp`、`src/auto4_lua_assfile.cpp`、`src/subs_controller.h`、`src/subs_controller.cpp`、`src/auto4_base.cpp`（本地脚本列表改经 `Read()`）、`src/ass_exporter.cpp`（导出副本改经 `Read()`）、`meson.build`（测试源与 `AEGISUB_SOURCE_ROOT`）
+- 文档：本记录、`docs/lua-isolation-design.md`
+
+未修改：`signal.h`、Undo 历史格式（仅新增从准备值构造 `UndoInfo` 的内部构造函数）、ASS 格式、Lua API、`Context::ass` 声明、第三方依赖。
+
+## 8. 测试
+
+新增 `lua_macro` 27 项，全部使用真实 `LuaScript`/`LuaCommand`、`DialogProgress` 工作线程与模态循环、SubsController、SelectionController 和门禁：
+
+| 类别 | 测试 |
+| --- | --- |
+| 旧行为刻画（8） | 多 Undo 点逐步 Undo/Redo；空描述 Undo 点并入下一步；只读宏无历史；替换行新 ID/未改行保留 ID/插入/删除；返回选择与活动行；Script Info/样式/Extradata 经历史往返；运行错误与 `aegisub.cancel()`；保存在全局的旧 subs 对象报错 |
+| 旧行为补充（3） | 删除全部对白后默认行与逐步撤销；改写绑定行保持绑定 Extradata 条目及未知条目；空显示名宏 |
+| 事务（11） | 失败不残留 Extradata；比较会话期间零修改；只读 Validate 不写 Extradata；首次改 Script Info 前的 Undo 点；运行中编辑→过期；运行中开始比较→拒绝且之后可正常运行；运行中 Close→新文档不受污染；完成后用户取消→丢弃；运行中 Validate 不重入；发布后观察者异常；多步运行单次通知 |
+| 兼容与持久化（4） | 7 个 `automation/autoload` 脚本全部加载、strip-tags 实际运行并撤销；导出过滤器只改其独立副本；宏结果保存后重开；方法错误消息 |
+| 性能（1） | 见第 9 节 |
+
+### 结果（Linux，Ubuntu 26.04，GCC，wxGTK 3.2，Meson release）
+
+| 程序 | 结果 |
+| --- | --- |
+| ordinary-edit-tests | 124 通过（97 原有 + 27 新增）；另 38 项为 C1-C1c-8 已记录的 wxGTK 限制（37 项 `CaptureMouse` 断言中止 + 1 项 GTK 文件对话框），与改动前相同，未计入通过 |
+| subtitle-compare-tests | 55/55 |
+| gtest-main | 433/433 |
+| 合计 | 612 项通过 |
+
+每个 ordinary 测试单独进程运行以免中止项影响其他项（日志 `build/c1c9-ordinary-each.log`）；`lua_macro` 全套另连续 3 次通过。取消测试最初用 idle 事件驱动对话框导致挂起，改为定时器轮询后连续 5 次稳定；这是测试驱动问题，产品代码未改。
+
+**Windows x64 Release：未执行。** 必须在 Windows 工作区拉取本阶段提交后构建并运行（预期 ordinary 162 项全部可运行）。
+
+## 9. 性能（Linux release，单次运行，`build/c1c9-perf.log`）
+
+宿主阶段用与宏相同的生产 API 计时（每行一个新节点、两个 Undo 点、200 条 Extradata）；“完整宏”是真实 Lua 宏（两遍改写全部行、两个 Undo 点）的端到端时间，包含脚本执行和进度对话框。
+
+| 行数 | 快照 | 结果转换 | 校验+历史准备 | 发布 | 完整宏 | RSS 前→后 |
+| ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 1000 | 0.1 ms | 0.5 ms | 0.8 ms | 0.4 ms | 39 ms | 84.4 → 92.0 MB |
+| 5000 | 0.7 ms | 3.1 ms | 5.9 ms | 2.3 ms | 123 ms | 92.9 → 100.0 MB |
+| 10000 | 1.3 ms | 9.7 ms | 13.5 ms | 5.1 ms | 261 ms | 100.8 → 112.0 MB |
+
+额外成本是每次宏运行一份工作模型深复制和一次映射；Undo 历史内存与旧实现相同（每步一份值快照）。Validate/IsActive 不复制模型。校验与发布在宿主线程，10000 行时合计约 19 ms。不检查进度的长循环仍只能等待脚本结束（合作式取消），未强制中断线程。
+
+## 10. 剩余旁路与限制
+
+- `Context::ass` 仍公开可变（C1-C1c-10 范围）。
+- Lua 运行时辅助函数仍在工作线程读取视频/音频控制器、Project、`c->path`（非字幕文档数据，上游既有）；registry 保存裸 `Context*`。
+- 运行中只对同一脚本的 Reload 做了拒绝；`LocalScriptManager::Reload`（FileOpen）或析构在宏运行中销毁脚本仍无保护，UI 模态期间不可达，仅静态审查。
+- 外部副作用（文件、剪贴板、状态栏、对话框、日志）不回滚。
+- 通知后的观察者异常不升级为 RecoveryBlocked，与普通编辑一致。
+
+## 11. 保护文件、Git 与人工验收
+
+- `本版与原版差异清单.md` 开始与结束 SHA256 均为 `6a922d69925ba61d4511fc29a712a3291e0034abdc2a39c8539b672bd0cf35d2`；另两个保护文件不在本克隆中。
+- 提交仅保存在本地，**未推送**；提交名称与哈希见交付消息。
+- 人工验收（未执行）：Windows 构建与全量测试；桌面运行常用第三方宏（含多 Undo 点、对话框、进度、取消）；工具栏放置带 validate 的宏并在运行中观察；运行中关闭主窗口；真实大文件性能。
