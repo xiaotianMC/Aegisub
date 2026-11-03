@@ -607,10 +607,12 @@ if get_option('tests')
     endif
     ordinary_runner = executable('ordinary-edit-tests',
         'tests/support/ordinary_main.cpp', 'tests/tests/ordinary_edit.cpp',
+        'tests/tests/lua_isolation.cpp',
         objects: ordinary_objects,
         include_directories: [libaegisub_inc, libresrc_inc, version_inc, include_directories('src')],
         dependencies: [tests_deps, deps], link_with: [libresrc, libaegisub],
-        cpp_args: aegisub_defines, win_subsystem: 'console')
+        cpp_args: aegisub_defines + ['-DAEGISUB_SOURCE_ROOT="@0@"'.format(meson.project_source_root())],
+        win_subsystem: 'console')
     test('ordinary editing integration', find_program('tests/run_isolated.py'),
         args: [ordinary_runner, '--output-root', meson.current_build_dir() / 'ordinary-data'])
 endif
