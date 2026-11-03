@@ -41,6 +41,7 @@
 
 #include <libaegisub/ass/string_codec.h>
 #include <libaegisub/dispatch.h>
+#include <libaegisub/log.h>
 #include <libaegisub/fs.h>
 #include <libaegisub/path.h>
 #include <libaegisub/split.h>
@@ -196,8 +197,15 @@ namespace Automation4 {
 	}
 
 	void ExportFilter::LoadSettings(bool, agi::Context *c) {
-		if (config_dialog)
+		if (!config_dialog) return;
+		// Remembering filter settings is best-effort: skipped while the
+		// subtitles are being compared (C1-C1c-12); the export still runs.
+		try {
 			c->subtitleAccess->SetAutomationSetting(GetScriptSettingsIdentifier(), config_dialog->Serialise());
+		}
+		catch (SubtitleProjectBusy const& e) {
+			LOG_W("automation/export") << "Filter settings not stored: " << e.GetMessage();
+		}
 	}
 
 	// ProgressSink
@@ -472,7 +480,14 @@ namespace Automation4 {
 
 			scripts_string += scriptfn;
 		}
-		context->subtitleAccess->SetMetadata(SubtitleProjectAccess::MetadataField::AutomationScripts, std::move(scripts_string));
+		try {
+			context->subtitleAccess->SetMetadata(SubtitleProjectAccess::MetadataField::AutomationScripts, std::move(scripts_string));
+		}
+		catch (SubtitleProjectBusy const&) {
+			// C1-C1c-12: the loaded scripts change, but the list stored in the
+			// subtitles cannot while they are being compared.
+			wxLogWarning(_("The list of loaded automation scripts was not stored in the subtitles because they are being compared."));
+		}
 	}
 
 	// ScriptFactory

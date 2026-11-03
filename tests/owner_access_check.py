@@ -112,6 +112,7 @@ void permitted(agi::Context& c) {
     auto snapshot = c.subtitleAccess->Snapshot();
     snapshot->Events.clear();
     if (auto row = c.selectionController->ReadActiveLine()) (void)row->Id;
+    { auto project = c.subtitleAccess->BeginProjectWrite(); (void)project; }
     if (auto scope = c.subtitleAccess->TryWrite()) {
         auto edit = c.subtitleAccess->Edit(scope->Lease());
         edit.SetDialogueField(1, &AssDialogueBase::Layer, 2);
@@ -137,6 +138,8 @@ NEGATIVE = {
     "owner_static_accessor": "void bad(agi::Context& c) { (void)SubsController::Live(&c); }",
     "owner_member_accessor": "void bad(agi::Context& c) { (void)c.subsController->Live(); }",
     "legacy_rows_for_write": "void bad(agi::Context& c) { (void)c.subtitleAccess->RowsForWrite(); }",
+    "project_lease_edits_rows": "void bad(agi::Context& c) { auto p = c.subtitleAccess->BeginProjectWrite(); (void)c.subtitleAccess->Edit(p); }",
+    "project_lease_from_gate_edits_rows": "void bad(agi::Context& c) { auto p = c.subtitleEditGate.TryBeginProjectWrite(); (void)c.subtitleAccess->Edit(*p); }",
     "live_history_writer": "void bad(agi::Context& c) { (void)c.subtitleAccess->Read().AddUndoManager([](AssFileCommit const&) {}); }",
 }
 

@@ -214,7 +214,12 @@ void DialogExport::OnProcess(wxCommandEvent &) {
 
 	try {
 		wxBusyCursor busy;
-		c->subtitleAccess->SetMetadata(SubtitleProjectAccess::MetadataField::ExportEncoding, from_wx(charset_list->GetStringSelection()));
+		// Export only reads the document; remembering the encoding is
+		// best-effort and skipped during a comparison (C1-C1c-12).
+		try {
+			c->subtitleAccess->SetMetadata(SubtitleProjectAccess::MetadataField::ExportEncoding, from_wx(charset_list->GetStringSelection()));
+		}
+		catch (SubtitleProjectBusy const&) { }
 		exporter.Export(filename, charset_list->GetStringSelection().utf8_str().data(), &d);
 	}
 	catch (agi::UserCancelException const&) { }

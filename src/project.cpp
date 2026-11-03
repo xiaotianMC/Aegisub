@@ -94,7 +94,8 @@ void Project::ReloadAudio() {
 
 void Project::ReloadVideo() {
 	if (video_provider) {
-		if (MediaChangeBlocked(_("Error loading file"))) return;
+		auto media = BeginMediaChange(_("Error loading file"));
+	if (!media) return;
 		DoLoadVideo(video_file);
 		context->videoController->JumpToFrame(context->videoController->GetFrameN());
 	}
@@ -116,17 +117,23 @@ bool Project::ReportRecoveryBlocked(wxString const& title) {
 	return true;
 }
 
-bool Project::MediaChangeBlocked(wxString const& title) {
-	if (!context->subsController->IsInstalling() && !context->subtitleEditGate.NeedsRebinding())
-		return false;
-	if (!ReportRecoveryBlocked(title))
-		LOG_W("project/media") << "Media change refused while the subtitle model is being installed";
-	return true;
+std::optional<agi::SubtitleEditGate::ProjectWriteLease> Project::BeginMediaChange(wxString const& title) {
+	if (context->subsController->IsInstalling() || context->subtitleEditGate.NeedsRebinding()) {
+		if (!ReportRecoveryBlocked(title))
+			LOG_W("project/media") << "Media change refused while the subtitle model is being installed";
+		return std::nullopt;
+	}
+	auto registration = context->subtitleEditGate.TryBeginProjectWrite();
+	if (!registration)
+		wxMessageBox(_("The subtitles are being compared. Finish the comparison before opening or closing files."),
+			title, wxOK | wxICON_ERROR | wxCENTER, context->parent);
+	return registration;
 }
 
-void Project::RequireMediaChangeAllowed() const {
+agi::SubtitleEditGate::ProjectWriteLease Project::RequireMediaChange() const {
 	if (context->subsController->IsInstalling() || context->subtitleEditGate.NeedsRebinding())
 		throw std::logic_error("Media changes are blocked while the subtitle model is installing or awaiting recovery");
+	return context->subtitleAccess->BeginProjectWrite();
 }
 
 void Project::ReportPeripheralErrors(wxString const& heading) {
@@ -220,7 +227,7 @@ void Project::LoadSubtitles(agi::fs::path path, std::string encoding, bool load_
 }
 
 void Project::SetSubtitlesFilename(agi::fs::path path) {
-	RequireMediaChangeAllowed();
+	auto media = RequireMediaChange();
 	context->path->SetToken("?script", path.parent_path());
 	UpdateRelativePaths();
 }
@@ -240,7 +247,8 @@ void Project::CloseSubtitles() {
 }
 
 void Project::LoadUnloadFiles(ProjectProperties properties) {
-	if (MediaChangeBlocked(_("Error loading file"))) return;
+	auto media = BeginMediaChange(_("Error loading file"));
+	if (!media) return;
 	auto load_linked = OPT_GET("App/Auto/Load Linked Files")->GetInt();
 	if (!load_linked) return;
 
@@ -373,7 +381,7 @@ void Project::LoadUnloadFiles(ProjectProperties properties) {
 }
 
 void Project::DoLoadAudio(agi::fs::path const& path, bool quiet) {
-	RequireMediaChangeAllowed();
+	auto media = RequireMediaChange();
 	if (!progress)
 		progress = new DialogProgress(context->parent);
 
@@ -410,19 +418,21 @@ void Project::DoLoadAudio(agi::fs::path const& path, bool quiet) {
 }
 
 void Project::LoadAudio(agi::fs::path path) {
-	if (MediaChangeBlocked(_("Error loading file"))) return;
+	auto media = BeginMediaChange(_("Error loading file"));
+	if (!media) return;
 	DoLoadAudio(path, false);
 }
 
 void Project::CloseAudio() {
-	if (MediaChangeBlocked(_("Error closing audio"))) return;
+	auto media = BeginMediaChange(_("Error closing audio"));
+	if (!media) return;
 	AnnounceAudioProviderModified(nullptr);
 	audio_provider.reset();
 	SetPath(audio_file, "?audio", "", "");
 }
 
 bool Project::DoLoadVideo(agi::fs::path const& path) {
-	RequireMediaChangeAllowed();
+	auto media = RequireMediaChange();
 	if (!progress)
 		progress = new DialogProgress(context->parent);
 
@@ -467,7 +477,8 @@ bool Project::DoLoadVideo(agi::fs::path const& path) {
 
 void Project::LoadVideo(agi::fs::path path) {
 	if (path.empty()) return;
-	if (MediaChangeBlocked(_("Error loading file"))) return;
+	auto media = BeginMediaChange(_("Error loading file"));
+	if (!media) return;
 	if (!DoLoadVideo(path)) return;
 	if (OPT_GET("Video/Open Audio")->GetBool() && audio_file != video_file && video_provider->HasAudio())
 		DoLoadAudio(video_file, true);
@@ -481,7 +492,8 @@ void Project::LoadVideo(agi::fs::path path) {
 }
 
 void Project::CloseVideo() {
-	if (MediaChangeBlocked(_("Error closing video"))) return;
+	auto media = BeginMediaChange(_("Error closing video"));
+	if (!media) return;
 	AnnounceVideoProviderModified(nullptr);
 	video_provider.reset();
 	SetPath(video_file, "?video", "", "");
@@ -492,14 +504,15 @@ void Project::CloseVideo() {
 }
 
 void Project::DoLoadTimecodes(agi::fs::path const& path) {
-	RequireMediaChangeAllowed();
+	auto media = RequireMediaChange();
 	timecodes = agi::vfr::Framerate(path);
 	SetPath(timecodes_file, "", "Timecodes", path);
 	AnnounceTimecodesModified(timecodes);
 }
 
 void Project::LoadTimecodes(agi::fs::path path) {
-	if (MediaChangeBlocked(_("Error loading file"))) return;
+	auto media = BeginMediaChange(_("Error loading file"));
+	if (!media) return;
 	try {
 		DoLoadTimecodes(path);
 	}
@@ -514,21 +527,23 @@ void Project::LoadTimecodes(agi::fs::path path) {
 }
 
 void Project::CloseTimecodes() {
-	if (MediaChangeBlocked(_("Error closing timecodes"))) return;
+	auto media = BeginMediaChange(_("Error closing timecodes"));
+	if (!media) return;
 	timecodes = video_provider ? video_provider->GetFPS() : agi::vfr::Framerate{};
 	SetPath(timecodes_file, "", "", "");
 	AnnounceTimecodesModified(timecodes);
 }
 
 void Project::DoLoadKeyframes(agi::fs::path const& path) {
-	RequireMediaChangeAllowed();
+	auto media = RequireMediaChange();
 	keyframes = agi::keyframe::Load(path);
 	SetPath(keyframes_file, "", "Keyframes", path);
 	AnnounceKeyframesModified(keyframes);
 }
 
 void Project::LoadKeyframes(agi::fs::path path) {
-	if (MediaChangeBlocked(_("Error loading file"))) return;
+	auto media = BeginMediaChange(_("Error loading file"));
+	if (!media) return;
 	try {
 		DoLoadKeyframes(path);
 	}
@@ -547,14 +562,18 @@ void Project::LoadKeyframes(agi::fs::path path) {
 }
 
 void Project::CloseKeyframes() {
-	if (MediaChangeBlocked(_("Error closing keyframes"))) return;
+	auto media = BeginMediaChange(_("Error closing keyframes"));
+	if (!media) return;
 	keyframes = video_provider ? video_provider->GetKeyFrames() : std::vector<int>{};
 	SetPath(keyframes_file, "", "", "");
 	AnnounceKeyframesModified(keyframes);
 }
 
 void Project::LoadList(std::vector<agi::fs::path> const& files) {
-	if (MediaChangeBlocked(_("Error loading file"))) return;
+	// Check only: the list may contain subtitles, whose installation needs an
+	// exclusive borrow that a held registration would refuse. Each media step
+	// below takes its own registration.
+	if (!BeginMediaChange(_("Error loading file"))) return;
 	// Keep these lists sorted
 
 	// Subtitle formats

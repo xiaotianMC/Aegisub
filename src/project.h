@@ -18,9 +18,11 @@
 
 #include <libaegisub/fs.h>
 #include <libaegisub/signal.h>
+#include <libaegisub/subtitle_edit_gate.h>
 #include <libaegisub/vfr.h>
 
 #include <memory>
+#include <optional>
 #include <vector>
 
 class AsyncVideoProvider;
@@ -60,12 +62,15 @@ class Project : private agi::signal::ConnectionScope {
 	bool ReportRecoveryBlocked(wxString const& title);
 	/// Warn about failed post-commit work of a Committed document installation.
 	void ReportPeripheralErrors(wxString const& heading);
-	/// C1-C1c-11: media and project paths are part of the document's metadata,
-	/// which is sealed while a subtitle model is being installed or awaits
-	/// recovery. Entry points refuse (and report) before any side effect;
-	/// the internal Do* helpers enforce the same precondition by throwing.
-	bool MediaChangeBlocked(wxString const& title);
-	void RequireMediaChangeAllowed() const;
+	/// C1-C1c-11/12: media and project paths are part of the document's
+	/// metadata, which is sealed while a subtitle model is being installed or
+	/// awaits recovery, and cannot change during a comparison session. Entry
+	/// points refuse (and report) before any side effect; the internal Do*
+	/// helpers enforce the same precondition by throwing. The returned
+	/// registration is held for the whole change, so a comparison cannot begin
+	/// part-way through (e.g. inside a progress dialog).
+	std::optional<agi::SubtitleEditGate::ProjectWriteLease> BeginMediaChange(wxString const& title);
+	agi::SubtitleEditGate::ProjectWriteLease RequireMediaChange() const;
 
 	bool DoLoadSubtitles(agi::fs::path const& path, std::string encoding, ProjectProperties &properties);
 	void DoLoadAudio(agi::fs::path const& path, bool quiet);

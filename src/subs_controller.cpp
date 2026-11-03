@@ -430,6 +430,10 @@ ProjectProperties SubsController::Load(agi::fs::path const& filename, const char
 
 void SubsController::Save(agi::fs::path const& filename, const char *encoding) {
     if (IsInstalling() || context->subtitleEditGate.NeedsRebinding()) throw std::logic_error("Cannot save an incomplete model installation");
+    // C1-C1c-12: saving moves the file name, ?script, relative media paths and
+    // the saved baseline; none of that may change during a comparison. Held for
+    // the whole save, so a comparison cannot begin part-way through either.
+    auto registration = context->subtitleAccess->BeginProjectWrite();
 	const SubtitleFormat *writer = SubtitleFormat::GetWriter(filename);
 	if (!writer)
 		throw agi::InvalidInputException("Unknown file type.");
@@ -522,6 +526,10 @@ bool SubsController::WriteRecoveryCopy(agi::fs::path const& file) const noexcept
 
 void SubsController::RequestAutoSave() {
     if (IsInstalling() || context->subtitleEditGate.NeedsRebinding()) throw std::logic_error("Cannot autosave an incomplete model installation");
+    // C1-C1c-12: deferred (not failed) during a comparison: the baseline is
+    // left unchanged, so the next timer tick or commit after it retries.
+    auto registration = context->subtitleEditGate.TryBeginProjectWrite();
+    if (!registration) return;
 	if (commit_id == autosaved_commit_id && context->subtitleAccess->MetadataRevision() == autosaved_metadata_revision)
 		return;
 

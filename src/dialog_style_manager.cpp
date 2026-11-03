@@ -432,7 +432,13 @@ void DialogStyleManager::UpdateStorage() {
 
 void DialogStyleManager::OnChangeCatalog() {
 	std::string catalog(from_wx(CatalogList->GetStringSelection()));
-	c->subtitleAccess->SetMetadata(SubtitleProjectAccess::MetadataField::StyleStorage, catalog);
+	try {
+		c->subtitleAccess->SetMetadata(SubtitleProjectAccess::MetadataField::StyleStorage, catalog);
+	}
+	catch (SubtitleProjectBusy const&) {
+		// C1-C1c-12: the catalog is still shown; only remembering it in the
+		// subtitles is skipped during a comparison.
+	}
 	Store.LoadCatalog(catalog);
 	UpdateStorage();
 }

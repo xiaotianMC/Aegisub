@@ -55,6 +55,21 @@ public:
         bool Valid() const;
         Token Capture() const;
     };
+    // C1-C1c-12: registration for project state outside the compared rows
+    // (metadata, automation settings, save target and baseline, media paths).
+    // Like a WriteLease it excludes comparison for its whole lifetime, but it
+    // does not advance the revision and grants no row write access: it cannot
+    // be passed where a WriteLease is required.
+    class ProjectWriteLease {
+        struct Registration;
+        std::unique_ptr<Registration> registration;
+        explicit ProjectWriteLease(std::unique_ptr<Registration>);
+        friend class SubtitleEditGate;
+    public:
+        ProjectWriteLease(ProjectWriteLease&&) noexcept;
+        ProjectWriteLease& operator=(ProjectWriteLease&&) noexcept;
+        ~ProjectWriteLease();
+    };
     class ComparisonSession {
         struct Registration;
         std::unique_ptr<Registration> registration;
@@ -80,6 +95,9 @@ public:
     ~SubtitleEditGate();
     std::optional<WriteLease> TryBeginWrite();
     std::optional<ComparisonSession> TryBeginComparison();
+    // Fails while a comparison session (including an installation or Lua
+    // publication borrow) or recovery rebinding is active.
+    std::optional<ProjectWriteLease> TryBeginProjectWrite();
     SubtitleRevision Revision() const;
     RevisionToken Capture() const;
     bool IsCurrent(SubtitleRevision) const;

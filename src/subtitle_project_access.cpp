@@ -237,6 +237,15 @@ void SubtitleProjectAccess::UpdateUIState(ProjectUIState const& value) {
         throw std::logic_error("Observer preparation cannot change project UI state");
     static_cast<ProjectUIState&>(state->file->Properties) = value;
 }
+agi::SubtitleEditGate::ProjectWriteLease SubtitleProjectAccess::BeginProjectWrite() {
+    state->Check();
+    auto registration = gate.TryBeginProjectWrite();
+    if (!registration) {
+        if (gate.NeedsRebinding()) throw std::logic_error("Project state is sealed during installation");
+        throw SubtitleProjectBusy("The subtitles are being compared; project settings, files and saving are unavailable until the comparison ends.");
+    }
+    return std::move(*registration);
+}
 void SubtitleProjectAccess::SetMetadata(MetadataField field, std::string value) {
     state->Check();
     if (state->file->IsInstalling() || gate.NeedsRebinding()) throw std::logic_error("Metadata is sealed during installation");
@@ -254,6 +263,7 @@ void SubtitleProjectAccess::SetMetadata(MetadataField field, std::string value) 
     }
     if (!target) throw std::invalid_argument("Unknown project metadata field");
     if (*target == value) return;
+    auto registration = BeginProjectWrite(); // held through notification
     if (metadata_revision == UINT64_MAX) throw std::overflow_error("Project metadata revision exhausted");
     *target = std::move(value);++metadata_revision;
     NotifyMetadataChanged();
@@ -267,6 +277,7 @@ void SubtitleProjectAccess::SetAutomationSetting(std::string key, std::string va
     state->Check();
     if (state->file->IsInstalling() || gate.NeedsRebinding()) throw std::logic_error("Metadata is sealed during installation");
     if (AutomationSetting(key) == value) return;
+    auto registration = BeginProjectWrite(); // held through notification
     if (metadata_revision == UINT64_MAX) throw std::overflow_error("Project metadata revision exhausted");
     state->file->Properties.automation_settings[std::move(key)] = std::move(value);++metadata_revision;
     NotifyMetadataChanged();

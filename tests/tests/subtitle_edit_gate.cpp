@@ -4,6 +4,7 @@
 #include <libaegisub/subtitle_edit_gate.h>
 #include <libaegisub/id_allocator.h>
 #include <algorithm>
+#include <type_traits>
 #include <future>
 #include <thread>
 
@@ -97,4 +98,30 @@ TEST(subtitle_edit_gate, lifetime_token_distinguishes_an_old_revision_from_a_clo
     {auto write=gate.TryBeginWrite();EXPECT_TRUE(write);}
     EXPECT_TRUE(token.Alive());EXPECT_FALSE(token.Current());
     gate.Close();EXPECT_FALSE(token.Alive());EXPECT_FALSE(token.Current());
+}
+
+// C1-C1c-12: project-state registration excludes comparison both ways, does not
+// advance the row revision, and is not a row write lease.
+static_assert(!std::is_convertible_v<agi::SubtitleEditGate::ProjectWriteLease, agi::SubtitleEditGate::WriteLease>);
+static_assert(!std::is_constructible_v<agi::SubtitleEditGate::WriteLease, agi::SubtitleEditGate::ProjectWriteLease&&>);
+static_assert(!std::is_copy_constructible_v<agi::SubtitleEditGate::ProjectWriteLease>);
+static_assert(!std::is_default_constructible_v<agi::SubtitleEditGate::ProjectWriteLease>);
+TEST(subtitle_edit_gate, project_write_excludes_comparison_without_changing_the_revision) {
+    agi::SubtitleEditGate gate;
+    auto before = gate.Revision();auto token = gate.Capture();
+    {
+        auto project = gate.TryBeginProjectWrite(); ASSERT_TRUE(project);
+        auto nested = gate.TryBeginProjectWrite(); ASSERT_TRUE(nested);
+        EXPECT_EQ(before, gate.Revision()); EXPECT_TRUE(gate.Authorizes(token));
+        EXPECT_FALSE(gate.TryBeginComparison());
+        project.reset(); EXPECT_FALSE(gate.TryBeginComparison());
+        // Ordinary writers coexist with it.
+        EXPECT_TRUE(gate.TryBeginWrite());
+    }
+    {
+        auto comparison = gate.TryBeginComparison(); ASSERT_TRUE(comparison);
+        EXPECT_FALSE(gate.TryBeginProjectWrite());
+    }
+    EXPECT_TRUE(gate.TryBeginProjectWrite());
+    gate.Close(); EXPECT_FALSE(gate.TryBeginProjectWrite());
 }

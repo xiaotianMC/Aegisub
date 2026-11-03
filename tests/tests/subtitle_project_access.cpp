@@ -311,6 +311,10 @@ TEST(subtitle_project_access, metadata_and_ui_have_separate_revisions_dirty_stat
         ++notices;EXPECT_FALSE(access.TryWrite());EXPECT_TRUE(file.IsNotifying());
     });
     using Field=SubtitleProjectAccess::MetadataField;
+    // C1-C1c-12: view state above may change during a comparison; metadata may not.
+    EXPECT_THROW(access.SetMetadata(Field::ExportEncoding,"utf-8"),SubtitleProjectBusy);
+    EXPECT_EQ(0,notices);EXPECT_EQ(0u,access.MetadataRevision());
+    comparison.reset();
     access.SetMetadata(Field::ExportEncoding,"utf-8");access.SetMetadata(Field::ExportEncoding,"utf-8");
     EXPECT_EQ(1,notices);EXPECT_EQ(1u,access.MetadataRevision());EXPECT_TRUE(access.MetadataDirty());
     access.SetMetadata(Field::ExportEncoding,"");EXPECT_FALSE(access.MetadataDirty());
@@ -449,4 +453,37 @@ TEST(subtitle_project_access, observer_dispatch_rethrows_first_exception_after_a
     agi::signal::Connection c=file.AddCommitListener([&](int,const AssDialogue*){order.push_back(3);throw std::logic_error("newest");});
     EXPECT_THROW(file.Commit("x",AssFile::COMMIT_DIAG_TEXT),std::logic_error);
     EXPECT_EQ((std::vector<int>{3,2,1}),order);
+}
+
+// C1-C1c-12 (audit C1): project metadata and automation settings cannot change
+// during a comparison session; a refusal changes nothing and notifies no one.
+TEST(subtitle_project_access, metadata_and_automation_settings_are_refused_during_comparison) {
+    AssFile file;file.Events.push_back(*new AssDialogue);
+    agi::SubtitleEditGate gate;SubtitleProjectAccess access(file,gate);
+    access.SetMetadata(SubtitleProjectAccess::MetadataField::AudioFile,"a.wav");
+    int notified=0;agi::signal::Connection listener=access.AddMetadataListener([&]{++notified;});
+    auto revision=access.MetadataRevision();auto row_revision=gate.Revision();
+    {
+        auto comparison=gate.TryBeginComparison();ASSERT_TRUE(comparison);
+        EXPECT_THROW(access.SetMetadata(SubtitleProjectAccess::MetadataField::AudioFile,"b.wav"),SubtitleProjectBusy);
+        EXPECT_THROW(access.SetAutomationSetting("k","v"),SubtitleProjectBusy);
+        EXPECT_THROW((void)access.BeginProjectWrite(),SubtitleProjectBusy);
+        // A no-op is not a change and is not refused.
+        EXPECT_NO_THROW(access.SetMetadata(SubtitleProjectAccess::MetadataField::AudioFile,"a.wav"));
+        EXPECT_EQ("a.wav",access.Read().Properties.audio_file);EXPECT_EQ("",access.AutomationSetting("k"));
+        EXPECT_EQ(revision,access.MetadataRevision());EXPECT_EQ(0,notified);
+    }
+    access.SetMetadata(SubtitleProjectAccess::MetadataField::AudioFile,"b.wav");
+    access.SetAutomationSetting("k","v");
+    EXPECT_EQ("b.wav",access.Read().Properties.audio_file);EXPECT_EQ(2,notified);
+    // Metadata changes never advance the row revision.
+    EXPECT_EQ(row_revision,gate.Revision());
+}
+TEST(subtitle_project_access, comparison_cannot_begin_while_metadata_observers_run) {
+    AssFile file;file.Events.push_back(*new AssDialogue);
+    agi::SubtitleEditGate gate;SubtitleProjectAccess access(file,gate);
+    bool began=true;
+    agi::signal::Connection listener=access.AddMetadataListener([&]{began=gate.TryBeginComparison().has_value();});
+    access.SetMetadata(SubtitleProjectAccess::MetadataField::VideoFile,"v.mkv");
+    EXPECT_FALSE(began);EXPECT_TRUE(gate.TryBeginComparison());
 }

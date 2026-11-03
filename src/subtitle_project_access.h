@@ -4,10 +4,16 @@
 #include "ass_dialogue.h"
 #include "ass_file.h"
 #include "ass_style.h"
+#include <libaegisub/exception.h>
 #include <libaegisub/subtitle_edit_gate.h>
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
+
+// C1-C1c-12: project state outside the compared rows (metadata, automation
+// settings, saving, media paths) cannot change while a comparison session or
+// an exclusive borrow is active. Such a refusal changes nothing.
+DEFINE_EXCEPTION(SubtitleProjectBusy, agi::Exception);
 
 // Incremental live-model boundary. Detached AssFiles keep their existing API.
 // The live AssFile is private to agi::Context and its owner (SubsController);
@@ -31,10 +37,15 @@ public:
     bool MetadataDirty() const;
     ProjectUIState UIState() const;
     void UpdateUIState(ProjectUIState const&);
+    /// Throws SubtitleProjectBusy (nothing changed) during a comparison session.
     void SetMetadata(MetadataField, std::string);
     std::string AutomationSetting(std::string const&) const;
     void SetAutomationSetting(std::string, std::string);
     DEFINE_SIGNAL_ADDERS(metadata_changed, AddMetadataListener)
+    /// Registers a change of project state outside the compared rows for the
+    /// lifetime of the result (excludes comparison; no row revision change).
+    /// Throws SubtitleProjectBusy during a comparison session.
+    agi::SubtitleEditGate::ProjectWriteLease BeginProjectWrite();
     // A synchronous ordinary edit, including nested commands and notifications.
     // Shares a C0 lease, never the gate's internal mutex.
     class WriteScope {

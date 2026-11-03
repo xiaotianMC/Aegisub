@@ -102,6 +102,19 @@ SubtitleEditGate::WriteLease::Token SubtitleEditGate::WriteLease::Capture() cons
     if (!Valid()) throw std::logic_error("Expired subtitle write lease");
     return Token(registration);
 }
+struct SubtitleEditGate::ProjectWriteLease::Registration {
+    std::shared_ptr<State> state;
+    bool enrolled = false;
+    explicit Registration(std::shared_ptr<State> value) : state(std::move(value)) { }
+    ~Registration() {
+        if (!enrolled) return;
+        std::lock_guard lock(state->mutex); --state->writers;
+    }
+};
+SubtitleEditGate::ProjectWriteLease::ProjectWriteLease(std::unique_ptr<Registration> value) : registration(std::move(value)) { }
+SubtitleEditGate::ProjectWriteLease::ProjectWriteLease(ProjectWriteLease&&) noexcept = default;
+SubtitleEditGate::ProjectWriteLease& SubtitleEditGate::ProjectWriteLease::operator=(ProjectWriteLease&&) noexcept = default;
+SubtitleEditGate::ProjectWriteLease::~ProjectWriteLease() = default;
 SubtitleEditGate::ComparisonSession::ComparisonSession(std::unique_ptr<Registration> value) : registration(std::move(value)) { }
 SubtitleEditGate::ComparisonSession::ComparisonSession(ComparisonSession&&) noexcept = default;
 SubtitleEditGate::ComparisonSession& SubtitleEditGate::ComparisonSession::operator=(ComparisonSession&&) noexcept = default;
@@ -185,6 +198,14 @@ std::optional<SubtitleEditGate::ComparisonSession> SubtitleEditGate::TryBeginCom
     if (!state->alive || state->writers || state->comparison || state->rebinding) return {};
     increment(state->last_comparison); state->comparison = registration->id = state->last_comparison;
     return ComparisonSession(std::move(registration));
+}
+std::optional<SubtitleEditGate::ProjectWriteLease> SubtitleEditGate::TryBeginProjectWrite() {
+    auto registration = std::make_unique<ProjectWriteLease::Registration>(state);
+    std::lock_guard lock(state->mutex);
+    if (!state->alive || state->comparison || state->rebinding) return {};
+    if (state->writers == std::numeric_limits<uint64_t>::max()) throw std::overflow_error("Subtitle writer count exhausted");
+    ++state->writers; registration->enrolled = true; // no revision change: rows are untouched
+    return ProjectWriteLease(std::move(registration));
 }
 SubtitleRevision SubtitleEditGate::Revision() const { std::lock_guard lock(state->mutex); return state->revision; }
 SubtitleEditGate::RevisionToken SubtitleEditGate::Capture() const {

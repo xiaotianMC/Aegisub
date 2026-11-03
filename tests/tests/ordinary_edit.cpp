@@ -22,6 +22,7 @@
 #include "search_replace_engine.h"
 #include "text_selection_controller.h"
 #include "dialog_style_editor.h"
+#include "ass_exporter.h"
 #include "dialogs.h"
 #include "dialog_manager.h"
 #include "compat.h"
@@ -1687,9 +1688,15 @@ TEST_F(ordinary_edit, save_cleans_only_independent_copy_and_keeps_ass_format_pre
     }
     auto id=LiveRead(*c).Events.front().Id;auto refs=LiveRead(*c).Events.front().ExtradataIds.get();
     auto revision=c->subtitleEditGate.Revision();auto undo=c->subsController->GetUndoDescription();
-    auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);
     auto path=agi::fs::path((std::filesystem::current_path()/"snapshot-save.ass").wstring());
+    {
+        // C1-C1c-12: saving during a comparison is refused before any output.
+        auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);
+        EXPECT_THROW(c->subsController->Save(path,"utf-8"),SubtitleProjectBusy);
+        EXPECT_FALSE(std::filesystem::exists(std::filesystem::path(path.wstring())));
+    }
     c->subsController->Save(path,"utf-8");
+    // Saving works on a snapshot: no row revision, history or live extradata change.
     EXPECT_EQ(revision,c->subtitleEditGate.Revision());EXPECT_EQ(undo,c->subsController->GetUndoDescription());
     EXPECT_EQ(refs,LiveRead(*c).Events.front().ExtradataIds.get());EXPECT_EQ(2u,LiveRead(*c).Extradata.size());
     EXPECT_EQ(id,LiveRead(*c).Events.front().Id);
@@ -2428,4 +2435,59 @@ TEST_F(visual_edit, subtitle_overlay_is_rendered_on_the_worker_after_queued_upda
         set(square);EXPECT_EQ(255,alpha_at(100,100)) << "iteration " << i;
         set("");EXPECT_EQ(0,alpha_at(100,100)) << "iteration " << i;
     }
+}
+
+// C1-C1c-12 (audit C1): during a comparison session, Save cannot move the file
+// name, ?script, relative paths or the saved baseline; AutoSave is deferred;
+// media changes are refused; Export still works. All without side effects.
+TEST_F(document_lifecycle, comparison_session_freezes_save_target_metadata_and_media) {
+    auto saved=Local("compare-saved.ass");c->subsController->Save(saved,"utf-8");
+    c->project->LoadAudio("dummy-audio:silence?sr=44100&bd=16&ch=1&ln=441000");
+    auto provider=c->project->AudioProvider();ASSERT_TRUE(provider);
+    Input("compared edit");ASSERT_TRUE(c->subsController->IsModified());
+    auto autosave_root=std::filesystem::current_path()/"compare-autosave";
+    auto old_autosave=OPT_GET("Path/Auto/Save")->GetString();OPT_SET("Path/Auto/Save")->SetString(autosave_root.string());
+    auto filename=c->subsController->Filename();auto script=c->path->Decode("?script");
+    auto properties=LiveRead(*c).Properties;auto metadata=c->subtitleAccess->MetadataRevision();
+    auto revision=c->subtitleEditGate.Revision();
+    {
+        auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);
+        RecordMessages messages;
+        auto elsewhere=Local("compare-elsewhere.ass");
+        EXPECT_THROW(c->subsController->Save(elsewhere,"utf-8"),SubtitleProjectBusy);
+        EXPECT_FALSE(std::filesystem::exists(std::filesystem::path(elsewhere.wstring())));
+        // The production command reports the refusal instead of failing silently.
+        EXPECT_NO_THROW(cmd::call("subtitle/save",c.get()));
+        ASSERT_EQ(1u,messages.messages.size());EXPECT_TRUE(messages.messages.back().Contains("being compared"));
+        c->subsController->RequestAutoSave();
+        EXPECT_FALSE(std::filesystem::exists(autosave_root));
+        EXPECT_NO_THROW(c->project->LoadAudio("dummy-audio:silence?sr=22050&bd=16&ch=1&ln=220500"));
+        EXPECT_NO_THROW(c->project->CloseAudio());
+        EXPECT_EQ(provider,c->project->AudioProvider());
+        ASSERT_EQ(3u,messages.messages.size());EXPECT_TRUE(messages.messages.back().Contains("being compared"));
+        // Read-only output stays available.
+        auto exported=Local("compare-export.srt");AssExporter exporter(c.get());
+        EXPECT_NO_THROW(exporter.Export(exported,"utf-8",nullptr));
+        EXPECT_TRUE(std::filesystem::exists(std::filesystem::path(exported.wstring())));
+        EXPECT_EQ(filename,c->subsController->Filename());EXPECT_EQ(script,c->path->Decode("?script"));
+        EXPECT_TRUE(c->subsController->IsModified());EXPECT_EQ(metadata,c->subtitleAccess->MetadataRevision());
+        EXPECT_TRUE(static_cast<ProjectMetadata const&>(properties)==static_cast<ProjectMetadata const&>(LiveRead(*c).Properties));
+        EXPECT_EQ(revision,c->subtitleEditGate.Revision());
+        EXPECT_TRUE(comparison->Valid());
+    }
+    // After the comparison everything works again, including the deferred autosave.
+    c->subsController->RequestAutoSave();c->subsController.reset();wxTheApp->ProcessPendingEvents();
+    EXPECT_TRUE(std::filesystem::exists(autosave_root));
+    OPT_SET("Path/Auto/Save")->SetString(old_autosave);
+}
+TEST_F(document_lifecycle, comparison_cannot_begin_while_a_save_or_media_change_is_in_progress) {
+    bool began=true;int saves=0;
+    agi::signal::Connection on_save=c->subsController->AddFileSaveListener([&]{++saves;began=c->subtitleEditGate.TryBeginComparison().has_value();});
+    c->subsController->Save(Local("in-progress.ass"),"utf-8");
+    EXPECT_EQ(1,saves);EXPECT_FALSE(began);
+    began=true;
+    agi::signal::Connection on_audio=c->project->AddAudioProviderListener([&](agi::AudioProvider*){began=c->subtitleEditGate.TryBeginComparison().has_value();});
+    c->project->LoadAudio("dummy-audio:silence?sr=44100&bd=16&ch=1&ln=441000");
+    EXPECT_FALSE(began);
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
 }
