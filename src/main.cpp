@@ -438,7 +438,7 @@ void AegisubApp::UnhandledException([[maybe_unused]] bool stackWalk) {
 	agi::fs::path path;
 	for (auto& frame : frames) {
 		auto c = frame->context.get();
-		if (!c || !c->ass || !c->subsController) continue;
+		if (!c || !c->subsController) continue;
 
 		path = config::path->Decode("?user/recovered");
 		agi::fs::CreateDirectory(path);

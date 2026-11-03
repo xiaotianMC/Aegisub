@@ -54,6 +54,11 @@ private:
     /// observers that were not refreshed never see freed nodes; freed on destruction.
     std::vector<std::shared_ptr<void>> lua_retired_after_failure;
 	agi::Context *context;
+    /// The only route from a Context to its live document. Private: reachable
+    /// from this controller, its nested history types and its installation and
+    /// Lua publication friends, each of which applies its own runtime authority.
+    static AssFile& Live(agi::Context const* c) noexcept;
+    AssFile& Live() const noexcept;
 	agi::signal::Connection undo_connection;
 	agi::signal::Connection active_line_connection;
 	agi::signal::Connection selection_connection;

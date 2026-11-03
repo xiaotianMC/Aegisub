@@ -67,7 +67,6 @@ private:
     Selection Validate(std::set<int> const&) const;
     void Notify(bool selected, bool active);
 public:
-    SelectionController(agi::Context*);
     SelectionController(AssFile&, agi::SubtitleEditGate&);
     int ActiveID() const;
     std::set<int> SelectedIDs() const;

@@ -10,7 +10,8 @@
 #include <utility>
 
 // Incremental live-model boundary. Detached AssFiles keep their existing API.
-// Legacy Context::ass remains a migration gap; this facade exposes no mutable pointer.
+// The live AssFile is private to agi::Context and its owner (SubsController);
+// this facade is the only business route to it and exposes no mutable pointer.
 class SubtitleProjectAccess {
     friend class SubsController;
     friend class SubtitleModelInstallation;

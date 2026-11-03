@@ -27,7 +27,6 @@
 #include <unordered_map>
 #include <utility>
 
-SelectionController::SelectionController(agi::Context *c) : SelectionController(*c->ass, c->subtitleEditGate) { }
 SelectionController::SelectionController(AssFile& model, agi::SubtitleEditGate& edit_gate)
 : file(&model), gate(&edit_gate), lifetime(edit_gate.Capture()),
   commit_connection(model.AddCommitListener("selection_controller.AddCommitListener", [this](int type, AssDialogue const*, SubtitleModelRebindTicket ticket) {

@@ -221,7 +221,7 @@ void Project::CloseSubtitles() {
 	}
 	// The installation already cleared ?script and selected the blank line.
 	ReportPeripheralErrors(_("The subtitles were closed, but some follow-up steps failed:"));
-	LoadUnloadFiles(context->ass->Properties);
+	LoadUnloadFiles(context->subtitleAccess->Read().Properties);
 }
 
 void Project::LoadUnloadFiles(ProjectProperties properties) {
@@ -407,7 +407,7 @@ bool Project::DoLoadVideo(agi::fs::path const& path) {
 		progress = new DialogProgress(context->parent);
 
 	try {
-		video_provider = std::make_unique<AsyncVideoProvider>(path, context->ass->GetYCbCrMatrix(), context->videoController.get(), progress);
+		video_provider = std::make_unique<AsyncVideoProvider>(path, context->subtitleAccess->Read().GetYCbCrMatrix(), context->videoController.get(), progress);
 	}
 	catch (agi::UserCancelException const&) { return false; }
 	catch (agi::fs::FileSystemError const& err) {
@@ -423,7 +423,7 @@ bool Project::DoLoadVideo(agi::fs::path const& path) {
 	AnnounceVideoProviderModified(video_provider.get());
 
 	UpdateVideoProperties(context, video_provider.get());
-	video_provider->LoadSubtitles(context->ass.get());
+	video_provider->LoadSubtitles(&context->subtitleAccess->Read());
 
 	timecodes = video_provider->GetFPS();
 	keyframes = video_provider->GetKeyFrames();

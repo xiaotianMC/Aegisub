@@ -37,6 +37,9 @@ class TextSelectionController;
 class VideoController;
 class VideoDisplay;
 class wxWindow;
+// Test-only attorney, defined solely under tests/support (enforced by the
+// owner-access API check). Production code cannot name the live model.
+struct LiveSubtitleModelTestAccess;
 namespace Automation4 { class ScriptManager; }
 
 namespace agi {
@@ -46,8 +49,15 @@ struct Context {
 	// Note: order here matters quite a bit, as things need to be set up and
     // torn down in the correct order
     SubtitleEditGate subtitleEditGate;
-    // Legacy mutable access: migrate business entry points before enabling comparison.
+private:
+    // The live document. Owned here, mutated only by its document owner
+    // (SubsController: history, installation, Lua publication) and by the
+    // controlled interfaces bound at construction. Everyone else reads through
+    // subtitleAccess->Read() and writes through its leases and interactions.
+    friend class ::SubsController;
+    friend struct ::LiveSubtitleModelTestAccess;
 	std::unique_ptr<AssFile> ass;
+public:
     std::unique_ptr<SubtitleProjectAccess> subtitleAccess;
 	std::unique_ptr<TextSelectionController> textSelectionController;
 	std::unique_ptr<SubsController> subsController;

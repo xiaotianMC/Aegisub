@@ -35,6 +35,7 @@
 #include "ass_exporter.h"
 #include "subtitle_format.h"
 #include "auto4_lua.h"
+#include "../support/live_model_test_access.h"
 
 namespace {
 void register_lua() {
@@ -119,11 +120,11 @@ protected:
         window = new wxFrame(nullptr, wxID_ANY, "lua isolation tests");
         c->parent = window;
         auto write = c->subtitleAccess->TryWrite();
-        c->ass->LoadDefault();
-        c->ass->Events.front().Text = "first";
-        auto second = new AssDialogue; second->Text = "second"; c->ass->Events.push_back(*second);
-        auto third = new AssDialogue; third->Text = "third"; c->ass->Events.push_back(*third);
-        c->ass->Commit("fixture", AssFile::COMMIT_NEW);
+        LiveWriteForTest(*c).LoadDefault();
+        LiveWriteForTest(*c).Events.front().Text = "first";
+        auto second = new AssDialogue; second->Text = "second"; LiveWriteForTest(*c).Events.push_back(*second);
+        auto third = new AssDialogue; third->Text = "third"; LiveWriteForTest(*c).Events.push_back(*third);
+        LiveWriteForTest(*c).Commit("fixture", AssFile::COMMIT_NEW);
         c->selectionController->SetSelectionAndActiveIDs({Id(0)}, Id(0));
         base_undo = c->subsController->GetUndoDescription();
         base_modified = c->subsController->IsModified();
@@ -136,18 +137,18 @@ protected:
     }
 
     int Id(size_t row) const {
-        auto it = c->ass->Events.begin();
+        auto it = LiveRead(*c).Events.begin();
         std::advance(it, row);
         return it->Id;
     }
     std::vector<std::string> Texts() const {
         std::vector<std::string> out;
-        for (auto const& line : c->ass->Events) out.push_back(line.Text.get());
+        for (auto const& line : LiveRead(*c).Events) out.push_back(line.Text.get());
         return out;
     }
     std::vector<int> Ids() const {
         std::vector<int> out;
-        for (auto const& line : c->ass->Events) out.push_back(line.Id);
+        for (auto const& line : LiveRead(*c).Events) out.push_back(line.Id);
         return out;
     }
 
@@ -296,26 +297,26 @@ aegisub.register_macro("Sections", "", function(subs)
 end)
 )");
     ASSERT_TRUE(macro);
-    { auto write = c->subtitleAccess->TryWrite(); c->ass->SetScriptInfo("Title", "orig"); c->ass->Commit("title", AssFile::COMMIT_SCRIPTINFO); }
-    auto extradata = c->ass->Extradata.size();
+    { auto write = c->subtitleAccess->TryWrite(); LiveWriteForTest(*c).SetScriptInfo("Title", "orig"); LiveWriteForTest(*c).Commit("title", AssFile::COMMIT_SCRIPTINFO); }
+    auto extradata = LiveRead(*c).Extradata.size();
     Run(macro);
-    EXPECT_EQ("lua title", c->ass->GetScriptInfo("Title"));
-    ASSERT_NE(nullptr, c->ass->GetStyle("Lua Style"));
-    EXPECT_EQ(42, c->ass->GetStyle("Lua Style")->fontsize);
-    auto const& line = c->ass->Events.front();
+    EXPECT_EQ("lua title", LiveRead(*c).GetScriptInfo("Title"));
+    ASSERT_NE(nullptr, LiveRead(*c).GetStyle("Lua Style"));
+    EXPECT_EQ(42, LiveRead(*c).GetStyle("Lua Style")->fontsize);
+    auto const& line = LiveRead(*c).Events.front();
     EXPECT_EQ("Lua Style", line.Style.get());
-    auto entries = c->ass->GetExtradata(line.ExtradataIds.get());
+    auto entries = LiveRead(*c).GetExtradata(line.ExtradataIds.get());
     ASSERT_EQ(1u, entries.size());
     EXPECT_EQ("lua.key", entries[0].key); EXPECT_EQ("lua value", entries[0].value);
-    EXPECT_EQ(extradata + 1, c->ass->Extradata.size());
+    EXPECT_EQ(extradata + 1, LiveRead(*c).Extradata.size());
 
     c->subsController->Undo();
-    EXPECT_EQ("orig", c->ass->GetScriptInfo("Title"));
-    EXPECT_EQ(nullptr, c->ass->GetStyle("Lua Style"));
-    EXPECT_TRUE(c->ass->Events.front().ExtradataIds.get().empty());
+    EXPECT_EQ("orig", LiveRead(*c).GetScriptInfo("Title"));
+    EXPECT_EQ(nullptr, LiveRead(*c).GetStyle("Lua Style"));
+    EXPECT_TRUE(LiveRead(*c).Events.front().ExtradataIds.get().empty());
     c->subsController->Redo();
-    EXPECT_EQ("lua title", c->ass->GetScriptInfo("Title"));
-    EXPECT_EQ(1u, c->ass->GetExtradata(c->ass->Events.front().ExtradataIds.get()).size());
+    EXPECT_EQ("lua title", LiveRead(*c).GetScriptInfo("Title"));
+    EXPECT_EQ(1u, LiveRead(*c).GetExtradata(LiveRead(*c).Events.front().ExtradataIds.get()).size());
 }
 
 TEST_F(lua_macro, legacy_runtime_error_and_cancel_leave_text_and_history_unchanged) {
@@ -375,11 +376,11 @@ aegisub.register_macro("Leak", "", function(subs)
 end)
 )");
     ASSERT_TRUE(failing);
-    auto extradata = c->ass->Extradata.size();
-    auto next = c->ass->next_extradata_id;
+    auto extradata = LiveRead(*c).Extradata.size();
+    auto next = LiveRead(*c).next_extradata_id;
     Run(failing);
-    EXPECT_EQ(extradata, c->ass->Extradata.size());
-    EXPECT_EQ(next, c->ass->next_extradata_id);
+    EXPECT_EQ(extradata, LiveRead(*c).Extradata.size());
+    EXPECT_EQ(next, LiveRead(*c).next_extradata_id);
 }
 
 TEST_F(lua_macro, isolation_comparison_session_rejects_the_whole_result_without_partial_write) {
@@ -418,9 +419,9 @@ aegisub.register_macro("Validate", "", function() end, function(subs)
 end)
 )");
     ASSERT_TRUE(macro);
-    auto extradata = c->ass->Extradata.size();
+    auto extradata = LiveRead(*c).Extradata.size();
     EXPECT_TRUE(macro->Validate(c.get()));
-    EXPECT_EQ(extradata, c->ass->Extradata.size());
+    EXPECT_EQ(extradata, LiveRead(*c).Extradata.size());
 }
 
 TEST_F(lua_macro, isolation_undo_point_before_first_script_info_edit_keeps_script_info) {
@@ -436,12 +437,12 @@ aegisub.register_macro("Info probe", "", function(subs)
 end)
 )");
     ASSERT_TRUE(macro);
-    auto info = c->ass->Info.size();
+    auto info = LiveRead(*c).Info.size();
     Run(macro);
-    EXPECT_EQ(info, c->ass->Info.size());
+    EXPECT_EQ(info, LiveRead(*c).Info.size());
     c->subsController->Undo();
     EXPECT_EQ("s1", Texts()[0]);
-    EXPECT_EQ(info, c->ass->Info.size()) << "checkpoint s1 lost Script Info";
+    EXPECT_EQ(info, LiveRead(*c).Info.size()) << "checkpoint s1 lost Script Info";
 }
 
 namespace {
@@ -502,7 +503,7 @@ TEST_F(lua_macro, isolation_close_during_run_keeps_old_result_out_of_the_new_doc
     auto epoch = c->subtitleEditGate.Revision().document_epoch;
     Run(macro);
     EXPECT_EQ(epoch + 1, c->subtitleEditGate.Revision().document_epoch);
-    ASSERT_EQ(1u, c->ass->Events.size());
+    ASSERT_EQ(1u, LiveRead(*c).Events.size());
     EXPECT_EQ("", Texts()[0]);
     EXPECT_TRUE(c->subsController->IsUndoStackEmpty());
     EXPECT_FALSE(c->subsController->IsModified());
@@ -549,8 +550,8 @@ TEST_F(lua_macro, isolation_observer_exception_after_publication_keeps_model_and
     auto macro = Load("observer", rewrite_first);
     ASSERT_TRUE(macro);
     int refreshed = 0;
-    agi::signal::Connection reader = c->ass->AddCommitListener([&](int, AssDialogue const*) { ++refreshed; });
-    agi::signal::Connection thrower = c->ass->AddCommitListener([](int, AssDialogue const*) { throw std::runtime_error("observer"); });
+    agi::signal::Connection reader = LiveRead(*c).AddCommitListener([&](int, AssDialogue const*) { ++refreshed; });
+    agi::signal::Connection thrower = LiveRead(*c).AddCommitListener([](int, AssDialogue const*) { throw std::runtime_error("observer"); });
     EXPECT_THROW(Run(macro), std::runtime_error);
     thrower.Disconnect();
     EXPECT_EQ("rewritten twice", Texts()[0]);
@@ -569,7 +570,7 @@ TEST_F(lua_macro, isolation_one_commit_notification_for_a_multi_step_run) {
     auto macro = Load("notify", rewrite_first);
     ASSERT_TRUE(macro);
     std::vector<int> types;
-    agi::signal::Connection reader = c->ass->AddCommitListener([&](int type, AssDialogue const*) { types.push_back(type); });
+    agi::signal::Connection reader = LiveRead(*c).AddCommitListener([&](int type, AssDialogue const*) { types.push_back(type); });
     Run(macro);
     ASSERT_EQ(1u, types.size());
     EXPECT_EQ(AssFile::COMMIT_DIAG_ADDREM, types[0]);
@@ -590,13 +591,13 @@ end)
     ASSERT_TRUE(macro);
     auto ids = Ids();
     Run(macro);
-    ASSERT_EQ(1u, c->ass->Events.size());
+    ASSERT_EQ(1u, LiveRead(*c).Events.size());
     EXPECT_EQ("appended", Texts()[0]);
     c->subsController->Undo();
-    ASSERT_EQ(1u, c->ass->Events.size());
+    ASSERT_EQ(1u, LiveRead(*c).Events.size());
     EXPECT_EQ("", Texts()[0]);
     EXPECT_EQ("deleted", c->subsController->GetUndoDescription());
-    EXPECT_EQ(0, c->ass->Events.front().Row);
+    EXPECT_EQ(0, LiveRead(*c).Events.front().Row);
     c->subsController->Undo();
     EXPECT_EQ(ids, Ids());
     c->subsController->Redo(); c->subsController->Redo();
@@ -607,22 +608,22 @@ TEST_F(lua_macro, legacy_rewritten_bound_lines_keep_their_binding_extradata_entr
     uint32_t binding;
     {
         auto write = c->subtitleAccess->TryWrite();
-        binding = c->ass->AddExtradata("aegisub.enhanced.subtitle-binding", "1:group");
-        c->ass->Events.front().ExtradataIds = std::vector<uint32_t>{binding};
-        std::next(c->ass->Events.begin())->ExtradataIds = std::vector<uint32_t>{binding};
-        c->ass->AddExtradata("unknown.key", "opaque 42");
-        c->ass->Commit("bind", AssFile::COMMIT_EXTRADATA);
+        binding = LiveWriteForTest(*c).AddExtradata("aegisub.enhanced.subtitle-binding", "1:group");
+        LiveWriteForTest(*c).Events.front().ExtradataIds = std::vector<uint32_t>{binding};
+        std::next(LiveWriteForTest(*c).Events.begin())->ExtradataIds = std::vector<uint32_t>{binding};
+        LiveWriteForTest(*c).AddExtradata("unknown.key", "opaque 42");
+        LiveWriteForTest(*c).Commit("bind", AssFile::COMMIT_EXTRADATA);
     }
-    auto before = c->ass->Extradata;
+    auto before = LiveRead(*c).Extradata;
     auto macro = Load("binding", rewrite_first);
     ASSERT_TRUE(macro);
     Run(macro);
-    EXPECT_EQ(std::vector<uint32_t>{binding}, c->ass->Events.front().ExtradataIds.get());
-    EXPECT_EQ(std::vector<uint32_t>{binding}, std::next(c->ass->Events.begin())->ExtradataIds.get());
-    ASSERT_EQ(before.size(), c->ass->Extradata.size());
+    EXPECT_EQ(std::vector<uint32_t>{binding}, LiveRead(*c).Events.front().ExtradataIds.get());
+    EXPECT_EQ(std::vector<uint32_t>{binding}, std::next(LiveRead(*c).Events.begin())->ExtradataIds.get());
+    ASSERT_EQ(before.size(), LiveRead(*c).Extradata.size());
     for (size_t i = 0; i < before.size(); ++i) {
-        EXPECT_EQ(before[i].id, c->ass->Extradata[i].id);
-        EXPECT_EQ(before[i].value, c->ass->Extradata[i].value);
+        EXPECT_EQ(before[i].id, LiveRead(*c).Extradata[i].id);
+        EXPECT_EQ(before[i].value, LiveRead(*c).Extradata[i].value);
     }
 }
 
@@ -635,12 +636,12 @@ end)
 )");
     ASSERT_TRUE(macro);
     int notified = 0;
-    agi::signal::Connection reader = c->ass->AddCommitListener([&](int, AssDialogue const*) { ++notified; });
+    agi::signal::Connection reader = LiveRead(*c).AddCommitListener([&](int, AssDialogue const*) { ++notified; });
     Run(macro);
     EXPECT_EQ("nameless", Texts()[0]);
     ExpectHistoryUnchanged();
     EXPECT_EQ(1, notified); // deliberate: observers are told about the change
-    EXPECT_EQ(0, c->ass->Events.front().Row);
+    EXPECT_EQ(0, LiveRead(*c).Events.front().Row);
 }
 
 TEST_F(lua_macro, isolation_macro_result_survives_save_and_reopen) {
@@ -657,8 +658,8 @@ end)
     EXPECT_FALSE(c->subsController->IsModified());
     c->subsController->Load(path, "utf-8");
     EXPECT_EQ("{\\i1}saved", Texts()[0]);
-    EXPECT_EQ("Lua", c->ass->Events.front().Actor.get());
-    auto extra = c->ass->GetExtradata(c->ass->Events.front().ExtradataIds.get());
+    EXPECT_EQ("Lua", LiveRead(*c).Events.front().Actor.get());
+    auto extra = LiveRead(*c).GetExtradata(LiveRead(*c).Events.front().ExtradataIds.get());
     ASSERT_EQ(1u, extra.size());
     EXPECT_EQ("yes", extra[0].value);
 }
@@ -676,7 +677,7 @@ end)
     ASSERT_TRUE(script && script->GetLoadedState());
     auto filters = script->GetFilters();
     ASSERT_EQ(1u, filters.size());
-    AssFile copy(*c->ass);
+    AssFile copy(LiveRead(*c));
     auto ids = Ids();
     filters[0]->ProcessSubs(&copy, window);
     for (auto const& line : copy.Events) EXPECT_EQ("filtered", line.Text.get());
@@ -701,8 +702,8 @@ TEST_F(lua_macro, compatibility_bundled_autoload_scripts_load_and_strip_tags_run
     ASSERT_TRUE(strip);
     {
         auto write = c->subtitleAccess->TryWrite();
-        c->ass->Events.front().Text = "{\\b1}bold{\\i1} text";
-        c->ass->Commit("tags", AssFile::COMMIT_DIAG_TEXT);
+        LiveWriteForTest(*c).Events.front().Text = "{\\b1}bold{\\i1} text";
+        LiveWriteForTest(*c).Commit("tags", AssFile::COMMIT_DIAG_TEXT);
     }
     auto id = Id(1);
     Run(strip);
@@ -741,10 +742,10 @@ end)
     for (int n : {1000, 5000, 10000}) {
         {
             auto write = c->subtitleAccess->TryWrite();
-            c->ass->Events.clear_and_dispose([](AssDialogue* d) { delete d; });
-            for (int i = 0; i < n; ++i) { auto l = new AssDialogue; l->Text = "line " + std::to_string(i); c->ass->Events.push_back(*l); }
-            for (int i = 0; i < 200; ++i) c->ass->AddExtradata("key" + std::to_string(i), "value");
-            c->ass->Commit("bulk fixture", AssFile::COMMIT_NEW);
+            LiveWriteForTest(*c).Events.clear_and_dispose([](AssDialogue* d) { delete d; });
+            for (int i = 0; i < n; ++i) { auto l = new AssDialogue; l->Text = "line " + std::to_string(i); LiveWriteForTest(*c).Events.push_back(*l); }
+            for (int i = 0; i < 200; ++i) LiveWriteForTest(*c).AddExtradata("key" + std::to_string(i), "value");
+            LiveWriteForTest(*c).Commit("bulk fixture", AssFile::COMMIT_NEW);
             c->selectionController->SetSelectionAndActiveIDs({Id(0)}, Id(0));
         }
         // Host phases measured on the same production API the macro uses.
@@ -780,7 +781,7 @@ end)
         Run(macro);
         auto t6 = clock::now();
         EXPECT_EQ("line 0!!", Texts()[0]);
-        EXPECT_EQ(1, c->ass->Events.front().Layer);
+        EXPECT_EQ(1, LiveRead(*c).Events.front().Layer);
         std::printf("[lua-perf] lines=%d snapshot=%.1fms convert=%.1fms validate+history=%.1fms publish=%.1fms full-macro=%.1fms rss-before=%ldkB rss-after=%ldkB peak=%ldkB\n",
             n, ms(t0, t1), ms(t1, t2), ms(t2, t3), ms(t3, t4), ms(t5, t6), rss_before, status_kb("VmRSS:"), status_kb("VmHWM:"));
     }

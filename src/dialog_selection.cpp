@@ -26,6 +26,7 @@
 #include "options.h"
 #include "search_replace_engine.h"
 #include "selection_controller.h"
+#include "subtitle_project_access.h"
 
 #include <boost/range/algorithm/set_algorithm.hpp>
 
@@ -193,7 +194,7 @@ void DialogSelection::Process(wxCommandEvent& event) {
 			from_wx(match_text->GetValue()), case_sensitive->IsChecked(),
 			static_cast<Mode>(match_mode->GetSelection()), select_unmatching_lines->GetValue(),
 			apply_to_comments->IsChecked(), apply_to_dialogue->IsChecked(),
-			dialogue_field->GetSelection(), con->ass.get());
+			dialogue_field->GetSelection(), &con->subtitleAccess->Read());
 	}
 	catch (agi::Exception const&) {
 		if (event.GetId() == wxID_OK) Close();

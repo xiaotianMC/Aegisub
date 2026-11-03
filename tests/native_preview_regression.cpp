@@ -10,6 +10,7 @@
 #include "include/aegisub/context.h"
 #include "project.h"
 #include "selection_controller.h"
+#include "subtitle_project_access.h"
 #include "subs_controller.h"
 #include "subs_edit_box.h"
 #include "subs_edit_ctrl.h"
@@ -155,11 +156,11 @@ int main(int argc, char **argv) {
 
         // Binding turns a group into a persistent multi-selection; Ctrl/Alt-style
         // callers can still select a single member for a temporary edit.
-        auto first = &*c.ass->Events.begin();
-        auto second = &*std::next(c.ass->Events.begin());
+        auto first = &*c.subtitleAccess->Read().Events.begin();
+        auto second = &*std::next(c.subtitleAccess->Read().Events.begin());
         c.selectionController->SetSelectionAndActiveIDs({first->Id,second->Id}, first->Id);
         cmd::call("subtitle/bind", &c);
-        require(!GetSubtitleBinding(*c.ass, *first).empty(), "binding was not created");
+        require(!GetSubtitleBinding(c.subtitleAccess->Read(), *first).empty(), "binding was not created");
         c.selectionController->SetSelectedIDs({first->Id});
         require(c.selectionController->ReadSelectedSet().size() == 2, "binding group did not expand the selection");
         c.selectionController->SetSelectedIDs({first->Id}, false);
@@ -203,7 +204,7 @@ int main(int argc, char **argv) {
 
         c.selectionController->SetSelectionAndActiveIDs({first->Id,second->Id}, first->Id);
         cmd::call("subtitle/unbind", &c);
-        require(GetSubtitleBinding(*c.ass, *first).empty() && GetSubtitleBinding(*c.ass, *second).empty(),
+        require(GetSubtitleBinding(c.subtitleAccess->Read(), *first).empty() && GetSubtitleBinding(c.subtitleAccess->Read(), *second).empty(),
             "unbind did not clear the binding");
         c.selectionController->SetSelectionAndActiveIDs({line->Id}, line->Id);
 

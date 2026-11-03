@@ -454,7 +454,7 @@ void DialogStyleManager::LoadCatalog() {
 	}
 
 	// Set to default if available
-	std::string pickStyle = c->ass->Properties.style_storage;
+	std::string pickStyle = c->subtitleAccess->Read().Properties.style_storage;
 	if (pickStyle.empty())
 		pickStyle = "Default";
 

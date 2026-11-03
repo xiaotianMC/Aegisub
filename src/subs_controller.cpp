@@ -84,7 +84,7 @@ struct SubsController::UndoInfo {
     UndoInfo(const agi::Context *c, wxString const& d, int commit_id, std::vector<AssInfo> const& info,
              std::vector<AssStyle const*> const& step_styles, std::vector<AssDialogue const*> const& step_events,
              std::vector<ExtradataEntry> const& step_extradata)
-    : undo_description(d), commit_id(commit_id), attachments(c->ass->Attachments), extradata(step_extradata) {
+    : undo_description(d), commit_id(commit_id), attachments(SubsController::Live(c).Attachments), extradata(step_extradata) {
         script_info.reserve(info.size());
         for (auto const& entry : info) script_info.emplace_back(entry.Key(), entry.Value());
         styles.reserve(step_styles.size());
@@ -99,18 +99,18 @@ struct SubsController::UndoInfo {
 	UndoInfo(const agi::Context *c, wxString const& d, int commit_id)
 	: undo_description(d)
 	, commit_id(commit_id)
-	, attachments(c->ass->Attachments)
-	, extradata(c->ass->Extradata)
+	, attachments(SubsController::Live(c).Attachments)
+	, extradata(SubsController::Live(c).Extradata)
 	{
-		script_info.reserve(c->ass->Info.size());
-		for (auto const& info : c->ass->Info)
+		script_info.reserve(SubsController::Live(c).Info.size());
+		for (auto const& info : SubsController::Live(c).Info)
 			script_info.emplace_back(info.Key(), info.Value());
 
-		styles.reserve(c->ass->Styles.size());
-		styles.assign(c->ass->Styles.begin(), c->ass->Styles.end());
+		styles.reserve(SubsController::Live(c).Styles.size());
+		styles.assign(SubsController::Live(c).Styles.begin(), SubsController::Live(c).Styles.end());
 
-		events.reserve(c->ass->Events.size());
-		events.assign(c->ass->Events.begin(), c->ass->Events.end());
+		events.reserve(SubsController::Live(c).Events.size());
+		events.assign(SubsController::Live(c).Events.begin(), SubsController::Live(c).Events.end());
 
 		UpdateActiveLine(c);
 		UpdateSelection(c);
@@ -119,16 +119,16 @@ struct SubsController::UndoInfo {
 
 	void Apply(agi::Context *c, HistoryRestore const& permission) const {
         if (permission.owner->context != c || !permission.owner->history_action ||
-            !permission.authority.Valid() || !c->subtitleEditGate.Authorizes(permission.revision) || c->ass->IsNotifying())
+            !permission.authority.Valid() || !c->subtitleEditGate.Authorizes(permission.revision) || SubsController::Live(c).IsNotifying())
             throw std::logic_error("Invalid subtitle history restoration authority");
 		// Keep old dialogue lines alive until after the commit is complete
 		// since a bunch of stuff holds references to them
 		AssFile old;
-		old.Events.swap(c->ass->Events);
-		c->ass->Info.clear();
-		c->ass->Attachments.clear();
-		c->ass->Styles.clear();
-		c->ass->Extradata.clear();
+		old.Events.swap(SubsController::Live(c).Events);
+		SubsController::Live(c).Info.clear();
+		SubsController::Live(c).Attachments.clear();
+		SubsController::Live(c).Styles.clear();
+		SubsController::Live(c).Extradata.clear();
 
 		sort(begin(selection), end(selection));
 
@@ -136,21 +136,21 @@ struct SubsController::UndoInfo {
         std::set<int> new_sel;
 
 		for (auto const& info : script_info)
-			c->ass->Info.push_back(*new AssInfo(info.first, info.second));
+			SubsController::Live(c).Info.push_back(*new AssInfo(info.first, info.second));
 		for (auto const& style : styles)
-			c->ass->Styles.push_back(*new AssStyle(style));
-		c->ass->Attachments = attachments;
+			SubsController::Live(c).Styles.push_back(*new AssStyle(style));
+		SubsController::Live(c).Attachments = attachments;
 		for (auto const& event : events) {
 			auto copy = new AssDialogue(event);
-			c->ass->Events.push_back(*copy);
+			SubsController::Live(c).Events.push_back(*copy);
 			if (copy->Id == active_line_id)
 				active = copy->Id;
 			if (binary_search(begin(selection), end(selection), copy->Id))
 				new_sel.insert(copy->Id);
 		}
-		c->ass->Extradata = extradata;
+		SubsController::Live(c).Extradata = extradata;
 
-		c->ass->Commit("", AssFile::COMMIT_NEW);
+		SubsController::Live(c).Commit("", AssFile::COMMIT_NEW);
 		c->selectionController->SetSelectionAndActiveIDs(std::move(new_sel), active);
 
 		c->textSelectionController->SetInsertionPoint(pos);
@@ -191,7 +191,7 @@ struct SubtitleModelInstallation::Pending {
     bool published=false;
     Pending(SubsController& owner, SubtitleModelCandidate&& candidate, agi::fs::path const& path)
     : retired(std::move(candidate.file)),
-      commits(owner.context->ass->AnnounceCommit.PrepareObservers()),
+      commits(owner.Live().AnnounceCommit.PrepareObservers()),
       selected_observers(owner.context->selectionController->AnnounceSelectedSetChanged.PrepareObservers()),
       active_observers(owner.context->selectionController->AnnounceActiveLineChanged.PrepareObservers()),
       selected(candidate.selected), active(candidate.active), old_active(owner.context->selectionController->ActiveID()),
@@ -230,7 +230,7 @@ void SubtitleModelInstallation::Begin() {
 }
 void SubtitleModelInstallation::Abort() noexcept {
     if (state==State::RecoveryBlocked || state==State::Committed) return;
-    owner.context->ass->installing=false;
+    owner.Live().installing=false;
     state=State::Aborting;pending.reset();expected.reset();
 }
 void SubtitleModelInstallation::Install(SubtitleModelCandidate&& candidate, agi::fs::path const& path) {
@@ -243,16 +243,16 @@ void SubtitleModelInstallation::Install(SubtitleModelCandidate&& candidate, agi:
         throw std::logic_error("Stale model installation input");
     auto session=c->subtitleEditGate.TryBeginComparison();
     if (!session) throw std::logic_error("Model installation requires no active writer or comparison");
-    c->ass->installing=true;
+    SubsController::Live(c).installing=true;
     pending->commits.Prepare();pending->selected_observers.Prepare();pending->active_observers.Prepare();
     if (cancelled || !c->subtitleEditGate.Authorizes(*expected) || metadata_revision!=c->subtitleAccess->MetadataRevision())
         throw std::logic_error("Model installation cancelled or changed during preparation");
     pending->batch=std::make_unique<agi::SubtitleRebindBatch>(std::move(*session),pending->retired,pending->names,true);
     state=State::Publishing;
-    c->ass->installing=true;
+    SubsController::Live(c).installing=true;
     try {
         pending->batch->PublishDocumentRevision();
-        c->ass->swap(*pending->retired);
+        SubsController::Live(c).swap(*pending->retired);
         owner.undo_stack.swap(pending->undo);owner.redo_stack.swap(pending->redo);
         owner.filename.swap(pending->filename);c->path->swap(pending->paths);
         std::swap(c->subtitleAccess->saved_metadata,pending->saved_metadata);
@@ -268,32 +268,32 @@ void SubtitleModelInstallation::Install(SubtitleModelCandidate&& candidate, agi:
         Confirm();
     }
     catch (...) {
-        c->ass->installing=false;state=State::RecoveryBlocked;throw;
+        SubsController::Live(c).installing=false;state=State::RecoveryBlocked;throw;
     }
-    c->ass->installing=false;
+    SubsController::Live(c).installing=false;
     if (state!=State::Committed) throw SubtitleModelRecoveryBlocked();
     pending.reset();
 }
 void SubtitleModelInstallation::Confirm() {
     state=State::Rebinding;
     auto c=owner.context;
-    bool previous=c->ass->notifying;c->ass->notifying=true;
+    bool previous=SubsController::Live(c).notifying;SubsController::Live(c).notifying=true;
     try {
         pending->commits.Dispatch(*pending->batch,0,AssFile::COMMIT_NEW,nullptr);
         c->selectionController->model_replaced=false;
         pending->selected_observers.Dispatch(*pending->batch,pending->selection_offset);
         pending->active_observers.Dispatch(*pending->batch,pending->active_offset);
     }
-    catch (...) {c->ass->notifying=previous;state=State::RecoveryBlocked;throw;}
-    c->ass->notifying=previous;
+    catch (...) {SubsController::Live(c).notifying=previous;state=State::RecoveryBlocked;throw;}
+    SubsController::Live(c).notifying=previous;
     state=pending->batch->Complete()?State::Committed:State::RecoveryBlocked;
 }
 bool SubtitleModelInstallation::Retry() {
     CheckThread();
     if (state!=State::RecoveryBlocked || !pending || !pending->published) throw std::logic_error("No published installation to recover");
-    state=State::Recovering;owner.context->ass->installing=true;
-    try {Confirm();} catch (...) {owner.context->ass->installing=false;state=State::RecoveryBlocked;throw;}
-    owner.context->ass->installing=false;
+    state=State::Recovering;owner.Live().installing=true;
+    try {Confirm();} catch (...) {owner.Live().installing=false;state=State::RecoveryBlocked;throw;}
+    owner.Live().installing=false;
     if (state!=State::Committed) return false;
     pending.reset();return true;
 }
@@ -301,9 +301,12 @@ std::vector<std::string> SubtitleModelInstallation::PendingObservers() const {
     CheckThread();return pending && pending->batch?pending->batch->Pending():std::vector<std::string>{};
 }
 
+AssFile& SubsController::Live(agi::Context const* c) noexcept { return *c->ass; }
+AssFile& SubsController::Live() const noexcept { return Live(context); }
+
 SubsController::SubsController(agi::Context *context)
 : context(context)
-, undo_connection(context->ass->PushState.Connect(&SubsController::OnCommit, this))
+, undo_connection(Live().PushState.Connect(&SubsController::OnCommit, this))
 , text_selection_connection(context->textSelectionController->AddSelectionListener(&SubsController::OnTextSelectionChanged, this))
 , autosave_queue(agi::dispatch::Create())
 {
@@ -438,7 +441,7 @@ void SubsController::Save(agi::fs::path const& filename, const char *encoding) {
 		saved_commit_id = old_saved_commit_id;
         this->filename = old_filename;
         context->path->SetToken("?script", old_script_path);
-        context->ass->Properties = std::move(old_properties);
+        Live().Properties = std::move(old_properties);
         context->subtitleAccess->saved_metadata = std::move(old_saved_metadata);
         autosaved_metadata_revision = old_auto_metadata;
 		throw;
@@ -532,7 +535,7 @@ void SubsController::RequestAutoSave() {
 bool SubsController::CanSave() const {
     if (IsInstalling() || context->subtitleEditGate.NeedsRebinding()) return false;
 	try {
-		return SubtitleFormat::GetWriter(filename)->CanSave(context->ass.get());
+		return SubtitleFormat::GetWriter(filename)->CanSave(&context->subtitleAccess->Read());
 	}
 	catch (...) {
 		return false;
@@ -574,11 +577,11 @@ void SubsController::OnCommit(AssFileCommit c) {
 	}
 
 	// Make sure the file has at least one style and one dialogue line
-	if (context->ass->Styles.empty())
-		context->ass->Styles.push_back(*new AssStyle);
-	if (context->ass->Events.empty()) {
-		context->ass->Events.push_back(*new AssDialogue);
-		context->ass->Events.back().Row = 0;
+	if (Live().Styles.empty())
+		Live().Styles.push_back(*new AssStyle);
+	if (Live().Events.empty()) {
+		Live().Events.push_back(*new AssDialogue);
+		Live().Events.back().Row = 0;
 	}
 
 	redo_stack.clear();
@@ -611,7 +614,7 @@ void SubsController::OnTextSelectionChanged() {
 }
 
 void SubsController::Undo() {
-    if (undo_stack.size() <= 1 || history_action || context->ass->IsNotifying()) return;
+    if (undo_stack.size() <= 1 || history_action || Live().IsNotifying()) return;
     auto edit_scope = context->subtitleAccess->TryWrite();
     if (!edit_scope) return;
     history_action = true;
@@ -627,7 +630,7 @@ void SubsController::Undo() {
 }
 
 void SubsController::Redo() {
-    if (redo_stack.empty() || history_action || context->ass->IsNotifying()) return;
+    if (redo_stack.empty() || history_action || Live().IsNotifying()) return;
     auto edit_scope = context->subtitleAccess->TryWrite();
     if (!edit_scope) return;
     history_action = true;
@@ -737,7 +740,7 @@ LuaSubtitlePublication SubsController::PrepareLuaPublication(LuaSubtitleTransact
     d.transaction.emplace(std::move(transaction));
     d.result = std::move(result);
     auto& gate = context->subtitleEditGate;
-    auto& live = *context->ass;
+    auto& live = Live();
     AssFile const& work = *d.transaction->work;
 
     auto current = [&] {
@@ -914,7 +917,7 @@ void SubsController::PublishLua(LuaSubtitlePublication&& publication, std::set<i
     if (!d->session || !gate.Authorizes(*d->session))
         throw LuaSubtitleRejected("The subtitles are being edited or compared");
 
-    auto& live = *context->ass;
+    auto& live = Live();
     auto& work = *d->transaction->work;
     // Throws before any change if the revision space is exhausted.
     d->session->AdvanceRevision();

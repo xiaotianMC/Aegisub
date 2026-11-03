@@ -52,6 +52,7 @@
 #include "dialog_styling_assistant.h"
 #include "dialog_translation.h"
 #include "dialogs.h"
+#include "../support/live_model_test_access.h"
 #include <wx/combobox.h>
 #include <wx/toolbar.h>
 #include <wx/evtloop.h>
@@ -125,8 +126,8 @@ protected:
             if (auto text = dynamic_cast<SubsTextEditCtrl*>(child)) editor = text;
         ASSERT_NE(nullptr, editor);
         auto write = c->subtitleAccess->TryWrite();
-        c->ass->LoadDefault(); c->ass->Commit("", AssFile::COMMIT_NEW);
-        auto line = &c->ass->Events.front();
+        LiveWriteForTest(*c).LoadDefault(); LiveWriteForTest(*c).Commit("", AssFile::COMMIT_NEW);
+        auto line = &LiveRead(*c).Events.front();
         c->selectionController->SetSelectionAndActiveIDs({line->Id}, line->Id);
     }
     void TearDown() override { delete window; c.reset(); }
@@ -140,26 +141,26 @@ protected:
     }
 };
 TEST_F(ordinary_edit, real_editor_text_event_is_gated_and_preserves_undo_granularity) {
-    auto id = c->ass->Events.front().Id;
+    auto id = LiveRead(*c).Events.front().Id;
     Input(" 中 文 {\\i1} ");
-    EXPECT_EQ(" 中 文 {\\i1} ", c->ass->Events.front().Text.get());
-    EXPECT_EQ(id, c->ass->Events.front().Id);
+    EXPECT_EQ(" 中 文 {\\i1} ", LiveRead(*c).Events.front().Text.get());
+    EXPECT_EQ(id, LiveRead(*c).Events.front().Id);
     EXPECT_FALSE(c->subsController->IsUndoStackEmpty());
-    auto before = c->ass->Events.front().Text.get();
+    auto before = LiveRead(*c).Events.front().Text.get();
     auto comparison = c->subtitleEditGate.TryBeginComparison(); ASSERT_TRUE(comparison);
     Input("blocked");
-    EXPECT_EQ(before, c->ass->Events.front().Text.get());
+    EXPECT_EQ(before, LiveRead(*c).Events.front().Text.get());
     EXPECT_EQ(before, editor->GetTextRaw().data());
     comparison.reset();
-    c->subsController->Undo(); EXPECT_EQ("", c->ass->Events.front().Text.get());
-    c->subsController->Redo(); EXPECT_EQ(before, c->ass->Events.front().Text.get());
+    c->subsController->Undo(); EXPECT_EQ("", LiveRead(*c).Events.front().Text.get());
+    c->subsController->Redo(); EXPECT_EQ(before, LiveRead(*c).Events.front().Text.get());
 }
 TEST_F(ordinary_edit, real_metadata_and_millisecond_time_events_share_multiline_write_lifetime) {
     {
         auto write=c->subtitleAccess->TryWrite();
-        auto other=new AssDialogue; c->ass->Events.push_back(*other);
-        c->ass->Commit("insert fixture", AssFile::COMMIT_DIAG_ADDREM);
-        c->selectionController->SetSelectedIDs({(c->ass->Events.front()).Id,other->Id});
+        auto other=new AssDialogue; LiveWriteForTest(*c).Events.push_back(*other);
+        LiveWriteForTest(*c).Commit("insert fixture", AssFile::COMMIT_DIAG_ADDREM);
+        c->selectionController->SetSelectedIDs({(LiveRead(*c).Events.front()).Id,other->Id});
     }
     TimeEdit *start=nullptr; wxSpinCtrl *layer=nullptr; wxComboBox *actor=nullptr;
     for (auto child:box->GetChildren()) {
@@ -175,14 +176,14 @@ TEST_F(ordinary_edit, real_metadata_and_millisecond_time_events_share_multiline_
     };
     start->SetTime(1001); send(start,0);
     send(layer,7); send(actor,0,"actor");
-    for(auto const& row:c->ass->Events) { EXPECT_EQ(1001,row.Start.GetMilliseconds()); EXPECT_EQ(7,row.Layer); EXPECT_EQ("actor",row.Actor.get()); }
+    for(auto const& row:LiveRead(*c).Events) { EXPECT_EQ(1001,row.Start.GetMilliseconds()); EXPECT_EQ(7,row.Layer); EXPECT_EQ("actor",row.Actor.get()); }
     auto comparison=c->subtitleEditGate.TryBeginComparison(); ASSERT_TRUE(comparison);
     start->SetTime(1002); send(start,0); send(layer,8); send(actor,0,"blocked");
-    for(auto const& row:c->ass->Events) { EXPECT_EQ(1001,row.Start.GetMilliseconds()); EXPECT_EQ(7,row.Layer); EXPECT_EQ("actor",row.Actor.get()); }
+    for(auto const& row:LiveRead(*c).Events) { EXPECT_EQ(1001,row.Start.GetMilliseconds()); EXPECT_EQ(7,row.Layer); EXPECT_EQ("actor",row.Actor.get()); }
 }
 TEST_F(ordinary_edit, grid_number_cell_direct_event_is_gated) {
     auto grid=new BaseGrid(window,c.get()); c->subsGrid=grid;
-    { auto write=c->subtitleAccess->TryWrite(); c->ass->Commit("",AssFile::COMMIT_NEW); }
+    { auto write=c->subtitleAccess->TryWrite(); LiveWriteForTest(*c).Commit("",AssFile::COMMIT_NEW); }
     wxFont font=*wxNORMAL_FONT; font.SetPointSize(OPT_GET("Subtitle/Grid/Font Size")->GetInt());
     auto face=FontFace("Subtitle/Grid"); if(!face.empty())font.SetFaceName(face);
     wxClientDC dc(grid); dc.SetFont(font);
@@ -190,42 +191,42 @@ TEST_F(ordinary_edit, grid_number_cell_direct_event_is_gated) {
         wxMouseEvent event(wxEVT_LEFT_DOWN); event.SetPosition({1,dc.GetCharHeight()+6});
         event.SetEventObject(grid); grid->GetEventHandler()->ProcessEvent(event);
     };
-    click(); EXPECT_TRUE(c->ass->Events.front().Comment);
+    click(); EXPECT_TRUE(LiveRead(*c).Events.front().Comment);
     auto comparison=c->subtitleEditGate.TryBeginComparison(); ASSERT_TRUE(comparison);
-    click(); EXPECT_TRUE(c->ass->Events.front().Comment);
-    comparison.reset(); click(); EXPECT_FALSE(c->ass->Events.front().Comment);
+    click(); EXPECT_TRUE(LiveRead(*c).Events.front().Comment);
+    comparison.reset(); click(); EXPECT_FALSE(LiveRead(*c).Events.front().Comment);
     c->subsGrid=nullptr;
 }
 TEST_F(ordinary_edit, paste_insert_delete_sort_and_history_restore_ids_order_and_selection) {
-    auto original=c->ass->Events.front().Id;
+    auto original=LiveRead(*c).Events.front().Id;
     cmd::PasteSubtitleLines(c.get(), "Dialogue: 0,0:00:02.001,0:00:03.002,Default,B,0,0,0,,second\nDialogue: 1,0:00:01.001,0:00:02.002,Default,A,0,0,0,,first");
-    ASSERT_EQ(3u,c->ass->Events.size());
+    ASSERT_EQ(3u,LiveRead(*c).Events.size());
     std::vector<int> pasted_ids;
-    for(auto const& row:c->ass->Events)pasted_ids.push_back(row.Id);
+    for(auto const& row:LiveRead(*c).Events)pasted_ids.push_back(row.Id);
     EXPECT_EQ(2u,c->selectionController->ReadSelectedSet().size());
     EXPECT_EQ(pasted_ids.front(),c->selectionController->ReadActiveLine()->Id);
-    c->subsController->Undo(); ASSERT_EQ(1u,c->ass->Events.size()); EXPECT_EQ(original,c->ass->Events.front().Id);
-    c->subsController->Redo(); ASSERT_EQ(3u,c->ass->Events.size());
-    std::vector<int> restored;for(auto const& row:c->ass->Events)restored.push_back(row.Id);
+    c->subsController->Undo(); ASSERT_EQ(1u,LiveRead(*c).Events.size()); EXPECT_EQ(original,LiveRead(*c).Events.front().Id);
+    c->subsController->Redo(); ASSERT_EQ(3u,LiveRead(*c).Events.size());
+    std::vector<int> restored;for(auto const& row:LiveRead(*c).Events)restored.push_back(row.Id);
     EXPECT_EQ(pasted_ids,restored); EXPECT_EQ(2u,c->selectionController->ReadSelectedSet().size());
     cmd::call("grid/sort/start/selected",c.get());
-    EXPECT_EQ("first",c->ass->Events.front().Text.get()); EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
-    cmd::call("edit/line/delete",c.get()); ASSERT_EQ(1u,c->ass->Events.size()); EXPECT_EQ(original,c->ass->Events.front().Id);
-    c->subsController->Undo(); EXPECT_EQ(3u,c->ass->Events.size());
-    cmd::call("subtitle/insert/before",c.get()); EXPECT_EQ(4u,c->ass->Events.size());
-    c->subsController->Undo(); EXPECT_EQ(3u,c->ass->Events.size());
+    EXPECT_EQ("first",LiveRead(*c).Events.front().Text.get()); EXPECT_EQ(1001,LiveRead(*c).Events.front().Start.GetMilliseconds());
+    cmd::call("edit/line/delete",c.get()); ASSERT_EQ(1u,LiveRead(*c).Events.size()); EXPECT_EQ(original,LiveRead(*c).Events.front().Id);
+    c->subsController->Undo(); EXPECT_EQ(3u,LiveRead(*c).Events.size());
+    cmd::call("subtitle/insert/before",c.get()); EXPECT_EQ(4u,LiveRead(*c).Events.size());
+    c->subsController->Undo(); EXPECT_EQ(3u,LiveRead(*c).Events.size());
 }
 TEST_F(ordinary_edit, binding_and_extradata_survive_undo_redo_and_blocked_public_entry) {
     cmd::PasteSubtitleLines(c.get(),"one\ntwo");
     BindSelectedSubtitles(c.get());
-    auto group=GetSubtitleBinding(*c->ass,c->ass->Events.front()); ASSERT_FALSE(group.empty());
-    auto extras=c->ass->Extradata.size();
-    c->subsController->Undo(); EXPECT_TRUE(GetSubtitleBinding(*c->ass,c->ass->Events.front()).empty());
-    c->subsController->Redo(); EXPECT_EQ(group,GetSubtitleBinding(*c->ass,c->ass->Events.front()));
+    auto group=GetSubtitleBinding(LiveRead(*c),LiveRead(*c).Events.front()); ASSERT_FALSE(group.empty());
+    auto extras=LiveRead(*c).Extradata.size();
+    c->subsController->Undo(); EXPECT_TRUE(GetSubtitleBinding(LiveRead(*c),LiveRead(*c).Events.front()).empty());
+    c->subsController->Redo(); EXPECT_EQ(group,GetSubtitleBinding(LiveRead(*c),LiveRead(*c).Events.front()));
     auto comparison=c->subtitleEditGate.TryBeginComparison(); ASSERT_TRUE(comparison);
-    UnbindSelectedSubtitles(c.get()); EXPECT_EQ(group,GetSubtitleBinding(*c->ass,c->ass->Events.front()));
-    EXPECT_EQ(extras,c->ass->Extradata.size()); comparison.reset();
-    UnbindSelectedSubtitles(c.get()); EXPECT_TRUE(GetSubtitleBinding(*c->ass,c->ass->Events.front()).empty());
+    UnbindSelectedSubtitles(c.get()); EXPECT_EQ(group,GetSubtitleBinding(LiveRead(*c),LiveRead(*c).Events.front()));
+    EXPECT_EQ(extras,LiveRead(*c).Extradata.size()); comparison.reset();
+    UnbindSelectedSubtitles(c.get()); EXPECT_TRUE(GetSubtitleBinding(LiveRead(*c),LiveRead(*c).Events.front()).empty());
 }
 TEST_F(ordinary_edit, nested_command_reuses_lease_and_commit_observers_cannot_edit_or_undo) {
     Input("keep");
@@ -233,50 +234,50 @@ TEST_F(ordinary_edit, nested_command_reuses_lease_and_commit_observers_cannot_ed
     cmd::call("edit/clear",c.get());
     EXPECT_EQ(generation+1,c->subtitleEditGate.Revision().generation); // Only Commit advanced it.
     bool visited=false;
-    agi::signal::Connection observer=c->ass->AddCommitListener([&](int,const AssDialogue*) {
+    agi::signal::Connection observer=LiveRead(*c).AddCommitListener([&](int,const AssDialogue*) {
         visited=true; cmd::call("edit/clear",c.get()); c->subsController->Undo();
     });
-    Input("notification"); EXPECT_TRUE(visited); EXPECT_EQ("notification",c->ass->Events.front().Text.get());
+    Input("notification"); EXPECT_TRUE(visited); EXPECT_EQ("notification",LiveRead(*c).Events.front().Text.get());
     outer.reset(); EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
 }
 TEST_F(ordinary_edit, undo_redo_reject_before_history_move_and_selection_notifications_cannot_reenter_history) {
     Input("one"); Input("two");
     auto comparison=c->subtitleEditGate.TryBeginComparison(); ASSERT_TRUE(comparison);
     auto description=c->subsController->GetUndoDescription();
-    c->subsController->Undo(); EXPECT_EQ("two",c->ass->Events.front().Text.get());
+    c->subsController->Undo(); EXPECT_EQ("two",LiveRead(*c).Events.front().Text.get());
     EXPECT_EQ(description,c->subsController->GetUndoDescription()); comparison.reset();
-    c->subsController->Undo(); EXPECT_EQ("one",c->ass->Events.front().Text.get());
+    c->subsController->Undo(); EXPECT_EQ("one",LiveRead(*c).Events.front().Text.get());
     comparison=c->subtitleEditGate.TryBeginComparison(); c->subsController->Redo();
-    EXPECT_EQ("one",c->ass->Events.front().Text.get()); comparison.reset();
+    EXPECT_EQ("one",LiveRead(*c).Events.front().Text.get()); comparison.reset();
     bool called=false;
     agi::signal::Connection selected=c->selectionController->AddSelectionListener([&] {
         called=true; c->subsController->Undo();
     });
-    c->subsController->Redo(); EXPECT_TRUE(called); EXPECT_EQ("two",c->ass->Events.front().Text.get());
+    c->subsController->Redo(); EXPECT_TRUE(called); EXPECT_EQ("two",LiveRead(*c).Events.front().Text.get());
 }
 TEST_F(ordinary_edit, saved_modified_flag_tracks_ordinary_undo_redo_without_changing_save_policy) {
     Input("saved baseline");
     { auto write=c->subtitleAccess->TryWrite();c->subsController->Save(agi::fs::path("ordinary-saved.ass")); }
     EXPECT_FALSE(c->subsController->IsModified());
     cmd::call("edit/clear",c.get()); EXPECT_TRUE(c->subsController->IsModified());
-    c->subsController->Undo(); EXPECT_FALSE(c->subsController->IsModified()); EXPECT_EQ("saved baseline",c->ass->Events.front().Text.get());
+    c->subsController->Undo(); EXPECT_FALSE(c->subsController->IsModified()); EXPECT_EQ("saved baseline",LiveRead(*c).Events.front().Text.get());
     c->subsController->Redo(); EXPECT_TRUE(c->subsController->IsModified());
     auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);
-    c->subsController->Undo();EXPECT_TRUE(c->subsController->IsModified());EXPECT_EQ("",c->ass->Events.front().Text.get());
+    c->subsController->Undo();EXPECT_TRUE(c->subsController->IsModified());EXPECT_EQ("",LiveRead(*c).Events.front().Text.get());
 }
 TEST_F(ordinary_edit, single_replacement_uses_real_engine_and_comparison_blocks_replace_all) {
     Input("alpha alpha");
     SearchReplaceSettings settings{}; settings.find="alpha";settings.replace_with="beta";
     settings.field=SearchReplaceSettings::Field::TEXT;settings.limit_to=SearchReplaceSettings::Limit::ALL;
     c->search->Configure(settings); c->textSelectionController->SetSelection(0,5);
-    EXPECT_TRUE(c->search->ReplaceNext()); EXPECT_EQ("beta alpha",c->ass->Events.front().Text.get());
+    EXPECT_TRUE(c->search->ReplaceNext()); EXPECT_EQ("beta alpha",LiveRead(*c).Events.front().Text.get());
     auto comparison=c->subtitleEditGate.TryBeginComparison(); ASSERT_TRUE(comparison);
     EXPECT_FALSE(c->search->ReplaceAll()); EXPECT_FALSE(c->search->ReplaceNext());
-    EXPECT_EQ("beta alpha",c->ass->Events.front().Text.get());
+    EXPECT_EQ("beta alpha",LiveRead(*c).Events.front().Text.get());
     comparison.reset();
     AcceptMessages messages;
-    EXPECT_TRUE(c->search->ReplaceAll()); EXPECT_EQ("beta beta",c->ass->Events.front().Text.get());
-    c->subsController->Undo(); EXPECT_EQ("beta alpha",c->ass->Events.front().Text.get());
+    EXPECT_TRUE(c->search->ReplaceAll()); EXPECT_EQ("beta beta",LiveRead(*c).Events.front().Text.get());
+    c->subsController->Undo(); EXPECT_EQ("beta alpha",LiveRead(*c).Events.front().Text.get());
 }
 TEST_F(ordinary_edit, canonical_unicode_find_is_readonly_and_returns_original_byte_offsets) {
     std::string original="x e\xCC\x81 {\\i1} e\xCC\x81 y"; Input(original);
@@ -285,55 +286,55 @@ TEST_F(ordinary_edit, canonical_unicode_find_is_readonly_and_returns_original_by
     settings.skip_tags=true; settings.match_case=true;
     auto comparison=c->subtitleEditGate.TryBeginComparison(); ASSERT_TRUE(comparison);
     auto revision=c->subtitleEditGate.Revision(); auto matcher=SearchReplaceEngine::GetMatcher(settings);
-    auto match=matcher(&c->ass->Events.front(),0); ASSERT_TRUE(match);
+    auto match=matcher(&LiveRead(*c).Events.front(),0); ASSERT_TRUE(match);
     EXPECT_EQ(2u,match.start); EXPECT_EQ(5u,match.end);
-    auto second=matcher(&c->ass->Events.front(),match.end); ASSERT_TRUE(second);
+    auto second=matcher(&LiveRead(*c).Events.front(),match.end); ASSERT_TRUE(second);
     EXPECT_EQ("e\xCC\x81",original.substr(second.start,second.end-second.start));
-    EXPECT_EQ(original,c->ass->Events.front().Text.get()); EXPECT_EQ(revision,c->subtitleEditGate.Revision());
+    EXPECT_EQ(original,LiveRead(*c).Events.front().Text.get()); EXPECT_EQ(revision,c->subtitleEditGate.Revision());
     comparison.reset(); c->search->Configure(settings); c->textSelectionController->SetSelection(2,5);
-    EXPECT_TRUE(c->search->ReplaceNext()); EXPECT_EQ("x Z {\\i1} e\xCC\x81 y",c->ass->Events.front().Text.get());
-    c->subsController->Undo(); EXPECT_EQ(original,c->ass->Events.front().Text.get());
+    EXPECT_TRUE(c->search->ReplaceNext()); EXPECT_EQ("x Z {\\i1} e\xCC\x81 y",LiveRead(*c).Events.front().Text.get());
+    c->subsController->Undo(); EXPECT_EQ(original,LiveRead(*c).Events.front().Text.get());
     settings.use_regex=true;settings.find="(\xC3\xA9)";settings.replace_with="[$1]";
     c->search->Configure(settings); AcceptMessages messages;
-    EXPECT_TRUE(c->search->ReplaceAll()); EXPECT_EQ("x [\xC3\xA9] {\\i1} [\xC3\xA9] y",c->ass->Events.front().Text.get());
+    EXPECT_TRUE(c->search->ReplaceAll()); EXPECT_EQ("x [\xC3\xA9] {\\i1} [\xC3\xA9] y",LiveRead(*c).Events.front().Text.get());
 }
 TEST_F(ordinary_edit, real_style_editor_apply_is_gated_and_new_styles_keep_undo_redo) {
     AcceptMessages messages;
     wxArrayString fonts; fonts.Add("Arial");
-    DialogStyleEditor dialog(window,c->ass->GetStyle("Default"),c.get(),nullptr,"Copied",fonts);
+    DialogStyleEditor dialog(window,LiveRead(*c).GetStyle("Default"),c.get(),nullptr,"Copied",fonts);
     auto comparison=c->subtitleEditGate.TryBeginComparison(); ASSERT_TRUE(comparison);
-    button(&dialog,wxID_APPLY); EXPECT_EQ(1u,c->ass->Styles.size()); EXPECT_EQ(nullptr,c->ass->GetStyle("Copied"));
+    button(&dialog,wxID_APPLY); EXPECT_EQ(1u,LiveRead(*c).Styles.size()); EXPECT_EQ(nullptr,LiveRead(*c).GetStyle("Copied"));
     comparison.reset(); button(&dialog,wxID_APPLY);
-    ASSERT_NE(nullptr,c->ass->GetStyle("Copied")); EXPECT_EQ(2u,c->ass->Styles.size());
-    auto style=c->ass->GetStyle("Copied");
-    button(&dialog,wxID_APPLY); EXPECT_EQ(style,c->ass->GetStyle("Copied")); // Apply again updates, no duplicate.
-    c->subsController->Undo(); EXPECT_EQ(2u,c->ass->Styles.size());
-    c->subsController->Undo(); EXPECT_EQ(nullptr,c->ass->GetStyle("Copied"));
-    c->subsController->Redo(); EXPECT_NE(nullptr,c->ass->GetStyle("Copied"));
+    ASSERT_NE(nullptr,LiveRead(*c).GetStyle("Copied")); EXPECT_EQ(2u,LiveRead(*c).Styles.size());
+    auto style=LiveRead(*c).GetStyle("Copied");
+    button(&dialog,wxID_APPLY); EXPECT_EQ(style,LiveRead(*c).GetStyle("Copied")); // Apply again updates, no duplicate.
+    c->subsController->Undo(); EXPECT_EQ(2u,LiveRead(*c).Styles.size());
+    c->subsController->Undo(); EXPECT_EQ(nullptr,LiveRead(*c).GetStyle("Copied"));
+    c->subsController->Redo(); EXPECT_NE(nullptr,LiveRead(*c).GetStyle("Copied"));
 }
 TEST_F(ordinary_edit, style_editor_rejects_stale_live_style_after_another_edit) {
     AcceptMessages messages; wxArrayString fonts; fonts.Add("Arial");
-    DialogStyleEditor dialog(window,c->ass->GetStyle("Default"),c.get(),nullptr,"",fonts);
+    DialogStyleEditor dialog(window,LiveRead(*c).GetStyle("Default"),c.get(),nullptr,"",fonts);
     Input("changed elsewhere"); auto revision=c->subsController->GetUndoDescription();
     button(&dialog,wxID_APPLY);
-    EXPECT_EQ(revision,c->subsController->GetUndoDescription()); EXPECT_EQ(1u,c->ass->Styles.size());
+    EXPECT_EQ(revision,c->subsController->GetUndoDescription()); EXPECT_EQ(1u,LiveRead(*c).Styles.size());
 }
 TEST_F(ordinary_edit, script_properties_event_rejects_comparison_and_preserves_undo) {
-    auto original=std::string(c->ass->GetScriptInfo("Title"));
+    auto original=std::string(LiveRead(*c).GetScriptInfo("Title"));
     RunModal hook("Script Properties",[&](wxDialog* dialog) {
         wxTextCtrl* title=nullptr;
         for(auto child:descendants(dialog))if(auto text=dynamic_cast<wxTextCtrl*>(child)){title=text;break;}
         ASSERT_NE(nullptr,title);title->ChangeValue("isolated title");button(dialog,wxID_OK);
     });
     auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);
-    ShowPropertiesDialog(c.get());EXPECT_EQ(original,c->ass->GetScriptInfo("Title"));comparison.reset();
-    ShowPropertiesDialog(c.get());EXPECT_EQ("isolated title",c->ass->GetScriptInfo("Title"));
-    c->subsController->Undo();EXPECT_EQ(original,c->ass->GetScriptInfo("Title"));
+    ShowPropertiesDialog(c.get());EXPECT_EQ(original,LiveRead(*c).GetScriptInfo("Title"));comparison.reset();
+    ShowPropertiesDialog(c.get());EXPECT_EQ("isolated title",LiveRead(*c).GetScriptInfo("Title"));
+    c->subsController->Undo();EXPECT_EQ(original,LiveRead(*c).GetScriptInfo("Title"));
 }
 TEST_F(ordinary_edit, attachment_delete_event_is_gated_and_undo_restores_content) {
     std::ofstream data("attachment.ttf",std::ios::binary);data << "attachment fixture";data.close();
-    { auto write=c->subtitleAccess->TryWrite();c->ass->InsertAttachment(agi::fs::path("attachment.ttf"));c->ass->Commit("attachment",AssFile::COMMIT_ATTACHMENT); }
-    auto original=c->ass->Attachments.front().GetEntryData();
+    { auto write=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).InsertAttachment(agi::fs::path("attachment.ttf"));LiveWriteForTest(*c).Commit("attachment",AssFile::COMMIT_ATTACHMENT); }
+    auto original=LiveRead(*c).Attachments.front().GetEntryData();
     RunModal hook("Attachment List",[&](wxDialog* dialog) {
         wxListView* list=nullptr;wxButton* remove=nullptr;
         for(auto child:descendants(dialog)) {
@@ -344,9 +345,9 @@ TEST_F(ordinary_edit, attachment_delete_event_is_gated_and_undo_restores_content
         wxCommandEvent event(wxEVT_BUTTON,remove->GetId());event.SetEventObject(remove);remove->GetEventHandler()->ProcessEvent(event);
     });
     auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);
-    ShowAttachmentsDialog(c.get());EXPECT_EQ(1u,c->ass->Attachments.size());comparison.reset();
-    ShowAttachmentsDialog(c.get());EXPECT_TRUE(c->ass->Attachments.empty());
-    c->subsController->Undo();ASSERT_EQ(1u,c->ass->Attachments.size());EXPECT_EQ(original,c->ass->Attachments.front().GetEntryData());
+    ShowAttachmentsDialog(c.get());EXPECT_EQ(1u,LiveRead(*c).Attachments.size());comparison.reset();
+    ShowAttachmentsDialog(c.get());EXPECT_TRUE(LiveRead(*c).Attachments.empty());
+    c->subsController->Undo();ASSERT_EQ(1u,LiveRead(*c).Attachments.size());EXPECT_EQ(original,LiveRead(*c).Attachments.front().GetEntryData());
 }
 TEST_F(ordinary_edit, real_style_import_and_delete_preserve_unrelated_data_and_history) {
     class ImportDialogs : public wxModalDialogHook {
@@ -367,9 +368,9 @@ TEST_F(ordinary_edit, real_style_import_and_delete_preserve_unrelated_data_and_h
     data << "[Script Info]\nScriptType: v4.00+\n[V4+ Styles]\n" << replaced.GetEntryData() << '\n' << imported.GetEntryData() << '\n'; data.close();
     std::ofstream attachment("attachment.ttf",std::ios::binary);attachment << "fixture attachment";attachment.close();
     {
-        auto write=c->subtitleAccess->TryWrite();c->ass->InsertAttachment(agi::fs::path("attachment.ttf"));
-        auto extra=c->ass->AddExtradata("opaque","retained"); c->ass->Events.front().ExtradataIds=std::vector<uint32_t>{extra};
-        c->ass->Commit("fixture metadata",AssFile::COMMIT_ATTACHMENT|AssFile::COMMIT_EXTRADATA);
+        auto write=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).InsertAttachment(agi::fs::path("attachment.ttf"));
+        auto extra=LiveWriteForTest(*c).AddExtradata("opaque","retained"); LiveWriteForTest(*c).Events.front().ExtradataIds=std::vector<uint32_t>{extra};
+        LiveWriteForTest(*c).Commit("fixture metadata",AssFile::COMMIT_ATTACHMENT|AssFile::COMMIT_EXTRADATA);
     }
     ShowStyleManagerDialog(c.get());
     wxDialog* manager=nullptr;
@@ -391,25 +392,25 @@ TEST_F(ordinary_edit, real_style_import_and_delete_preserve_unrelated_data_and_h
     auto path=std::filesystem::absolute("styles.ass").wstring(); ImportDialogs dialogs{wxString(path)};
     auto click=[](wxWindow* control) { wxCommandEvent event(wxEVT_BUTTON,control->GetId());event.SetEventObject(control);control->GetEventHandler()->ProcessEvent(event); };
     auto comparison=c->subtitleEditGate.TryBeginComparison(); ASSERT_TRUE(comparison);
-    click(import);EXPECT_EQ(0,dialogs.files);EXPECT_EQ(1u,c->ass->Styles.size());comparison.reset();
-    click(import);ASSERT_NE(nullptr,c->ass->GetStyle("Imported"));EXPECT_EQ(72.,c->ass->GetStyle("Imported")->fontsize);
-    EXPECT_EQ(70.,c->ass->GetStyle("Default")->fontsize);EXPECT_EQ(1,dialogs.files);
-    EXPECT_EQ(1u,c->ass->Attachments.size());EXPECT_EQ("retained",c->ass->Extradata.front().value);
+    click(import);EXPECT_EQ(0,dialogs.files);EXPECT_EQ(1u,LiveRead(*c).Styles.size());comparison.reset();
+    click(import);ASSERT_NE(nullptr,LiveRead(*c).GetStyle("Imported"));EXPECT_EQ(72.,LiveRead(*c).GetStyle("Imported")->fontsize);
+    EXPECT_EQ(70.,LiveRead(*c).GetStyle("Default")->fontsize);EXPECT_EQ(1,dialogs.files);
+    EXPECT_EQ(1u,LiveRead(*c).Attachments.size());EXPECT_EQ("retained",LiveRead(*c).Extradata.front().value);
     current->DeselectAll();current->SetStringSelection("Default");click(down);
-    EXPECT_EQ("Imported",c->ass->Styles.front().name);c->subsController->Undo();
-    EXPECT_EQ("Default",c->ass->Styles.front().name);click(sort);c->subsController->Undo();
+    EXPECT_EQ("Imported",LiveRead(*c).Styles.front().name);c->subsController->Undo();
+    EXPECT_EQ("Default",LiveRead(*c).Styles.front().name);click(sort);c->subsController->Undo();
     current->DeselectAll();current->SetStringSelection("Imported");
-    comparison=c->subtitleEditGate.TryBeginComparison();click(remove);EXPECT_NE(nullptr,c->ass->GetStyle("Imported"));comparison.reset();
-    click(remove);EXPECT_EQ(nullptr,c->ass->GetStyle("Imported"));
-    c->subsController->Undo();EXPECT_NE(nullptr,c->ass->GetStyle("Imported"));
-    c->subsController->Undo();EXPECT_EQ(nullptr,c->ass->GetStyle("Imported"));EXPECT_EQ(48.,c->ass->GetStyle("Default")->fontsize);
-    c->subsController->Redo();EXPECT_NE(nullptr,c->ass->GetStyle("Imported"));
-    EXPECT_EQ(1u,c->ass->Attachments.size());EXPECT_EQ("retained",c->ass->Extradata.front().value);
+    comparison=c->subtitleEditGate.TryBeginComparison();click(remove);EXPECT_NE(nullptr,LiveRead(*c).GetStyle("Imported"));comparison.reset();
+    click(remove);EXPECT_EQ(nullptr,LiveRead(*c).GetStyle("Imported"));
+    c->subsController->Undo();EXPECT_NE(nullptr,LiveRead(*c).GetStyle("Imported"));
+    c->subsController->Undo();EXPECT_EQ(nullptr,LiveRead(*c).GetStyle("Imported"));EXPECT_EQ(48.,LiveRead(*c).GetStyle("Default")->fontsize);
+    c->subsController->Redo();EXPECT_NE(nullptr,LiveRead(*c).GetStyle("Imported"));
+    EXPECT_EQ(1u,LiveRead(*c).Attachments.size());EXPECT_EQ("retained",LiveRead(*c).Extradata.front().value);
 }
 
 TEST_F(ordinary_edit, all_migrated_command_operators_reject_comparison_before_any_model_or_history_change) {
     Input("unchanged");
-    auto id=c->ass->Events.front().Id;
+    auto id=LiveRead(*c).Events.front().Id;
     auto description=c->subsController->GetUndoDescription();
     auto comparison=c->subtitleEditGate.TryBeginComparison(); ASSERT_TRUE(comparison);
     char const* commands[] = {
@@ -487,12 +488,12 @@ TEST_F(ordinary_edit, all_migrated_command_operators_reject_comparison_before_an
     };
     for(auto name:commands) {
         SCOPED_TRACE(name); (*cmd::get(name))(c.get());
-        EXPECT_EQ(1u,c->ass->Events.size()); EXPECT_EQ(id,c->ass->Events.front().Id);
-        EXPECT_EQ("unchanged",c->ass->Events.front().Text.get());
+        EXPECT_EQ(1u,LiveRead(*c).Events.size()); EXPECT_EQ(id,LiveRead(*c).Events.front().Id);
+        EXPECT_EQ("unchanged",LiveRead(*c).Events.front().Text.get());
         EXPECT_EQ(description,c->subsController->GetUndoDescription());
         EXPECT_EQ(id,c->selectionController->ReadActiveLine()->Id);
     }
-    cmd::PasteSubtitleLines(c.get(),"blocked\nblocked"); EXPECT_EQ(1u,c->ass->Events.size());
+    cmd::PasteSubtitleLines(c.get(),"blocked\nblocked"); EXPECT_EQ(1u,LiveRead(*c).Events.size());
 }
 
 class audio_edit : public ordinary_edit {
@@ -508,9 +509,9 @@ protected:
         OPT_SET("Audio/Inactive Lines Display Mode")->SetInt(0);
         OPT_SET("Timing/Link Adjacent Lines")->SetBool(false);
         auto write=c->subtitleAccess->TryWrite();
-        auto& row=c->ass->Events.front();row.Start=1001;row.End=2002;
+        auto& row=LiveWriteForTest(*c).Events.front();row.Start=1001;row.End=2002;
         row.Text="{\\k50}ab{\\k50}cd";
-        c->ass->Commit("audio fixture",AssFile::COMMIT_NEW);
+        LiveWriteForTest(*c).Commit("audio fixture",AssFile::COMMIT_NEW);
         c->audioController->SetTimingController(CreateDialogueTimingController(c.get()));
     }
     void TearDown() override {
@@ -518,7 +519,7 @@ protected:
         ordinary_edit::TearDown();
     }
     void Karaoke() {
-        SetKaraokeLine(karaoke,&c->ass->Events.front(),true);
+        SetKaraokeLine(karaoke,&LiveRead(*c).Events.front(),true);
         c->audioController->SetTimingController(CreateKaraokeTimingController(c.get(),&karaoke,file_slot));
     }
     AudioDisplay* Display() {
@@ -539,7 +540,7 @@ TEST_F(audio_edit, dialogue_manual_drag_cancel_never_writes_or_adds_history) {
     ASSERT_TRUE(Timing()->BeginDrag());
     auto markers=Timing()->OnLeftClick(1001,false,false,5,0);ASSERT_EQ(1u,markers.size());
     Timing()->OnMarkerDrag(markers,1103,0);
-    EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
+    EXPECT_EQ(1001,LiveRead(*c).Events.front().Start.GetMilliseconds());
     EXPECT_FALSE(c->subtitleEditGate.TryBeginComparison());
     Timing()->EndDrag(true);
     EXPECT_TRUE(token.expired());
@@ -548,13 +549,13 @@ TEST_F(audio_edit, dialogue_manual_drag_cancel_never_writes_or_adds_history) {
     EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
 }
 TEST_F(audio_edit, dialogue_manual_commit_and_history_preserve_exact_milliseconds_and_identity) {
-    auto id=c->ass->Events.front().Id;
+    auto id=LiveRead(*c).Events.front().Id;
     Timing()->ModifyStart(1);Timing()->Commit();
-    EXPECT_EQ(1011,c->ass->Events.front().Start.GetMilliseconds());
-    EXPECT_EQ(2002,c->ass->Events.front().End.GetMilliseconds());
-    c->subsController->Undo();EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
-    c->subsController->Redo();EXPECT_EQ(1011,c->ass->Events.front().Start.GetMilliseconds());
-    EXPECT_EQ(id,c->ass->Events.front().Id);
+    EXPECT_EQ(1011,LiveRead(*c).Events.front().Start.GetMilliseconds());
+    EXPECT_EQ(2002,LiveRead(*c).Events.front().End.GetMilliseconds());
+    c->subsController->Undo();EXPECT_EQ(1001,LiveRead(*c).Events.front().Start.GetMilliseconds());
+    c->subsController->Redo();EXPECT_EQ(1011,LiveRead(*c).Events.front().Start.GetMilliseconds());
+    EXPECT_EQ(id,LiveRead(*c).Events.front().Id);
     EXPECT_EQ(id,c->selectionController->ReadActiveLine()->Id);
 }
 TEST_F(audio_edit, continuous_autocommit_drag_keeps_marker_borrow_and_coalesces_undo) {
@@ -566,34 +567,34 @@ TEST_F(audio_edit, continuous_autocommit_drag_keeps_marker_borrow_and_coalesces_
     EXPECT_FALSE(token.expired());EXPECT_FALSE(c->subtitleEditGate.TryBeginComparison());
     OPT_SET("Audio/Auto/Commit")->SetBool(false); // preference changed during a completed auto drag
     Timing()->EndDrag(false);EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
-    EXPECT_EQ(1101,c->ass->Events.front().Start.GetMilliseconds());
-    c->subsController->Undo();EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
+    EXPECT_EQ(1101,LiveRead(*c).Events.front().Start.GetMilliseconds());
+    c->subsController->Undo();EXPECT_EQ(1001,LiveRead(*c).Events.front().Start.GetMilliseconds());
     EXPECT_EQ("audio fixture",c->subsController->GetUndoDescription());
-    c->subsController->Redo();EXPECT_EQ(1101,c->ass->Events.front().Start.GetMilliseconds());
+    c->subsController->Redo();EXPECT_EQ(1101,LiveRead(*c).Events.front().Start.GetMilliseconds());
 }
 TEST_F(audio_edit, selection_change_invalidates_markers_and_releases_pending_task) {
     AssDialogue* next;
     {auto write=c->subtitleAccess->TryWrite();next=new AssDialogue;
-     next->Start=3001;next->End=4002;c->ass->Events.push_back(*next);c->ass->Commit("audio fixture",AssFile::COMMIT_NEW);}
+     next->Start=3001;next->End=4002;LiveWriteForTest(*c).Events.push_back(*next);LiveWriteForTest(*c).Commit("audio fixture",AssFile::COMMIT_NEW);}
     ASSERT_TRUE(Timing()->BeginDrag());
     auto markers=Timing()->OnLeftClick(1001,false,false,5,0);auto token=Timing()->MarkerLifetime();
     Timing()->OnMarkerDrag(markers,1111,0);
     c->selectionController->SetSelectionAndActiveIDs({next->Id}, next->Id);
     EXPECT_TRUE(token.expired());EXPECT_EQ(3001,Timing()->GetActiveLineRange().begin());
-    EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
+    EXPECT_EQ(1001,LiveRead(*c).Events.front().Start.GetMilliseconds());
     EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
 }
 TEST_F(audio_edit, multiple_selected_rows_share_pending_lifetime_and_undo) {
     AssDialogue* next;
     {auto write=c->subtitleAccess->TryWrite();next=new AssDialogue;
-     next->Start=3001;next->End=4002;c->ass->Events.push_back(*next);c->ass->Commit("audio fixture",AssFile::COMMIT_NEW);
-     c->selectionController->SetSelectedIDs({(c->ass->Events.front()).Id,next->Id});}
+     next->Start=3001;next->End=4002;LiveWriteForTest(*c).Events.push_back(*next);LiveWriteForTest(*c).Commit("audio fixture",AssFile::COMMIT_NEW);
+     c->selectionController->SetSelectedIDs({(LiveRead(*c).Events.front()).Id,next->Id});}
     ASSERT_TRUE(Timing()->BeginDrag());
     auto markers=Timing()->OnRightClick(4503,false,0,0);ASSERT_EQ(2u,markers.size());
     Timing()->EndDrag(false);Timing()->Commit();
-    for(auto const& row:c->ass->Events)EXPECT_EQ(4503,row.End.GetMilliseconds());
-    c->subsController->Undo();EXPECT_EQ(2002,c->ass->Events.front().End.GetMilliseconds());
-    EXPECT_EQ(4002,c->ass->Events.back().End.GetMilliseconds());
+    for(auto const& row:LiveRead(*c).Events)EXPECT_EQ(4503,row.End.GetMilliseconds());
+    c->subsController->Undo();EXPECT_EQ(2002,LiveRead(*c).Events.front().End.GetMilliseconds());
+    EXPECT_EQ(4002,LiveRead(*c).Events.back().End.GetMilliseconds());
     EXPECT_EQ(2u,c->selectionController->ReadSelectedSet().size());
 }
 TEST_F(audio_edit, comparison_rejects_dialogue_and_karaoke_cache_changes) {
@@ -606,40 +607,40 @@ TEST_F(audio_edit, comparison_rejects_dialogue_and_karaoke_cache_changes) {
     auto text=karaoke.GetText();original=Timing()->GetActiveLineRange();
     EXPECT_FALSE(Timing()->BeginDrag());Timing()->AddLeadIn();Timing()->ModifyLength(1,false);Timing()->Commit();
     EXPECT_EQ(text,karaoke.GetText());EXPECT_EQ(original.begin(),Timing()->GetActiveLineRange().begin());
-    EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
+    EXPECT_EQ(1001,LiveRead(*c).Events.front().Start.GetMilliseconds());
 }
 TEST_F(audio_edit, karaoke_lead_is_staged_cancelled_then_committed_with_undo) {
-    Karaoke();auto text=c->ass->Events.front().Text.get();
+    Karaoke();auto text=LiveRead(*c).Events.front().Text.get();
     auto lead=OPT_GET("Audio/Lead/IN")->GetInt();
-    Timing()->AddLeadIn();EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
-    EXPECT_EQ(text,c->ass->Events.front().Text.get());EXPECT_FALSE(c->subtitleEditGate.TryBeginComparison());
+    Timing()->AddLeadIn();EXPECT_EQ(1001,LiveRead(*c).Events.front().Start.GetMilliseconds());
+    EXPECT_EQ(text,LiveRead(*c).Events.front().Text.get());EXPECT_FALSE(c->subtitleEditGate.TryBeginComparison());
     Timing()->Revert();EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
     EXPECT_EQ("audio fixture",c->subsController->GetUndoDescription());
     Timing()->AddLeadIn();Timing()->Commit();
-    EXPECT_EQ(1001-lead,c->ass->Events.front().Start.GetMilliseconds());
-    EXPECT_EQ(2002,c->ass->Events.front().End.GetMilliseconds());
-    c->subsController->Undo();EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
-    EXPECT_EQ(text,c->ass->Events.front().Text.get());
-    c->subsController->Redo();EXPECT_EQ(1001-lead,c->ass->Events.front().Start.GetMilliseconds());
+    EXPECT_EQ(1001-lead,LiveRead(*c).Events.front().Start.GetMilliseconds());
+    EXPECT_EQ(2002,LiveRead(*c).Events.front().End.GetMilliseconds());
+    c->subsController->Undo();EXPECT_EQ(1001,LiveRead(*c).Events.front().Start.GetMilliseconds());
+    EXPECT_EQ(text,LiveRead(*c).Events.front().Text.get());
+    c->subsController->Redo();EXPECT_EQ(1001-lead,LiveRead(*c).Events.front().Start.GetMilliseconds());
 }
 TEST_F(audio_edit, karaoke_drag_and_controller_switch_cancel_pending_cache) {
-    Karaoke();auto text=c->ass->Events.front().Text.get();
+    Karaoke();auto text=LiveRead(*c).Events.front().Text.get();
     ASSERT_TRUE(Timing()->BeginDrag());
     auto markers=Timing()->OnLeftClick(1500,false,false,10,0);ASSERT_EQ(1u,markers.size());
     auto token=Timing()->MarkerLifetime();Timing()->OnMarkerDrag(markers,1600,0);
-    EXPECT_NE(text,karaoke.GetText());EXPECT_EQ(text,c->ass->Events.front().Text.get());
+    EXPECT_NE(text,karaoke.GetText());EXPECT_EQ(text,LiveRead(*c).Events.front().Text.get());
     c->audioController->SetTimingController(CreateDialogueTimingController(c.get()));
-    EXPECT_TRUE(token.expired());EXPECT_EQ(text,c->ass->Events.front().Text.get());
+    EXPECT_TRUE(token.expired());EXPECT_EQ(text,LiveRead(*c).Events.front().Text.get());
     EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
 }
 TEST_F(audio_edit, real_wx_audio_drag_release_and_destroyed_controller_borrow) {
     auto display=Display();
     Mouse(display,wxEVT_LEFT_DOWN,1001,true);EXPECT_TRUE(display->HasCapture());
     Mouse(display,wxEVT_MOTION,1200,true);
-    EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
+    EXPECT_EQ(1001,LiveRead(*c).Events.front().Start.GetMilliseconds());
     EXPECT_FALSE(c->subtitleEditGate.TryBeginComparison());
     Mouse(display,wxEVT_LEFT_UP,1200);
-    Timing()->Commit();EXPECT_GT(c->ass->Events.front().Start.GetMilliseconds(),1100);
+    Timing()->Commit();EXPECT_GT(LiveRead(*c).Events.front().Start.GetMilliseconds(),1100);
     Mouse(display,wxEVT_LEFT_DOWN,1200,true);
     auto token=Timing()->MarkerLifetime();
     c->audioController->SetTimingController(CreateDialogueTimingController(c.get()));
@@ -651,7 +652,7 @@ TEST_F(audio_edit, real_wx_audio_drag_release_and_destroyed_controller_borrow) {
 TEST_F(audio_edit, real_wx_display_destruction_discards_uncommitted_drag) {
     auto display=Display();Mouse(display,wxEVT_LEFT_DOWN,1001,true);
     Mouse(display,wxEVT_MOTION,1200,true);delete display;
-    EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
+    EXPECT_EQ(1001,LiveRead(*c).Events.front().Start.GetMilliseconds());
     EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
     EXPECT_EQ("audio fixture",c->subsController->GetUndoDescription());c->project->CloseAudio();
 }
@@ -661,15 +662,15 @@ TEST_F(audio_edit, real_wx_drag_exception_releases_task_and_capture) {
     EXPECT_THROW(Mouse(display,wxEVT_MOTION,1200,true),std::runtime_error);
     EXPECT_FALSE(display->HasCapture());
     EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
-    EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
+    EXPECT_EQ(1001,LiveRead(*c).Events.front().Start.GetMilliseconds());
     observer.Disconnect();c->project->CloseAudio();
 }
 TEST_F(audio_edit, stale_revision_missing_target_and_document_change_never_write_back) {
     AudioEditSession edit(c.get());ASSERT_TRUE(edit.Begin());
-    auto row=c->ass->Events.front(); // independent AssDialogue copy
-    {auto scope=c->subtitleAccess->TryWrite();c->ass->Events.front().Start=1002;c->ass->Commit("other",AssFile::COMMIT_DIAG_TIME);}
+    auto row=LiveRead(*c).Events.front(); // independent AssDialogue copy
+    {auto scope=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).Events.front().Start=1002;LiveWriteForTest(*c).Commit("other",AssFile::COMMIT_DIAG_TIME);}
     EXPECT_FALSE(edit.Begin());
-    EXPECT_EQ(1002,c->ass->Events.front().Start.GetMilliseconds());
+    EXPECT_EQ(1002,LiveRead(*c).Events.front().Start.GetMilliseconds());
     edit.Refresh();ASSERT_TRUE(edit.Begin());
     row.Id+=100000;
     EXPECT_THROW(edit.Update({row}),std::invalid_argument);
@@ -678,9 +679,9 @@ TEST_F(audio_edit, stale_revision_missing_target_and_document_change_never_write
 }
 TEST_F(audio_edit, outer_time_command_scope_is_reused_without_spurious_stale_rejection) {
     (*cmd::get("time/lead/in"))(c.get());
-    EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
+    EXPECT_EQ(1001,LiveRead(*c).Events.front().Start.GetMilliseconds());
     EXPECT_LT(Timing()->GetActiveLineRange().begin(),1001);
-    Timing()->Commit();EXPECT_LT(c->ass->Events.front().Start.GetMilliseconds(),1001);
+    Timing()->Commit();EXPECT_LT(LiveRead(*c).Events.front().Start.GetMilliseconds(),1001);
     EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
 }
 
@@ -698,22 +699,22 @@ TEST_F(audio_edit, real_karaoke_split_buttons_cancel_apply_and_rebuild_after_his
     ASSERT_NE(nullptr,panel);ASSERT_NE(nullptr,accept);ASSERT_NE(nullptr,cancel);
     panel->SetSize(0,0,600,35);
     auto click=[&] {wxMouseEvent event(wxEVT_LEFT_DOWN);event.SetPosition({25,10});event.SetEventObject(panel);panel->GetEventHandler()->ProcessEvent(event);};
-    auto text=c->ass->Events.front().Text.get();
+    auto text=LiveRead(*c).Events.front().Text.get();
     click();EXPECT_TRUE(cancel->IsEnabled());EXPECT_FALSE(c->subtitleEditGate.TryBeginComparison());
-    EXPECT_EQ(text,c->ass->Events.front().Text.get());
+    EXPECT_EQ(text,LiveRead(*c).Events.front().Text.get());
     button(cancel,cancel->GetId());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
-    EXPECT_EQ(text,c->ass->Events.front().Text.get());
+    EXPECT_EQ(text,LiveRead(*c).Events.front().Text.get());
     auto token=Timing()->MarkerLifetime();
     click();button(accept,accept->GetId());
-    EXPECT_NE(text,c->ass->Events.front().Text.get());EXPECT_TRUE(token.expired());
-    auto changed=c->ass->Events.front().Text.get();
-    EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
-    EXPECT_EQ(2002,c->ass->Events.front().End.GetMilliseconds());
-    c->subsController->Undo();EXPECT_EQ(text,c->ass->Events.front().Text.get());
-    c->subsController->Redo();EXPECT_EQ(changed,c->ass->Events.front().Text.get());
+    EXPECT_NE(text,LiveRead(*c).Events.front().Text.get());EXPECT_TRUE(token.expired());
+    auto changed=LiveRead(*c).Events.front().Text.get();
+    EXPECT_EQ(1001,LiveRead(*c).Events.front().Start.GetMilliseconds());
+    EXPECT_EQ(2002,LiveRead(*c).Events.front().End.GetMilliseconds());
+    c->subsController->Undo();EXPECT_EQ(text,LiveRead(*c).Events.front().Text.get());
+    c->subsController->Redo();EXPECT_EQ(changed,LiveRead(*c).Events.front().Text.get());
     auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);
     click();button(accept,accept->GetId());
-    EXPECT_EQ(changed,c->ass->Events.front().Text.get());
+    EXPECT_EQ(changed,LiveRead(*c).Events.front().Text.get());
     comparison.reset();c->project->CloseAudio();
 }
 TEST_F(audio_edit, audio_source_close_invalidates_active_drag_and_releases_registration) {
@@ -722,19 +723,19 @@ TEST_F(audio_edit, audio_source_close_invalidates_active_drag_and_releases_regis
     c->project->CloseAudio();
     EXPECT_TRUE(token.expired());EXPECT_FALSE(display->HasCapture());
     EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
-    EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
+    EXPECT_EQ(1001,LiveRead(*c).Events.front().Start.GetMilliseconds());
 }
 TEST_F(audio_edit, linked_neighbor_is_authorized_and_restored_by_undo) {
     {auto write=c->subtitleAccess->TryWrite();auto other=new AssDialogue;
-     other->Start=2002;other->End=3003;c->ass->Events.push_back(*other);c->ass->Commit("audio fixture",AssFile::COMMIT_DIAG_ADDREM);}
+     other->Start=2002;other->End=3003;LiveWriteForTest(*c).Events.push_back(*other);LiveWriteForTest(*c).Commit("audio fixture",AssFile::COMMIT_DIAG_ADDREM);}
     OPT_SET("Timing/Link Adjacent Lines")->SetBool(true);
     Timing()->ModifyLength(1,false);Timing()->Commit();
-    EXPECT_EQ(2012,c->ass->Events.front().End.GetMilliseconds());
-    EXPECT_EQ(2012,c->ass->Events.back().Start.GetMilliseconds());
-    c->subsController->Undo();EXPECT_EQ(2002,c->ass->Events.back().Start.GetMilliseconds());
-    EXPECT_EQ(2002,c->ass->Events.front().End.GetMilliseconds());
-    auto session=c->subtitleAccess->TryBeginInteraction({c->ass->Events.front().Id});ASSERT_TRUE(session);
-    EXPECT_THROW(session->LinkAdjacent(c->ass->Events.front().Id,false,2002,100),std::logic_error);
+    EXPECT_EQ(2012,LiveRead(*c).Events.front().End.GetMilliseconds());
+    EXPECT_EQ(2012,LiveRead(*c).Events.back().Start.GetMilliseconds());
+    c->subsController->Undo();EXPECT_EQ(2002,LiveRead(*c).Events.back().Start.GetMilliseconds());
+    EXPECT_EQ(2002,LiveRead(*c).Events.front().End.GetMilliseconds());
+    auto session=c->subtitleAccess->TryBeginInteraction({LiveRead(*c).Events.front().Id});ASSERT_TRUE(session);
+    EXPECT_THROW(session->LinkAdjacent(LiveRead(*c).Events.front().Id,false,2002,100),std::logic_error);
     EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
 }
 
@@ -744,7 +745,7 @@ TEST_F(audio_edit, real_wx_capture_lost_cancels_pending_drag) {
     wxMouseCaptureLostEvent lost(display->GetId());
     display->GetEventHandler()->ProcessEvent(lost);
     EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
-    EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
+    EXPECT_EQ(1001,LiveRead(*c).Events.front().Start.GetMilliseconds());
     c->project->CloseAudio();
 }
 TEST_F(audio_edit, throwing_cancellation_observer_cannot_keep_destroyed_cache_borrower) {
@@ -757,24 +758,24 @@ TEST_F(audio_edit, throwing_cancellation_observer_cannot_keep_destroyed_cache_bo
 }
 TEST_F(audio_edit, karaoke_continuous_auto_drag_coalesces_text_undo_without_rounding_row_times) {
     OPT_SET("Audio/Auto/Commit")->SetBool(true);Karaoke();
-    auto text=c->ass->Events.front().Text.get();
+    auto text=LiveRead(*c).Events.front().Text.get();
     ASSERT_TRUE(Timing()->BeginDrag());
     auto markers=Timing()->OnLeftClick(1500,false,false,10,0);ASSERT_EQ(1u,markers.size());
     auto token=Timing()->MarkerLifetime();
     Timing()->OnMarkerDrag(markers,1600,0);Timing()->OnMarkerDrag(markers,1700,0);
     EXPECT_FALSE(token.expired());EXPECT_FALSE(c->subtitleEditGate.TryBeginComparison());
     Timing()->EndDrag(false);EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
-    EXPECT_NE(text,c->ass->Events.front().Text.get());
-    EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
-    EXPECT_EQ(2002,c->ass->Events.front().End.GetMilliseconds());
-    auto changed=c->ass->Events.front().Text.get();
-    c->subsController->Undo();EXPECT_EQ(text,c->ass->Events.front().Text.get());
+    EXPECT_NE(text,LiveRead(*c).Events.front().Text.get());
+    EXPECT_EQ(1001,LiveRead(*c).Events.front().Start.GetMilliseconds());
+    EXPECT_EQ(2002,LiveRead(*c).Events.front().End.GetMilliseconds());
+    auto changed=LiveRead(*c).Events.front().Text.get();
+    c->subsController->Undo();EXPECT_EQ(text,LiveRead(*c).Events.front().Text.get());
     EXPECT_EQ("audio fixture",c->subsController->GetUndoDescription());
-    c->subsController->Redo();EXPECT_EQ(changed,c->ass->Events.front().Text.get());
+    c->subsController->Redo();EXPECT_EQ(changed,LiveRead(*c).Events.front().Text.get());
 }
 TEST_F(audio_edit, inactive_neighbor_cache_survives_undo_node_replacement) {
     {auto write=c->subtitleAccess->TryWrite();auto other=new AssDialogue;
-     other->Start=3001;other->End=4002;c->ass->Events.push_back(*other);c->ass->Commit("audio fixture",AssFile::COMMIT_DIAG_ADDREM);}
+     other->Start=3001;other->End=4002;LiveWriteForTest(*c).Events.push_back(*other);LiveWriteForTest(*c).Commit("audio fixture",AssFile::COMMIT_DIAG_ADDREM);}
     OPT_SET("Audio/Inactive Lines Display Mode")->SetInt(2);
     Timing()->ModifyStart(1);Timing()->Commit();
     c->subsController->Undo();c->subsController->Redo();
@@ -782,7 +783,7 @@ TEST_F(audio_edit, inactive_neighbor_cache_survives_undo_node_replacement) {
     AudioMarkerVector markers;Timing()->GetMarkers(TimeRange(0,5000),markers);
     EXPECT_GE(markers.size(),4u);
     Timing()->ModifyStart(1);Timing()->Commit();
-    EXPECT_EQ(1021,c->ass->Events.front().Start.GetMilliseconds());
+    EXPECT_EQ(1021,LiveRead(*c).Events.front().Start.GetMilliseconds());
 }
 
 TEST_F(audio_edit, no_op_navigation_and_boundary_commands_do_not_stale_audio_cache) {
@@ -790,8 +791,8 @@ TEST_F(audio_edit, no_op_navigation_and_boundary_commands_do_not_stale_audio_cac
     (*cmd::get("time/prev"))(c.get());
     EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
     Timing()->ModifyStart(1);Timing()->Commit();
-    EXPECT_EQ(1011,c->ass->Events.front().Start.GetMilliseconds());
-    Karaoke();auto text=c->ass->Events.front().Text.get();
+    EXPECT_EQ(1011,LiveRead(*c).Events.front().Start.GetMilliseconds());
+    Karaoke();auto text=LiveRead(*c).Events.front().Text.get();
     (*cmd::get("time/prev"))(c.get());
     (*cmd::get("time/start/increase"))(c.get()); // first syllable: no movable left boundary
     EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
@@ -800,7 +801,7 @@ TEST_F(audio_edit, no_op_navigation_and_boundary_commands_do_not_stale_audio_cac
     EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
     (*cmd::get("time/prev"))(c.get());
     Timing()->ModifyLength(1,false);Timing()->Commit();
-    EXPECT_NE(text,c->ass->Events.front().Text.get());
+    EXPECT_NE(text,LiveRead(*c).Events.front().Text.get());
     EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
 }
 
@@ -808,30 +809,30 @@ TEST_F(audio_edit, stale_pending_audio_task_stays_rejected_until_explicit_rebuil
     Timing()->ModifyStart(1);
     {auto foreign=c->subtitleEditGate.TryBeginWrite();ASSERT_TRUE(foreign);}
     Timing()->Commit();Timing()->Commit();
-    EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
+    EXPECT_EQ(1001,LiveRead(*c).Events.front().Start.GetMilliseconds());
     EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
     Timing()->Revert();Timing()->ModifyStart(1);Timing()->Commit();
-    EXPECT_EQ(1011,c->ass->Events.front().Start.GetMilliseconds());
+    EXPECT_EQ(1011,LiveRead(*c).Events.front().Start.GetMilliseconds());
 }
 
 TEST_F(audio_edit, karaoke_one_millisecond_lead_is_not_lost_to_tag_rounding) {
     auto lead=OPT_GET("Audio/Lead/IN")->GetInt();
     OPT_SET("Audio/Lead/IN")->SetInt(1);Karaoke();
     Timing()->AddLeadIn();Timing()->Commit();
-    EXPECT_EQ(1000,c->ass->Events.front().Start.GetMilliseconds());
-    EXPECT_EQ(2002,c->ass->Events.front().End.GetMilliseconds());
-    c->subsController->Undo();EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());
+    EXPECT_EQ(1000,LiveRead(*c).Events.front().Start.GetMilliseconds());
+    EXPECT_EQ(2002,LiveRead(*c).Events.front().End.GetMilliseconds());
+    c->subsController->Undo();EXPECT_EQ(1001,LiveRead(*c).Events.front().Start.GetMilliseconds());
     OPT_SET("Audio/Lead/IN")->SetInt(lead);
 }
 
 TEST_F(audio_edit, cancelling_an_untimed_row_cannot_be_committed_later) {
-    {auto scope=c->subtitleAccess->TryWrite();c->ass->Events.front().Start=0;c->ass->Events.front().End=0;
-     c->ass->Commit("audio fixture",AssFile::COMMIT_DIAG_TIME);}
+    {auto scope=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).Events.front().Start=0;LiveWriteForTest(*c).Events.front().End=0;
+     LiveWriteForTest(*c).Commit("audio fixture",AssFile::COMMIT_DIAG_TIME);}
     ASSERT_TRUE(Timing()->BeginDrag());
     auto markers=Timing()->OnRightClick(1500,false,0,0);ASSERT_FALSE(markers.empty());
     Timing()->EndDrag(true);Timing()->Commit();
-    EXPECT_EQ(0,c->ass->Events.front().Start.GetMilliseconds());
-    EXPECT_EQ(0,c->ass->Events.front().End.GetMilliseconds());
+    EXPECT_EQ(0,LiveRead(*c).Events.front().Start.GetMilliseconds());
+    EXPECT_EQ(0,LiveRead(*c).Events.front().End.GetMilliseconds());
     EXPECT_EQ("audio fixture",c->subsController->GetUndoDescription());
     EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
 }
@@ -846,9 +847,9 @@ protected:
         c->project->LoadVideo("?dummy:25:250:640:480:64:64:64:");
         ASSERT_NE(nullptr,c->project->VideoProvider());
         {auto scope=c->subtitleAccess->TryWrite();
-         auto& row=c->ass->Events.front();row.Start=0;row.End=5000;
+         auto& row=LiveWriteForTest(*c).Events.front();row.Start=0;row.End=5000;
          row.Text="{\\pos(100,100)\\bord3\\i1}中 文 {\\b1} tail";
-         c->ass->Commit("visual fixture",AssFile::COMMIT_DIAG_FULL);}
+         LiveWriteForTest(*c).Commit("visual fixture",AssFile::COMMIT_DIAG_FULL);}
         toolbar=new wxToolBar(window,wxID_ANY);
         auto zoom=new wxComboBox(window,wxID_ANY);
         display=new VideoDisplay(toolbar,false,zoom,window,c.get());
@@ -874,7 +875,7 @@ protected:
     void Drag(int x,int y,int x2,int y2) {
         Mouse(wxEVT_LEFT_DOWN,x,y,true);Mouse(wxEVT_MOTION,x2,y2,true);Mouse(wxEVT_LEFT_UP,x2,y2);
     }
-    std::string Text() { return c->ass->Events.front().Text.get(); }
+    std::string Text() { return LiveRead(*c).Events.front().Text.get(); }
     std::vector<unsigned char> FrameData() {
         // Libass font setup may need the main dispatch queue. Keep the normal
         // wx loop responsive rather than synchronously waiting on that worker.
@@ -894,7 +895,7 @@ protected:
     }
 };
 TEST_F(visual_edit, position_drag_previews_without_model_write_then_commits_once_and_undoes) {
-    Install<VisualToolDrag>();auto text=Text();auto id=c->ass->Events.front().Id;
+    Install<VisualToolDrag>();auto text=Text();auto id=LiveRead(*c).Events.front().Id;
     auto before=FrameData();
     Mouse(wxEVT_LEFT_DOWN,100,100,true);ASSERT_TRUE(display->HasCapture());
     EXPECT_FALSE(c->subtitleEditGate.TryBeginComparison());
@@ -904,7 +905,7 @@ TEST_F(visual_edit, position_drag_previews_without_model_write_then_commits_once
     Mouse(wxEVT_LEFT_UP,140,160);
     EXPECT_NE(text,Text());EXPECT_NE(std::string::npos,Text().find("\\pos(140,160)"));
     EXPECT_NE(std::string::npos,Text().find("\\bord3"));EXPECT_NE(std::string::npos,Text().find("中 文 {\\b1} tail"));
-    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());EXPECT_EQ(id,c->ass->Events.front().Id);
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());EXPECT_EQ(id,LiveRead(*c).Events.front().Id);
     c->subsController->Undo();EXPECT_EQ(text,Text());EXPECT_EQ("visual fixture",c->subsController->GetUndoDescription());
     c->subsController->Redo();EXPECT_NE(text,Text());
 }
@@ -933,7 +934,7 @@ TEST_F(visual_edit, all_standard_tools_reject_comparison_writes) {
     Install<VisualToolScale>();blocked();Install<VisualToolRotateXY>();blocked();
     Install<VisualToolRotateZ>();blocked();Install<VisualToolClip>();blocked();
     Install<VisualToolVectorClip>();blocked();Install<VisualToolRectangle>();blocked();
-    EXPECT_EQ(1u,c->ass->Events.size());
+    EXPECT_EQ(1u,LiveRead(*c).Events.size());
 }
 TEST_F(visual_edit, scale_rotation_and_rectangular_clip_preserve_unedited_tags) {
     auto text=Text();Install<VisualToolScale>();Drag(200,200,240,160);
@@ -945,18 +946,18 @@ TEST_F(visual_edit, scale_rotation_and_rectangular_clip_preserve_unedited_tags) 
     EXPECT_NE(std::string::npos,Text().find("\\bord3"));EXPECT_NE(std::string::npos,Text().find("中 文 {\\b1} tail"));
 }
 TEST_F(visual_edit, drawing_finish_inserts_before_source_with_style_and_preserves_identity) {
-    Install<VisualToolRectangle>();auto source=c->ass->Events.front().Id;auto text=Text();
+    Install<VisualToolRectangle>();auto source=LiveRead(*c).Events.front().Id;auto text=Text();
     Mouse(wxEVT_LEFT_DOWN,30,40,true);Mouse(wxEVT_MOTION,100,150,true);
-    EXPECT_EQ(1u,c->ass->Events.size());EXPECT_FALSE(c->subtitleEditGate.TryBeginComparison());
+    EXPECT_EQ(1u,LiveRead(*c).Events.size());EXPECT_FALSE(c->subtitleEditGate.TryBeginComparison());
     Mouse(wxEVT_LEFT_UP,100,150);
-    ASSERT_EQ(2u,c->ass->Events.size());EXPECT_NE(source,c->ass->Events.front().Id);
-    EXPECT_EQ(source,c->ass->Events.back().Id);EXPECT_EQ(text,c->ass->Events.back().Text.get());
-    EXPECT_NE(nullptr,c->ass->GetStyle("图形"));EXPECT_EQ("图形",c->ass->Events.front().Style.get());
-    c->subsController->Undo();EXPECT_EQ(1u,c->ass->Events.size());EXPECT_EQ(nullptr,c->ass->GetStyle("图形"));
-    c->subsController->Redo();EXPECT_EQ(2u,c->ass->Events.size());
+    ASSERT_EQ(2u,LiveRead(*c).Events.size());EXPECT_NE(source,LiveRead(*c).Events.front().Id);
+    EXPECT_EQ(source,LiveRead(*c).Events.back().Id);EXPECT_EQ(text,LiveRead(*c).Events.back().Text.get());
+    EXPECT_NE(nullptr,LiveRead(*c).GetStyle("图形"));EXPECT_EQ("图形",LiveRead(*c).Events.front().Style.get());
+    c->subsController->Undo();EXPECT_EQ(1u,LiveRead(*c).Events.size());EXPECT_EQ(nullptr,LiveRead(*c).GetStyle("图形"));
+    c->subsController->Redo();EXPECT_EQ(2u,LiveRead(*c).Events.size());
 }
 TEST_F(visual_edit, vector_clip_drag_and_cancel_rebuild_path_without_losing_inverse) {
-    {auto write=c->subtitleAccess->TryWrite();c->ass->Events.front().Text="{\\iclip(m 50 50 l 200 50 200 200)\\bord3}字幕";c->ass->Commit("visual fixture",AssFile::COMMIT_DIAG_TEXT);}
+    {auto write=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).Events.front().Text="{\\iclip(m 50 50 l 200 50 200 200)\\bord3}字幕";LiveWriteForTest(*c).Commit("visual fixture",AssFile::COMMIT_DIAG_TEXT);}
     auto tool=Install<VisualToolVectorClip>();tool->SetSubTool(VCLIP_DRAG);auto text=Text();
     Drag(50,50,70,80);EXPECT_NE(text,Text());EXPECT_NE(std::string::npos,Text().find("\\iclip("));
     auto changed=Text();Mouse(wxEVT_LEFT_DOWN,70,80,true);Mouse(wxEVT_MOTION,90,100,true);
@@ -976,7 +977,7 @@ TEST_F(visual_edit, tool_switch_and_window_close_cancel_pending_drag) {
 TEST_F(visual_edit, selection_change_and_delete_cancel_without_writing_other_row) {
     AssDialogue* other;
     {auto write=c->subtitleAccess->TryWrite();other=new AssDialogue;
-     other->Text="{\\pos(300,300)}other";c->ass->Events.push_back(*other);c->ass->Commit("visual fixture",AssFile::COMMIT_DIAG_ADDREM);}
+     other->Text="{\\pos(300,300)}other";LiveWriteForTest(*c).Events.push_back(*other);LiveWriteForTest(*c).Commit("visual fixture",AssFile::COMMIT_DIAG_ADDREM);}
     Install<VisualToolDrag>();auto text=Text();auto other_id=other->Id;
     Mouse(wxEVT_LEFT_DOWN,100,100,true);Mouse(wxEVT_MOTION,150,150,true);
     c->selectionController->SetSelectionAndActiveIDs({other->Id}, other->Id);
@@ -984,7 +985,7 @@ TEST_F(visual_edit, selection_change_and_delete_cancel_without_writing_other_row
     Mouse(wxEVT_LEFT_DOWN,300,300,true);Mouse(wxEVT_MOTION,350,350,true);
     (*cmd::get("edit/line/delete"))(c.get());
     Mouse(wxEVT_LEFT_UP,350,350);
-    EXPECT_EQ(1u,c->ass->Events.size());EXPECT_NE(other_id,c->ass->Events.front().Id);EXPECT_EQ(text,Text());
+    EXPECT_EQ(1u,LiveRead(*c).Events.size());EXPECT_NE(other_id,LiveRead(*c).Events.front().Id);EXPECT_EQ(text,Text());
 }
 TEST_F(visual_edit, foreign_generation_rejects_pending_result_and_releases_registration) {
     Install<VisualToolScale>();auto text=Text();
@@ -1015,30 +1016,30 @@ TEST_F(visual_edit, continuous_drags_have_separate_undo_records_and_refresh_afte
 }
 TEST_F(visual_edit, multirow_position_changes_preserve_metadata_extras_and_binding) {
     int first_id,second_id;std::string group;
-    {auto write=c->subtitleAccess->TryWrite();auto row=new AssDialogue(c->ass->Events.front());
-     row->Text="{\\pos(300,300)\\blur2}other";c->ass->Events.push_back(*row);
-     first_id=c->ass->Events.front().Id;second_id=row->Id;
-     auto extra=c->ass->AddExtradata("unknown-test","opaque value");
-     c->ass->Events.front().Actor="actor";c->ass->Events.front().Layer=7;c->ass->Events.front().ExtradataIds=std::vector<uint32_t>{extra};
-     c->ass->Commit("visual fixture",AssFile::COMMIT_DIAG_ADDREM);
-     c->selectionController->SetSelectedIDs({(c->ass->Events.front()).Id,row->Id});BindSelectedSubtitles(c.get());
-     group=GetSubtitleBinding(*c->ass,c->ass->Events.front());}
-    auto extras=c->ass->Extradata;Install<VisualToolDrag>();
+    {auto write=c->subtitleAccess->TryWrite();auto row=new AssDialogue(LiveRead(*c).Events.front());
+     row->Text="{\\pos(300,300)\\blur2}other";LiveWriteForTest(*c).Events.push_back(*row);
+     first_id=LiveRead(*c).Events.front().Id;second_id=row->Id;
+     auto extra=LiveWriteForTest(*c).AddExtradata("unknown-test","opaque value");
+     LiveWriteForTest(*c).Events.front().Actor="actor";LiveWriteForTest(*c).Events.front().Layer=7;LiveWriteForTest(*c).Events.front().ExtradataIds=std::vector<uint32_t>{extra};
+     LiveWriteForTest(*c).Commit("visual fixture",AssFile::COMMIT_DIAG_ADDREM);
+     c->selectionController->SetSelectedIDs({(LiveRead(*c).Events.front()).Id,row->Id});BindSelectedSubtitles(c.get());
+     group=GetSubtitleBinding(LiveRead(*c),LiveRead(*c).Events.front());}
+    auto extras=LiveRead(*c).Extradata;Install<VisualToolDrag>();
     Drag(100,100,130,140);
-    EXPECT_EQ(first_id,c->ass->Events.front().Id);EXPECT_EQ(second_id,c->ass->Events.back().Id);
-    EXPECT_EQ(7,c->ass->Events.front().Layer);EXPECT_EQ("actor",c->ass->Events.front().Actor.get());
-    EXPECT_EQ(group,GetSubtitleBinding(*c->ass,c->ass->Events.front()));
-    EXPECT_NE(std::string::npos,c->ass->Events.back().Text.get().find("\\pos(330,340)"));
-    ASSERT_EQ(extras.size(),c->ass->Extradata.size());
-    for(size_t i=0;i<extras.size();++i){EXPECT_EQ(extras[i].key,c->ass->Extradata[i].key);EXPECT_EQ(extras[i].value,c->ass->Extradata[i].value);}
+    EXPECT_EQ(first_id,LiveRead(*c).Events.front().Id);EXPECT_EQ(second_id,LiveRead(*c).Events.back().Id);
+    EXPECT_EQ(7,LiveRead(*c).Events.front().Layer);EXPECT_EQ("actor",LiveRead(*c).Events.front().Actor.get());
+    EXPECT_EQ(group,GetSubtitleBinding(LiveRead(*c),LiveRead(*c).Events.front()));
+    EXPECT_NE(std::string::npos,LiveRead(*c).Events.back().Text.get().find("\\pos(330,340)"));
+    ASSERT_EQ(extras.size(),LiveRead(*c).Extradata.size());
+    for(size_t i=0;i<extras.size();++i){EXPECT_EQ(extras[i].key,LiveRead(*c).Extradata[i].key);EXPECT_EQ(extras[i].value,LiveRead(*c).Extradata[i].value);}
 }
 TEST_F(visual_edit, selecting_another_visible_line_with_subtitle_sync_keeps_feature_alive) {
     {auto write=c->subtitleAccess->TryWrite();auto row=new AssDialogue;
-     row->Start=1000;row->End=5000;row->Text="{\\pos(300,300)}other";c->ass->Events.push_back(*row);c->ass->Commit("visual fixture",AssFile::COMMIT_DIAG_ADDREM);}
+     row->Start=1000;row->End=5000;row->Text="{\\pos(300,300)}other";LiveWriteForTest(*c).Events.push_back(*row);LiveWriteForTest(*c).Commit("visual fixture",AssFile::COMMIT_DIAG_ADDREM);}
     c->videoController->JumpToFrame(50);OPT_SET("Video/Subtitle Sync")->SetBool(true);
     Install<VisualToolDrag>();auto first=Text();
     Drag(300,300,340,350);
-    EXPECT_EQ(first,Text());EXPECT_NE(std::string::npos,c->ass->Events.back().Text.get().find("\\pos(340,350)"));
+    EXPECT_EQ(first,Text());EXPECT_NE(std::string::npos,LiveRead(*c).Events.back().Text.get().find("\\pos(340,350)"));
     EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
 }
 TEST_F(visual_edit, vector_tools_insert_convert_remove_and_freehand_use_authorized_completion) {
@@ -1058,21 +1059,21 @@ TEST_F(visual_edit, rectangle_escape_polygon_and_existing_style_are_safe) {
     auto tool=Install<VisualToolRectangle>();auto text=Text();
     Mouse(wxEVT_LEFT_DOWN,30,40,true);Mouse(wxEVT_MOTION,90,100,true);
     wxKeyEvent esc(wxEVT_CHAR_HOOK);esc.m_keyCode=WXK_ESCAPE;display->GetEventHandler()->ProcessEvent(esc);
-    EXPECT_EQ(1u,c->ass->Events.size());EXPECT_EQ(text,Text());EXPECT_EQ(nullptr,c->ass->GetStyle("图形"));
+    EXPECT_EQ(1u,LiveRead(*c).Events.size());EXPECT_EQ(text,Text());EXPECT_EQ(nullptr,LiveRead(*c).GetStyle("图形"));
     tool->SetSubTool(static_cast<int>(DrawingShape::Polygon));
     Mouse(wxEVT_LEFT_DOWN,20,20,true);Mouse(wxEVT_LEFT_UP,20,20);
     Mouse(wxEVT_LEFT_DOWN,100,20,true);Mouse(wxEVT_LEFT_UP,100,20);
     Mouse(wxEVT_LEFT_DOWN,100,100,true);Mouse(wxEVT_LEFT_UP,100,100);
     EXPECT_FALSE(c->subtitleEditGate.TryBeginComparison());
     wxKeyEvent enter(wxEVT_CHAR_HOOK);enter.m_keyCode=WXK_RETURN;display->GetEventHandler()->ProcessEvent(enter);
-    ASSERT_EQ(2u,c->ass->Events.size());auto style=c->ass->GetStyle("图形");ASSERT_NE(nullptr,style);auto data=style->GetEntryData();
+    ASSERT_EQ(2u,LiveRead(*c).Events.size());auto style=LiveRead(*c).GetStyle("图形");ASSERT_NE(nullptr,style);auto data=style->GetEntryData();
     tool->SetSubTool(static_cast<int>(DrawingShape::Ellipse));Drag(200,200,240,260);
-    EXPECT_EQ(3u,c->ass->Events.size());EXPECT_EQ(data,c->ass->GetStyle("图形")->GetEntryData());
+    EXPECT_EQ(3u,LiveRead(*c).Events.size());EXPECT_EQ(data,LiveRead(*c).GetStyle("图形")->GetEntryData());
 }
 TEST_F(visual_edit, commit_observer_exception_ends_task_and_preserves_normal_undo) {
     Install<VisualToolDrag>();auto text=Text();
     Mouse(wxEVT_LEFT_DOWN,100,100,true);Mouse(wxEVT_MOTION,160,170,true);
-    agi::signal::Connection observer=c->ass->AddCommitListener([]{throw std::runtime_error("observer");});
+    agi::signal::Connection observer=LiveRead(*c).AddCommitListener([]{throw std::runtime_error("observer");});
     EXPECT_THROW(Mouse(wxEVT_LEFT_UP,160,170),std::runtime_error);
     EXPECT_FALSE(display->HasCapture());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
     observer.Disconnect();c->subsController->Undo();EXPECT_EQ(text,Text());
@@ -1094,52 +1095,52 @@ TEST_F(visual_edit, toolbar_callbacks_detach_on_tool_destruction) {
     EXPECT_EQ(text,Text());
 }
 TEST_F(visual_edit, rejected_structural_insertion_does_not_add_style_or_row) {
-    auto session=c->subtitleAccess->TryBeginInteraction({c->ass->Events.front().Id});ASSERT_TRUE(session);
-    AssDialogue drawing;drawing.Id=c->ass->Events.front().Id;AssStyle style;style.name="must-not-be-added";
-    auto count=c->ass->Styles.size();
+    auto session=c->subtitleAccess->TryBeginInteraction({LiveRead(*c).Events.front().Id});ASSERT_TRUE(session);
+    AssDialogue drawing;drawing.Id=LiveRead(*c).Events.front().Id;AssStyle style;style.name="must-not-be-added";
+    auto count=LiveRead(*c).Styles.size();
     EXPECT_THROW(session->InsertBefore(drawing.Id,drawing,&style),std::invalid_argument);
-    EXPECT_EQ(1u,c->ass->Events.size());EXPECT_EQ(count,c->ass->Styles.size());
+    EXPECT_EQ(1u,LiveRead(*c).Events.size());EXPECT_EQ(count,LiveRead(*c).Styles.size());
     EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
 }
 
 TEST_F(visual_edit, outside_video_rectangle_click_does_not_leave_a_write_task) {
     Install<VisualToolRectangle>();Mouse(wxEVT_LEFT_DOWN,-10,-10,true);Mouse(wxEVT_LEFT_UP,-10,-10);
-    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());EXPECT_EQ(1u,c->ass->Events.size());
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());EXPECT_EQ(1u,LiveRead(*c).Events.size());
 }
 TEST_F(visual_edit, cross_double_click_preserves_move_origin_and_unrelated_tags) {
-    {auto write=c->subtitleAccess->TryWrite();c->ass->Events.front().Text="{\\move(100,100,200,200,10,900)\\org(80,80)\\fax0.2\\i1}字幕";c->ass->Commit("visual fixture",AssFile::COMMIT_DIAG_TEXT);}
+    {auto write=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).Events.front().Text="{\\move(100,100,200,200,10,900)\\org(80,80)\\fax0.2\\i1}字幕";LiveWriteForTest(*c).Commit("visual fixture",AssFile::COMMIT_DIAG_TEXT);}
     Install<VisualToolCross>();Mouse(wxEVT_LEFT_DCLICK,150,160,true);Mouse(wxEVT_LEFT_UP,150,160);
     EXPECT_NE(std::string::npos,Text().find("\\move(150,160,250,260,10,900)"));
     EXPECT_NE(std::string::npos,Text().find("\\org(130,140)"));EXPECT_NE(std::string::npos,Text().find("\\fax0.2"));
 }
 TEST_F(visual_edit, replacing_document_content_invalidates_old_geometry_and_target_ids) {
-    Install<VisualToolDrag>();auto previous=c->ass->Events.front().Id;
+    Install<VisualToolDrag>();auto previous=LiveRead(*c).Events.front().Id;
     Mouse(wxEVT_LEFT_DOWN,100,100,true);Mouse(wxEVT_MOTION,160,170,true);
     {auto write=c->subtitleAccess->TryWrite();AssFile replacement;replacement.LoadDefault();
      replacement.SetScriptInfo("PlayResX","640");replacement.SetScriptInfo("PlayResY","480");
-     replacement.Events.front().Text="{\\pos(300,300)}new document";c->ass->swap(replacement);
-     c->ass->Commit("new document",AssFile::COMMIT_NEW);
-     auto active=&c->ass->Events.front();c->selectionController->SetSelectionAndActiveIDs({active->Id}, active->Id);}
+     replacement.Events.front().Text="{\\pos(300,300)}new document";LiveWriteForTest(*c).swap(replacement);
+     LiveWriteForTest(*c).Commit("new document",AssFile::COMMIT_NEW);
+     auto active=&LiveRead(*c).Events.front();c->selectionController->SetSelectionAndActiveIDs({active->Id}, active->Id);}
     Mouse(wxEVT_LEFT_UP,160,170);
-    EXPECT_NE(previous,c->ass->Events.front().Id);EXPECT_EQ("{\\pos(300,300)}new document",Text());
+    EXPECT_NE(previous,LiveRead(*c).Events.front().Id);EXPECT_EQ("{\\pos(300,300)}new document",Text());
     EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
     Drag(300,300,350,350);EXPECT_NE(std::string::npos,Text().find("\\pos(350,350)"));
 }
 TEST_F(visual_edit, feature_hit_order_follows_document_order_after_sort) {
-    {auto write=c->subtitleAccess->TryWrite();auto other=new AssDialogue(c->ass->Events.front());
-     c->ass->Events.push_back(*other);c->ass->Events.reverse();c->ass->Commit("visual fixture",AssFile::COMMIT_ORDER);}
-    auto expected=c->ass->Events.back().Id;auto untouched=c->ass->Events.front().Text.get();
+    {auto write=c->subtitleAccess->TryWrite();auto other=new AssDialogue(LiveRead(*c).Events.front());
+     LiveWriteForTest(*c).Events.push_back(*other);LiveWriteForTest(*c).Events.reverse();LiveWriteForTest(*c).Commit("visual fixture",AssFile::COMMIT_ORDER);}
+    auto expected=LiveRead(*c).Events.back().Id;auto untouched=LiveRead(*c).Events.front().Text.get();
     Install<VisualToolDrag>();Drag(100,100,160,170);
     EXPECT_EQ(expected,c->selectionController->ReadActiveLine()->Id);
-    EXPECT_EQ(untouched,c->ass->Events.front().Text.get());EXPECT_NE(untouched,c->ass->Events.back().Text.get());
+    EXPECT_EQ(untouched,LiveRead(*c).Events.front().Text.get());EXPECT_NE(untouched,LiveRead(*c).Events.back().Text.get());
 }
 TEST_F(visual_edit, missing_target_without_commit_cannot_partially_write_other_rows) {
     AssDialogue* other;
     {auto write=c->subtitleAccess->TryWrite();other=new AssDialogue;other->Text="untouched";
-     c->ass->Events.push_back(*other);c->ass->Commit("visual fixture",AssFile::COMMIT_DIAG_ADDREM);}
+     LiveWriteForTest(*c).Events.push_back(*other);LiveWriteForTest(*c).Commit("visual fixture",AssFile::COMMIT_DIAG_ADDREM);}
     Install<VisualToolDrag>();Mouse(wxEVT_LEFT_DOWN,100,100,true);Mouse(wxEVT_MOTION,160,170,true);
     // Deliberately simulate a not-yet-migrated C1-C caller which removes a row without Commit.
-    {auto write=c->subtitleAccess->TryWrite();c->ass->Events.erase_and_dispose(c->ass->Events.begin(),[](auto row){delete row;});}
+    {auto write=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).Events.erase_and_dispose(LiveWriteForTest(*c).Events.begin(),[](auto row){delete row;});}
     EXPECT_THROW(Mouse(wxEVT_LEFT_UP,160,170),std::out_of_range);
     EXPECT_EQ("untouched",Text());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
     c->selectionController->SetSelectionAndActiveIDs({other->Id}, other->Id);
@@ -1157,7 +1158,7 @@ TEST_F(visual_edit, override_interface_rejects_calls_without_interaction) {
 }
 TEST_F(visual_edit, invalid_preview_batch_changes_neither_renderer_nor_live_model) {
     auto before=FrameData();auto text=Text();
-    AssDialogueBase valid=c->ass->Events.front();valid.Text="{\\pos(500,400)}different";
+    AssDialogueBase valid=LiveRead(*c).Events.front();valid.Text="{\\pos(500,400)}different";
     auto missing=valid;missing.Id+=100000;
     c->project->VideoProvider()->PreviewSubtitles({valid,missing});
     EXPECT_EQ(before,FrameData());EXPECT_EQ(text,Text());
@@ -1165,17 +1166,17 @@ TEST_F(visual_edit, invalid_preview_batch_changes_neither_renderer_nor_live_mode
 }
 TEST_F(visual_edit, ten_thousand_rows_keep_mouse_motion_local_to_edited_targets) {
     {auto write=c->subtitleAccess->TryWrite();for(int i=1;i<10000;++i){auto row=new AssDialogue;
-     row->Start=10000;row->End=15000;row->Text="inactive subtitle";c->ass->Events.push_back(*row);}
-     c->ass->Commit("visual fixture",AssFile::COMMIT_DIAG_ADDREM);}
+     row->Start=10000;row->End=15000;row->Text="inactive subtitle";LiveWriteForTest(*c).Events.push_back(*row);}
+     LiveWriteForTest(*c).Commit("visual fixture",AssFile::COMMIT_DIAG_ADDREM);}
     Install<VisualToolDrag>();Mouse(wxEVT_LEFT_DOWN,100,100,true);
     auto start=std::chrono::steady_clock::now();
     for(int i=1;i<=100;++i)Mouse(wxEVT_MOTION,100+i,100+i,true);
     auto milliseconds=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
     std::printf("B2 10000 rows, 100 mouse moves: %.3f ms UI dispatch\n",milliseconds);
     EXPECT_LT(milliseconds,10000);EXPECT_EQ("{\\pos(100,100)\\bord3\\i1}中 文 {\\b1} tail",Text());
-    Mouse(wxEVT_LEFT_UP,200,200);EXPECT_EQ(10000u,c->ass->Events.size());
+    Mouse(wxEVT_LEFT_UP,200,200);EXPECT_EQ(10000u,LiveRead(*c).Events.size());
     EXPECT_NE(std::string::npos,Text().find("\\pos(200,200)"));
-    EXPECT_EQ("inactive subtitle",c->ass->Events.back().Text.get());
+    EXPECT_EQ("inactive subtitle",LiveRead(*c).Events.back().Text.get());
 }
 
 TEST_F(visual_edit, toolbar_can_be_destroyed_before_its_tool_and_canvas) {
@@ -1194,20 +1195,20 @@ TEST_F(visual_edit, changing_vector_subtool_cancels_uncommitted_spline) {
 
 TEST_F(visual_edit, ass_save_reopen_contains_only_confirmed_visual_edits_and_drawing_style) {
     Install<VisualToolRectangle>();Drag(30,40,120,150);
-    ASSERT_EQ(2u,c->ass->Events.size());auto shape=c->ass->Events.front().Text.get();
+    ASSERT_EQ(2u,LiveRead(*c).Events.size());auto shape=LiveRead(*c).Events.front().Text.get();
     Install<VisualToolDrag>();
     auto save=agi::fs::path((std::filesystem::current_path()/"visual-result.ass").wstring());
     {auto write=c->subtitleAccess->TryWrite();c->subsController->Save(save);}
     AssFile reopened;SubtitleFormat::GetReader(save,"utf-8")->ReadFile(&reopened,save,c->project->Timecodes(),"utf-8");
     ASSERT_EQ(2u,reopened.Events.size());EXPECT_EQ(shape,reopened.Events.front().Text.get());
     EXPECT_NE(nullptr,reopened.GetStyle("图形"));
-    auto saved=c->ass->Events.front().Text.get();
+    auto saved=LiveRead(*c).Events.front().Text.get();
     Mouse(wxEVT_LEFT_DOWN,30,40,true);Mouse(wxEVT_MOTION,60,70,true);
     {auto write=c->subtitleAccess->TryWrite();c->subsController->Save(save);}
     AssFile pending;SubtitleFormat::GetReader(save,"utf-8")->ReadFile(&pending,save,c->project->Timecodes(),"utf-8");
     EXPECT_EQ(saved,pending.Events.front().Text.get());
     wxKeyEvent esc(wxEVT_CHAR_HOOK);esc.m_keyCode=WXK_ESCAPE;display->GetEventHandler()->ProcessEvent(esc);
-    EXPECT_EQ(saved,c->ass->Events.front().Text.get());
+    EXPECT_EQ(saved,LiveRead(*c).Events.front().Text.get());
 }
 
 TEST_F(visual_edit, entering_preview_pan_mode_cancels_visual_edit_and_releases_capture) {
@@ -1220,10 +1221,10 @@ TEST_F(visual_edit, entering_preview_pan_mode_cancels_visual_edit_and_releases_c
 TEST_F(visual_edit, unnotified_metadata_and_one_millisecond_changes_are_not_overwritten) {
     Install<VisualToolDrag>();auto text=Text();
     Mouse(wxEVT_LEFT_DOWN,100,100,true);Mouse(wxEVT_MOTION,140,150,true);
-    {auto legacy=c->subtitleAccess->TryWrite();c->ass->Events.front().Layer=7;c->ass->Events.front().Start=1;}
+    {auto legacy=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).Events.front().Layer=7;LiveWriteForTest(*c).Events.front().Start=1;}
     EXPECT_THROW(Mouse(wxEVT_LEFT_UP,140,150),std::logic_error);
-    EXPECT_EQ(text,Text());EXPECT_EQ(7,c->ass->Events.front().Layer);
-    EXPECT_EQ(1,c->ass->Events.front().Start.GetMilliseconds());
+    EXPECT_EQ(text,Text());EXPECT_EQ(7,LiveRead(*c).Events.front().Layer);
+    EXPECT_EQ(1,LiveRead(*c).Events.front().Start.GetMilliseconds());
     EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
 }
 
@@ -1250,10 +1251,10 @@ TEST_F(visual_edit, drawing_dialog_preview_confirm_cancel_and_undo_use_independe
 TEST_F(visual_edit, drawing_dialog_rejects_changed_target_and_comparison_authorization) {
     Install<VisualToolRectangle>();Drag(30,40,120,150);auto text=Text();AcceptMessages accept;
     {RunModal changed("Edit Shape",[&](wxDialog* dialog){
-        {auto write=c->subtitleAccess->TryWrite();c->ass->Events.front().Layer=9;}
+        {auto write=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).Events.front().Layer=9;}
         button(dialog,wxID_OK);EXPECT_EQ(text,Text());EXPECT_TRUE(dialog->IsModal());
     });
-    EditDrawing(c.get());}EXPECT_EQ(9,c->ass->Events.front().Layer);EXPECT_EQ(text,Text());
+    EditDrawing(c.get());}EXPECT_EQ(9,LiveRead(*c).Events.front().Layer);EXPECT_EQ(text,Text());
     auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);
     RunModal blocked("Edit Shape",[&](wxDialog* dialog){button(dialog,wxID_OK);EXPECT_TRUE(dialog->IsModal());});
     EditDrawing(c.get());EXPECT_EQ(text,Text());
@@ -1262,57 +1263,57 @@ TEST_F(ordinary_edit, dialog_snapshot_closes_with_parent_and_rejects_duplicate_b
     SubtitleDialogEdit edit(c.get());edit.ResetActive();ASSERT_TRUE(edit.Begin());
     auto row=edit.Rows().front();row.Text="must not be written";
     EXPECT_THROW(edit.Commit({row,row},"duplicate",AssFile::COMMIT_DIAG_TEXT),std::invalid_argument);
-    EXPECT_EQ("",c->ass->Events.front().Text.get());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    EXPECT_EQ("",LiveRead(*c).Events.front().Text.get());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
     edit.ResetActive();delete window;window=nullptr;
     EXPECT_FALSE(edit.Alive());EXPECT_FALSE(edit.Begin());
 }
 TEST_F(ordinary_edit, styling_dialog_commits_owned_style_and_rejects_stale_definitions) {
-    {auto write=c->subtitleAccess->TryWrite();auto style=new AssStyle();style->name="Other";c->ass->Styles.push_back(*style);c->ass->Commit("fixture",AssFile::COMMIT_STYLES);}
+    {auto write=c->subtitleAccess->TryWrite();auto style=new AssStyle();style->name="Other";LiveWriteForTest(*c).Styles.push_back(*style);LiveWriteForTest(*c).Commit("fixture",AssFile::COMMIT_STYLES);}
     DialogStyling dialog(c.get());wxTextCtrl* name=nullptr;
     for(auto child:descendants(&dialog))if(auto text=dynamic_cast<wxTextCtrl*>(child);text && (text->GetWindowStyleFlag() & wxTE_PROCESS_ENTER))name=text;
     ASSERT_NE(nullptr,name);EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
     name->SetValue("Other");EXPECT_FALSE(c->subtitleEditGate.TryBeginComparison());dialog.Commit(false);
-    EXPECT_EQ("Other",c->ass->Events.front().Style.get());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
-    c->subsController->Undo();EXPECT_EQ("Default",c->ass->Events.front().Style.get());
-    c->subsController->Redo();EXPECT_EQ("Other",c->ass->Events.front().Style.get());
-    {auto write=c->subtitleAccess->TryWrite();c->ass->Styles.front().fontsize+=1;}
-    AcceptMessages accept;name->ChangeValue("Default");dialog.Commit(false);EXPECT_EQ("Other",c->ass->Events.front().Style.get());
+    EXPECT_EQ("Other",LiveRead(*c).Events.front().Style.get());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    c->subsController->Undo();EXPECT_EQ("Default",LiveRead(*c).Events.front().Style.get());
+    c->subsController->Redo();EXPECT_EQ("Other",LiveRead(*c).Events.front().Style.get());
+    {auto write=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).Styles.front().fontsize+=1;}
+    AcceptMessages accept;name->ChangeValue("Default");dialog.Commit(false);EXPECT_EQ("Other",LiveRead(*c).Events.front().Style.get());
 }
 TEST_F(ordinary_edit, styling_dialog_comparison_denial_and_draft_cancel_do_not_write) {
-    {DialogStyling dialog(c.get());auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);AcceptMessages accept;dialog.Commit(false);EXPECT_EQ("Default",c->ass->Events.front().Style.get());}
+    {DialogStyling dialog(c.get());auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);AcceptMessages accept;dialog.Commit(false);EXPECT_EQ("Default",LiveRead(*c).Events.front().Style.get());}
     EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
 }
 
 TEST_F(ordinary_edit, translation_dialog_preserves_tags_ids_and_per_line_undo) {
     int second;
-    {auto write=c->subtitleAccess->TryWrite();c->ass->Events.front().Text="{\\i1}one";auto row=new AssDialogue();row->Text="{\\b1}two";second=row->Id;c->ass->Events.push_back(*row);c->ass->Commit("fixture",AssFile::COMMIT_DIAG_ADDREM);}
-    auto first=c->ass->Events.front().Id;DialogTranslation dialog(c.get());
+    {auto write=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).Events.front().Text="{\\i1}one";auto row=new AssDialogue();row->Text="{\\b1}two";second=row->Id;LiveWriteForTest(*c).Events.push_back(*row);LiveWriteForTest(*c).Commit("fixture",AssFile::COMMIT_DIAG_ADDREM);}
+    auto first=LiveRead(*c).Events.front().Id;DialogTranslation dialog(c.get());
     SubsTextEditCtrl* target=nullptr;for(auto child:descendants(&dialog))if(auto text=dynamic_cast<SubsTextEditCtrl*>(child))target=text;
     ASSERT_NE(nullptr,target);target->SetTextRaw("中 文");EXPECT_FALSE(c->subtitleEditGate.TryBeginComparison());dialog.Commit(true);
-    EXPECT_EQ(first,c->ass->Events.front().Id);EXPECT_EQ("{\\i1}中 文",c->ass->Events.front().Text.get());
+    EXPECT_EQ(first,LiveRead(*c).Events.front().Id);EXPECT_EQ("{\\i1}中 文",LiveRead(*c).Events.front().Text.get());
     EXPECT_EQ(second,c->selectionController->ReadActiveLine()->Id);
-    target->SetTextRaw("译文");dialog.Commit(false);EXPECT_EQ("{\\b1}译文",c->ass->Events.back().Text.get());
-    c->subsController->Undo();EXPECT_EQ("{\\b1}two",c->ass->Events.back().Text.get());EXPECT_EQ("{\\i1}中 文",c->ass->Events.front().Text.get());
-    c->subsController->Redo();EXPECT_EQ("{\\b1}译文",c->ass->Events.back().Text.get());
+    target->SetTextRaw("译文");dialog.Commit(false);EXPECT_EQ("{\\b1}译文",LiveRead(*c).Events.back().Text.get());
+    c->subsController->Undo();EXPECT_EQ("{\\b1}two",LiveRead(*c).Events.back().Text.get());EXPECT_EQ("{\\i1}中 文",LiveRead(*c).Events.front().Text.get());
+    c->subsController->Redo();EXPECT_EQ("{\\b1}译文",LiveRead(*c).Events.back().Text.get());
 }
 TEST_F(ordinary_edit, translation_dialog_rejects_stale_row_and_releases_draft_on_close) {
-    {auto write=c->subtitleAccess->TryWrite();c->ass->Events.front().Text="source";c->ass->Commit("fixture",AssFile::COMMIT_DIAG_TEXT);}
+    {auto write=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).Events.front().Text="source";LiveWriteForTest(*c).Commit("fixture",AssFile::COMMIT_DIAG_TEXT);}
     {
         DialogTranslation dialog(c.get());dialog.InsertOriginal();EXPECT_FALSE(c->subtitleEditGate.TryBeginComparison());
-        {auto write=c->subtitleAccess->TryWrite();c->ass->Events.front().Text="external";c->ass->Commit("external",AssFile::COMMIT_DIAG_TEXT);}
-        AcceptMessages accept;dialog.Commit(false);EXPECT_EQ("external",c->ass->Events.front().Text.get());
+        {auto write=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).Events.front().Text="external";LiveWriteForTest(*c).Commit("external",AssFile::COMMIT_DIAG_TEXT);}
+        AcceptMessages accept;dialog.Commit(false);EXPECT_EQ("external",LiveRead(*c).Events.front().Text.get());
     }
     EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
 }
 
 TEST_F(ordinary_edit, kanji_dialog_validates_all_targets_and_commits_once_or_discards) {
     std::vector<int> ids;
-    {auto write=c->subtitleAccess->TryWrite();auto style=new AssStyle();style->name="Target";c->ass->Styles.push_back(*style);
-        c->ass->Events.front().Text=R"({\k10}a)";ids.push_back(c->ass->Events.front().Id);
-        for(int i=1;i<4;++i){auto row=new AssDialogue();row->Style=i%2?"Target":"Default";row->Text=i%2?"字":R"({\k20}b)";ids.push_back(row->Id);c->ass->Events.push_back(*row);}
-        c->ass->Commit("fixture",AssFile::COMMIT_DIAG_ADDREM|AssFile::COMMIT_STYLES);
+    {auto write=c->subtitleAccess->TryWrite();auto style=new AssStyle();style->name="Target";LiveWriteForTest(*c).Styles.push_back(*style);
+        LiveWriteForTest(*c).Events.front().Text=R"({\k10}a)";ids.push_back(LiveWriteForTest(*c).Events.front().Id);
+        for(int i=1;i<4;++i){auto row=new AssDialogue();row->Style=i%2?"Target":"Default";row->Text=i%2?"字":R"({\k20}b)";ids.push_back(row->Id);LiveWriteForTest(*c).Events.push_back(*row);}
+        LiveWriteForTest(*c).Commit("fixture",AssFile::COMMIT_DIAG_ADDREM|AssFile::COMMIT_STYLES);
     }
-    auto text=[&](int id){for(auto const& row:c->ass->Events)if(row.Id==id)return row.Text.get();return std::string();};
+    auto text=[&](int id){for(auto const& row:LiveRead(*c).Events)if(row.Id==id)return row.Text.get();return std::string();};
     auto prepare=[&](wxDialog* dialog){
         std::vector<wxComboBox*> combos;for(auto child:descendants(dialog))if(auto combo=dynamic_cast<wxComboBox*>(child))combos.push_back(combo);
         ASSERT_EQ(2u,combos.size());combos[0]->SetStringSelection("Default");combos[1]->SetStringSelection("Target");
@@ -1324,7 +1325,7 @@ TEST_F(ordinary_edit, kanji_dialog_validates_all_targets_and_commits_once_or_dis
     {RunModal cancel("Kanji timer",[&](wxDialog* dialog){prepare(dialog);press(dialog,"S&tart!");press(dialog,"&Link");press(dialog,"&Accept Line");wxCloseEvent e(wxEVT_CLOSE_WINDOW);dialog->GetEventHandler()->ProcessEvent(e);});ShowKanjiTimerDialog(c.get());}
     EXPECT_EQ("字",text(ids[1]));EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
     {RunModal stale("Kanji timer",[&](wxDialog* dialog){prepare(dialog);press(dialog,"S&tart!");for(int i=0;i<2;++i){press(dialog,"&Link");press(dialog,"&Accept Line");}
-        {auto write=c->subtitleAccess->TryWrite();c->ass->Events.back().Text="external";c->ass->Commit("external",AssFile::COMMIT_DIAG_TEXT);}
+        {auto write=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).Events.back().Text="external";LiveWriteForTest(*c).Commit("external",AssFile::COMMIT_DIAG_TEXT);}
         AcceptMessages messages;press(dialog,"&Close");EXPECT_TRUE(dialog->IsShown());});ShowKanjiTimerDialog(c.get());}
     EXPECT_EQ("字",text(ids[1]));EXPECT_EQ("external",text(ids[3]));EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
 }
@@ -1333,84 +1334,84 @@ TEST_F(visual_edit, video_properties_prompt_is_detached_and_preserves_resample_u
     {std::ofstream video("properties.y4m",std::ios::binary);video<<"YUV4MPEG2 W32 H24 F25:1 Ip A1:1 C420jpeg\nFRAME\n";std::string pixels(32*24*3/2,'\x80');video.write(pixels.data(),pixels.size());}
     OPT_SET("Video/No YCbCr Matrix in Script")->SetInt(0);OPT_SET("Video/PlayRes Mismatch")->SetInt(0);OPT_SET("Video/No LayoutRes in Script")->SetInt(0);OPT_SET("Video/LayoutRes Mismatch")->SetInt(0);
     AcceptMessages messages;c->project->LoadVideo("properties.y4m");ASSERT_NE(nullptr,c->project->VideoProvider());FrameData();
-    {auto write=c->subtitleAccess->TryWrite();c->ass->SetScriptInfo("PlayResX","80");c->ass->SetScriptInfo("PlayResY","60");c->ass->Events.front().Text=R"({\pos(20,20)\bord4}中 文)";c->ass->Commit("fixture",AssFile::COMMIT_SCRIPTINFO|AssFile::COMMIT_DIAG_TEXT);}
-    auto id=c->ass->Events.front().Id;auto pointer=&c->ass->Events.front();auto text=c->ass->Events.front().Text.get();auto size=c->ass->Styles.front().fontsize;
+    {auto write=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).SetScriptInfo("PlayResX","80");LiveWriteForTest(*c).SetScriptInfo("PlayResY","60");LiveWriteForTest(*c).Events.front().Text=R"({\pos(20,20)\bord4}中 文)";LiveWriteForTest(*c).Commit("fixture",AssFile::COMMIT_SCRIPTINFO|AssFile::COMMIT_DIAG_TEXT);}
+    auto id=LiveRead(*c).Events.front().Id;auto pointer=&LiveRead(*c).Events.front();auto text=LiveRead(*c).Events.front().Text.get();auto size=LiveRead(*c).Styles.front().fontsize;
     OPT_SET("Video/PlayRes Mismatch")->SetInt(1);
-    {RunModal choose("Resolution mismatch",[&](wxDialog* dialog){EXPECT_EQ(text,c->ass->Events.front().Text.get());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    {RunModal choose("Resolution mismatch",[&](wxDialog* dialog){EXPECT_EQ(text,LiveRead(*c).Events.front().Text.get());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
         for(auto child:descendants(dialog))if(auto list=dynamic_cast<wxListBox*>(child))list->SetSelection(1);button(dialog,wxID_OK);
     });UpdateVideoProperties(c.get(),c->project->VideoProvider());}
-    EXPECT_EQ(32,c->ass->GetScriptInfoAsInt("PlayResX"));EXPECT_NE(text,c->ass->Events.front().Text.get());EXPECT_DOUBLE_EQ(std::round(size*0.4),c->ass->Styles.front().fontsize);EXPECT_EQ(id,c->ass->Events.front().Id);EXPECT_EQ(pointer,&c->ass->Events.front());
-    auto changed=c->ass->Events.front().Text.get();c->subsController->Undo();EXPECT_EQ(changed,c->ass->Events.front().Text.get());c->subsController->Undo();EXPECT_EQ(text,c->ass->Events.front().Text.get());EXPECT_EQ(80,c->ass->GetScriptInfoAsInt("PlayResX"));c->subsController->Redo();EXPECT_EQ(changed,c->ass->Events.front().Text.get());
+    EXPECT_EQ(32,LiveRead(*c).GetScriptInfoAsInt("PlayResX"));EXPECT_NE(text,LiveRead(*c).Events.front().Text.get());EXPECT_DOUBLE_EQ(std::round(size*0.4),LiveRead(*c).Styles.front().fontsize);EXPECT_EQ(id,LiveRead(*c).Events.front().Id);EXPECT_EQ(pointer,&LiveRead(*c).Events.front());
+    auto changed=LiveRead(*c).Events.front().Text.get();c->subsController->Undo();EXPECT_EQ(changed,LiveRead(*c).Events.front().Text.get());c->subsController->Undo();EXPECT_EQ(text,LiveRead(*c).Events.front().Text.get());EXPECT_EQ(80,LiveRead(*c).GetScriptInfoAsInt("PlayResX"));c->subsController->Redo();EXPECT_EQ(changed,LiveRead(*c).Events.front().Text.get());
 }
 TEST_F(visual_edit, video_properties_denies_comparison_without_changing_script_metadata) {
-    {auto write=c->subtitleAccess->TryWrite();c->ass->SetScriptInfo("PlayResX","0");c->ass->SetScriptInfo("PlayResY","0");c->ass->Commit("fixture",AssFile::COMMIT_SCRIPTINFO);}
+    {auto write=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).SetScriptInfo("PlayResX","0");LiveWriteForTest(*c).SetScriptInfo("PlayResY","0");LiveWriteForTest(*c).Commit("fixture",AssFile::COMMIT_SCRIPTINFO);}
     auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);AcceptMessages messages;UpdateVideoProperties(c.get(),c->project->VideoProvider());
-    EXPECT_EQ(0,c->ass->GetScriptInfoAsInt("PlayResX"));
+    EXPECT_EQ(0,LiveRead(*c).GetScriptInfoAsInt("PlayResX"));
 }
 
 TEST_F(ordinary_edit, dialog_batch_rejects_reordered_missing_or_invalid_rows_before_any_write) {
-    {auto write=c->subtitleAccess->TryWrite();for(int i=0;i<2;++i)c->ass->Events.push_back(*new AssDialogue());c->ass->Commit("fixture",AssFile::COMMIT_DIAG_ADDREM);}
+    {auto write=c->subtitleAccess->TryWrite();for(int i=0;i<2;++i)LiveWriteForTest(*c).Events.push_back(*new AssDialogue());LiveWriteForTest(*c).Commit("fixture",AssFile::COMMIT_DIAG_ADDREM);}
     SubtitleDialogEdit edit(c.get());edit.ResetAll();auto updates=edit.Rows();updates.front().Text="first";updates.back().Text="last";
-    updates.back().Row=99;EXPECT_THROW(edit.Commit(updates,"bad order",AssFile::COMMIT_DIAG_TEXT),std::invalid_argument);EXPECT_EQ("",c->ass->Events.front().Text.get());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    updates.back().Row=99;EXPECT_THROW(edit.Commit(updates,"bad order",AssFile::COMMIT_DIAG_TEXT),std::invalid_argument);EXPECT_EQ("",LiveRead(*c).Events.front().Text.get());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
     edit.ResetAll();updates=edit.Rows();updates.front().Text="first";updates.back().Text="last";
-    {auto write=c->subtitleAccess->TryWrite();c->ass->Events.splice(c->ass->Events.begin(),c->ass->Events,c->ass->iterator_to(c->ass->Events.back()));}
-    EXPECT_FALSE(edit.Commit(updates,"reordered",AssFile::COMMIT_DIAG_TEXT));for(auto const& row:c->ass->Events)EXPECT_EQ("",row.Text.get());
+    {auto write=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).Events.splice(LiveWriteForTest(*c).Events.begin(),LiveWriteForTest(*c).Events,LiveWriteForTest(*c).iterator_to(LiveWriteForTest(*c).Events.back()));}
+    EXPECT_FALSE(edit.Commit(updates,"reordered",AssFile::COMMIT_DIAG_TEXT));for(auto const& row:LiveRead(*c).Events)EXPECT_EQ("",row.Text.get());
     edit.ResetAll();updates=edit.Rows();updates.front().Text="first";
-    {auto write=c->subtitleAccess->TryWrite();delete &c->ass->Events.back();}
-    EXPECT_FALSE(edit.Commit(updates,"removed",AssFile::COMMIT_DIAG_TEXT));EXPECT_EQ("",c->ass->Events.front().Text.get());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    {auto write=c->subtitleAccess->TryWrite();delete &LiveRead(*c).Events.back();}
+    EXPECT_FALSE(edit.Commit(updates,"removed",AssFile::COMMIT_DIAG_TEXT));EXPECT_EQ("",LiveRead(*c).Events.front().Text.get());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
 }
 TEST_F(ordinary_edit, translation_dialog_repeated_preview_does_not_reinterpret_inserted_tags_as_blocks) {
-    {auto write=c->subtitleAccess->TryWrite();c->ass->Events.front().Text=R"({\i1}source)";c->ass->Commit("fixture",AssFile::COMMIT_DIAG_TEXT);}
+    {auto write=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).Events.front().Text=R"({\i1}source)";LiveWriteForTest(*c).Commit("fixture",AssFile::COMMIT_DIAG_TEXT);}
     DialogTranslation dialog(c.get());SubsTextEditCtrl* target=nullptr;for(auto child:descendants(&dialog))if(auto text=dynamic_cast<SubsTextEditCtrl*>(child))target=text;
-    ASSERT_NE(nullptr,target);target->SetTextRaw(R"({\b1}译文)");dialog.Commit(false);EXPECT_EQ(R"({\i1}{\b1}译文)",c->ass->Events.front().Text.get());
-    target->SetTextRaw("second");dialog.Commit(false);EXPECT_EQ(R"({\i1}second)",c->ass->Events.front().Text.get());
+    ASSERT_NE(nullptr,target);target->SetTextRaw(R"({\b1}译文)");dialog.Commit(false);EXPECT_EQ(R"({\i1}{\b1}译文)",LiveRead(*c).Events.front().Text.get());
+    target->SetTextRaw("second");dialog.Commit(false);EXPECT_EQ(R"({\i1}second)",LiveRead(*c).Events.front().Text.get());
 }
 TEST_F(ordinary_edit, dialog_noncontiguous_batch_preserves_unselected_fields_and_releases_on_notification_exception) {
-    {auto write=c->subtitleAccess->TryWrite();for(int i=0;i<2;++i)c->ass->Events.push_back(*new AssDialogue());c->ass->Commit("fixture",AssFile::COMMIT_DIAG_ADDREM);}
-    SubtitleDialogEdit edit(c.get());auto first=c->ass->Events.front().Id,last=c->ass->Events.back().Id;edit.Reset({first,last});auto updates=edit.Rows();updates.front().Text="first";updates.back().Text="last";
-    agi::signal::Connection throwing=c->ass->AddCommitListener([]{throw std::runtime_error("observer");});
+    {auto write=c->subtitleAccess->TryWrite();for(int i=0;i<2;++i)LiveWriteForTest(*c).Events.push_back(*new AssDialogue());LiveWriteForTest(*c).Commit("fixture",AssFile::COMMIT_DIAG_ADDREM);}
+    SubtitleDialogEdit edit(c.get());auto first=LiveRead(*c).Events.front().Id,last=LiveRead(*c).Events.back().Id;edit.Reset({first,last});auto updates=edit.Rows();updates.front().Text="first";updates.back().Text="last";
+    agi::signal::Connection throwing=LiveRead(*c).AddCommitListener([]{throw std::runtime_error("observer");});
     EXPECT_THROW(edit.Commit(updates,"complete batch",AssFile::COMMIT_DIAG_TEXT),std::runtime_error);
-    EXPECT_EQ("first",c->ass->Events.front().Text.get());EXPECT_EQ("last",c->ass->Events.back().Text.get());EXPECT_EQ("",std::next(c->ass->Events.begin())->Text.get());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
-    throwing.Disconnect();c->subsController->Undo();for(auto const& row:c->ass->Events)EXPECT_EQ("",row.Text.get());
+    EXPECT_EQ("first",LiveRead(*c).Events.front().Text.get());EXPECT_EQ("last",LiveRead(*c).Events.back().Text.get());EXPECT_EQ("",std::next(LiveRead(*c).Events.begin())->Text.get());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    throwing.Disconnect();c->subsController->Undo();for(auto const& row:LiveRead(*c).Events)EXPECT_EQ("",row.Text.get());
 }
 
 TEST_F(ordinary_edit, translation_dialog_persists_only_confirmed_text_and_keeps_metadata) {
     uint32_t extra;
-    {auto write=c->subtitleAccess->TryWrite();auto& row=c->ass->Events.front();row.Text="source";row.Comment=true;row.Layer=3;row.Start=1;row.End=2002;row.Actor="actor";row.Effect="effect";extra=c->ass->AddExtradata("unknown","payload");row.ExtradataIds=std::vector<uint32_t>{extra};c->ass->Commit("fixture",AssFile::COMMIT_DIAG_FULL);}
-    auto id=c->ass->Events.front().Id;
+    {auto write=c->subtitleAccess->TryWrite();auto& row=LiveWriteForTest(*c).Events.front();row.Text="source";row.Comment=true;row.Layer=3;row.Start=1;row.End=2002;row.Actor="actor";row.Effect="effect";extra=LiveWriteForTest(*c).AddExtradata("unknown","payload");row.ExtradataIds=std::vector<uint32_t>{extra};LiveWriteForTest(*c).Commit("fixture",AssFile::COMMIT_DIAG_FULL);}
+    auto id=LiveRead(*c).Events.front().Id;
     {DialogTranslation dialog(c.get());SubsTextEditCtrl* target=nullptr;for(auto child:descendants(&dialog))if(auto text=dynamic_cast<SubsTextEditCtrl*>(child))target=text;ASSERT_NE(nullptr,target);target->SetTextRaw("中 文");dialog.Commit(false);target->SetTextRaw("unconfirmed");}
-    auto const& row=c->ass->Events.front();EXPECT_EQ(id,row.Id);EXPECT_EQ(1,row.Start.GetMilliseconds());EXPECT_EQ(2002,row.End.GetMilliseconds());EXPECT_TRUE(row.Comment);EXPECT_EQ(3,row.Layer);EXPECT_EQ("actor",row.Actor.get());EXPECT_EQ("effect",row.Effect.get());EXPECT_EQ(std::vector<uint32_t>{extra},row.ExtradataIds.get());
+    auto const& row=LiveRead(*c).Events.front();EXPECT_EQ(id,row.Id);EXPECT_EQ(1,row.Start.GetMilliseconds());EXPECT_EQ(2002,row.End.GetMilliseconds());EXPECT_TRUE(row.Comment);EXPECT_EQ(3,row.Layer);EXPECT_EQ("actor",row.Actor.get());EXPECT_EQ("effect",row.Effect.get());EXPECT_EQ(std::vector<uint32_t>{extra},row.ExtradataIds.get());
     auto save=agi::fs::path((std::filesystem::current_path()/"dialog-result.ass").wstring());{auto write=c->subtitleAccess->TryWrite();c->subsController->Save(save);}
     AssFile reopened;SubtitleFormat::GetReader(save,"utf-8")->ReadFile(&reopened,save,c->project->Timecodes(),"utf-8");EXPECT_EQ("中 文",reopened.Events.front().Text.get());ASSERT_EQ(1u,reopened.Extradata.size());EXPECT_EQ("payload",reopened.Extradata.front().value);
 }
 TEST_F(ordinary_edit, dialog_dependency_changes_and_explicit_hide_release_pending_work) {
     SubtitleDialogEdit edit(c.get());edit.ResetActive();
-    {auto write=c->subtitleAccess->TryWrite();c->ass->Events.front().Start=1;}
+    {auto write=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).Events.front().Start=1;}
     EXPECT_FALSE(edit.Begin());edit.ResetActive();
-    {auto write=c->subtitleAccess->TryWrite();c->ass->Styles.front().fontsize+=1;}
+    {auto write=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).Styles.front().fontsize+=1;}
     EXPECT_FALSE(edit.Begin());
     DialogStyling dialog(c.get());dialog.Show();wxTextCtrl* name=nullptr;for(auto child:descendants(&dialog))if(auto text=dynamic_cast<wxTextCtrl*>(child);text && (text->GetWindowStyleFlag()&wxTE_PROCESS_ENTER))name=text;
     ASSERT_NE(nullptr,name);name->SetValue("Default");EXPECT_FALSE(c->subtitleEditGate.TryBeginComparison());dialog.Hide();EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
 }
 TEST_F(ordinary_edit, styling_dialog_notification_exception_releases_interaction_without_partial_state) {
-    DialogStyling dialog(c.get());agi::signal::Connection throwing=c->ass->AddCommitListener([]{throw std::runtime_error("observer");});
-    EXPECT_THROW(dialog.Commit(false),std::runtime_error);EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());EXPECT_EQ("Default",c->ass->Events.front().Style.get());
+    DialogStyling dialog(c.get());agi::signal::Connection throwing=LiveRead(*c).AddCommitListener([]{throw std::runtime_error("observer");});
+    EXPECT_THROW(dialog.Commit(false),std::runtime_error);EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());EXPECT_EQ("Default",LiveRead(*c).Events.front().Style.get());
 }
 
 TEST_F(ordinary_edit, video_layout_writeback_rejects_bad_structure_and_keeps_live_nodes_and_other_state) {
-    {auto write=c->subtitleAccess->TryWrite();c->ass->Properties.video_zoom=2;c->ass->AddExtradata("unknown","keep");}
-    SubtitleDialogEdit edit(c.get());edit.ResetAll();AssFile calculated(c->subtitleAccess->Read());calculated.Events.front().Id=c->ass->Events.front().Id;
+    {auto write=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).Properties.video_zoom=2;LiveWriteForTest(*c).AddExtradata("unknown","keep");}
+    SubtitleDialogEdit edit(c.get());edit.ResetAll();AssFile calculated(c->subtitleAccess->Read());calculated.Events.front().Id=LiveRead(*c).Events.front().Id;
     calculated.Events.front().Text="layout";calculated.Styles.front().name="renamed";
-    EXPECT_THROW(edit.CommitLayout(calculated,"invalid layout",AssFile::COMMIT_DIAG_FULL),std::invalid_argument);EXPECT_EQ("",c->ass->Events.front().Text.get());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+    EXPECT_THROW(edit.CommitLayout(calculated,"invalid layout",AssFile::COMMIT_DIAG_FULL),std::invalid_argument);EXPECT_EQ("",LiveRead(*c).Events.front().Text.get());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
     calculated.Styles.front().name="Default";calculated.Styles.front().fontsize=24;calculated.Styles.front().UpdateData();calculated.SetScriptInfo("PlayResX","123");
-    edit.ResetAll();auto row=&c->ass->Events.front();auto style=&c->ass->Styles.front();
+    edit.ResetAll();auto row=&LiveRead(*c).Events.front();auto style=&LiveRead(*c).Styles.front();
     ASSERT_TRUE(edit.CommitLayout(calculated,"layout",AssFile::COMMIT_DIAG_FULL|AssFile::COMMIT_STYLES|AssFile::COMMIT_SCRIPTINFO));
-    EXPECT_EQ(row,&c->ass->Events.front());EXPECT_EQ(style,&c->ass->Styles.front());EXPECT_EQ(row,c->selectionController->ReadActiveLine());EXPECT_EQ("layout",row->Text.get());EXPECT_DOUBLE_EQ(24,style->fontsize);EXPECT_DOUBLE_EQ(2,c->ass->Properties.video_zoom);EXPECT_EQ("keep",c->ass->Extradata.front().value);
+    EXPECT_EQ(row,&LiveRead(*c).Events.front());EXPECT_EQ(style,&LiveRead(*c).Styles.front());EXPECT_EQ(row,c->selectionController->ReadActiveLine());EXPECT_EQ("layout",row->Text.get());EXPECT_DOUBLE_EQ(24,style->fontsize);EXPECT_DOUBLE_EQ(2,LiveRead(*c).Properties.video_zoom);EXPECT_EQ("keep",LiveRead(*c).Extradata.front().value);
 }
 TEST_F(ordinary_edit, video_layout_access_requires_a_current_interaction) {
-    auto id=c->ass->Events.front().Id;AssFile calculated(c->subtitleAccess->Read());calculated.Events.front().Id=id;calculated.SetScriptInfo("Title","blocked");
+    auto id=LiveRead(*c).Events.front().Id;AssFile calculated(c->subtitleAccess->Read());calculated.Events.front().Id=id;calculated.SetScriptInfo("Title","blocked");
     auto interaction=c->subtitleAccess->TryBeginInteraction({id});ASSERT_TRUE(interaction);interaction->End();
-    EXPECT_THROW(interaction->UpdateLayout(calculated),std::logic_error);EXPECT_NE("blocked",c->ass->GetScriptInfo("Title"));
+    EXPECT_THROW(interaction->UpdateLayout(calculated),std::logic_error);EXPECT_NE("blocked",LiveRead(*c).GetScriptInfo("Title"));
 }
 
 }
@@ -1420,21 +1421,21 @@ TEST_F(ordinary_edit, controlled_tag_commands_preserve_multiline_data_and_single
     std::vector<int> ids;for(auto row:c->selectionController->ReadSelectedLines())ids.push_back(row->Id);
     ASSERT_EQ(2u,ids.size());
     cmd::call("edit/style/bold",c.get());
-    for(auto const& row:c->ass->Events)if(std::find(ids.begin(),ids.end(),row.Id)!=ids.end())EXPECT_NE(std::string::npos,row.Text.get().find("\\b1"));
+    for(auto const& row:LiveRead(*c).Events)if(std::find(ids.begin(),ids.end(),row.Id)!=ids.end())EXPECT_NE(std::string::npos,row.Text.get().find("\\b1"));
     c->subsController->Undo();
-    for(auto const& row:c->ass->Events)EXPECT_EQ(std::string::npos,row.Text.get().find("\\b1"));
+    for(auto const& row:LiveRead(*c).Events)EXPECT_EQ(std::string::npos,row.Text.get().find("\\b1"));
     c->subsController->Redo();
-    for(auto const& row:c->ass->Events)if(std::find(ids.begin(),ids.end(),row.Id)!=ids.end())EXPECT_NE(std::string::npos,row.Text.get().find("\\b1"));
+    for(auto const& row:LiveRead(*c).Events)if(std::find(ids.begin(),ids.end(),row.Id)!=ids.end())EXPECT_NE(std::string::npos,row.Text.get().find("\\b1"));
 }
 TEST_F(ordinary_edit, controlled_adjoin_and_replace_all_use_production_entries_and_preserve_ids) {
     cmd::PasteSubtitleLines(c.get(),"Dialogue: 0,0:00:00.000,0:00:01.000,Default,A,0,0,0,,one\nDialogue: 0,0:00:02.000,0:00:03.000,Default,B,0,0,0,,one");
     auto selected=c->selectionController->ReadSortedSelection();ASSERT_EQ(2u,selected.size());
     auto second=selected[1]->Id;
     cmd::call("time/continuous/start",c.get());
-    EXPECT_EQ(1000,c->ass->Events.front().End.GetMilliseconds());
-    for(auto const& row:c->ass->Events)if(row.Id==second)EXPECT_EQ(1000,row.Start.GetMilliseconds());
+    EXPECT_EQ(1000,LiveRead(*c).Events.front().End.GetMilliseconds());
+    for(auto const& row:LiveRead(*c).Events)if(row.Id==second)EXPECT_EQ(1000,row.Start.GetMilliseconds());
     c->subsController->Undo();
-    for(auto const& row:c->ass->Events)if(row.Id==second)EXPECT_EQ(2000,row.Start.GetMilliseconds());
+    for(auto const& row:LiveRead(*c).Events)if(row.Id==second)EXPECT_EQ(2000,row.Start.GetMilliseconds());
     SearchReplaceSettings settings{};settings.find="one";settings.replace_with="translated";
     settings.field=SearchReplaceSettings::Field::TEXT;settings.limit_to=SearchReplaceSettings::Limit::SELECTED;
     c->search->Configure(settings);AcceptMessages messages;EXPECT_TRUE(c->search->ReplaceAll());
@@ -1446,15 +1447,15 @@ TEST_F(ordinary_edit, controlled_duplicate_move_join_and_split_preserve_live_ide
     cmd::PasteSubtitleLines(c.get(),"one\ntwo");
     auto selected=c->selectionController->ReadSortedSelection();ASSERT_EQ(2u,selected.size());
     auto original=selected.front();auto id=original->Id;
-    cmd::call("edit/line/duplicate",c.get());EXPECT_EQ(5u,c->ass->Events.size());
-    bool preserved=false;for(auto const& row:c->ass->Events)if(row.Id==id)preserved=&row==original;EXPECT_TRUE(preserved);
+    cmd::call("edit/line/duplicate",c.get());EXPECT_EQ(5u,LiveRead(*c).Events.size());
+    bool preserved=false;for(auto const& row:LiveRead(*c).Events)if(row.Id==id)preserved=&row==original;EXPECT_TRUE(preserved);
     cmd::call("grid/move/up",c.get());EXPECT_EQ(2u,c->selectionController->ReadSelectedSet().size());
-    cmd::call("edit/line/join/concatenate",c.get());EXPECT_EQ(4u,c->ass->Events.size());
-    c->subsController->Undo();EXPECT_EQ(5u,c->ass->Events.size());
-    c->subsController->Redo();EXPECT_EQ(4u,c->ass->Events.size());
+    cmd::call("edit/line/join/concatenate",c.get());EXPECT_EQ(4u,LiveRead(*c).Events.size());
+    c->subsController->Undo();EXPECT_EQ(5u,LiveRead(*c).Events.size());
+    c->subsController->Redo();EXPECT_EQ(4u,LiveRead(*c).Events.size());
     c->textSelectionController->SetSelection(1,1);
-    cmd::call("edit/line/split/preserve",c.get());EXPECT_EQ(5u,c->ass->Events.size());
-    c->subsController->Undo();EXPECT_EQ(4u,c->ass->Events.size());
+    cmd::call("edit/line/split/preserve",c.get());EXPECT_EQ(5u,LiveRead(*c).Events.size());
+    c->subsController->Undo();EXPECT_EQ(4u,LiveRead(*c).Events.size());
 }
 
 TEST_F(ordinary_edit, controlled_real_style_rename_updates_references_and_repeated_apply_keeps_node_identity) {
@@ -1463,15 +1464,15 @@ TEST_F(ordinary_edit, controlled_real_style_rename_updates_references_and_repeat
         int Enter(wxDialog* dialog) override {return dynamic_cast<wxMessageDialog*>(dialog)?wxID_YES:wxID_NONE;}
     } confirm;
     Input("{\\rDefault}text");
-    auto live=c->ass->GetStyle("Default");wxArrayString fonts;fonts.Add("Arial");
+    auto live=LiveRead(*c).GetStyle("Default");wxArrayString fonts;fonts.Add("Arial");
     DialogStyleEditor dialog(window,live,c.get(),nullptr,"",fonts);
     wxTextCtrl* name=nullptr;
     for(auto child:descendants(&dialog))if(auto text=dynamic_cast<wxTextCtrl*>(child);text && text->GetValue()=="Default"){name=text;break;}
     ASSERT_NE(nullptr,name);name->ChangeValue("Renamed");button(&dialog,wxID_APPLY);
-    EXPECT_EQ(live,c->ass->GetStyle("Renamed"));EXPECT_EQ("Renamed",c->ass->Events.front().Style.get());EXPECT_EQ("{\\rRenamed}text",c->ass->Events.front().Text.get());
-    button(&dialog,wxID_APPLY);EXPECT_EQ(live,c->ass->GetStyle("Renamed"));
-    c->subsController->Undo();c->subsController->Undo();EXPECT_NE(nullptr,c->ass->GetStyle("Default"));EXPECT_EQ("{\\rDefault}text",c->ass->Events.front().Text.get());
-    c->subsController->Redo();EXPECT_EQ("{\\rRenamed}text",c->ass->Events.front().Text.get());
+    EXPECT_EQ(live,LiveRead(*c).GetStyle("Renamed"));EXPECT_EQ("Renamed",LiveRead(*c).Events.front().Style.get());EXPECT_EQ("{\\rRenamed}text",LiveRead(*c).Events.front().Text.get());
+    button(&dialog,wxID_APPLY);EXPECT_EQ(live,LiveRead(*c).GetStyle("Renamed"));
+    c->subsController->Undo();c->subsController->Undo();EXPECT_NE(nullptr,LiveRead(*c).GetStyle("Default"));EXPECT_EQ("{\\rDefault}text",LiveRead(*c).Events.front().Text.get());
+    c->subsController->Redo();EXPECT_EQ("{\\rRenamed}text",LiveRead(*c).Events.front().Text.get());
 }
 
 TEST_F(ordinary_edit, controlled_shift_and_timing_processor_use_real_dialog_confirm_events) {
@@ -1483,7 +1484,7 @@ TEST_F(ordinary_edit, controlled_shift_and_timing_processor_use_real_dialog_conf
     ASSERT_NE(nullptr,shift);
     TimeEdit* value=nullptr;for(auto child:descendants(shift))if(auto time=dynamic_cast<TimeEdit*>(child))value=time;
     ASSERT_NE(nullptr,value);value->SetTime(1000);button(shift,wxID_OK);
-    EXPECT_EQ(1000,c->ass->Events.front().Start.GetMilliseconds());
+    EXPECT_EQ(1000,LiveRead(*c).Events.front().Start.GetMilliseconds());
     OPT_SET("Tool/Timing Post Processor/Lead/IN")->SetInt(100);
     OPT_SET("Tool/Timing Post Processor/Enable/Lead/IN")->SetBool(true);
     OPT_SET("Tool/Timing Post Processor/Enable/Lead/OUT")->SetBool(false);
@@ -1494,25 +1495,25 @@ TEST_F(ordinary_edit, controlled_shift_and_timing_processor_use_real_dialog_conf
             for(auto child:descendants(dialog))if(auto list=dynamic_cast<wxCheckListBox*>(child))for(unsigned i=0;i<list->GetCount();++i)list->Check(i,true);
             button(dialog,wxID_OK);
         });
-        ShowTimingProcessorDialog(c.get());EXPECT_EQ(900,c->ass->Events.front().Start.GetMilliseconds());
+        ShowTimingProcessorDialog(c.get());EXPECT_EQ(900,LiveRead(*c).Events.front().Start.GetMilliseconds());
     }
-    c->subsController->Undo();EXPECT_EQ(1000,c->ass->Events.front().Start.GetMilliseconds());
-    c->subsController->Undo();EXPECT_EQ(0,c->ass->Events.front().Start.GetMilliseconds());
+    c->subsController->Undo();EXPECT_EQ(1000,LiveRead(*c).Events.front().Start.GetMilliseconds());
+    c->subsController->Undo();EXPECT_EQ(0,LiveRead(*c).Events.front().Start.GetMilliseconds());
 }
 TEST_F(ordinary_edit, controlled_resample_uses_real_settings_confirmation_and_one_history_step) {
     Input("{\\pos(10,20)}sample");
-    int width,height;c->ass->GetResolution(width,height);auto fontsize=c->ass->GetStyle("Default")->fontsize;
+    int width,height;LiveRead(*c).GetResolution(width,height);auto fontsize=LiveRead(*c).GetStyle("Default")->fontsize;
     RunModal hook("Resample Resolution",[&](wxDialog* dialog){
         int changed=0;
         for(auto child:descendants(dialog))if(auto spin=dynamic_cast<wxSpinCtrl*>(child);spin && spin->GetParent()->GetLabel()=="Destination Resolution") {spin->SetValue(spin->GetValue()*2);++changed;}
         ASSERT_EQ(2,changed);button(dialog,wxID_OK);
     });
     cmd::call("tool/resampleres",c.get());
-    EXPECT_EQ(width*2,c->ass->GetScriptInfoAsInt("PlayResX"));EXPECT_EQ(height*2,c->ass->GetScriptInfoAsInt("PlayResY"));
-    EXPECT_DOUBLE_EQ(fontsize*2,c->ass->GetStyle("Default")->fontsize);
-    c->subsController->Undo();int restored_width,restored_height;c->ass->GetResolution(restored_width,restored_height);
-    EXPECT_EQ(width,restored_width);EXPECT_EQ(height,restored_height);EXPECT_DOUBLE_EQ(fontsize,c->ass->GetStyle("Default")->fontsize);
-    EXPECT_EQ("{\\pos(10,20)}sample",c->ass->Events.front().Text.get());
+    EXPECT_EQ(width*2,LiveRead(*c).GetScriptInfoAsInt("PlayResX"));EXPECT_EQ(height*2,LiveRead(*c).GetScriptInfoAsInt("PlayResY"));
+    EXPECT_DOUBLE_EQ(fontsize*2,LiveRead(*c).GetStyle("Default")->fontsize);
+    c->subsController->Undo();int restored_width,restored_height;LiveRead(*c).GetResolution(restored_width,restored_height);
+    EXPECT_EQ(width,restored_width);EXPECT_EQ(height,restored_height);EXPECT_DOUBLE_EQ(fontsize,LiveRead(*c).GetStyle("Default")->fontsize);
+    EXPECT_EQ("{\\pos(10,20)}sample",LiveRead(*c).Events.front().Text.get());
 }
 
 TEST_F(ordinary_edit, selection_notifications_refresh_real_editor_without_model_authority) {
@@ -1520,7 +1521,7 @@ TEST_F(ordinary_edit, selection_notifications_refresh_real_editor_without_model_
     {
         auto write=c->subtitleAccess->TryWrite();
         auto row=new AssDialogue;row->Text="second selection";second=row->Id;
-        c->ass->Events.push_back(*row);c->ass->Commit("selection fixture",AssFile::COMMIT_DIAG_ADDREM);
+        LiveWriteForTest(*c).Events.push_back(*row);LiveWriteForTest(*c).Commit("selection fixture",AssFile::COMMIT_DIAG_ADDREM);
     }
     auto undo=c->subsController->GetUndoDescription();auto revision=c->subtitleEditGate.Revision();
     auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);
@@ -1553,13 +1554,13 @@ protected:
         grid->SetSize(900,300);window->SetSize(1000,600);window->Show();
         {
             auto write=c->subtitleAccess->TryWrite();
-            auto& first=c->ass->Events.front();first.Text="first";first.Start=1000;
+            auto& first=LiveWriteForTest(*c).Events.front();first.Text="first";first.Start=1000;
             ids.push_back(first.Id);
             for(int i=1;i<4;++i) {
                 auto row=new AssDialogue;row->Text=std::to_string(i);row->Start=(i+1)*1000;
-                c->ass->Events.push_back(*row);ids.push_back(row->Id);
+                LiveWriteForTest(*c).Events.push_back(*row);ids.push_back(row->Id);
             }
-            c->ass->Commit("selection UI fixture",AssFile::COMMIT_DIAG_ADDREM|AssFile::COMMIT_DIAG_FULL);
+            LiveWriteForTest(*c).Commit("selection UI fixture",AssFile::COMMIT_DIAG_ADDREM|AssFile::COMMIT_DIAG_FULL);
         }
         c->selectionController->SetSelectionAndActiveIDs({ids[0]},ids[0],false);
         wxFont font=*wxNORMAL_FONT;font.SetPointSize(OPT_GET("Subtitle/Grid/Font Size")->GetInt());
@@ -1598,10 +1599,10 @@ TEST_F(selection_ui, mouse_keyboard_and_select_all_are_pure_ui_during_comparison
 TEST_F(selection_ui, bound_row_modifiers_keep_single_member_and_repeat_notifications) {
     {
         auto write=c->subtitleAccess->TryWrite();
-        auto group=c->ass->AddExtradata("aegisub.enhanced.subtitle-binding","0:test");
-        c->ass->Events.front().ExtradataIds=std::vector<uint32_t>{group};
-        std::next(c->ass->Events.begin())->ExtradataIds=std::vector<uint32_t>{group};
-        c->ass->Commit("binding fixture",AssFile::COMMIT_EXTRADATA);
+        auto group=LiveWriteForTest(*c).AddExtradata("aegisub.enhanced.subtitle-binding","0:test");
+        LiveWriteForTest(*c).Events.front().ExtradataIds=std::vector<uint32_t>{group};
+        std::next(LiveWriteForTest(*c).Events.begin())->ExtradataIds=std::vector<uint32_t>{group};
+        LiveWriteForTest(*c).Commit("binding fixture",AssFile::COMMIT_EXTRADATA);
     }
     auto revision=c->subtitleEditGate.Revision();auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);
     Mouse(0);EXPECT_EQ((std::set<int>{ids[0],ids[1]}),c->selectionController->SelectedIDs());
@@ -1662,7 +1663,7 @@ TEST_F(selection_ui, selection_listener_cannot_undo_or_commit_with_a_preexisting
     });
     c->selectionController->SetSelectedIDs({ids[0]});
     EXPECT_EQ(1,calls);EXPECT_EQ(before,c->subsController->GetUndoDescription());
-    EXPECT_EQ("history entry",c->ass->Events.front().Text.get());EXPECT_EQ(revision,c->subtitleEditGate.Revision());
+    EXPECT_EQ("history entry",LiveRead(*c).Events.front().Text.get());EXPECT_EQ(revision,c->subtitleEditGate.Revision());
 }
 TEST_F(selection_ui, find_navigation_uses_ids_without_a_write_lease) {
     SearchReplaceSettings settings{};settings.find="2";settings.field=SearchReplaceSettings::Field::TEXT;
@@ -1676,22 +1677,22 @@ TEST_F(selection_ui, find_navigation_uses_ids_without_a_write_lease) {
 
 TEST_F(ordinary_edit, save_cleans_only_independent_copy_and_keeps_ass_format_precision) {
     {
-        auto write=c->subtitleAccess->TryWrite();auto& row=c->ass->Events.front();
+        auto write=c->subtitleAccess->TryWrite();auto& row=LiveWriteForTest(*c).Events.front();
         row.Text=" 中 文 {\\i1} ";row.Comment=true;row.Start=1001;row.End=2345;
-        auto binding=c->ass->AddExtradata("aegisub.enhanced.subtitle-binding","0:save-test");
-        c->ass->AddExtradata("orphan","keep in memory");
+        auto binding=LiveWriteForTest(*c).AddExtradata("aegisub.enhanced.subtitle-binding","0:save-test");
+        LiveWriteForTest(*c).AddExtradata("orphan","keep in memory");
         row.ExtradataIds=std::vector<uint32_t>{binding,999999};
-        c->ass->Properties.video_zoom=1.25;c->ass->Properties.automation_settings["test"]="saved";
-        c->ass->Commit("save fixture",AssFile::COMMIT_DIAG_FULL|AssFile::COMMIT_EXTRADATA);
+        LiveWriteForTest(*c).Properties.video_zoom=1.25;LiveWriteForTest(*c).Properties.automation_settings["test"]="saved";
+        LiveWriteForTest(*c).Commit("save fixture",AssFile::COMMIT_DIAG_FULL|AssFile::COMMIT_EXTRADATA);
     }
-    auto id=c->ass->Events.front().Id;auto refs=c->ass->Events.front().ExtradataIds.get();
+    auto id=LiveRead(*c).Events.front().Id;auto refs=LiveRead(*c).Events.front().ExtradataIds.get();
     auto revision=c->subtitleEditGate.Revision();auto undo=c->subsController->GetUndoDescription();
     auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);
     auto path=agi::fs::path((std::filesystem::current_path()/"snapshot-save.ass").wstring());
     c->subsController->Save(path,"utf-8");
     EXPECT_EQ(revision,c->subtitleEditGate.Revision());EXPECT_EQ(undo,c->subsController->GetUndoDescription());
-    EXPECT_EQ(refs,c->ass->Events.front().ExtradataIds.get());EXPECT_EQ(2u,c->ass->Extradata.size());
-    EXPECT_EQ(id,c->ass->Events.front().Id);
+    EXPECT_EQ(refs,LiveRead(*c).Events.front().ExtradataIds.get());EXPECT_EQ(2u,LiveRead(*c).Extradata.size());
+    EXPECT_EQ(id,LiveRead(*c).Events.front().Id);
     AssFile reopened;SubtitleFormat::GetReader(path,"utf-8")->ReadFile(&reopened,path,c->project->Timecodes(),"utf-8");
     std::ifstream saved(path.string(),std::ios::binary);
     std::string output((std::istreambuf_iterator<char>(saved)),{});
@@ -1699,7 +1700,7 @@ TEST_F(ordinary_edit, save_cleans_only_independent_copy_and_keeps_ass_format_pre
     // The existing ASS reader trims line-end space; ASS time serialization rounds to centiseconds.
     EXPECT_EQ(" 中 文 {\\i1}",reopened.Events.front().Text.get());EXPECT_TRUE(reopened.Events.front().Comment);
     EXPECT_EQ(1000,reopened.Events.front().Start.GetMilliseconds());EXPECT_EQ(2350,reopened.Events.front().End.GetMilliseconds());
-    EXPECT_EQ(1001,c->ass->Events.front().Start.GetMilliseconds());EXPECT_EQ(2345,c->ass->Events.front().End.GetMilliseconds());
+    EXPECT_EQ(1001,LiveRead(*c).Events.front().Start.GetMilliseconds());EXPECT_EQ(2345,LiveRead(*c).Events.front().End.GetMilliseconds());
     ASSERT_EQ(1u,reopened.Extradata.size());EXPECT_EQ("aegisub.enhanced.subtitle-binding",reopened.Extradata.front().key);
     EXPECT_EQ(1u,reopened.Events.front().ExtradataIds.get().size());EXPECT_NE(nullptr,reopened.GetStyle("Default"));
     EXPECT_DOUBLE_EQ(1.25,reopened.Properties.video_zoom);
@@ -1710,7 +1711,7 @@ TEST_F(ordinary_edit, failed_save_leaves_filename_paths_dirty_state_model_and_hi
     auto path=agi::fs::path((std::filesystem::current_path()/"missing-parent"/"failed.ass").wstring());
     EXPECT_ANY_THROW(c->subsController->Save(path,"utf-8"));
     EXPECT_EQ(old,c->subsController->Filename());EXPECT_EQ(script,c->path->Decode("?script"));EXPECT_TRUE(c->subsController->IsModified());
-    EXPECT_EQ("unsaved",c->ass->Events.front().Text.get());EXPECT_EQ(revision,c->subtitleEditGate.Revision());EXPECT_EQ(undo,c->subsController->GetUndoDescription());
+    EXPECT_EQ("unsaved",LiveRead(*c).Events.front().Text.get());EXPECT_EQ(revision,c->subtitleEditGate.Revision());EXPECT_EQ(undo,c->subsController->GetUndoDescription());
 }
 
 TEST_F(ordinary_edit, autosave_owns_complete_input_and_queued_completion_survives_controller_destruction) {
@@ -1718,11 +1719,11 @@ TEST_F(ordinary_edit, autosave_owns_complete_input_and_queued_completion_survive
     auto old_path=OPT_GET("Path/Auto/Save")->GetString();OPT_SET("Path/Auto/Save")->SetString(directory.string());
     Input("automatic snapshot 中 文");
     {
-        auto write=c->subtitleAccess->TryWrite();c->ass->Properties.video_zoom=1.75;
-        c->ass->Properties.export_encoding="utf-8";
-        auto id=c->ass->AddExtradata("aegisub.enhanced.subtitle-binding","0:auto");
-        c->ass->Events.front().ExtradataIds=std::vector<uint32_t>{id};c->ass->AddExtradata("orphan","not saved");
-        c->ass->Commit("auto fixture",AssFile::COMMIT_EXTRADATA);
+        auto write=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).Properties.video_zoom=1.75;
+        LiveWriteForTest(*c).Properties.export_encoding="utf-8";
+        auto id=LiveWriteForTest(*c).AddExtradata("aegisub.enhanced.subtitle-binding","0:auto");
+        LiveWriteForTest(*c).Events.front().ExtradataIds=std::vector<uint32_t>{id};LiveWriteForTest(*c).AddExtradata("orphan","not saved");
+        LiveWriteForTest(*c).Commit("auto fixture",AssFile::COMMIT_EXTRADATA);
     }
     c->subsController->RequestAutoSave();Input("later edit");
     // The production destructor drains its serial worker and invalidates queued UI results.
@@ -1731,9 +1732,9 @@ TEST_F(ordinary_edit, autosave_owns_complete_input_and_queued_completion_survive
     for(auto const& item:std::filesystem::directory_iterator(directory))outputs.push_back(item.path());
     ASSERT_EQ(1u,outputs.size());AssFile reopened;agi::fs::path path(outputs.front().wstring());
     SubtitleFormat::GetReader(path,"utf-8")->ReadFile(&reopened,path,c->project->Timecodes(),"utf-8");
-    EXPECT_EQ("automatic snapshot 中 文",reopened.Events.front().Text.get());EXPECT_EQ("later edit",c->ass->Events.front().Text.get());
+    EXPECT_EQ("automatic snapshot 中 文",reopened.Events.front().Text.get());EXPECT_EQ("later edit",LiveRead(*c).Events.front().Text.get());
     EXPECT_DOUBLE_EQ(1.75,reopened.Properties.video_zoom);EXPECT_EQ("utf-8",reopened.Properties.export_encoding);
-    EXPECT_EQ(1u,reopened.Extradata.size());EXPECT_EQ(2u,c->ass->Extradata.size());
+    EXPECT_EQ(1u,reopened.Extradata.size());EXPECT_EQ(2u,LiveRead(*c).Extradata.size());
     OPT_SET("Path/Auto/Save")->SetString(old_path);
 }
 
@@ -1750,9 +1751,9 @@ TEST_F(ordinary_edit, metadata_only_save_close_reopen_has_independent_dirty_stat
     EXPECT_ANY_THROW(c->subsController->Save(bad,"utf-8"));EXPECT_TRUE(c->subtitleAccess->MetadataDirty());
     c->subsController->Save(path,"utf-8");EXPECT_FALSE(c->subsController->IsModified());
     c->subsController->Close();c->subsController->Load(path,"utf-8");
-    auto id=c->ass->Events.front().Id;c->selectionController->SetSelectionAndActiveIDs({id},id);
-    EXPECT_FALSE(c->subsController->IsModified());EXPECT_EQ("utf-8",c->ass->Properties.export_encoding);
-    EXPECT_EQ("some settings",c->subtitleAccess->AutomationSetting("test"));EXPECT_DOUBLE_EQ(1.5,c->ass->Properties.video_zoom);
+    auto id=LiveRead(*c).Events.front().Id;c->selectionController->SetSelectionAndActiveIDs({id},id);
+    EXPECT_FALSE(c->subsController->IsModified());EXPECT_EQ("utf-8",LiveRead(*c).Properties.export_encoding);
+    EXPECT_EQ("some settings",c->subtitleAccess->AutomationSetting("test"));EXPECT_DOUBLE_EQ(1.5,LiveRead(*c).Properties.video_zoom);
 }
 TEST_F(ordinary_edit, metadata_only_change_triggers_autosave_after_a_clean_manual_save) {
     auto root=std::filesystem::current_path()/"metadata-autosave";
@@ -1772,14 +1773,14 @@ template<class T> concept PublicHistoryRestore = requires { typename T::HistoryR
 static_assert(!PublicHistoryRestore<SubsController>);
 TEST_F(ordinary_edit, ordinary_scope_cannot_register_a_live_history_writer_or_change_undo_granularity) {
     auto scope=c->subtitleAccess->TryWrite();ASSERT_TRUE(scope);
-    EXPECT_THROW(c->ass->AddUndoManager([](AssFileCommit const&){}),std::logic_error);
+    EXPECT_THROW(LiveWriteForTest(*c).AddUndoManager([](AssFileCommit const&){}),std::logic_error);
     scope.reset();Input("first history edit");Input("same undo group");
     auto description=c->subsController->GetUndoDescription();
     // Input emits STARTACTION, so each call retains its own existing Undo group.
-    c->subsController->Undo();EXPECT_EQ("first history edit",c->ass->Events.front().Text.get());
-    c->subsController->Undo();EXPECT_EQ("",c->ass->Events.front().Text.get());
-    c->subsController->Redo();EXPECT_EQ("first history edit",c->ass->Events.front().Text.get());
-    c->subsController->Redo();EXPECT_EQ("same undo group",c->ass->Events.front().Text.get());
+    c->subsController->Undo();EXPECT_EQ("first history edit",LiveRead(*c).Events.front().Text.get());
+    c->subsController->Undo();EXPECT_EQ("",LiveRead(*c).Events.front().Text.get());
+    c->subsController->Redo();EXPECT_EQ("first history edit",LiveRead(*c).Events.front().Text.get());
+    c->subsController->Redo();EXPECT_EQ("same undo group",LiveRead(*c).Events.front().Text.get());
     EXPECT_EQ(description,c->subsController->GetUndoDescription());
 }
 
@@ -1795,7 +1796,7 @@ TEST_F(ordinary_edit, font_collection_uses_snapshot_and_can_be_destroyed_with_wo
     button(start,start->GetId());EXPECT_EQ(revision,c->subtitleEditGate.Revision());
     comparison.reset();Input("edited while worker owns snapshot");
     button(dialog,wxID_CANCEL); // unregisters; parent destruction drains the private worker queue
-    EXPECT_EQ("edited while worker owns snapshot",c->ass->Events.front().Text.get());
+    EXPECT_EQ("edited while worker owns snapshot",LiveRead(*c).Events.front().Text.get());
     OPT_SET("Tool/Fonts Collector/Action")->SetInt(action);
 }
 
@@ -1830,14 +1831,14 @@ protected:
         bool modified,metadata_dirty,undo_empty,redo_empty;
     };
     Envelope Capture() {
-        return {Contents(),c->ass->Properties,c->subtitleEditGate.Revision(),c->subtitleAccess->MetadataRevision(),
+        return {Contents(),LiveRead(*c).Properties,c->subtitleEditGate.Revision(),c->subtitleAccess->MetadataRevision(),
             c->selectionController->SelectedIDs(),c->selectionController->ActiveID(),c->subsController->GetUndoDescription(),
             c->subsController->GetRedoDescription(),c->subsController->Filename(),c->path->Decode("?script"),
             c->subsController->IsModified(),c->subtitleAccess->MetadataDirty(),c->subsController->IsUndoStackEmpty(),c->subsController->IsRedoStackEmpty()};
     }
     void Unchanged(Envelope const& before) {
-        EXPECT_EQ(before.content,Contents());EXPECT_EQ(static_cast<ProjectMetadata const&>(before.properties),static_cast<ProjectMetadata const&>(c->ass->Properties));
-        auto const& ui=c->ass->Properties;EXPECT_EQ(before.properties.active_row,ui.active_row);EXPECT_EQ(before.properties.scroll_position,ui.scroll_position);
+        EXPECT_EQ(before.content,Contents());EXPECT_EQ(static_cast<ProjectMetadata const&>(before.properties),static_cast<ProjectMetadata const&>(LiveRead(*c).Properties));
+        auto const& ui=LiveRead(*c).Properties;EXPECT_EQ(before.properties.active_row,ui.active_row);EXPECT_EQ(before.properties.scroll_position,ui.scroll_position);
         EXPECT_EQ(before.properties.video_position,ui.video_position);EXPECT_EQ(before.properties.video_zoom,ui.video_zoom);
         EXPECT_EQ(before.properties.ar_mode,ui.ar_mode);EXPECT_EQ(before.properties.ar_value,ui.ar_value);
         EXPECT_EQ(before.revision,c->subtitleEditGate.Revision());EXPECT_EQ(before.metadata,c->subtitleAccess->MetadataRevision());
@@ -1852,18 +1853,18 @@ TEST_F(model_installation, production_load_denied_by_comparison_preserves_comple
     Input("one");Input("two");c->subsController->Undo();
     c->subtitleAccess->SetAutomationSetting("keep","metadata");
     auto path=Candidate("denied-load");auto before=Capture();auto old=c->selectionController->ReadActiveLine();int notices=0;
-    agi::signal::Connection listener=c->ass->AddCommitListener([&](int,AssDialogue const*,Ticket t){++notices;if(t.Current())t.Acknowledge(t.Revision());});
+    agi::signal::Connection listener=LiveRead(*c).AddCommitListener([&](int,AssDialogue const*,Ticket t){++notices;if(t.Current())t.Acknowledge(t.Revision());});
     auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);
     EXPECT_THROW(c->subsController->Load(path,"utf-8"),std::logic_error);Unchanged(before);
     EXPECT_EQ(old,c->selectionController->ReadActiveLine());EXPECT_EQ(0,notices);EXPECT_EQ("one",std::string(editor->GetTextRaw().data()));
-    comparison.reset();c->subsController->Redo();EXPECT_EQ("two",c->ass->Events.front().Text.get());
+    comparison.reset();c->subsController->Redo();EXPECT_EQ("two",LiveRead(*c).Events.front().Text.get());
 }
 TEST_F(model_installation, production_observer_failure_is_recovery_blocked_and_retries_explicitly) {
     Input("retained old row");auto old=c->selectionController->ReadActiveLine();auto path=Candidate("observer-failure");
     bool fail=true;std::vector<int> order;
-    agi::signal::Connection reader=c->ass->AddCommitListener([&](int,AssDialogue const*,Ticket t){order.push_back(1);EXPECT_EQ("new 模型",c->ass->Events.front().Text.get());t.Acknowledge(t.Revision());});
-    agi::signal::Connection throwing=c->ass->AddCommitListener([&](int,AssDialogue const*,Ticket t){order.push_back(2);if(fail)throw std::runtime_error("observer failure");old=nullptr;t.Acknowledge(t.Revision());});
-    agi::signal::Connection normal=c->ass->AddCommitListener([&](int,AssDialogue const*,Ticket t){order.push_back(3);t.Acknowledge(t.Revision());});
+    agi::signal::Connection reader=LiveRead(*c).AddCommitListener([&](int,AssDialogue const*,Ticket t){order.push_back(1);EXPECT_EQ("new 模型",LiveRead(*c).Events.front().Text.get());t.Acknowledge(t.Revision());});
+    agi::signal::Connection throwing=LiveRead(*c).AddCommitListener([&](int,AssDialogue const*,Ticket t){order.push_back(2);if(fail)throw std::runtime_error("observer failure");old=nullptr;t.Acknowledge(t.Revision());});
+    agi::signal::Connection normal=LiveRead(*c).AddCommitListener([&](int,AssDialogue const*,Ticket t){order.push_back(3);t.Acknowledge(t.Revision());});
     EXPECT_THROW(c->subsController->Load(path,"utf-8"),std::runtime_error);
     EXPECT_EQ((std::vector<int>{3,2,1}),order);EXPECT_EQ(State::RecoveryBlocked,c->subsController->InstallationStatus());
     ASSERT_NE(nullptr,old);EXPECT_EQ("retained old row",old->Text.get());EXPECT_EQ(1u,c->subsController->PendingInstallationObservers().size());
@@ -1877,8 +1878,8 @@ TEST_F(model_installation, production_observer_failure_is_recovery_blocked_and_r
     EXPECT_EQ(State::Committed,c->subsController->InstallationStatus());EXPECT_FALSE(c->subtitleEditGate.NeedsRebinding());
     EXPECT_TRUE(c->subsController->PendingInstallationObservers().empty());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
     reader.Disconnect();throwing.Disconnect();normal.Disconnect();
-    Input("new edit");c->subsController->Undo();EXPECT_EQ("new 模型",c->ass->Events.front().Text.get());
-    c->subsController->Redo();EXPECT_EQ("new edit",c->ass->Events.front().Text.get());
+    Input("new edit");c->subsController->Undo();EXPECT_EQ("new 模型",LiveRead(*c).Events.front().Text.get());
+    c->subsController->Redo();EXPECT_EQ("new edit",LiveRead(*c).Events.front().Text.get());
 }
 TEST_F(model_installation, successful_install_invalidates_old_document_and_saves_reopened_data) {
     Input("old");auto old=c->subtitleEditGate.Capture();auto path=Candidate("successful-install");
@@ -1888,8 +1889,8 @@ TEST_F(model_installation, successful_install_invalidates_old_document_and_saves
     EXPECT_THROW(c->subtitleAccess->Read(old),std::logic_error);
     EXPECT_THROW(c->selectionController->ReadActiveLine(old),std::logic_error);
     EXPECT_FALSE(c->subsController->IsModified());EXPECT_TRUE(c->subsController->IsUndoStackEmpty());
-    EXPECT_EQ((std::set<int>{c->ass->Events.front().Id}),c->selectionController->SelectedIDs());
-    EXPECT_EQ(c->ass->Events.front().Id,c->selectionController->ActiveID());EXPECT_EQ("new 模型",std::string(editor->GetTextRaw().data()));
+    EXPECT_EQ((std::set<int>{LiveRead(*c).Events.front().Id}),c->selectionController->SelectedIDs());
+    EXPECT_EQ(LiveRead(*c).Events.front().Id,c->selectionController->ActiveID());EXPECT_EQ("new 模型",std::string(editor->GetTextRaw().data()));
     c->subsController->Save(path,"utf-8");AssFile reopened;SubtitleFormat::GetReader(path,"utf-8")->ReadFile(&reopened,path,c->project->Timecodes(),"utf-8");
     EXPECT_EQ("new 模型",reopened.Events.front().Text.get());EXPECT_TRUE(reopened.Events.front().Comment);
     EXPECT_EQ("aegisub.enhanced.subtitle-binding",reopened.Extradata.front().key);EXPECT_NE(nullptr,reopened.GetStyle("Default"));
@@ -1902,7 +1903,7 @@ TEST_F(model_installation, active_writer_and_prepare_failure_or_cancel_preserve_
     }
     for(bool cancel:{false,true}) {
         auto before=Capture();
-        agi::signal::Connection observer=c->ass->AddInstallationObserver("prepare-stop",[&]{
+        agi::signal::Connection observer=LiveRead(*c).AddInstallationObserver("prepare-stop",[&]{
             EXPECT_FALSE(c->subtitleAccess->TryWrite());
             EXPECT_THROW(c->subtitleAccess->SetAutomationSetting("keep","blocked"),std::logic_error);
             auto ui=c->subtitleAccess->UIState();ui.video_zoom=9;
@@ -1922,7 +1923,7 @@ TEST_F(model_installation, invalid_candidate_and_missing_input_do_not_publish_or
 TEST_F(model_installation, observer_reentry_and_real_host_close_event_cannot_destroy_publication_stack) {
     auto path=Candidate("reentrant-load");bool closed=false,visited=false;
     window->Bind(wxEVT_CLOSE_WINDOW,[&](wxCloseEvent& event){if(c->subsController->DeferHostClose(event)){closed=true;return;}event.Skip();});
-    agi::signal::Connection observer=c->ass->AddCommitListener([&](int,AssDialogue const*,Ticket t){
+    agi::signal::Connection observer=LiveRead(*c).AddCommitListener([&](int,AssDialogue const*,Ticket t){
         visited=true;EXPECT_FALSE(window->Close());EXPECT_TRUE(closed);
         EXPECT_THROW(c->subsController->Load(path,"utf-8"),std::logic_error);
         EXPECT_THROW(c->subsController->RetryModelInstallation(),std::logic_error);
@@ -1941,7 +1942,7 @@ TEST_F(model_installation, observer_self_destruction_withdraws_only_after_refere
         ~Borrower(){row=nullptr;destroyed=true;}
     };
     auto borrower=std::make_unique<Borrower>(c->selectionController->ReadActiveLine(),destroyed);
-    borrower->connection=c->ass->AddInstallationObserver("owned borrower",[]{},[&](int,AssDialogue const*,Ticket){borrower.reset();},std::weak_ptr<void const>(borrower->lifetime));
+    borrower->connection=LiveRead(*c).AddInstallationObserver("owned borrower",[]{},[&](int,AssDialogue const*,Ticket){borrower.reset();},std::weak_ptr<void const>(borrower->lifetime));
     c->subsController->Load(path,"utf-8");EXPECT_TRUE(destroyed);EXPECT_FALSE(borrower);EXPECT_EQ(State::Committed,c->subsController->InstallationStatus());
 }
 TEST_F(model_installation, background_installation_is_rejected_before_any_host_access) {
@@ -1951,7 +1952,7 @@ TEST_F(model_installation, background_installation_is_rejected_before_any_host_a
 TEST_F(model_installation, missing_ack_and_disconnection_cannot_release_an_owners_old_reference) {
     Input("borrowed until owner releases");auto old=c->selectionController->ReadActiveLine();auto path=Candidate("missing-ack");
     auto lifetime=std::make_shared<int>(0);int called=0;
-    agi::signal::Connection observer=c->ass->AddInstallationObserver("no acknowledgement",[]{},
+    agi::signal::Connection observer=LiveRead(*c).AddInstallationObserver("no acknowledgement",[]{},
         [&](int,AssDialogue const*,Ticket){++called;},std::weak_ptr<void const>(lifetime));
     EXPECT_THROW(c->subsController->Load(path,"utf-8"),std::runtime_error);
     EXPECT_EQ(1,called);EXPECT_EQ(State::RecoveryBlocked,c->subsController->InstallationStatus());
@@ -1969,7 +1970,7 @@ TEST_F(model_installation, owner_destroyed_during_prepare_releases_its_old_refer
         ~Borrower(){row=nullptr;destroyed=true;}
     };
     auto borrower=std::make_unique<Borrower>(c->selectionController->ReadActiveLine(),destroyed);
-    borrower->connection=c->ass->AddInstallationObserver("prepare destroys owner",[&]{borrower.reset();},
+    borrower->connection=LiveRead(*c).AddInstallationObserver("prepare destroys owner",[&]{borrower.reset();},
         [&](int,AssDialogue const*,Ticket){called=true;},std::weak_ptr<void const>(borrower->lifetime));
     c->subsController->Load(path,"utf-8");EXPECT_TRUE(destroyed);EXPECT_FALSE(called);
     EXPECT_EQ(State::Committed,c->subsController->InstallationStatus());
@@ -1983,8 +1984,8 @@ TEST_F(model_installation, repeated_load_keeps_selection_before_active_and_rejec
     for(int i=1;i<=2;++i) {
         order.clear();c->subsController->Load(path,"utf-8");
         EXPECT_EQ((std::vector<int>{1,2}),order);EXPECT_EQ(revision.document_epoch+i,c->subtitleEditGate.Revision().document_epoch);
-        EXPECT_THROW(task.SetDialogueField(c->ass->Events.front().Id,&AssDialogueBase::Text,std::string("old task")),std::logic_error);
-        EXPECT_EQ("new 模型",c->ass->Events.front().Text.get());EXPECT_TRUE(c->subsController->IsUndoStackEmpty());
+        EXPECT_THROW(task.SetDialogueField(LiveRead(*c).Events.front().Id,&AssDialogueBase::Text,std::string("old task")),std::logic_error);
+        EXPECT_EQ("new 模型",LiveRead(*c).Events.front().Text.get());EXPECT_TRUE(c->subsController->IsUndoStackEmpty());
     }
     order.clear();auto ids=c->selectionController->SelectedIDs();c->selectionController->SetSelectedIDs(ids);
     c->selectionController->SetSelectedIDs(ids);EXPECT_EQ((std::vector<int>{1,1}),order);
@@ -2000,8 +2001,8 @@ TEST_F(model_installation, real_grid_audio_and_long_lived_dialogs_rebind_and_edi
         EXPECT_TRUE(c->subsController->PendingInstallationObservers().empty());
         EXPECT_EQ("new 模型",std::string(editor->GetTextRaw().data()));
         EXPECT_NE(nullptr,c->audioController->GetTimingController());
-        Input("edited new UI model");c->subsController->Undo();EXPECT_EQ("new 模型",c->ass->Events.front().Text.get());
-        c->subsController->Redo();EXPECT_EQ("edited new UI model",c->ass->Events.front().Text.get());
+        Input("edited new UI model");c->subsController->Undo();EXPECT_EQ("new 模型",LiveRead(*c).Events.front().Text.get());
+        c->subsController->Redo();EXPECT_EQ("edited new UI model",LiveRead(*c).Events.front().Text.get());
     }
     c->project->CloseAudio();c->subsGrid=nullptr;c->audioBox=nullptr;
 }
@@ -2031,7 +2032,7 @@ TEST_F(document_lifecycle, production_close_installs_blank_document_with_new_ide
     auto old=c->subtitleEditGate.Capture();auto recent=Recent();
     int opened=0;agi::fs::path opened_path="unset";std::vector<int> order;
     agi::signal::Connection open=c->subsController->AddFileOpenListener([&](agi::fs::path const& p){++opened;opened_path=p;});
-    agi::signal::Connection commit=c->ass->AddCommitListener([&](int type,AssDialogue const*,Ticket t){order.push_back(type==AssFile::COMMIT_NEW?0:-1);Ack(t);});
+    agi::signal::Connection commit=LiveRead(*c).AddCommitListener([&](int type,AssDialogue const*,Ticket t){order.push_back(type==AssFile::COMMIT_NEW?0:-1);Ack(t);});
     agi::signal::Connection selected=c->selectionController->AddSelectionListener([&](Ticket t){order.push_back(1);Ack(t);});
     agi::signal::Connection active=c->selectionController->AddActiveLineListener([&](Ticket t){order.push_back(2);Ack(t);});
     c->subsController->Close();
@@ -2041,27 +2042,27 @@ TEST_F(document_lifecycle, production_close_installs_blank_document_with_new_ide
     EXPECT_EQ(old.Revision().document,next.document);EXPECT_EQ(old.Revision().document_epoch+1,next.document_epoch);
     EXPECT_EQ(old.Revision().generation+1,next.generation);EXPECT_FALSE(old.Current());
     EXPECT_THROW(c->subtitleAccess->Read(old),std::logic_error);
-    EXPECT_THROW(task.SetDialogueField(c->ass->Events.front().Id,&AssDialogueBase::Text,std::string("old task")),std::logic_error);
-    ASSERT_EQ(1u,c->ass->Events.size());EXPECT_EQ("",c->ass->Events.front().Text.get());EXPECT_NE(nullptr,c->ass->GetStyle("Default"));
-    EXPECT_TRUE(c->ass->Extradata.empty());EXPECT_EQ("",std::string(editor->GetTextRaw().data()));
+    EXPECT_THROW(task.SetDialogueField(LiveRead(*c).Events.front().Id,&AssDialogueBase::Text,std::string("old task")),std::logic_error);
+    ASSERT_EQ(1u,LiveRead(*c).Events.size());EXPECT_EQ("",LiveRead(*c).Events.front().Text.get());EXPECT_NE(nullptr,LiveRead(*c).GetStyle("Default"));
+    EXPECT_TRUE(LiveRead(*c).Extradata.empty());EXPECT_EQ("",std::string(editor->GetTextRaw().data()));
     AssFile blank;blank.LoadDefault(true,OPT_GET("Subtitle Format/ASS/Default Style Catalog")->GetString());
-    EXPECT_EQ(static_cast<ProjectMetadata const&>(blank.Properties),static_cast<ProjectMetadata const&>(c->ass->Properties));
-    EXPECT_EQ((std::set<int>{c->ass->Events.front().Id}),c->selectionController->SelectedIDs());
-    EXPECT_EQ(c->ass->Events.front().Id,c->selectionController->ActiveID());
+    EXPECT_EQ(static_cast<ProjectMetadata const&>(blank.Properties),static_cast<ProjectMetadata const&>(LiveRead(*c).Properties));
+    EXPECT_EQ((std::set<int>{LiveRead(*c).Events.front().Id}),c->selectionController->SelectedIDs());
+    EXPECT_EQ(LiveRead(*c).Events.front().Id,c->selectionController->ActiveID());
     EXPECT_FALSE(c->subsController->IsModified());EXPECT_FALSE(c->subtitleAccess->MetadataDirty());
     EXPECT_TRUE(c->subsController->IsUndoStackEmpty());EXPECT_TRUE(c->subsController->IsRedoStackEmpty());
     EXPECT_NE(path,c->subsController->Filename());EXPECT_NE(path.parent_path(),c->path->Decode("?script"));
     EXPECT_EQ(1,opened);EXPECT_TRUE(opened_path.empty());EXPECT_EQ(recent,Recent()); // closing never adds an empty MRU entry
     Input("after close");EXPECT_TRUE(c->subsController->IsModified());
-    c->subsController->Undo();EXPECT_EQ("",c->ass->Events.front().Text.get());EXPECT_TRUE(c->subsController->IsUndoStackEmpty());
-    c->subsController->Redo();EXPECT_EQ("after close",c->ass->Events.front().Text.get());
+    c->subsController->Undo();EXPECT_EQ("",LiveRead(*c).Events.front().Text.get());EXPECT_TRUE(c->subsController->IsUndoStackEmpty());
+    c->subsController->Redo();EXPECT_EQ("after close",LiveRead(*c).Events.front().Text.get());
 }
 TEST_F(document_lifecycle, production_close_denied_by_comparison_or_writer_preserves_complete_host_state) {
     auto path=Candidate("close-denied");c->subsController->Load(path,"utf-8");
     Input("one");Input("two");c->subsController->Undo();c->subtitleAccess->SetAutomationSetting("keep","metadata");
     int opened=0,notices=0;auto old=c->selectionController->ReadActiveLine();
     agi::signal::Connection open=c->subsController->AddFileOpenListener([&](agi::fs::path const&){++opened;});
-    agi::signal::Connection commit=c->ass->AddCommitListener([&](int,AssDialogue const*,Ticket t){++notices;Ack(t);});
+    agi::signal::Connection commit=LiveRead(*c).AddCommitListener([&](int,AssDialogue const*,Ticket t){++notices;Ack(t);});
     auto before=Capture();
     {
         auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);
@@ -2073,13 +2074,13 @@ TEST_F(document_lifecycle, production_close_denied_by_comparison_or_writer_prese
     }
     EXPECT_EQ(old,c->selectionController->ReadActiveLine());EXPECT_EQ(0,opened);EXPECT_EQ(0,notices);
     EXPECT_EQ(State::Aborting,c->subsController->InstallationStatus());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
-    c->subsController->Redo();EXPECT_EQ("two",c->ass->Events.front().Text.get());EXPECT_EQ(path,c->subsController->Filename());
+    c->subsController->Redo();EXPECT_EQ("two",LiveRead(*c).Events.front().Text.get());EXPECT_EQ(path,c->subsController->Filename());
 }
 TEST_F(document_lifecycle, close_recovery_blocked_runs_follow_up_work_exactly_once_after_explicit_retry) {
     auto path=Candidate("close-recovery");c->subsController->Load(path,"utf-8");Input("kept by retired model");
     auto old=c->selectionController->ReadActiveLine();auto recent=Recent();bool fail=true;int opened=0;
     agi::signal::Connection open=c->subsController->AddFileOpenListener([&](agi::fs::path const&){++opened;});
-    agi::signal::Connection throwing=c->ass->AddCommitListener([&](int,AssDialogue const*,Ticket t){if(fail)throw std::runtime_error("observer failure");old=nullptr;Ack(t);});
+    agi::signal::Connection throwing=LiveRead(*c).AddCommitListener([&](int,AssDialogue const*,Ticket t){if(fail)throw std::runtime_error("observer failure");old=nullptr;Ack(t);});
     EXPECT_THROW(c->subsController->Close(),SubtitleModelRecoveryBlocked);
     EXPECT_EQ(State::RecoveryBlocked,c->subsController->InstallationStatus());EXPECT_EQ(0,opened);
     ASSERT_NE(nullptr,old);EXPECT_EQ("kept by retired model",old->Text.get());
@@ -2107,7 +2108,7 @@ TEST_F(document_lifecycle, load_follow_up_failures_are_reported_after_commit_and
     EXPECT_NE(std::string::npos,c->subsController->LastPeripheralErrors().front().find("Backup"));
     EXPECT_EQ(1,opened);EXPECT_EQ(path,c->subsController->Filename());ASSERT_FALSE(Recent().empty());EXPECT_EQ(path,Recent().front());
     EXPECT_EQ(path.parent_path().string(),OPT_GET("Path/Last/Subtitles")->GetString());
-    EXPECT_EQ("new 模型",c->ass->Events.front().Text.get());EXPECT_TRUE(c->subsController->CanSave());
+    EXPECT_EQ("new 模型",LiveRead(*c).Events.front().Text.get());EXPECT_TRUE(c->subsController->CanSave());
     agi::signal::Connection failing=c->subsController->AddFileOpenListener([&](agi::fs::path const&){throw std::runtime_error("listener failure");});
     EXPECT_NO_THROW(c->subsController->Load(path,"utf-8"));EXPECT_EQ(epoch+2,c->subtitleEditGate.Revision().document_epoch);
     EXPECT_EQ(2u,c->subsController->LastPeripheralErrors().size());EXPECT_EQ(State::Committed,c->subsController->InstallationStatus());
@@ -2140,7 +2141,7 @@ TEST_F(document_lifecycle, project_entries_distinguish_parse_failure_recovery_bl
     c->project->LoadSubtitles(Local("missing-project-input.ass"),"utf-8");ASSERT_EQ(2u,messages.messages.size());
     EXPECT_TRUE(messages.messages.back().Contains("not found"));Unchanged(before);
     auto path=Candidate("project-recovery");bool fail=true;
-    agi::signal::Connection throwing=c->ass->AddCommitListener([&](int,AssDialogue const*,Ticket t){if(fail)throw std::runtime_error("observer failure");Ack(t);});
+    agi::signal::Connection throwing=LiveRead(*c).AddCommitListener([&](int,AssDialogue const*,Ticket t){if(fail)throw std::runtime_error("observer failure");Ack(t);});
     c->project->LoadSubtitles(path,"utf-8");ASSERT_EQ(3u,messages.messages.size());
     EXPECT_TRUE(messages.messages.back().Contains("Close Aegisub to recover"));EXPECT_EQ(State::RecoveryBlocked,c->subsController->InstallationStatus());
     EXPECT_NO_THROW(c->project->CloseSubtitles());ASSERT_EQ(4u,messages.messages.size());
@@ -2150,7 +2151,7 @@ TEST_F(document_lifecycle, project_entries_distinguish_parse_failure_recovery_bl
     auto second=Candidate("project-warning");c->project->LoadSubtitles(second,"utf-8");ASSERT_EQ(5u,messages.messages.size());
     EXPECT_TRUE(messages.messages.back().StartsWith("The subtitles were opened"));EXPECT_TRUE(messages.messages.back().Contains("listener failure"));
     EXPECT_EQ(State::Committed,c->subsController->InstallationStatus());EXPECT_EQ(second,c->subsController->Filename());
-    EXPECT_EQ((std::set<int>{c->ass->Events.front().Id}),c->selectionController->SelectedIDs());
+    EXPECT_EQ((std::set<int>{LiveRead(*c).Events.front().Id}),c->selectionController->SelectedIDs());
 }
 TEST_F(document_lifecycle, project_close_reports_rejection_without_throwing_then_closes_once) {
     RecordMessages messages;auto path=Candidate("project-close");c->subsController->Load(path,"utf-8");Input("kept");
@@ -2165,8 +2166,8 @@ TEST_F(document_lifecycle, project_close_reports_rejection_without_throwing_then
     agi::signal::Connection active=c->selectionController->AddActiveLineListener([&](Ticket t){order.push_back(2);Ack(t);});
     c->project->CloseSubtitles();EXPECT_EQ(1u,messages.messages.size());EXPECT_EQ(1,opened);
     EXPECT_EQ((std::vector<int>{1,2}),order); // no second selection announcement after the installation
-    EXPECT_EQ("",c->ass->Events.front().Text.get());EXPECT_FALSE(c->subsController->IsModified());
-    EXPECT_EQ(c->ass->Events.front().Id,c->selectionController->ActiveID());
+    EXPECT_EQ("",LiveRead(*c).Events.front().Text.get());EXPECT_FALSE(c->subsController->IsModified());
+    EXPECT_EQ(LiveRead(*c).Events.front().Id,c->selectionController->ActiveID());
 }
 TEST_F(document_lifecycle, project_load_announces_installed_selection_once) {
     RecordMessages messages;auto path=Candidate("project-selection");std::vector<int> order;
@@ -2174,7 +2175,7 @@ TEST_F(document_lifecycle, project_load_announces_installed_selection_once) {
     agi::signal::Connection active=c->selectionController->AddActiveLineListener([&](Ticket t){order.push_back(2);Ack(t);});
     c->project->LoadSubtitles(path,"utf-8");EXPECT_TRUE(messages.messages.empty());
     EXPECT_EQ((std::vector<int>{1,2}),order);EXPECT_EQ(path,c->subsController->Filename());
-    EXPECT_EQ((std::set<int>{c->ass->Events.front().Id}),c->selectionController->SelectedIDs());
+    EXPECT_EQ((std::set<int>{LiveRead(*c).Events.front().Id}),c->selectionController->SelectedIDs());
 }
 TEST_F(document_lifecycle, open_close_reload_save_and_reopen_keep_path_mru_and_metadata_consistent) {
     auto a=Candidate("cycle-a");c->subsController->Load(a,"utf-8");
@@ -2184,14 +2185,14 @@ TEST_F(document_lifecycle, open_close_reload_save_and_reopen_keep_path_mru_and_m
     EXPECT_FALSE(c->subsController->IsModified());
     c->subsController->Close();EXPECT_NE(a,c->subsController->Filename());EXPECT_FALSE(c->subsController->IsModified());
     EXPECT_EQ(a,Recent().front());
-    c->subsController->Load(a,"utf-8");EXPECT_EQ("edited a",c->ass->Events.front().Text.get());
+    c->subsController->Load(a,"utf-8");EXPECT_EQ("edited a",LiveRead(*c).Events.front().Text.get());
     EXPECT_TRUE(c->subsController->IsUndoStackEmpty());EXPECT_FALSE(c->subsController->IsModified());EXPECT_FALSE(c->subtitleAccess->MetadataDirty());
     Input("second edit");auto b=Local("cycle-b.ass");c->subsController->Save(b,"utf-8");
     EXPECT_EQ(b,c->subsController->Filename());EXPECT_EQ(b,Recent().front());EXPECT_EQ(b.parent_path(),c->path->Decode("?script"));
     AssFile reopened;SubtitleFormat::GetReader(b,"utf-8")->ReadFile(&reopened,b,c->project->Timecodes(),"utf-8");
     EXPECT_EQ("second edit",reopened.Events.front().Text.get());EXPECT_TRUE(reopened.Events.front().Comment);
     ASSERT_EQ(1u,reopened.Extradata.size());EXPECT_EQ("aegisub.enhanced.subtitle-binding",reopened.Extradata.front().key);
-    c->subsController->Close();c->subsController->Load(b,"utf-8");EXPECT_EQ("second edit",c->ass->Events.front().Text.get());
+    c->subsController->Close();c->subsController->Load(b,"utf-8");EXPECT_EQ("second edit",LiveRead(*c).Events.front().Text.get());
 }
 TEST_F(document_lifecycle, explicit_retry_with_real_grid_and_dialogs_repeats_rebinding_without_duplicate_side_effects) {
     Input("old dialog input");auto path=Candidate("retry-ui");c->subsGrid=new BaseGrid(window,c.get());
@@ -2199,7 +2200,7 @@ TEST_F(document_lifecycle, explicit_retry_with_real_grid_and_dialogs_repeats_reb
         DialogStyling styling(c.get());DialogTranslation translation(c.get());
         bool fail=true;int opened=0;auto recent=Recent();
         agi::signal::Connection open=c->subsController->AddFileOpenListener([&](agi::fs::path const&){++opened;});
-        agi::signal::Connection throwing=c->ass->AddCommitListener([&](int,AssDialogue const*,Ticket t){if(fail)throw std::runtime_error("observer failure");Ack(t);});
+        agi::signal::Connection throwing=LiveRead(*c).AddCommitListener([&](int,AssDialogue const*,Ticket t){if(fail)throw std::runtime_error("observer failure");Ack(t);});
         auto metadata=c->subtitleAccess->MetadataRevision();
         EXPECT_THROW(c->subsController->Load(path,"utf-8"),SubtitleModelRecoveryBlocked);
         auto published=c->subtitleAccess->MetadataRevision();auto revision=c->subtitleEditGate.Revision();
@@ -2210,9 +2211,9 @@ TEST_F(document_lifecycle, explicit_retry_with_real_grid_and_dialogs_repeats_reb
         EXPECT_EQ(published,c->subtitleAccess->MetadataRevision());EXPECT_EQ(revision,c->subtitleEditGate.Revision());
         EXPECT_EQ(1,opened);EXPECT_EQ(path,Recent().front());EXPECT_TRUE(c->subsController->IsUndoStackEmpty());
         EXPECT_FALSE(c->subsController->IsModified());EXPECT_FALSE(c->subtitleAccess->MetadataDirty());
-        EXPECT_EQ(c->ass->Events.front().Id,c->selectionController->ActiveID());EXPECT_EQ("new 模型",std::string(editor->GetTextRaw().data()));
-        Input("edited after retry");c->subsController->Undo();EXPECT_EQ("new 模型",c->ass->Events.front().Text.get());
-        c->subsController->Redo();EXPECT_EQ("edited after retry",c->ass->Events.front().Text.get());
+        EXPECT_EQ(LiveRead(*c).Events.front().Id,c->selectionController->ActiveID());EXPECT_EQ("new 模型",std::string(editor->GetTextRaw().data()));
+        Input("edited after retry");c->subsController->Undo();EXPECT_EQ("new 模型",LiveRead(*c).Events.front().Text.get());
+        c->subsController->Redo();EXPECT_EQ("edited after retry",LiveRead(*c).Events.front().Text.get());
     }
     c->subsGrid=nullptr;
 }
@@ -2224,8 +2225,8 @@ TEST_F(document_lifecycle, autosave_result_completing_after_close_cannot_touch_t
     EXPECT_TRUE(c->subsController->IsModified());
     for(int i=0;i<200 && wxTheApp->HasPendingEvents();++i)wxTheApp->ProcessPendingEvents();
     std::this_thread::sleep_for(std::chrono::milliseconds(100));wxTheApp->ProcessPendingEvents();
-    EXPECT_EQ("new document edit",c->ass->Events.front().Text.get());EXPECT_TRUE(c->subsController->IsModified());
-    c->subsController->Undo();EXPECT_EQ("",c->ass->Events.front().Text.get());EXPECT_FALSE(c->subsController->IsModified());
+    EXPECT_EQ("new document edit",LiveRead(*c).Events.front().Text.get());EXPECT_TRUE(c->subsController->IsModified());
+    c->subsController->Undo();EXPECT_EQ("",LiveRead(*c).Events.front().Text.get());EXPECT_FALSE(c->subsController->IsModified());
 }
 TEST_F(document_lifecycle, lua_local_scripts_reload_is_post_commit_follow_up_not_isolated_work) {
     // Boundary record: automation still reads the live document from its FileOpen listener.
@@ -2238,16 +2239,51 @@ TEST_F(document_lifecycle, lua_local_scripts_reload_is_post_commit_follow_up_not
 }
 }
 TEST_F(visual_edit, production_load_rebinds_real_visual_cache_and_renderer_before_next_gesture) {
-    Install<VisualToolDrag>();auto old_id=c->ass->Events.front().Id;
+    Install<VisualToolDrag>();auto old_id=LiveRead(*c).Events.front().Id;
     AssFile source;source.LoadDefault();source.Events.front().Start=0;source.Events.front().End=5000;
     source.SetScriptInfo("PlayResX","640");source.SetScriptInfo("PlayResY","480");
     source.Events.front().Text="{\\pos(100,100)\\bord7}new visual model";
     auto path=agi::fs::path((std::filesystem::current_path()/"visual-install.ass").wstring());
     SubtitleFormat::GetWriter(path)->WriteFile(&source,path,0,"utf-8");
     c->subsController->Load(path,"utf-8");EXPECT_EQ(SubtitleModelInstallation::State::Committed,c->subsController->InstallationStatus());
-    EXPECT_NE(old_id,c->ass->Events.front().Id);EXPECT_EQ(source.Events.front().Text.get(),Text());EXPECT_FALSE(FrameData().empty());
+    EXPECT_NE(old_id,LiveRead(*c).Events.front().Id);EXPECT_EQ(source.Events.front().Text.get(),Text());EXPECT_FALSE(FrameData().empty());
     auto before=Text();Mouse(wxEVT_LEFT_DOWN,100,100,true);ASSERT_TRUE(display->HasCapture());
     Mouse(wxEVT_MOTION,150,160,true);Mouse(wxEVT_LEFT_UP,150,160);EXPECT_NE(before,Text());
     c->subsController->Undo();EXPECT_EQ(before,Text());c->subsController->Redo();EXPECT_NE(before,Text());
 }
 static_assert(!std::is_constructible_v<SubtitleModelInstallation,SubsController&>);
+
+// C1-C1c-10: the privatized owner still holds exactly one live document; the
+// production read path is that document, copies are detached, and runtime
+// authority (revision tokens, history restore, document replacement) is unchanged.
+TEST_F(ordinary_edit, owner_privatization_keeps_one_live_document_read_only_path_and_detached_copies) {
+    AssFile const* live=&LiveRead(*c);
+    EXPECT_EQ(live,&LiveSubtitleModelTestAccess::Model(*c));
+    Input("owner edit");
+    ASSERT_EQ("owner edit",LiveRead(*c).Events.front().Text.get());
+    auto id=LiveRead(*c).Events.front().Id;
+    auto undo=c->subsController->GetUndoDescription();
+    auto revision=c->subtitleEditGate.Capture();
+
+    auto snapshot=c->subtitleAccess->Snapshot();
+    snapshot->Events.front().Text="detached";snapshot->AddExtradata("k","v");snapshot->Events.clear();
+    AssFile copy(LiveRead(*c));copy.Events.front().Text="copy";copy.Commit("copy",AssFile::COMMIT_DIAG_TEXT);
+    EXPECT_EQ("owner edit",LiveRead(*c).Events.front().Text.get());
+    EXPECT_EQ(id,LiveRead(*c).Events.front().Id);
+    EXPECT_EQ(undo,c->subsController->GetUndoDescription());
+    EXPECT_TRUE(c->subtitleEditGate.Authorizes(revision));
+
+    std::thread worker([&]{ EXPECT_THROW((void)LiveRead(*c),std::logic_error); });
+    worker.join();
+
+    c->subsController->Undo();EXPECT_NE("owner edit",LiveRead(*c).Events.front().Text.get());
+    c->subsController->Redo();EXPECT_EQ("owner edit",LiveRead(*c).Events.front().Text.get());
+    EXPECT_EQ(live,&LiveRead(*c));
+    EXPECT_FALSE(c->subtitleEditGate.Authorizes(revision));
+
+    auto before_close=c->subtitleEditGate.Capture();
+    c->subsController->Close();
+    EXPECT_EQ(live,&LiveRead(*c));
+    EXPECT_FALSE(c->subtitleEditGate.Authorizes(before_close));
+    EXPECT_NE("owner edit",LiveRead(*c).Events.front().Text.get());
+}

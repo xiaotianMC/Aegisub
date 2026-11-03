@@ -116,7 +116,7 @@ DialogExport::DialogExport(agi::Context *c)
 	filter_list->Bind(wxEVT_LISTBOX, &DialogExport::OnChange, this);
 
 	// Get selected filters
-	std::string const& selected = c->ass->Properties.export_filters;
+	std::string const selected = c->subtitleAccess->Read().Properties.export_filters;
 	for (auto token : agi::Split(selected, '|')) {
 		auto it = find(begin(filters), end(filters), token);
 		if (it != end(filters))
@@ -147,7 +147,7 @@ DialogExport::DialogExport(agi::Context *c)
 	wxSizer *charset_list_sizer = new wxBoxSizer(wxHORIZONTAL);
 	charset_list_sizer->Add(charset_list_label, wxSizerFlags().Center().Border(wxRIGHT));
 	charset_list_sizer->Add(charset_list, wxSizerFlags(1).Expand());
-	if (!charset_list->SetStringSelection(to_wx(c->ass->Properties.export_encoding)))
+	if (!charset_list->SetStringSelection(to_wx(c->subtitleAccess->Read().Properties.export_encoding)))
 		charset_list->SetStringSelection("Unicode (UTF-8)");
 
 	top_sizer->Add(filter_list, wxSizerFlags(1).Expand());
