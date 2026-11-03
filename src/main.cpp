@@ -79,7 +79,10 @@ namespace config {
 	Automation4::AutoloadScriptManager *global_scripts;
 }
 
-wxIMPLEMENT_APP(AegisubApp);
+// Equivalent to wxIMPLEMENT_APP; the platform entry point lives in main_entry.cpp
+// so the application-model test runner can link these objects with its own main.
+wxIMPLEMENT_WX_THEME_SUPPORT
+wxIMPLEMENT_APP_NO_MAIN(AegisubApp);
 
 static const char *LastStartupState = nullptr;
 

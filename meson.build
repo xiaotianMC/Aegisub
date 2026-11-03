@@ -581,7 +581,7 @@ if host_machine.system() == 'windows'
     link_depends += manifest_file
 endif
 
-aegisub = executable('aegisub', aegisub_src, version_h, libresrc_headers, aegisub_order_dep,
+aegisub = executable('aegisub', aegisub_src, files('src/main_entry.cpp'), version_h, libresrc_headers, aegisub_order_dep,
                      c_args: aegisub_defines,
                      cpp_args: aegisub_defines,
                      link_with: [libresrc, libaegisub],
@@ -595,12 +595,19 @@ aegisub = executable('aegisub', aegisub_src, version_h, libresrc_headers, aegisu
                      dependencies: deps,
                      win_subsystem: 'windows')
 
-# Windows GUI objects have WinMain, so a console test main can reuse the exact
-# application objects without a second implementation of commands/history.
-if get_option('tests') and host_machine.system() == 'windows'
+# The editor entry point is in src/main_entry.cpp, so a console test main can
+# reuse the exact application objects without a second implementation of
+# commands/history. Windows keeps its unused WinMain object as before; other
+# platforms extract everything except the entry point, which defines main().
+if get_option('tests')
+    if host_machine.system() == 'windows'
+        ordinary_objects = aegisub.extract_all_objects(recursive: true)
+    else
+        ordinary_objects = aegisub.extract_objects(aegisub_src)
+    endif
     ordinary_runner = executable('ordinary-edit-tests',
         'tests/support/ordinary_main.cpp', 'tests/tests/ordinary_edit.cpp',
-        objects: aegisub.extract_all_objects(recursive: true),
+        objects: ordinary_objects,
         include_directories: [libaegisub_inc, libresrc_inc, version_inc, include_directories('src')],
         dependencies: [tests_deps, deps], link_with: [libresrc, libaegisub],
         cpp_args: aegisub_defines, win_subsystem: 'console')
