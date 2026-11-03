@@ -50,9 +50,10 @@ private:
     friend class SubtitleModelInstallation;
     friend class LuaSubtitlePublication;
     std::unique_ptr<SubtitleModelInstallation> installation;
-    /// Retired Lua publication state whose commit notification threw: kept so
-    /// observers that were not refreshed never see freed nodes; freed on destruction.
-    std::vector<std::shared_ptr<void>> lua_retired_after_failure;
+    /// Retired live nodes (Lua publication state or the content replaced by
+    /// Undo/Redo) whose commit notification threw: kept so observers that were
+    /// not refreshed never see freed nodes; freed on destruction.
+    std::vector<std::shared_ptr<void>> retired_after_failure;
 	agi::Context *context;
     /// The only route from a Context to its live document. Private: reachable
     /// from this controller, its nested history types and its installation and
@@ -165,6 +166,12 @@ public:
 	/// @param encoding Encoding to use, or empty to let the writer decide (which usually means "App/Save Charset")
 	void Save(agi::fs::path const& file, const char *encoding="");
     void RequestAutoSave();
+    /// Crash recovery (C1-C1c-11): write an independent snapshot of the current
+    /// document to @p file without changing the file name, the dirty state,
+    /// metadata or history. Works in every installation state (a RecoveryBlocked
+    /// document is still the newest data) and never throws.
+    /// @return true if the copy was written
+    bool WriteRecoveryCopy(agi::fs::path const& file) const noexcept;
 
 	/// Close the currently open file (i.e. open a new blank file)
 	void Close();

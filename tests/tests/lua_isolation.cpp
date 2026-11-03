@@ -807,3 +807,44 @@ end)
     EXPECT_NE(std::string::npos, text.find("Out of range line index")) << text;
     EXPECT_NE(std::string::npos, text.find("Invalid or missing field")) << text;
 }
+
+// C1-C1c-11 B4 (audit finding): export filters ran on the worker thread without
+// the per-script running guard, so a filter and a macro (or its validation) of
+// the same script could use one Lua state concurrently.
+TEST_F(lua_macro, isolation_export_filter_and_macro_of_one_script_never_share_the_running_lua_state) {
+    auto macro = Load("busy", std::string(first_dialogue) + R"(
+aegisub.register_macro("Busy", "", function(subs)
+    local i = first_dialogue(subs)
+    local l = subs[i]; l.text = "ran"; subs[i] = l
+end, function() return true end)
+aegisub.register_filter("Busy filter", "", 1, function(subs)
+    for i = 1, #subs do
+        if subs[i].class == "dialogue" then local l = subs[i]; l.text = "filtered"; subs[i] = l end
+    end
+end)
+)");
+    ASSERT_TRUE(macro);
+    auto filters = scripts.back()->GetFilters();
+    ASSERT_EQ(1u, filters.size());
+    AssFile copy(LiveRead(*c));
+    bool filter_refused = false;
+    progress.on_enter = [&] {
+        try { filters[0]->ProcessSubs(&copy, window); }
+        catch (agi::Exception const&) { filter_refused = true; }
+    };
+    Run(macro);
+    EXPECT_TRUE(filter_refused);
+    EXPECT_EQ("ran", Texts()[0]);
+    for (auto const& line : copy.Events) EXPECT_NE("filtered", line.Text.get());
+
+    bool validated_during_filter = true;
+    progress.on_enter = [&] { validated_during_filter = macro->Validate(c.get()); };
+    filters[0]->ProcessSubs(&copy, window);
+    EXPECT_FALSE(validated_during_filter);
+    for (auto const& line : copy.Events) EXPECT_EQ("filtered", line.Text.get());
+    // The guard is released after the filter: the macro is usable again.
+    EXPECT_TRUE(macro->Validate(c.get()));
+    // Only the macro wrote to the document; the filter changed its copy.
+    EXPECT_EQ("Busy", c->subsController->GetUndoDescription());
+    EXPECT_EQ("ran", Texts()[0]);
+}

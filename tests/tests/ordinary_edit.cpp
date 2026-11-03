@@ -2266,7 +2266,7 @@ TEST_F(ordinary_edit, owner_privatization_keeps_one_live_document_read_only_path
     auto revision=c->subtitleEditGate.Capture();
 
     auto snapshot=c->subtitleAccess->Snapshot();
-    snapshot->Events.front().Text="detached";snapshot->AddExtradata("k","v");snapshot->Events.clear();
+    snapshot->Events.front().Text="detached";snapshot->AddExtradata("k","v");snapshot->Events.clear_and_dispose([](AssDialogue* row){delete row;});
     AssFile copy(LiveRead(*c));copy.Events.front().Text="copy";copy.Commit("copy",AssFile::COMMIT_DIAG_TEXT);
     EXPECT_EQ("owner edit",LiveRead(*c).Events.front().Text.get());
     EXPECT_EQ(id,LiveRead(*c).Events.front().Id);
@@ -2286,4 +2286,146 @@ TEST_F(ordinary_edit, owner_privatization_keeps_one_live_document_read_only_path
     EXPECT_EQ(live,&LiveRead(*c));
     EXPECT_FALSE(c->subtitleEditGate.Authorizes(before_close));
     EXPECT_NE("owner edit",LiveRead(*c).Events.front().Text.get());
+}
+
+// C1-C1c-11 A1 (audit probe): a throwing newer commit observer used to stop
+// delivery, leaving older observers (BaseGrid/SubsEditBox) on freed rows.
+TEST_F(ordinary_edit, throwing_newer_commit_observer_still_reaches_older_observers_and_keeps_deleted_rows_alive) {
+    cmd::call("edit/line/duplicate",c.get());
+    ASSERT_EQ(2u,LiveRead(*c).Events.size());
+    auto doomed=&LiveRead(*c).Events.back();auto doomed_id=doomed->Id;
+    c->selectionController->SetSelectionAndActiveIDs({doomed_id},doomed_id);
+    int older_calls=0;
+    agi::signal::Connection older=LiveRead(*c).AddCommitListener([&](int,AssDialogue const*){++older_calls;});
+    agi::signal::Connection newer=LiveRead(*c).AddCommitListener([](int,AssDialogue const*){throw std::runtime_error("newer observer");});
+    auto before=c->subtitleAccess->RetainedRetiredNodes();
+    EXPECT_THROW(cmd::call("edit/line/delete",c.get()),std::runtime_error);
+    EXPECT_EQ(1u,LiveRead(*c).Events.size());
+    EXPECT_EQ(1,older_calls);
+    EXPECT_EQ(before+1,c->subtitleAccess->RetainedRetiredNodes());
+    EXPECT_EQ(doomed_id,doomed->Id) << "retired row must remain valid for observers that may still reference it";
+    EXPECT_FALSE(c->subtitleEditGate.NeedsRebinding());
+    newer.Disconnect();
+    EXPECT_TRUE(c->subtitleAccess->TryWrite().has_value());
+}
+
+// C1-C1c-11 B1/B2 (audit probe): Undo/Redo restoration prepares the target state
+// before touching the model or the history stacks; a failed announcement keeps
+// the replaced rows alive and the model and history consistent with each other.
+TEST_F(ordinary_edit, undo_with_throwing_commit_observer_keeps_model_history_and_replaced_rows_consistent) {
+    auto commit=[&](char const* text,char const* message){ auto w=c->subtitleAccess->TryWrite();ASSERT_TRUE(w);
+        LiveWriteForTest(*c).Events.front().Text=text;LiveWriteForTest(*c).Commit(message,AssFile::COMMIT_DIAG_TEXT); };
+    commit("one","step one"); commit("two","step two");
+    auto replaced=&LiveRead(*c).Events.front();auto replaced_id=replaced->Id;
+    auto replaced_style=&LiveRead(*c).Styles.front();auto style_name=replaced_style->name;
+    int older_calls=0;
+    agi::signal::Connection older=LiveRead(*c).AddCommitListener([&](int,AssDialogue const*){++older_calls;});
+    agi::signal::Connection thrower=LiveRead(*c).AddCommitListener([](int,AssDialogue const*){throw std::runtime_error("observer");});
+    EXPECT_THROW(c->subsController->Undo(),std::runtime_error);
+    EXPECT_EQ(1,older_calls);
+    // Model and history agree: the undo took effect and can be redone.
+    EXPECT_EQ("one",LiveRead(*c).Events.front().Text.get());
+    EXPECT_EQ("step two",c->subsController->GetRedoDescription());
+    // The replaced nodes were parked, not freed.
+    EXPECT_EQ(replaced_id,replaced->Id);EXPECT_EQ(style_name,replaced_style->name);
+    EXPECT_FALSE(c->subtitleEditGate.NeedsRebinding());
+    thrower.Disconnect();
+    EXPECT_TRUE(c->subtitleAccess->TryWrite().has_value());
+    c->subsController->Redo();
+    EXPECT_EQ("two",LiveRead(*c).Events.front().Text.get());
+    c->subsController->Undo();c->subsController->Redo();c->subsController->Undo();
+    EXPECT_EQ("one",LiveRead(*c).Events.front().Text.get());
+    EXPECT_EQ(1u,LiveRead(*c).Styles.size());
+}
+
+// C1-C1c-11 A2 (audit probe): media changes in RecoveryBlocked used to replace
+// the provider, then fail in SetMetadata before announcing it, leaving the
+// audio controller on a freed provider. They are now refused before any effect.
+TEST_F(document_lifecycle, media_changes_are_refused_without_side_effects_while_recovery_is_blocked) {
+    c->project->LoadAudio("dummy-audio:silence?sr=44100&bd=16&ch=1&ln=441000");
+    auto first=c->project->AudioProvider();ASSERT_TRUE(first);int announced=0;
+    agi::signal::Connection l=c->project->AddAudioProviderListener([&](agi::AudioProvider*){++announced;});
+    auto path=Candidate("media-recovery");c->subsController->Load(path,"utf-8");
+    bool fail=true;
+    agi::signal::Connection throwing=LiveRead(*c).AddCommitListener([&](int,AssDialogue const*,Ticket t){if(fail)throw std::runtime_error("observer failure");Ack(t);});
+    EXPECT_THROW(c->subsController->Close(),SubtitleModelRecoveryBlocked);
+    ASSERT_EQ(State::RecoveryBlocked,c->subsController->InstallationStatus());
+    RecordMessages messages;
+    auto metadata=c->subtitleAccess->MetadataRevision();
+    EXPECT_NO_THROW(c->project->LoadAudio("dummy-audio:silence?sr=22050&bd=16&ch=1&ln=220500"));
+    EXPECT_EQ(first,c->project->AudioProvider());
+    EXPECT_NO_THROW(c->project->CloseAudio());
+    EXPECT_EQ(first,c->project->AudioProvider());
+    EXPECT_NO_THROW(c->project->CloseVideo());
+    EXPECT_NO_THROW(c->project->CloseTimecodes());
+    EXPECT_NO_THROW(c->project->CloseKeyframes());
+    EXPECT_NO_THROW(c->project->LoadList({}));
+    EXPECT_EQ(0,announced);EXPECT_EQ(metadata,c->subtitleAccess->MetadataRevision());
+    ASSERT_EQ(6u,messages.messages.size());
+    for(auto const& m:messages.messages)EXPECT_TRUE(m.Contains("Close Aegisub to recover"));
+    fail=false;EXPECT_TRUE(c->subsController->RetryModelInstallation());throwing.Disconnect();
+    c->project->CloseAudio();EXPECT_EQ(1,announced);EXPECT_FALSE(c->project->AudioProvider());
+}
+
+// C1-C1c-11 A3 (audit finding): ~DialogExport stored the filter selection with
+// SetMetadata, which throws while recovery is blocked -> std::terminate. The
+// destructor must not throw, whether the metadata is sealed or an observer throws.
+TEST_F(document_lifecycle, export_dialog_closes_without_terminating_when_metadata_cannot_be_stored) {
+    {
+        bool fail=true;
+        agi::signal::Connection throwing=c->subtitleAccess->AddMetadataListener([&]{if(fail)throw std::runtime_error("metadata observer");});
+        RunModal close("Export",[&](wxDialog*){});
+        EXPECT_NO_THROW(ShowExportDialog(c.get()));
+        fail=false;
+    }
+    auto path=Candidate("export-recovery");c->subsController->Load(path,"utf-8");
+    bool fail=true;
+    agi::signal::Connection throwing=LiveRead(*c).AddCommitListener([&](int,AssDialogue const*,Ticket t){if(fail)throw std::runtime_error("observer failure");Ack(t);});
+    EXPECT_THROW(c->subsController->Close(),SubtitleModelRecoveryBlocked);
+    ASSERT_EQ(State::RecoveryBlocked,c->subsController->InstallationStatus());
+    auto metadata=c->subtitleAccess->MetadataRevision();
+    {RunModal close("Export",[&](wxDialog*){});EXPECT_NO_THROW(ShowExportDialog(c.get()));}
+    EXPECT_EQ(metadata,c->subtitleAccess->MetadataRevision());
+    fail=false;EXPECT_TRUE(c->subsController->RetryModelInstallation());
+}
+
+// C1-C1c-11 A4 (audit finding): the crash handler saved with Save(), which
+// throws for an installing or RecoveryBlocked model, inside the fatal-exception
+// handler. The recovery copy works in every state and never throws.
+TEST_F(document_lifecycle, recovery_copy_is_written_in_recovery_blocked_without_touching_document_state) {
+    auto path=Candidate("crash-recovery");c->subsController->Load(path,"utf-8");Input("unsaved work");
+    bool fail=true;
+    agi::signal::Connection throwing=LiveRead(*c).AddCommitListener([&](int,AssDialogue const*,Ticket t){if(fail)throw std::runtime_error("observer failure");Ack(t);});
+    EXPECT_THROW(c->subsController->Close(),SubtitleModelRecoveryBlocked);
+    ASSERT_EQ(State::RecoveryBlocked,c->subsController->InstallationStatus());
+    auto filename=c->subsController->Filename();auto modified=c->subsController->IsModified();
+    auto metadata=c->subtitleAccess->MetadataRevision();
+    EXPECT_THROW(c->subsController->Save(Local("recovered-save.ass")),std::logic_error);
+    auto target=Local("recovered-copy.ass");
+    EXPECT_TRUE(c->subsController->WriteRecoveryCopy(target));
+    ASSERT_TRUE(std::filesystem::exists(std::filesystem::path(target.wstring())));
+    AssFile reread;SubtitleFormat::GetReader(target,"utf-8")->ReadFile(&reread,target,{},"utf-8");
+    EXPECT_EQ(LiveRead(*c).Events.size(),reread.Events.size());
+    EXPECT_EQ(filename,c->subsController->Filename());EXPECT_EQ(modified,c->subsController->IsModified());
+    EXPECT_EQ(metadata,c->subtitleAccess->MetadataRevision());
+    EXPECT_FALSE(c->subsController->WriteRecoveryCopy(Local("missing-dir/sub/recovered.ass")));
+    EXPECT_FALSE(c->subsController->WriteRecoveryCopy(Local("recovered.unknown-format")));
+    fail=false;EXPECT_TRUE(c->subsController->RetryModelInstallation());
+}
+
+// C1-C1c-11 B5 (audit finding): GetSubtitles read the worker-owned render copy
+// and subtitle provider from the UI thread without synchronizing with the
+// worker. It now runs on the worker after every queued subtitle update.
+TEST_F(visual_edit, subtitle_overlay_is_rendered_on_the_worker_after_queued_updates) {
+    auto set=[&](char const* text){auto scope=c->subtitleAccess->TryWrite();ASSERT_TRUE(scope);
+        LiveWriteForTest(*c).Events.front().Text=text;LiveWriteForTest(*c).Commit("overlay",AssFile::COMMIT_DIAG_TEXT);};
+    auto alpha_at=[&](int x,int y){
+        auto frame=c->project->VideoProvider()->GetSubtitles(1.0);
+        return frame.data[(y*frame.width+x)*4+3];
+    };
+    char const* square="{\\an7\\pos(0,0)\\bord0\\shad0\\1c&HFFFFFF&\\p1}m 0 0 l 200 0 200 200 0 200";
+    for(int i=0;i<20;++i) {
+        set(square);EXPECT_EQ(255,alpha_at(100,100)) << "iteration " << i;
+        set("");EXPECT_EQ(0,alpha_at(100,100)) << "iteration " << i;
+    }
 }

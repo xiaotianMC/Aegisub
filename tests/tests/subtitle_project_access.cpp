@@ -210,7 +210,11 @@ TEST(subtitle_interaction, own_commit_does_not_adopt_unexpected_nested_revision)
         if(!nested) {nested=true;file.Commit(wxString{},AssFile::COMMIT_DIAG_TEXT);}
     });
     auto session=access.TryBeginInteraction({line->Id});
-    EXPECT_THROW(session->Commit(wxString{},AssFile::COMMIT_DIAG_TEXT),std::logic_error);
+    int commits=0;agi::signal::Connection counted=file.AddCommitListener([&](int,const AssDialogue*){++commits;});
+    // C1-C1c-11 B3: the own commit succeeded, so it is not reported as failed;
+    // the session ends instead of adopting the foreign nested revision.
+    EXPECT_NO_THROW(session->Commit(wxString{},AssFile::COMMIT_DIAG_TEXT));
+    EXPECT_EQ(2,commits);
     EXPECT_FALSE(session->Current());EXPECT_TRUE(gate.TryBeginComparison());
 }
 
@@ -248,8 +252,10 @@ TEST(subtitle_project_access, ordinary_row_list_rejects_stale_or_duplicate_resul
     EXPECT_THROW(edit.ReplaceRows(stamp,original,{changed[0],changed[0]}),std::invalid_argument);EXPECT_EQ("",a->Text.get());
     EXPECT_THROW(edit.ReplaceRows(foreign.Capture(),original,changed),std::logic_error);
     auto stale=original;stale[1].Start=1;EXPECT_THROW(edit.ReplaceRows(stamp,stale,changed),std::logic_error);
-    auto retired=edit.ReplaceRows(stamp,original,{original[1]});
-    ASSERT_EQ(1u,file.Events.size());EXPECT_EQ(b,&file.Events.front());ASSERT_EQ(1u,retired.size());EXPECT_EQ(a,retired.front().get());EXPECT_EQ(a->Id,retired.front()->Id);
+    EXPECT_EQ(0u,access.RetainedRetiredNodes());
+    auto a_id=a->Id;edit.ReplaceRows(stamp,original,{original[1]});
+    // The detached node is project-owned until a successful Commit settles it.
+    ASSERT_EQ(1u,file.Events.size());EXPECT_EQ(b,&file.Events.front());EXPECT_EQ(1u,access.RetainedRetiredNodes());EXPECT_EQ(a_id,a->Id);
 }
 
 TEST(subtitle_project_access, ordinary_dependent_values_prepare_every_part_and_preserve_project_properties) {
@@ -264,8 +270,8 @@ TEST(subtitle_project_access, ordinary_dependent_values_prepare_every_part_and_p
     auto edit=access.Edit(scope->Lease());
     EXPECT_THROW(edit.UpdateValues(stamp,original,candidate,{1},AssFile::COMMIT_STYLES|AssFile::COMMIT_DIAG_FULL),std::invalid_argument);
     EXPECT_EQ("",row->Text.get());EXPECT_EQ("Default",style->name);EXPECT_EQ("original",file.GetScriptInfo("Title"));
-    auto retired=edit.UpdateValues(stamp,original,candidate,{0},AssFile::COMMIT_STYLES|AssFile::COMMIT_DIAG_FULL|AssFile::COMMIT_SCRIPTINFO|AssFile::COMMIT_EXTRADATA);
-    EXPECT_TRUE(retired.empty());EXPECT_EQ(style,&file.Styles.front());EXPECT_EQ(row,&file.Events.front());
+    edit.UpdateValues(stamp,original,candidate,{0},AssFile::COMMIT_STYLES|AssFile::COMMIT_DIAG_FULL|AssFile::COMMIT_SCRIPTINFO|AssFile::COMMIT_EXTRADATA);
+    EXPECT_EQ(0u,access.RetainedRetiredNodes());EXPECT_EQ(style,&file.Styles.front());EXPECT_EQ(row,&file.Events.front());
     EXPECT_EQ("Renamed",row->Style.get());EXPECT_EQ("updated",file.GetScriptInfo("Title"));EXPECT_EQ(1u,file.Extradata.size());EXPECT_EQ(17,file.Properties.video_position);
 }
 TEST(subtitle_project_access, ordinary_values_reject_silent_dependency_changes_and_unknown_new_extra_before_writing) {
@@ -360,8 +366,10 @@ TEST(model_installation_preparation, normal_observer_order_and_exceptions_are_pr
     SubtitleModelObservers<int> observers("normal");std::vector<int> seen;
     agi::signal::Connection a=observers.Add([&](int value){seen.push_back(value);});
     agi::signal::Connection b=observers.Add([&]{throw std::runtime_error("normal");});
-    EXPECT_THROW(observers(3),std::runtime_error);EXPECT_TRUE(seen.empty());
-    b.Disconnect();observers(4);EXPECT_EQ((std::vector<int>{4}),seen);
+    // C1-C1c-11: order (newest first) and propagation are preserved, but a
+    // throwing observer no longer stops delivery to older ones.
+    EXPECT_THROW(observers(3),std::runtime_error);EXPECT_EQ((std::vector<int>{3}),seen);
+    b.Disconnect();observers(4);EXPECT_EQ((std::vector<int>{3,4}),seen);
 }
 TEST(model_installation_preparation, explicit_acknowledgements_isolate_failures_and_retain_old_model) {
     SubtitleModelObservers<int> observers("install");using Ticket=agi::SubtitleRebindBatch::Ticket;
@@ -399,3 +407,46 @@ TEST(model_installation_preparation, observer_prepare_failure_is_not_a_publicati
 template<class T> concept PublicDocumentPublication = requires(T& value) { value.PublishDocumentRevision(); };
 static_assert(!PublicDocumentPublication<agi::SubtitleRebindBatch>);
 static_assert(std::is_same_v<decltype(std::declval<SubtitleModelCandidate const&>().Read()),AssFile const&>);
+
+// C1-C1c-11 A1: a throwing observer no longer stops delivery to older observers,
+// and nodes detached by the edit stay alive while any observer may hold them.
+TEST(subtitle_project_access, throwing_newer_observer_still_notifies_older_ones_and_parks_retired_rows) {
+    AssFile file;auto a=new AssDialogue;auto b=new AssDialogue;file.Events.push_back(*a);file.Events.push_back(*b);a->Row=0;b->Row=1;
+    agi::SubtitleEditGate gate;SubtitleProjectAccess access(file,gate);
+    int older=0;bool fail=true;
+    agi::signal::Connection first=file.AddCommitListener([&](int,const AssDialogue*){++older;});
+    agi::signal::Connection second=file.AddCommitListener([&](int,const AssDialogue*){if(fail)throw std::runtime_error("newer");});
+    auto a_id=a->Id;
+    {
+        auto scope=access.TryWrite();ASSERT_TRUE(scope);auto edit=access.Edit(scope->Lease());
+        std::vector<AssDialogueBase> original={*a,*b};
+        edit.ReplaceRows(gate.Capture(),original,{original[1]});
+        EXPECT_THROW(edit.Commit("delete",AssFile::COMMIT_DIAG_ADDREM),std::runtime_error);
+    }
+    EXPECT_EQ(1,older);
+    // The announcing commit failed: the detached row is parked, not freed.
+    EXPECT_EQ(1u,access.RetainedRetiredNodes());EXPECT_EQ(a_id,a->Id);
+    EXPECT_FALSE(gate.NeedsRebinding());
+    fail=false;
+    {
+        auto scope=access.TryWrite();ASSERT_TRUE(scope);auto edit=access.Edit(scope->Lease());
+        std::vector<AssDialogueBase> original={*b};auto added=original;added.push_back(*b);added.back().Id=b->Id+1000;added.back().Row=1;
+        edit.ReplaceRows(gate.Capture(),original,added);
+        edit.ReplaceRows(gate.Capture(),added,{added[1]});
+        EXPECT_EQ(2u,access.RetainedRetiredNodes());
+        edit.Commit("ok",AssFile::COMMIT_DIAG_ADDREM);
+        // Settled nodes live until the outermost write scope ends.
+        EXPECT_EQ(2u,access.RetainedRetiredNodes());
+    }
+    EXPECT_EQ(2,older);
+    EXPECT_EQ(1u,access.RetainedRetiredNodes()) << "only the parked row remains after the scope";
+}
+TEST(subtitle_project_access, observer_dispatch_rethrows_first_exception_after_all_observers_ran) {
+    AssFile file;file.Events.push_back(*new AssDialogue);
+    std::vector<int> order;
+    agi::signal::Connection a=file.AddCommitListener([&](int,const AssDialogue*){order.push_back(1);throw std::runtime_error("oldest");});
+    agi::signal::Connection b=file.AddCommitListener([&](int,const AssDialogue*){order.push_back(2);});
+    agi::signal::Connection c=file.AddCommitListener([&](int,const AssDialogue*){order.push_back(3);throw std::logic_error("newest");});
+    EXPECT_THROW(file.Commit("x",AssFile::COMMIT_DIAG_TEXT),std::logic_error);
+    EXPECT_EQ((std::vector<int>{3,2,1}),order);
+}

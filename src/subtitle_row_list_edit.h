@@ -10,13 +10,12 @@ class SubtitleRowListEdit {
     std::optional<SubtitleProjectAccess::WriteScope> scope;
     agi::SubtitleEditGate::RevisionToken revision;
     std::vector<AssDialogueBase> originals;
-    std::vector<std::unique_ptr<AssDialogue>> retired;
     bool applied = false;
     void Apply() {
         if (applied) return;
         std::vector<AssDialogueBase> values;
         for (auto const& row : file.Events) values.push_back(row);
-        retired = c->subtitleAccess->Edit(scope->Lease()).ReplaceRows(revision, originals, values);
+        c->subtitleAccess->Edit(scope->Lease()).ReplaceRows(revision, originals, values);
         applied = true;
     }
 public:

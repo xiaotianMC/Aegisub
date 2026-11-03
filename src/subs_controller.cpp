@@ -38,6 +38,7 @@
 #include <libaegisub/dispatch.h>
 #include <libaegisub/format_path.h>
 #include <libaegisub/fs.h>
+#include <libaegisub/log.h>
 #include <libaegisub/path.h>
 #include <libaegisub/util.h>
 
@@ -117,45 +118,65 @@ struct SubsController::UndoInfo {
 		UpdateTextSelection(c);
 	}
 
-	void Apply(agi::Context *c, HistoryRestore const& permission) const {
+    // C1-C1c-11: restoration is split so that every allocation happens before
+    // the live model or the history stacks change. Install then only swaps
+    // containers (no-throw) and announces; if announcing fails, the replaced
+    // nodes are parked because unrefreshed observers may still reference them.
+    struct Prepared {
+        std::unique_ptr<AssFile> next = std::make_unique<AssFile>();
+        std::set<int> selection;
+        int active = 0;
+    };
+    Prepared Prepare(agi::Context *c, HistoryRestore const& permission) const {
         if (permission.owner->context != c || !permission.owner->history_action ||
             !permission.authority.Valid() || !c->subtitleEditGate.Authorizes(permission.revision) || SubsController::Live(c).IsNotifying())
             throw std::logic_error("Invalid subtitle history restoration authority");
-		// Keep old dialogue lines alive until after the commit is complete
-		// since a bunch of stuff holds references to them
-		AssFile old;
-		old.Events.swap(SubsController::Live(c).Events);
-		SubsController::Live(c).Info.clear();
-		SubsController::Live(c).Attachments.clear();
-		SubsController::Live(c).Styles.clear();
-		SubsController::Live(c).Extradata.clear();
+        Prepared p;
+        auto& next = *p.next;
+        std::vector<int> sorted(selection);
+        sort(begin(sorted), end(sorted));
+        next.Info.reserve(script_info.size());
+        for (auto const& info : script_info)
+            next.Info.emplace_back(info.first, info.second);
+        for (auto const& style : styles)
+            next.Styles.push_back(*new AssStyle(style));
+        next.Attachments = attachments;
+        for (auto const& event : events) {
+            auto copy = new AssDialogue(event);
+            next.Events.push_back(*copy);
+            if (copy->Id == active_line_id)
+                p.active = copy->Id;
+            if (binary_search(begin(sorted), end(sorted), copy->Id))
+                p.selection.insert(copy->Id);
+        }
+        next.Extradata = extradata;
+        return p;
+    }
 
-		sort(begin(selection), end(selection));
+    void Install(agi::Context *c, Prepared&& p, std::vector<std::shared_ptr<void>>& parked) const {
+        auto& live = SubsController::Live(c);
+        std::shared_ptr<AssFile> old(std::move(p.next)); // after the swaps: the replaced content
+        parked.reserve(parked.size() + 1);
+        // ---- no-throw replacement ----
+        live.Info.swap(old->Info);
+        live.Styles.swap(old->Styles);
+        live.Events.swap(old->Events);
+        live.Attachments.swap(old->Attachments);
+        live.Extradata.swap(old->Extradata);
+        try {
+            live.Commit("", AssFile::COMMIT_NEW);
+        }
+        catch (...) {
+            parked.push_back(std::move(old));
+            throw;
+        }
+        c->selectionController->SetSelectionAndActiveIDs(std::move(p.selection), p.active);
 
-		int active = 0;
-        std::set<int> new_sel;
-
-		for (auto const& info : script_info)
-			SubsController::Live(c).Info.push_back(*new AssInfo(info.first, info.second));
-		for (auto const& style : styles)
-			SubsController::Live(c).Styles.push_back(*new AssStyle(style));
-		SubsController::Live(c).Attachments = attachments;
-		for (auto const& event : events) {
-			auto copy = new AssDialogue(event);
-			SubsController::Live(c).Events.push_back(*copy);
-			if (copy->Id == active_line_id)
-				active = copy->Id;
-			if (binary_search(begin(selection), end(selection), copy->Id))
-				new_sel.insert(copy->Id);
-		}
-		SubsController::Live(c).Extradata = extradata;
-
-		SubsController::Live(c).Commit("", AssFile::COMMIT_NEW);
-		c->selectionController->SetSelectionAndActiveIDs(std::move(new_sel), active);
-
-		c->textSelectionController->SetInsertionPoint(pos);
-		c->textSelectionController->SetSelection(sel_start, sel_end);
-	}
+        c->textSelectionController->SetInsertionPoint(pos);
+        c->textSelectionController->SetSelection(sel_start, sel_end);
+        // `old` (Info, Styles and Events of the previous state) is freed here,
+        // after every observer was refreshed by the commit above.
+    }
 
     void UpdateActiveLine(const agi::Context *c) {
         if (auto id = c->selectionController->ActiveID()) active_line_id = id;
@@ -481,6 +502,24 @@ int SubsController::TryToClose(bool allow_cancel) const {
 	return result;
 }
 
+bool SubsController::WriteRecoveryCopy(agi::fs::path const& file) const noexcept {
+    try {
+        auto writer = SubtitleFormat::GetWriter(file);
+        if (!writer) return false;
+        auto snapshot = context->subtitleAccess->Snapshot();
+        try { snapshot->Properties = context->project->PropertiesForSave(file); }
+        catch (...) { } // keep the snapshot's own project properties
+        snapshot->CleanExtradata();
+        writer->WriteFile(snapshot.get(), file, 0);
+        return true;
+    }
+    catch (...) { }
+    // Logging may allocate; keep it out of the handlers and contained.
+    try { LOG_E("subtitle/recovery") << "Recovery copy failed: " << file; }
+    catch (...) { }
+    return false;
+}
+
 void SubsController::RequestAutoSave() {
     if (IsInstalling() || context->subtitleEditGate.NeedsRebinding()) throw std::logic_error("Cannot autosave an incomplete model installation");
 	if (commit_id == autosaved_commit_id && context->subtitleAccess->MetadataRevision() == autosaved_metadata_revision)
@@ -619,13 +658,15 @@ void SubsController::Undo() {
     if (!edit_scope) return;
     history_action = true;
     BOOST_SCOPE_EXIT_ALL(this) { history_action = false; text_selection_connection.Unblock(); };
+    HistoryRestore permission{this, edit_scope->Lease().Capture(), context->subtitleEditGate.Capture()};
+    // Prepare the target state first: a failure leaves model and stacks unchanged.
+    auto prepared = std::prev(undo_stack.end(), 2)->Prepare(context, permission);
 	redo_stack.splice(redo_stack.end(), undo_stack, std::prev(undo_stack.end()));
 
 	commit_id = undo_stack.back().commit_id;
 
 	text_selection_connection.Block();
-    HistoryRestore permission{this, edit_scope->Lease().Capture(), context->subtitleEditGate.Capture()};
-	undo_stack.back().Apply(context, permission);
+	undo_stack.back().Install(context, std::move(prepared), retired_after_failure);
 	text_selection_connection.Unblock();
 }
 
@@ -635,13 +676,14 @@ void SubsController::Redo() {
     if (!edit_scope) return;
     history_action = true;
     BOOST_SCOPE_EXIT_ALL(this) { history_action = false; text_selection_connection.Unblock(); };
+    HistoryRestore permission{this, edit_scope->Lease().Capture(), context->subtitleEditGate.Capture()};
+    auto prepared = redo_stack.back().Prepare(context, permission);
 	undo_stack.splice(undo_stack.end(), redo_stack, std::prev(redo_stack.end()));
 
 	commit_id = undo_stack.back().commit_id;
 
 	text_selection_connection.Block();
-    HistoryRestore permission{this, edit_scope->Lease().Capture(), context->subtitleEditGate.Capture()};
-	undo_stack.back().Apply(context, permission);
+	undo_stack.back().Install(context, std::move(prepared), retired_after_failure);
 	text_selection_connection.Unblock();
 }
 
@@ -905,7 +947,9 @@ LuaSubtitlePublication SubsController::PrepareLuaPublication(LuaSubtitleTransact
 
 void SubsController::PublishLua(LuaSubtitlePublication&& publication, std::set<int> selection, int active) {
     installation->CheckThread();
-    auto d = std::move(publication.data);
+    // Shared ownership is allocated up front so parking it after a failed
+    // announcement below cannot allocate (C1-C1c-11).
+    std::shared_ptr<std::remove_reference_t<decltype(*publication.data)>> d(std::move(publication.data));
     if (!d) throw std::logic_error("Consumed Lua publication");
     auto& gate = context->subtitleEditGate;
     if (!gate.Authorizes(*d->transaction->expected) || IsInstalling() || gate.NeedsRebinding())
@@ -919,6 +963,7 @@ void SubsController::PublishLua(LuaSubtitlePublication&& publication, std::set<i
 
     auto& live = Live();
     auto& work = *d->transaction->work;
+    retired_after_failure.reserve(retired_after_failure.size() + 1);
     // Throws before any change if the revision space is exhausted.
     d->session->AdvanceRevision();
 
@@ -956,7 +1001,7 @@ void SubsController::PublishLua(LuaSubtitlePublication&& publication, std::set<i
     }
     catch (...) {
         d->session.reset();
-        lua_retired_after_failure.push_back(std::shared_ptr<void>(std::move(d)));
+        retired_after_failure.push_back(std::move(d)); // capacity reserved above
         throw;
     }
     bool pushed = d->pushed;

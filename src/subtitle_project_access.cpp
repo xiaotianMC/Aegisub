@@ -10,6 +10,9 @@
 
 struct SubtitleProjectAccess::ActiveWrite {
     agi::SubtitleEditGate::WriteLease lease;
+    // Retired nodes whose removal was announced by a successful Commit. Freed
+    // only when the outermost write scope ends, after any nested work.
+    std::vector<std::unique_ptr<AssEntry>> settled;
     explicit ActiveWrite(agi::SubtitleEditGate::WriteLease&& lease) : lease(std::move(lease)) { }
 };
 struct SubtitleProjectAccess::State {
@@ -18,6 +21,26 @@ struct SubtitleProjectAccess::State {
     bool alive = true;
     std::weak_ptr<ActiveWrite> active;
     agi::SubtitleEditGate *gate = nullptr;
+    // C1-C1c-11 retired-node custody. pending: detached from the live file but
+    // not yet announced. parked: an announcing Commit failed, so some observer
+    // may still point at them; kept until this state is destroyed.
+    std::vector<std::unique_ptr<AssEntry>> pending_retired, parked_retired;
+    template<class F> int CommitRetiring(F&& commit) {
+        auto settle = active.lock();
+        // Reserve first so moving nodes below cannot throw.
+        parked_retired.reserve(parked_retired.size() + pending_retired.size());
+        if (settle) settle->settled.reserve(settle->settled.size() + pending_retired.size());
+        int id;
+        try { id = commit(); }
+        catch (...) {
+            for (auto& node : pending_retired) parked_retired.push_back(std::move(node));
+            pending_retired.clear();
+            throw;
+        }
+        if (settle) for (auto& node : pending_retired) settle->settled.push_back(std::move(node));
+        pending_retired.clear();
+        return id;
+    }
     void Check() const {
         if (thread != std::this_thread::get_id()) throw std::logic_error("Live subtitles require the owner thread");
         if (!alive) throw std::logic_error("Subtitle project access closed");
@@ -173,10 +196,15 @@ int SubtitleProjectAccess::Interaction::Commit(wxString const& description, int 
             for(auto& row:state->file->Events)if(row.Id==single_line_id)single=&row;
             if(!single)throw std::out_of_range("Commit target missing");
         }
-        auto id = state->file->Commit(description,type,amend_id,single);
+        auto id = state->CommitRetiring([&]{ return state->file->Commit(description,type,amend_id,single); });
+        // C1-C1c-11: the commit above succeeded and is recorded; never report
+        // it as a failure. An unexpected nested revision only means this session
+        // cannot adopt the new baseline, so it ends (Current() becomes false).
         auto next = state->gate->Capture();
-        if (next.Revision().generation != revision.Revision().generation + 1)
-            throw std::logic_error("Unexpected nested subtitle revision during interaction commit");
+        if (next.Revision().generation != revision.Revision().generation + 1) {
+            End();
+            return id;
+        }
         revision = std::move(next);
         return id;
     }
@@ -188,6 +216,11 @@ void SubtitleProjectAccess::Close() noexcept {
     if (state->file->edit_gate == &gate) state->file->edit_gate = nullptr;
 }
 AssFile const& SubtitleProjectAccess::Read() const { state->Check(); return *state->file; }
+size_t SubtitleProjectAccess::RetainedRetiredNodes() const noexcept {
+    size_t count = state->pending_retired.size() + state->parked_retired.size();
+    if (auto active = state->active.lock()) count += active->settled.size();
+    return count;
+}
 uint64_t SubtitleProjectAccess::MetadataRevision() const { state->Check(); return metadata_revision; }
 bool SubtitleProjectAccess::MetadataDirty() const { return saved_metadata != static_cast<ProjectMetadata const&>(Read().Properties); }
 ProjectUIState SubtitleProjectAccess::UIState() const { return Read().Properties; }
@@ -299,7 +332,7 @@ int SubtitleProjectAccess::WriteAccess::Commit(wxString const& message, int type
     AssDialogue* single = nullptr;
     for (auto& row : access.file->Events) if (row.Id == id) single = &row;
     if (id && !single) throw std::out_of_range("Subtitle commit target missing");
-    return access.file->Commit(message, type, amend, single);
+    return access.owner->CommitRetiring([&]{ return access.file->Commit(message, type, amend, single); });
 }
 
 namespace {
@@ -308,7 +341,7 @@ auto RowFields(AssDialogueBase const& row) {
         row.Start.GetMilliseconds(),row.End.GetMilliseconds(),row.Style,row.Actor,row.Effect,row.ExtradataIds,row.Text);
 }
 }
-std::vector<std::unique_ptr<AssDialogue>> SubtitleProjectAccess::WriteAccess::ReplaceRows(
+void SubtitleProjectAccess::WriteAccess::ReplaceRows(
     agi::SubtitleEditGate::RevisionToken const& revision, std::vector<AssDialogueBase> const& originals,
     std::vector<AssDialogueBase> const& result) const {
     auto access=Check();
@@ -331,7 +364,7 @@ std::vector<std::unique_ptr<AssDialogue>> SubtitleProjectAccess::WriteAccess::Re
         if(found!=live.end())prepared.push_back(found->second);
         else {allocated.push_back(std::make_unique<AssDialogue>(row));prepared.push_back(allocated.back().get());}
     }
-    std::vector<std::unique_ptr<AssDialogue>> retired;retired.reserve(originals.size());
+    auto& retired=access.owner->pending_retired;retired.reserve(retired.size()+events.size());
     EntryList<AssDialogue> old;
     old.swap(events);
     for(size_t j=0;j<prepared.size();++j) {
@@ -342,7 +375,6 @@ std::vector<std::unique_ptr<AssDialogue>> SubtitleProjectAccess::WriteAccess::Re
     }
     for(auto& row:allocated)row.release();
     while(!old.empty()) {auto row=&old.front();old.pop_front();retired.emplace_back(row);}
-    return retired;
 }
 
 namespace {
@@ -352,7 +384,7 @@ auto StyleFields(AssStyle const& s) {
         s.alignment,s.Margin,s.encoding,s.GetEntryData());
 }
 }
-std::vector<std::unique_ptr<AssStyle>> SubtitleProjectAccess::WriteAccess::UpdateValues(
+void SubtitleProjectAccess::WriteAccess::UpdateValues(
     agi::SubtitleEditGate::RevisionToken const& revision, AssFile const& original, AssFile const& result,
     std::vector<int> const& sources, int parts) const {
     auto access=Check();auto& file=*access.file;
@@ -413,7 +445,7 @@ std::vector<std::unique_ptr<AssStyle>> SubtitleProjectAccess::WriteAccess::Updat
                 if(!ids.contains(id) && std::find(previous.begin(),previous.end(),id)==previous.end())throw std::invalid_argument("Unresolved new extradata reference");
         }
     }
-    std::vector<std::unique_ptr<AssStyle>> retired;retired.reserve(live_styles.size());
+    auto& retired=access.owner->pending_retired;retired.reserve(retired.size()+live_styles.size());
     // All validation and preparation precede the first live write.
     if(parts & AssFile::COMMIT_DIAG_FULL)UpdateRows(rows);
     if(parts & AssFile::COMMIT_STYLES) {
@@ -428,5 +460,4 @@ std::vector<std::unique_ptr<AssStyle>> SubtitleProjectAccess::WriteAccess::Updat
     if(parts & AssFile::COMMIT_SCRIPTINFO)file.Info.swap(info);
     if(parts & AssFile::COMMIT_ATTACHMENT)file.Attachments.swap(attachments);
     if(parts & AssFile::COMMIT_EXTRADATA){file.Extradata.swap(extras);file.next_extradata_id=result.next_extradata_id;}
-    return retired;
 }

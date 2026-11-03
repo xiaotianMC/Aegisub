@@ -100,13 +100,24 @@ VideoFrame AsyncVideoProvider::GetSubtitles(double time) {
 	// usually by blending many separate small images with alpha).
 	// To do this, draw the subtitles once on a black frame and once on a white frame
 	// and solve for the color and alpha.
-	VideoFrame frame_black = GetBlankFrame(false);
-	if (!subs) return frame_black;
-	VideoFrame frame_white = GetBlankFrame(true);
-
-	subs_provider->LoadSubtitles(subs.get());
-	subs_provider->DrawSubtitles(frame_black, time / 1000.);
-	subs_provider->DrawSubtitles(frame_white, time / 1000.);
+	//
+	// C1-C1c-11 B5: `subs`, `single_frame` and `subs_provider` belong to the
+	// worker thread (LoadSubtitles/UpdateSubtitles replace them there), so the
+	// rendering runs on the worker, ordered after every queued update.
+	VideoFrame frame_black, frame_white;
+	bool has_subs = false;
+	worker->Sync([&] {
+		frame_black = GetBlankFrame(false);
+		if (!subs || !subs_provider) return;
+		has_subs = true;
+		frame_white = GetBlankFrame(true);
+		subs_provider->LoadSubtitles(subs.get());
+		// The provider now holds the complete file, not a single-frame export.
+		single_frame = SUBS_FILE_ALREADY_LOADED;
+		subs_provider->DrawSubtitles(frame_black, time / 1000.);
+		subs_provider->DrawSubtitles(frame_white, time / 1000.);
+	});
+	if (!has_subs) return frame_black;
 
 	using namespace boost::gil;
 	auto blackview = interleaved_view(frame_black.width, frame_black.height, (bgra8_pixel_t*) frame_black.data.data(), frame_black.width * 4);

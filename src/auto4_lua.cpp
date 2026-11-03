@@ -1149,6 +1149,16 @@ namespace {
 
 	void LuaExportFilter::ProcessSubs(AssFile *subs, wxWindow *export_dialog)
 	{
+		// C1-C1c-11 B4: the filter runs on a worker thread like a macro, so it
+		// takes the same per-script running guard: no macro, validation,
+		// toggle state or reload may use this Lua state concurrently, and a
+		// filter cannot start while a macro of the script is running.
+		auto script = LuaScript::GetScriptObject(L);
+		if (script->Running())
+			throw agi::InvalidInputException(agi::format("Automation script \"%s\" is busy; export filter \"%s\" cannot run now.", script->GetName(), GetName()));
+		script->SetRunning(true);
+		BOOST_SCOPE_EXIT_ALL(script) { script->SetRunning(false); };
+
 		LuaStackcheck stackcheck(L);
 
 		GetFeatureFunction("run");
@@ -1187,6 +1197,9 @@ namespace {
 	std::unique_ptr<ScriptDialog> LuaExportFilter::GenerateConfigDialog(wxWindow *, agi::Context *c)
 	{
 		if (!has_config)
+			return nullptr;
+		// The Lua state is in use by a running macro or filter of this script
+		if (LuaScript::GetScriptObject(L)->Running())
 			return nullptr;
 
 		set_context(L, c);

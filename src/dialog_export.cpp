@@ -34,10 +34,12 @@
 #include "include/aegisub/context.h"
 #include "help_button.h"
 #include "libresrc/libresrc.h"
+#include "subs_controller.h"
 #include "subtitle_format.h"
 #include "utils.h"
 
 #include <libaegisub/charset_conv.h>
+#include <libaegisub/log.h>
 #include <libaegisub/split.h>
 
 #include <algorithm>
@@ -183,7 +185,20 @@ DialogExport::~DialogExport() {
 			filters += from_wx(filter_list->GetString(i));
 		}
 	}
-    c->subtitleAccess->SetMetadata(SubtitleProjectAccess::MetadataField::ExportFilters, std::move(filters));
+	// C1-C1c-11: a destructor must not throw. Metadata is sealed while a
+	// subtitle model installs or awaits recovery, and metadata observers may
+	// throw; the remembered filter selection is then simply not updated.
+	if (c->subsController->IsInstalling() || c->subtitleEditGate.NeedsRebinding())
+		return;
+	try {
+		c->subtitleAccess->SetMetadata(SubtitleProjectAccess::MetadataField::ExportFilters, std::move(filters));
+	}
+	catch (std::exception const& e) {
+		LOG_W("dialog/export") << "Export filter selection not stored: " << e.what();
+	}
+	catch (...) {
+		LOG_W("dialog/export") << "Export filter selection not stored";
+	}
 }
 
 void DialogExport::OnProcess(wxCommandEvent &) {

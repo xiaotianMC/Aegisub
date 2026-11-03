@@ -440,15 +440,22 @@ void AegisubApp::UnhandledException([[maybe_unused]] bool stackWalk) {
 		auto c = frame->context.get();
 		if (!c || !c->subsController) continue;
 
-		path = config::path->Decode("?user/recovered");
-		agi::fs::CreateDirectory(path);
+		// C1-C1c-11: one frame's failure must not abort the others, and a
+		// recovery copy must not depend on the document being saveable
+		// (Save refuses an installing or RecoveryBlocked model).
+		try {
+			auto target = config::path->Decode("?user/recovered");
+			agi::fs::CreateDirectory(target);
 
-		auto filename = c->subsController->Filename().stem();
-		filename.replace_extension(agi::format("%s.ass", agi::util::strftime("%Y-%m-%d-%H-%M-%S")));
-		path /= filename;
-		c->subsController->Save(path);
-
-		any = true;
+			auto filename = c->subsController->Filename().stem();
+			filename.replace_extension(agi::format("%s.ass", agi::util::strftime("%Y-%m-%d-%H-%M-%S")));
+			target /= filename;
+			if (c->subsController->WriteRecoveryCopy(target)) {
+				path = target;
+				any = true;
+			}
+		}
+		catch (...) { }
 	}
 
 	if (stackWalk)

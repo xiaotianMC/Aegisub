@@ -105,13 +105,16 @@ public:
         }
         void SetExtradataValue(uint32_t id, std::string value) const;
         // Value-only ordinary edits; row structure and project/UI properties cannot change.
-        std::vector<std::unique_ptr<AssStyle>> UpdateValues(
+        // Replaced style nodes are retained by the project (see ReplaceRows).
+        void UpdateValues(
             agi::SubtitleEditGate::RevisionToken const&, AssFile const& original, AssFile const& result,
             std::vector<int> const& style_sources, int parts) const;
         void UpdateRows(std::vector<AssDialogueBase> const&) const;
-        // Ordinary row-list edits only. Returned nodes are detached retired data;
-        // callers retain them through Commit and selection refresh.
-        std::vector<std::unique_ptr<AssDialogue>> ReplaceRows(
+        // Ordinary row-list edits only. Detached nodes are retained by the project,
+        // never by the caller: they are freed only after a later Commit notified
+        // every observer and the outermost write scope ended; if that Commit
+        // fails they stay parked until the project access is destroyed.
+        void ReplaceRows(
             agi::SubtitleEditGate::RevisionToken const&, std::vector<AssDialogueBase> const& originals,
             std::vector<AssDialogueBase> const& result) const;
         bool LinkAdjacent(int id, bool start_changed, int old_boundary, int threshold_ms, bool exact_milliseconds = false) const;
@@ -126,5 +129,8 @@ public:
     std::unique_ptr<AssFile> Snapshot() const;
     AssFile const& Read(agi::SubtitleEditGate::RevisionToken const&) const;
     WriteAccess Edit(agi::SubtitleEditGate::WriteLease const&);
+    // Diagnostics: retired live nodes still owned by the project (pending, settled
+    // or parked after a failed commit). Read-only; grants no access to them.
+    size_t RetainedRetiredNodes() const noexcept;
     void Close() noexcept;
 };

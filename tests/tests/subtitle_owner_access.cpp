@@ -113,7 +113,8 @@ TEST(subtitle_owner_access, independent_models_keep_full_mutability_and_snapshot
     EXPECT_EQ("", std::string(access.Read().GetScriptInfo("Title")));
 
     AssFile copy(access.Read());
-    copy.Events.clear(); copy.Events.push_back(*new AssDialogue); copy.Sort();
+    copy.Events.clear_and_dispose([](AssDialogue* row) { delete row; });
+    copy.Events.push_back(*new AssDialogue); copy.Sort();
     agi::signal::Connection copy_history = copy.AddUndoManager([](AssFileCommit const&) {});
     EXPECT_EQ(before, access.Read().Events.front().Text.get());
     // The bound live file still refuses ordinary history registration.

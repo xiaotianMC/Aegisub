@@ -13,7 +13,6 @@ class SubtitleValueEdit {
     AssFile original;
     std::map<AssStyle const*, AssStyle*> style_copies;
     std::map<AssStyle const*, int> style_origins;
-    std::vector<std::unique_ptr<AssStyle>> retired;
     bool published = false;
 public:
     AssFile file;
@@ -40,7 +39,7 @@ public:
             auto found=style_origins.find(&style);
             sources.push_back(found==style_origins.end()?-1:found->second);
         }
-        retired=c->subtitleAccess->Edit(scope->Lease()).UpdateValues(revision,original,file,sources,parts);
+        c->subtitleAccess->Edit(scope->Lease()).UpdateValues(revision,original,file,sources,parts);
         published=true;
     }
     AssStyle const* LiveStyle(AssStyle const* snapshot) const {

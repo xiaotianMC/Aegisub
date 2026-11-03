@@ -3,6 +3,7 @@
 #pragma once
 #include <libaegisub/signal.h>
 #include <libaegisub/subtitle_rebind.h>
+#include <exception>
 #include <functional>
 #include <algorithm>
 #include <limits>
@@ -14,7 +15,8 @@
 using SubtitleModelRebindTicket = agi::SubtitleRebindBatch::Ticket;
 
 // Project-local registration, not a replacement for the generic Signal contract.
-// Ordinary delivery retains reverse registration order and exception propagation.
+// Ordinary delivery retains reverse registration order; an exception no longer
+// stops delivery to older subscribers (it is rethrown after all were called).
 // Installation delivery delegates each subscriber to the existing C0 protocol.
 template<class... Args> class SubtitleModelObservers {
 public:
@@ -133,10 +135,18 @@ public:
             return std::invoke(method,object,std::forward<decltype(args)>(args)...);
         });
     }
+    // C1-C1c-11: every live subscriber is delivered even if an earlier one
+    // throws; the first exception is rethrown afterwards. A throwing observer
+    // must never leave older observers holding nodes the edit has retired.
     void operator()(Args... args) const {
         auto slots=state->slots;
+        std::exception_ptr first;
         for (auto it=slots.rbegin(); it!=slots.rend(); ++it)
-            if (!(*it)->owner_lifetime || !(*it)->owner_lifetime->expired()) (*it)->signal(args...,Ticket{});
+            if (!(*it)->owner_lifetime || !(*it)->owner_lifetime->expired()) {
+                try { (*it)->signal(args...,Ticket{}); }
+                catch (...) { if (!first) first=std::current_exception(); }
+            }
         std::erase_if(state->slots, [](auto const& slot){return slot->subscriber.expired() && (!slot->owner_lifetime || slot->owner_lifetime->expired());});
+        if (first) std::rethrow_exception(first);
     }
 };
