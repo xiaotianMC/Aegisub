@@ -736,7 +736,13 @@ TEST_F(audio_edit, linked_neighbor_is_authorized_and_restored_by_undo) {
     c->subsController->Undo();EXPECT_EQ(2002,LiveRead(*c).Events.back().Start.GetMilliseconds());
     EXPECT_EQ(2002,LiveRead(*c).Events.front().End.GetMilliseconds());
     auto session=c->subtitleAccess->TryBeginInteraction({LiveRead(*c).Events.front().Id});ASSERT_TRUE(session);
-    EXPECT_THROW(session->LinkAdjacent(LiveRead(*c).Events.front().Id,false,2002,100),std::logic_error);
+    // C1-C1c-13 (audit C6): the refused link is validated before the row
+    // write, so the requested value is not left behind uncommitted.
+    AssDialogueBase moved=LiveRead(*c).Events.front();moved.End=2050;
+    EXPECT_THROW(session->UpdateRowsLinkingAdjacent({moved},{moved.Id,false,2002,100,true}),std::logic_error);
+    EXPECT_EQ(2002,LiveRead(*c).Events.front().End.GetMilliseconds());
+    EXPECT_EQ(2002,LiveRead(*c).Events.back().Start.GetMilliseconds());
+    EXPECT_FALSE(session->Current());
     EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
 }
 
@@ -2490,4 +2496,176 @@ TEST_F(document_lifecycle, comparison_cannot_begin_while_a_save_or_media_change_
     c->project->LoadAudio("dummy-audio:silence?sr=44100&bd=16&ch=1&ln=441000");
     EXPECT_FALSE(began);
     EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+}
+
+// C1-C1c-13: modal dialogs without write leases (B6), save failures (C2),
+// opening inside notifications (C4) and atomic multi-step writes (C6).
+namespace {
+class ProbeModal : public wxModalDialogHook {
+    std::function<int(wxDialog*)> enter;
+public:
+    explicit ProbeModal(std::function<int(wxDialog*)> enter) : enter(std::move(enter)) { Register(); }
+    int Enter(wxDialog* dialog) override { return enter(dialog); }
+    void Exit(wxDialog*) override {}
+};
+wxTextCtrl* AssColorInput(wxDialog* dialog) {
+    for(auto child:descendants(dialog))
+        if(auto text=dynamic_cast<wxTextCtrl*>(child);text && text->GetValue().StartsWith("&H"))return text;
+    return nullptr;
+}
+}
+TEST_F(ordinary_edit, color_picker_preview_is_an_interaction_and_cancel_undoes_it) {
+    Input("sample");
+    auto before=c->subsController->GetUndoDescription();
+    bool previewed=false,comparison_refused=false;
+    {
+        RunModal hook("Select Color",[&](wxDialog* dialog){
+            auto input=AssColorInput(dialog);ASSERT_NE(nullptr,input);
+            input->SetValue("&H0000FF&");
+            previewed=LiveRead(*c).Events.front().Text.get().find("0000FF")!=std::string::npos;
+            comparison_refused=!c->subtitleEditGate.TryBeginComparison().has_value();
+        });
+        cmd::call("edit/color/primary",c.get());
+    }
+    EXPECT_TRUE(previewed);EXPECT_TRUE(comparison_refused);
+    EXPECT_EQ("sample",LiveRead(*c).Events.front().Text.get());
+    EXPECT_EQ(before,c->subsController->GetUndoDescription());
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison().has_value());
+}
+TEST_F(ordinary_edit, color_picker_cancel_never_undoes_a_commit_made_while_it_was_open) {
+    Input("sample");
+    {
+        RunModal hook("Select Color",[&](wxDialog* dialog){
+            auto input=AssColorInput(dialog);ASSERT_NE(nullptr,input);
+            input->SetValue("&H0000FF&");
+            // Another handler commits through the shared write scope meanwhile.
+            auto write=c->subtitleAccess->TryWrite();ASSERT_TRUE(write);
+            AssDialogueBase row=LiveRead(*c).Events.front();row.Actor="other handler";
+            auto edit=c->subtitleAccess->Edit(write->Lease());edit.UpdateRows({row});
+            edit.Commit("other handler",AssFile::COMMIT_DIAG_META);
+            input->SetValue("&H00FF00&"); // the preview session is stale: ignored
+        });
+        cmd::call("edit/color/primary",c.get());
+    }
+    EXPECT_EQ("other handler",LiveRead(*c).Events.front().Actor.get());
+    EXPECT_EQ(wxString("other handler"),c->subsController->GetUndoDescription());
+    EXPECT_EQ(std::string::npos,LiveRead(*c).Events.front().Text.get().find("00FF00"));
+    EXPECT_NE(std::string::npos,LiveRead(*c).Events.front().Text.get().find("0000FF"));
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison().has_value());
+}
+TEST_F(ordinary_edit, font_resample_and_style_manager_questions_hold_no_write_lease) {
+    Input("sample");
+    std::vector<std::pair<wxString,bool>> seen;
+    auto description=c->subsController->GetUndoDescription();auto styles=LiveRead(*c).Styles.size();
+    ShowStyleManagerDialog(c.get());
+    wxDialog* manager=nullptr;
+    for(auto top:wxTopLevelWindows) if(auto d=dynamic_cast<wxDialog*>(top);d && d->GetTitle()=="Styles Manager")manager=d;
+    ASSERT_NE(nullptr,manager); manager->Hide();
+    auto cleanup=std::unique_ptr<wxDialog,std::function<void(wxDialog*)>>(manager,[](wxDialog* d){d->Close();});
+    wxButton *import=nullptr,*remove=nullptr;wxListBox *current=nullptr;
+    for(auto child:descendants(manager)) {
+        if(auto b=dynamic_cast<wxButton*>(child); b && b->GetLabel()=="&Import from script...")import=b;
+        if(child->GetParent()->GetLabel()=="Current script") {
+            if(auto b=dynamic_cast<wxButton*>(child);b && b->GetLabel()=="&Delete")remove=b;
+            if(auto list=dynamic_cast<wxListBox*>(child))current=list;
+        }
+    }
+    ASSERT_NE(nullptr,import);ASSERT_NE(nullptr,remove);ASSERT_NE(nullptr,current);
+    ProbeModal probe([&](wxDialog* dialog){
+        seen.emplace_back(dialog->GetTitle(),c->subtitleEditGate.TryBeginComparison().has_value());
+        return dynamic_cast<wxMessageDialog*>(dialog)?wxID_NO:wxID_CANCEL;
+    });
+    cmd::call("edit/font",c.get());
+    cmd::call("tool/resampleres",c.get());
+    current->DeselectAll();current->SetStringSelection("Default");button(remove,remove->GetId());
+    button(import,import->GetId());
+    ASSERT_EQ(4u,seen.size());
+    for(auto const& [title,free]:seen) EXPECT_TRUE(free) << title;
+    EXPECT_EQ(description,c->subsController->GetUndoDescription());EXPECT_EQ(styles,LiveRead(*c).Styles.size());
+    EXPECT_EQ("sample",LiveRead(*c).Events.front().Text.get());
+}
+TEST_F(ordinary_edit, joined_lines_are_committed_before_selection_observers_see_them) {
+    int first=LiveRead(*c).Events.front().Id,second=0;
+    {
+        auto write=c->subtitleAccess->TryWrite();auto row=new AssDialogue;row->Text="second";second=row->Id;
+        LiveWriteForTest(*c).Events.push_back(*row);LiveWriteForTest(*c).Commit("join fixture",AssFile::COMMIT_DIAG_ADDREM);
+    }
+    c->selectionController->SetSelectionAndActiveIDs({first,second},first);
+    std::vector<wxString> seen;std::vector<size_t> rows;
+    agi::signal::Connection selected=c->selectionController->AddSelectionListener([&]{
+        seen.push_back(c->subsController->GetUndoDescription());rows.push_back(LiveRead(*c).Events.size());});
+    cmd::call("edit/line/join/concatenate",c.get());
+    ASSERT_FALSE(seen.empty());
+    for(size_t i=0;i<seen.size();++i){EXPECT_EQ(wxString("join lines"),seen[i]);EXPECT_EQ(1u,rows[i]);}
+    ASSERT_EQ(1u,LiveRead(*c).Events.size());
+    c->subsController->Undo();EXPECT_EQ(2u,LiveRead(*c).Events.size());
+}
+TEST_F(document_lifecycle, failed_save_restores_metadata_through_its_listeners) {
+    c->subsController->Save(Local("rollback.ass"),"utf-8");
+    auto filename=c->subsController->Filename();
+    auto original=LiveRead(*c).Properties.export_encoding;
+    std::string seen="unset";int notices=0;
+    agi::signal::Connection metadata=c->subtitleAccess->AddMetadataListener([&]{++notices;seen=LiveRead(*c).Properties.export_encoding;});
+    agi::signal::Connection on_save=c->subsController->AddFileSaveListener([&]{
+        c->subtitleAccess->SetMetadata(SubtitleProjectAccess::MetadataField::ExportEncoding,"changed during save");
+        throw std::runtime_error("save listener");
+    });
+    auto revision=c->subtitleAccess->MetadataRevision();
+    EXPECT_THROW(c->subsController->Save(Local("rollback-2.ass"),"utf-8"),std::runtime_error);
+    EXPECT_EQ(original,LiveRead(*c).Properties.export_encoding);
+    EXPECT_EQ(original,seen); // the listeners were told about the restored value
+    EXPECT_EQ(2,notices);EXPECT_EQ(revision+2,c->subtitleAccess->MetadataRevision());
+    EXPECT_EQ(filename,c->subsController->Filename());EXPECT_FALSE(c->subsController->IsModified());
+}
+TEST_F(document_lifecycle, failed_save_on_every_change_still_announces_the_recorded_commit) {
+    c->subsController->Save(Local("every-change.ass"),"utf-8");
+    auto old=OPT_GET("App/Auto/Save on Every Change")->GetBool();
+    OPT_SET("App/Auto/Save on Every Change")->SetBool(true);
+    BOOST_SCOPE_EXIT_ALL(old) { OPT_SET("App/Auto/Save on Every Change")->SetBool(old); };
+    bool fail=true;int saves=0,notices=0;
+    agi::signal::Connection on_save=c->subsController->AddFileSaveListener([&]{++saves;if(fail)throw std::runtime_error("disk full");});
+    agi::signal::Connection commit=LiveRead(*c).AddCommitListener([&](int,AssDialogue const*,Ticket t){++notices;Ack(t);});
+    auto edit_row=[&](std::string const& text,wxString const& message) {
+        auto write=c->subtitleAccess->TryWrite();ASSERT_TRUE(write);
+        AssDialogueBase row=LiveRead(*c).Events.front();row.Text=text;
+        auto edit=c->subtitleAccess->Edit(write->Lease());edit.UpdateRows({row});
+        EXPECT_NO_THROW(edit.Commit(message,AssFile::COMMIT_DIAG_TEXT));
+    };
+    edit_row("changed while the disk is full","disk full edit");
+    EXPECT_EQ(1,saves);EXPECT_EQ(1,notices);
+    EXPECT_EQ(wxString("disk full edit"),c->subsController->GetUndoDescription());
+    EXPECT_TRUE(c->subsController->IsModified());
+    fail=false;edit_row("saved again","second edit");
+    EXPECT_EQ(2,saves);EXPECT_EQ(2,notices);EXPECT_FALSE(c->subsController->IsModified());
+    c->subsController->Undo();EXPECT_EQ("changed while the disk is full",LiveRead(*c).Events.front().Text.get());
+}
+TEST_F(document_lifecycle, opening_or_closing_inside_an_observer_notification_is_refused_without_side_effects) {
+    auto path=Candidate("notify-source");
+    int first=LiveRead(*c).Events.front().Id,second=0;
+    {
+        auto write=c->subtitleAccess->TryWrite();auto row=new AssDialogue;row->Text="second";second=row->Id;
+        LiveWriteForTest(*c).Events.push_back(*row);LiveWriteForTest(*c).Commit("notify fixture",AssFile::COMMIT_DIAG_ADDREM);
+    }
+    auto before=Contents();auto filename=c->subsController->Filename();
+    RecordMessages messages;
+    bool ran=false,notifying=false;
+    agi::signal::Connection selected=c->selectionController->AddSelectionListener([&](Ticket t){
+        if(!ran) {
+            ran=true;notifying=LiveRead(*c).IsNotifying();
+            EXPECT_THROW(c->subsController->Load(path,"utf-8"),agi::InvalidInputException);
+            EXPECT_THROW(c->subsController->Close(),agi::InvalidInputException);
+            c->project->LoadSubtitles(path);
+            c->project->LoadList({path});
+            c->project->LoadAudio("dummy-audio:silence?sr=44100&bd=16&ch=1&ln=441000");
+        }
+        Ack(t);
+    });
+    c->selectionController->SetSelectionAndActiveIDs({second},second);
+    EXPECT_TRUE(ran);EXPECT_TRUE(notifying);
+    EXPECT_EQ(before,Contents());EXPECT_EQ(filename,c->subsController->Filename());
+    EXPECT_EQ(nullptr,c->project->AudioProvider());
+    EXPECT_EQ(3u,messages.messages.size());
+    // Outside the notification the same open works.
+    c->subsController->Load(path,"utf-8");EXPECT_EQ("new 模型",LiveRead(*c).Events.front().Text.get());
+    (void)first;
 }

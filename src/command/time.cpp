@@ -194,15 +194,21 @@ static void snap_subs_video(agi::Context *c, bool set_start) {
 			line->End = end;
 	}
 
-	auto edit=c->subtitleAccess->Edit(scope->Lease());edit.UpdateRows(staged.Values());
+	// C1-C1c-13 (audit C6): values and neighbour links are one validated write.
+	// The links are decided from the staged values; an unchanged boundary is a
+	// no-op inside the link itself.
+	std::vector<SubtitleProjectAccess::AdjacentLink> links;
 	if (sel.size() == 1 && OPT_GET("Timing/Link Adjacent Lines")->GetBool()) {
-		auto line = *sel.begin();
+		int id = (*sel.begin())->Id;
 		int threshold_ms = static_cast<int>(OPT_GET("Timing/Adjacent Line Gap")->GetDouble() * 1000 + 0.5);
-		if (line->Start != old_start)
-			edit.LinkAdjacent(line->Id, true, old_start, threshold_ms);
-		if (line->End != old_end)
-			edit.LinkAdjacent(line->Id, false, old_end, threshold_ms);
+		for (auto line : staged.rows) {
+			if (line->Id != id) continue;
+			if (line->Start != old_start) links.push_back({id, true, old_start, threshold_ms});
+			if (line->End != old_end) links.push_back({id, false, old_end, threshold_ms});
+		}
 	}
+	auto edit=c->subtitleAccess->Edit(scope->Lease());
+	edit.UpdateRowsLinkingAdjacent(staged.Values(), links);
 
 	edit.Commit(_("timing"), AssFile::COMMIT_DIAG_TIME);
 }

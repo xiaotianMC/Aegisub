@@ -97,16 +97,18 @@ struct tool_resampleres final : public Command {
 	STR_HELP("Resample subtitles to maintain their current appearance at a different script resolution")
 
 	void operator()(agi::Context *c) override {
-        auto edit_scope = c->subtitleAccess->TryWrite();
-        if (!edit_scope) return;
+		// C1-C1c-13 (audit B6): refuse before the dialog, but stage and write
+		// the live model only after it closed; the lease is not held across it.
+		if (!c->subtitleAccess->TryWrite()) return;
 		c->videoController->Stop();
 		ResampleSettings settings;
+		if (!PromptForResampleSettings(c, settings)) return;
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
         SubtitleValueEdit staged(c);
-		if (PromptForResampleSettings(c, settings))
-			{
-                ResampleResolution(&staged.file, settings);
-                staged.Publish(AssFile::COMMIT_SCRIPTINFO|AssFile::COMMIT_DIAG_FULL|AssFile::COMMIT_STYLES);
-                staged.Commit(_("resolution resampling"),AssFile::COMMIT_SCRIPTINFO|AssFile::COMMIT_DIAG_FULL); }
+		ResampleResolution(&staged.file, settings);
+		staged.Publish(AssFile::COMMIT_SCRIPTINFO|AssFile::COMMIT_DIAG_FULL|AssFile::COMMIT_STYLES);
+		staged.Commit(_("resolution resampling"),AssFile::COMMIT_SCRIPTINFO|AssFile::COMMIT_DIAG_FULL);
 	}
 };
 

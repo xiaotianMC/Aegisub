@@ -4,6 +4,7 @@
 #include "ass_info.h"
 #include "ass_attachment.h"
 #include <boost/algorithm/string/case_conv.hpp>
+#include <libaegisub/log.h>
 #include <thread>
 #include <algorithm>
 #include <unordered_map>
@@ -170,19 +171,21 @@ int SubtitleProjectAccess::Interaction::InsertBefore(int target_id, AssDialogueB
     }
     catch (...) { End(); throw; }
 }
-bool SubtitleProjectAccess::Interaction::LinkAdjacent(int id,bool start,int old,int threshold) {
+bool SubtitleProjectAccess::Interaction::UpdateRowsLinkingAdjacent(std::vector<AssDialogueBase> const& updates, AdjacentLink const& link) {
     try {
-        if(!Current() || !std::binary_search(targets.begin(),targets.end(),id))throw std::logic_error("Invalid audio neighbor target");
+        if(!Current() || !std::binary_search(targets.begin(),targets.end(),link.id))throw std::logic_error("Invalid audio neighbor target");
         auto state=owner.lock();scope->Lease();
-        // The existing helper may also change a neighbor. Require authorization
-        // for the complete live set before delegating its neighbor search.
+        // The neighbor search may change any row. Require authorization for the
+        // complete live set before the first write, not after the row update.
         std::vector<int> live_ids;
         live_ids.reserve(state->file->Events.size());
         for(auto const& row:state->file->Events) live_ids.push_back(row.Id);
         std::sort(live_ids.begin(),live_ids.end());
         if(live_ids!=targets)throw std::logic_error("Unauthorized or stale audio neighbor set");
-        for(auto& row:state->file->Events)if(row.Id==id)return state->file->LinkAdjacentLine(&row,start,old,threshold,true);
-        throw std::out_of_range("Audio target missing");
+        for (auto const& row : updates)
+            if (!std::binary_search(targets.begin(), targets.end(), row.Id))
+                throw std::invalid_argument("Unauthorized interaction update target");
+        return WriteAccess(state, scope->Lease().Capture()).UpdateRowsLinkingAdjacent(updates, {link});
     } catch (...) { End();throw; }
 }
 int SubtitleProjectAccess::Interaction::Commit(wxString const& description, int type, int amend_id, int single_line_id) {
@@ -268,6 +271,21 @@ void SubtitleProjectAccess::SetMetadata(MetadataField field, std::string value) 
     *target = std::move(value);++metadata_revision;
     NotifyMetadataChanged();
 }
+void SubtitleProjectAccess::RestoreMetadata(ProjectMetadata const& value) noexcept {
+    try {
+        state->Check();
+        auto& current = static_cast<ProjectMetadata&>(state->file->Properties);
+        if (current == value) return;
+        ProjectMetadata copy = value; // allocate before the first change
+        static_cast<ProjectMetadata&>(state->file->Properties) = std::move(copy);
+        if (metadata_revision != UINT64_MAX) ++metadata_revision;
+        NotifyMetadataChanged();
+        return;
+    }
+    catch (...) { }
+    try { LOG_E("subtitle/metadata") << "Metadata listeners failed while restoring a failed save"; }
+    catch (...) { }
+}
 std::string SubtitleProjectAccess::AutomationSetting(std::string const& key) const {
     auto const& settings = Read().Properties.automation_settings;
     auto found = settings.find(key);
@@ -332,11 +350,27 @@ void SubtitleProjectAccess::WriteAccess::UpdateRows(std::vector<AssDialogueBase>
     }
     for (auto const& row : updates) static_cast<AssDialogueBase&>(*live.at(row.Id)) = row;
 }
-bool SubtitleProjectAccess::WriteAccess::LinkAdjacent(int id, bool start, int old, int threshold, bool exact) const {
+bool SubtitleProjectAccess::WriteAccess::UpdateRowsLinkingAdjacent(
+    std::vector<AssDialogueBase> const& updates, std::vector<AdjacentLink> const& links) const {
     auto access = Check();
-    for (auto& row : access.file->Events)
-        if (row.Id == id) return access.file->LinkAdjacentLine(&row, start, old, threshold, exact);
-    throw std::out_of_range("Subtitle neighbor target missing");
+    std::vector<AssDialogue*> targets;
+    targets.reserve(links.size());
+    for (auto const& link : links) {
+        AssDialogue* found = nullptr;
+        for (auto& row : access.file->Events) if (row.Id == link.id) { found = &row; break; }
+        if (!found) throw std::out_of_range("Subtitle neighbor target missing");
+        targets.push_back(found);
+    }
+    // UpdateRows validates every target before its first assignment; the
+    // neighbor links below only assign times and cannot fail.
+    UpdateRows(updates);
+    bool changed = false;
+    for (size_t i = 0; i < links.size(); ++i) {
+        auto const& link = links[i];
+        changed |= access.file->LinkAdjacentLine(targets[i], link.start_changed, link.old_boundary,
+            link.threshold_ms, link.exact_milliseconds);
+    }
+    return changed;
 }
 int SubtitleProjectAccess::WriteAccess::Commit(wxString const& message, int type, int amend, int id) const {
     auto access = Check();

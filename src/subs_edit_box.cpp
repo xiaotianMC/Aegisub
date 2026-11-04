@@ -559,11 +559,13 @@ void SubsEditBox::CommitTimes(TimeField field) {
         updates.push_back(candidate);
     }
     auto edit = c->subtitleAccess->Edit(write->Lease());
-    edit.UpdateRows(updates);
+    // C1-C1c-13 (audit C6): values and neighbour link are one validated write.
+    std::vector<SubtitleProjectAccess::AdjacentLink> links;
     if (sel.size() == 1 && OPT_GET("Timing/Link Adjacent Lines")->GetBool()) {
         auto threshold_ms = static_cast<int>(OPT_GET("Timing/Adjacent Line Gap")->GetDouble() * 1000 + 0.5);
-        linked_neighbor = edit.LinkAdjacent((*sel.begin())->Id, field == TIME_START, old_boundary, threshold_ms);
+        links.push_back({(*sel.begin())->Id, field == TIME_START, old_boundary, threshold_ms});
     }
+    linked_neighbor = edit.UpdateRowsLinkingAdjacent(updates, links);
 
 	start_time->SetTime(line->Start);
 	end_time->SetTime(line->End);

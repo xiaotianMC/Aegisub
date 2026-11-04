@@ -156,11 +156,8 @@ void paste_lines(agi::Context *c, SubtitleRowListEdit& staged, bool paste_over, 
 	}
 }
 
-bool paste_over(wxWindow *parent, std::vector<bool>& pasteOverOptions, AssDialogue &new_line, AssDialogue &old_line) {
-	if (pasteOverOptions.empty()) {
-		if (!ShowPasteOverDialog(parent)) return false;
-		pasteOverOptions = OPT_GET("Tool/Paste Lines Over/Fields")->GetListBool();
-	}
+bool paste_over(std::vector<bool> const& pasteOverOptions, AssDialogue &new_line, AssDialogue &old_line) {
+	if (pasteOverOptions.size() < 11) return false;
 
 	if (pasteOverOptions[0])  old_line.Comment   = new_line.Comment;
 	if (pasteOverOptions[1])  old_line.Layer     = new_line.Layer;
@@ -317,6 +314,7 @@ void update_lines(const agi::Context *c, wxString const& undo_msg, Func&& f) {
 	auto scope = c->subtitleAccess->TryWrite(); if (!scope) return;
     SubtitleRowEdit staged(c);
 	const auto active_line = c->selectionController->ReadActiveLine();
+	if (!active_line) return;
 	const int sel_start = c->textSelectionController->GetSelectionStart();
 	const int sel_end = c->textSelectionController->GetSelectionEnd();
 	const int norm_sel_start = normalize_pos(active_line->Text, sel_start);
@@ -355,16 +353,27 @@ void toggle_override_tag(const agi::Context *c, bool (AssStyle::*field), const c
 }
 
 void show_color_picker(const agi::Context *c, agi::Color (AssStyle::*field), const char *tag, const char *alt, const char *alpha) {
-	auto scope = c->subtitleAccess->TryWrite(); if (!scope) return;
-    SubtitleRowEdit staged(c);
-    auto revision = c->subtitleEditGate.Capture();
-	agi::Color initial_color;
+	// C1-C1c-13 (audit B6): the live preview runs inside the colour dialog's
+	// modal loop, so it is an Interaction over the selected rows rather than a
+	// plain write scope: every preview checks that nothing else has changed the
+	// model since the previous one, and Cancel only undoes the preview when it
+	// is still the latest change. Any other commit during the dialog ends the
+	// preview; that commit is never undone.
+	SubtitleRowEdit staged(c);
 	const auto active_line = c->selectionController->ReadActiveLine();
+	if (staged.rows.empty() || !active_line) return;
+	const int active_id = active_line->Id;
+	std::vector<int> targets;
+	for (auto line : staged.rows) targets.push_back(line->Id);
+	auto session = c->subtitleAccess->TryBeginInteraction(targets);
+	if (!session) return;
+	agi::Color initial_color;
 	const int sel_start = c->textSelectionController->GetSelectionStart();
 	const int sel_end = c->textSelectionController->GetSelectionStart();
 	const int norm_sel_start = normalize_pos(active_line->Text, sel_start);
 
 	auto const& sel = c->selectionController->ReadSelectedSet();
+	const int single_line_id = sel.size() == 1 ? (*sel.begin())->Id : 0;
 	using line_info = std::pair<agi::Color, parsed_line>;
 	std::vector<line_info> lines;
 	for (auto line : staged.rows) {
@@ -378,7 +387,7 @@ void show_color_picker(const agi::Context *c, agi::Color (AssStyle::*field), con
 		color = parsed.get_value(blockn, color, tag, alt);
 		color.a = a;
 
-		if (line->Id == active_line->Id)
+		if (line->Id == active_id)
 			initial_color = color;
 
 		lines.emplace_back(color, std::move(parsed));
@@ -386,8 +395,9 @@ void show_color_picker(const agi::Context *c, agi::Color (AssStyle::*field), con
 
 	int active_shift = 0;
 	int commit_id = -1;
+	bool previewed = false;
 	bool ok = GetColorFromUser(c->parent, initial_color, true, [&](agi::Color new_color) {
-		if (!revision.Current()) return;
+		if (!session || !session->Current()) return;
 		for (auto& line : lines) {
 			int shift = line.second.set_tag(tag, new_color.GetAssOverrideFormatted(), norm_sel_start, sel_start);
 			if (new_color.a != line.first.a) {
@@ -395,19 +405,22 @@ void show_color_picker(const agi::Context *c, agi::Color (AssStyle::*field), con
 				line.first.a = new_color.a;
 			}
 
-			if (line.second.line->Id == active_line->Id)
+			if (line.second.line->Id == active_id)
 				active_shift = shift;
 		}
 
-		auto edit = c->subtitleAccess->Edit(scope->Lease());
-        edit.UpdateRows(staged.Values());
-        commit_id = edit.Commit(_("set color"), AssFile::COMMIT_DIAG_TEXT, commit_id, sel.size() == 1 ? (*sel.begin())->Id : 0);
-        revision = c->subtitleEditGate.Capture();
+		session->UpdateRows(staged.Values());
+		commit_id = session->Commit(_("set color"), AssFile::COMMIT_DIAG_TEXT, commit_id, single_line_id);
+		previewed = true;
 		if (active_shift)
 			c->textSelectionController->SetSelection(sel_start + active_shift, sel_start + active_shift);
 	});
 
-	if (!ok && commit_id != -1) {
+	// Current(): no revision since this session's own last preview commit, so
+	// the top of the undo stack is that preview.
+	const bool undo_preview = !ok && previewed && session->Current();
+	session->End();
+	if (undo_preview) {
 		c->subsController->Undo();
 		c->textSelectionController->SetSelection(sel_start, sel_end);
 	}
@@ -533,9 +546,13 @@ struct edit_font final : public Command {
 	STR_HELP("Select a font face and size")
 
 	void operator()(agi::Context *c) override {
-        auto edit_scope = c->subtitleAccess->TryWrite();
-        if (!edit_scope) return;
-		AssDialogue active_copy(static_cast<AssDialogueBase const&>(*c->selectionController->ReadActiveLine()));
+		// C1-C1c-13 (audit B6): refuse before the dialog, but do not hold the
+		// write lease across the font dialog. update_lines() below stages the
+		// rows from the live model with its own scope after the choice.
+		if (!c->subtitleAccess->TryWrite()) return;
+		auto const* current = c->selectionController->ReadActiveLine();
+		if (!current) return;
+		AssDialogue active_copy(static_cast<AssDialogueBase const&>(*current));
         const parsed_line active(&active_copy);
 		const int insertion_point = normalize_pos(active.line->Text, c->textSelectionController->GetInsertionPoint());
 
@@ -826,9 +843,8 @@ static void combine_lines(agi::Context *c, void (*combiner)(AssDialogue *, AssDi
 		delete sel[i];
 	}
 
-	staged.Select({first}, first);
-
 	staged.Commit(message, AssFile::COMMIT_DIAG_ADDREM | AssFile::COMMIT_DIAG_FULL);
+	staged.Select({first}, first);
 }
 
 static void combine_karaoke(AssDialogue *first, AssDialogue *second) {
@@ -963,21 +979,29 @@ struct edit_line_paste_over final : public Command {
 	}
 
 	void operator()(agi::Context *c) override {
+		// C1-C1c-13 (audit B6): refuse (e.g. during a comparison) before the
+		// dialog, but do not hold the write lease across its modal loop. The
+		// rows are staged from the live model only after the fields are chosen.
+		if (!c->subtitleAccess->TryWrite()) return;
+		auto data = GetClipboard();
+		if (data.empty()) return;
+		if (!ShowPasteOverDialog(c->parent)) return;
+		const std::vector<bool> pasteOverOptions = OPT_GET("Tool/Paste Lines Over/Fields")->GetListBool();
         auto edit_scope = c->subtitleAccess->TryWrite();
         if (!edit_scope) return;
         SubtitleRowListEdit staged(c);
 		auto const& sel = staged.selection;
-		std::vector<bool> pasteOverOptions;
+		if (!staged.active) return;
 
 		// Only one line selected, so paste over downwards from the active line
 		if (sel.size() < 2) {
 			auto pos = staged.file.iterator_to(*staged.active);
 
-			paste_lines(c, staged, true, GetClipboard(), [&](std::unique_ptr<AssDialogue> new_line) -> AssDialogue * {
+			paste_lines(c, staged, true, data, [&](std::unique_ptr<AssDialogue> new_line) -> AssDialogue * {
 				if (pos == staged.file.Events.end()) return nullptr;
 
 				auto& old = *pos;
-				if (paste_over(c->parent, pasteOverOptions, *new_line, old))
+				if (paste_over(pasteOverOptions, *new_line, old))
 					++pos;
 				return &old;
 			});
@@ -986,11 +1010,11 @@ struct edit_line_paste_over final : public Command {
 			// Multiple lines selected, so paste over the selection
 			auto sorted_selection = staged.SortedSelection();
 			auto pos = begin(sorted_selection);
-			paste_lines(c, staged, true, GetClipboard(), [&](std::unique_ptr<AssDialogue> new_line) -> AssDialogue * {
+			paste_lines(c, staged, true, data, [&](std::unique_ptr<AssDialogue> new_line) -> AssDialogue * {
 				if (pos == end(sorted_selection)) return nullptr;
 
 				auto& old = **pos;
-				if (paste_over(c->parent, pasteOverOptions, *new_line, old))
+				if (paste_over(pasteOverOptions, *new_line, old))
 					++pos;
 				return &old;
 			});
@@ -1108,9 +1132,8 @@ struct edit_line_recombine final : public validate_sel_multiple {
 		// Restore selection
 		if (!new_sel.count(active_line))
 			active_line = *new_sel.begin();
-		staged.Select(std::move(new_sel), active_line);
-
 		staged.Commit(_("combining"), AssFile::COMMIT_DIAG_ADDREM | AssFile::COMMIT_DIAG_FULL);
+		staged.Select(std::move(new_sel), active_line);
 	}
 };
 

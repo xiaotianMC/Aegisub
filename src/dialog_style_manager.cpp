@@ -54,6 +54,7 @@
 #include <libaegisub/vfr.h>
 
 #include <algorithm>
+#include <set>
 #include <functional>
 #include <future>
 #include <memory>
@@ -545,18 +546,31 @@ void DialogStyleManager::OnCopyToStorage() {
 }
 
 void DialogStyleManager::OnCopyToCurrent() {
+	// C1-C1c-13 (audit B6): refuse before any question, then ask about name
+	// collisions without holding the write lease. The live styles are staged
+	// only afterwards; a collision that appears after the questions is never
+	// overwritten without confirmation.
+	if (!c->subtitleAccess->TryWrite()) return;
+	wxArrayInt selections;
+	int n = StorageList->GetSelections(selections);
+	std::set<std::string> overwrite;
+	for (int i = 0; i < n; i++) {
+		wxString styleName = StorageList->GetString(selections[i]);
+		if (c->subtitleAccess->Read().GetStyle(from_wx(styleName)) &&
+			wxYES == wxMessageBox(fmt_tl("There is already a style with the name \"%s\" in the current script. Overwrite?", styleName), _("Style name collision"), wxYES_NO))
+			overwrite.insert(from_wx(styleName));
+	}
+
     auto edit_scope = c->subtitleAccess->TryWrite();
     if (!edit_scope) return;
     SubtitleValueEdit staged(c);
-	wxArrayInt selections;
-	int n = StorageList->GetSelections(selections);
 	wxArrayString copied;
 	copied.reserve(n);
 	for (int i = 0; i < n; i++) {
 		wxString styleName = StorageList->GetString(selections[i]);
 
 		if (AssStyle *style = staged.file.GetStyle(from_wx(styleName))) {
-			if (wxYES == wxMessageBox(fmt_tl("There is already a style with the name \"%s\" in the current script. Overwrite?", styleName), _("Style name collision"), wxYES_NO)) {
+			if (overwrite.count(from_wx(styleName))) {
 				*style = *Store[selections[i]];
 				copied.push_back(styleName);
 			}
@@ -680,24 +694,28 @@ void DialogStyleManager::OnCurrentCopy() {
 }
 
 void DialogStyleManager::OnCurrentDelete() {
-    auto edit_scope = c->subtitleAccess->TryWrite();
-    if (!edit_scope) return;
-    SubtitleValueEdit staged(c);
+	// C1-C1c-13 (audit B6): confirm without holding the write lease. The list
+	// selection and its style cache are read again afterwards, because any
+	// commit during the question refreshes them.
+	if (!c->subtitleAccess->TryWrite()) return;
 	wxArrayInt selections;
 	int n = CurrentList->GetSelections(selections);
+	if (confirm_delete(n, this, _("Confirm delete from current")) != wxYES) return;
 
-	if (confirm_delete(n, this, _("Confirm delete from current")) == wxYES) {
-		for (int i = 0; i < n; i++) {
-			delete staged.Source(styleMap.at(selections[i]));
-		}
-		staged.Commit(_("style delete"), AssFile::COMMIT_STYLES);
+    auto edit_scope = c->subtitleAccess->TryWrite();
+    if (!edit_scope) return;
+	if (CurrentList->GetSelections(selections) != n || n == 0) return;
+    SubtitleValueEdit staged(c);
+	for (int i = 0; i < n; i++) {
+		delete staged.Source(styleMap.at(selections[i]));
 	}
+	staged.Commit(_("style delete"), AssFile::COMMIT_STYLES);
 }
 
 void DialogStyleManager::OnCurrentImport() {
-    auto edit_scope = c->subtitleAccess->TryWrite();
-    if (!edit_scope) return;
-    SubtitleValueEdit staged(c);
+	// C1-C1c-13 (audit B6): the file, choice and collision dialogs all run
+	// without the write lease; the live styles are staged after the last one.
+	if (!c->subtitleAccess->TryWrite()) return;
 	auto filename = OpenFileSelector(c, _("Open Subtitles File"), "Path/Last/Subtitles", "", "", SubtitleFormat::GetWildcards(0), this);
 	if (filename.empty()) return;
 
@@ -737,17 +755,26 @@ void DialogStyleManager::OnCurrentImport() {
 	wxArrayInt selections;
 	int res = GetSelectedChoices(this, selections, _("Choose styles to import:"), _("Import Styles"), to_wx(styles));
 	if (res == -1 || selections.empty()) return;
+
+	std::set<std::string> overwrite;
+	for (auto const& sel : selections) {
+		if (c->subtitleAccess->Read().GetStyle(styles[sel]) && wxYES == wxMessageBox(
+				fmt_tl("There is already a style with the name \"%s\" in the current script. Overwrite?", styles[sel]),
+				_("Style name collision"),
+				wxYES_NO))
+			overwrite.insert(styles[sel]);
+	}
+
+    auto edit_scope = c->subtitleAccess->TryWrite();
+    if (!edit_scope) return;
+    SubtitleValueEdit staged(c);
 	bool modified = false;
 
 	// Loop through selection
 	for (auto const& sel : selections) {
 		// Check if there is already a style with that name
 		if (AssStyle *existing = staged.file.GetStyle(styles[sel])) {
-			int answer = wxMessageBox(
-				fmt_tl("There is already a style with the name \"%s\" in the current script. Overwrite?", styles[sel]),
-				_("Style name collision"),
-				wxYES_NO);
-			if (answer == wxYES) {
+			if (overwrite.count(styles[sel])) {
 				modified = true;
 				*existing = *temp.GetStyle(styles[sel]);
 			}

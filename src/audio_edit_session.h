@@ -85,8 +85,8 @@ public:
     }
 
     void Update(std::vector<AssDialogueBase> const& rows) { interaction->UpdateRows(rows); }
-    bool LinkAdjacent(int id, bool start, int old, int threshold) {
-        return interaction->LinkAdjacent(id, start, old, threshold);
+    bool UpdateLinkingAdjacent(std::vector<AssDialogueBase> const& rows, SubtitleProjectAccess::AdjacentLink const& link) {
+        return interaction->UpdateRowsLinkingAdjacent(rows, link);
     }
     int Commit(wxString const& description, int type, int amend = -1, int single = 0) {
         try {

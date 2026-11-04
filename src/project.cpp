@@ -123,6 +123,13 @@ std::optional<agi::SubtitleEditGate::ProjectWriteLease> Project::BeginMediaChang
 			LOG_W("project/media") << "Media change refused while the subtitle model is being installed";
 		return std::nullopt;
 	}
+	// C1-C1c-13 (audit C4): e.g. a drop queued in a modal loop opened by a
+	// selection or commit observer. Refused before any side effect.
+	if (context->subtitleAccess->Read().IsNotifying()) {
+		wxMessageBox(_("Files cannot be opened or closed while the editor is still updating. Try again."),
+			title, wxOK | wxICON_ERROR | wxCENTER, context->parent);
+		return std::nullopt;
+	}
 	auto registration = context->subtitleEditGate.TryBeginProjectWrite();
 	if (!registration)
 		wxMessageBox(_("The subtitles are being compared. Finish the comparison before opening or closing files."),
@@ -133,6 +140,8 @@ std::optional<agi::SubtitleEditGate::ProjectWriteLease> Project::BeginMediaChang
 agi::SubtitleEditGate::ProjectWriteLease Project::RequireMediaChange() const {
 	if (context->subsController->IsInstalling() || context->subtitleEditGate.NeedsRebinding())
 		throw std::logic_error("Media changes are blocked while the subtitle model is installing or awaiting recovery");
+	if (context->subtitleAccess->Read().IsNotifying())
+		throw std::logic_error("Media changes cannot start inside a subtitle observer notification");
 	return context->subtitleAccess->BeginProjectWrite();
 }
 

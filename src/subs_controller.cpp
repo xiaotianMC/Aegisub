@@ -244,7 +244,11 @@ void SubtitleModelInstallation::Begin() {
     CheckThread();
     if (Busy() || state==State::RecoveryBlocked || owner.context->subtitleEditGate.NeedsRebinding())
         throw std::logic_error("Another model installation is active or recovery is blocked");
-    owner.context->subtitleAccess->Read();
+    // C1-C1c-13 (audit C4): a queued open or close dispatched from a modal loop
+    // inside an observer notification must not start replacing the document
+    // that the notification is still describing.
+    if (owner.context->subtitleAccess->Read().IsNotifying())
+        throw agi::InvalidInputException("Subtitles cannot be opened or closed while the editor is still updating; try again.");
     expected=owner.context->subtitleEditGate.Capture();
     metadata_revision=owner.context->subtitleAccess->MetadataRevision();
     cancelled=false;state=State::Preparing;
@@ -445,7 +449,7 @@ void SubsController::Save(agi::fs::path const& filename, const char *encoding) {
     writer->WriteFile(snapshot.get(), filename, 0, encoding);
 	int old_autosaved_commit_id = autosaved_commit_id, old_saved_commit_id = saved_commit_id;
     auto old_filename = this->filename;
-    auto old_properties = context->subtitleAccess->Read().Properties;
+    ProjectMetadata old_metadata = context->subtitleAccess->Read().Properties;
     auto old_script_path = context->path->Decode("?script");
     auto old_saved_metadata = context->subtitleAccess->saved_metadata;
     auto old_auto_metadata = autosaved_metadata_revision;
@@ -466,9 +470,12 @@ void SubsController::Save(agi::fs::path const& filename, const char *encoding) {
 		saved_commit_id = old_saved_commit_id;
         this->filename = old_filename;
         context->path->SetToken("?script", old_script_path);
-        Live().Properties = std::move(old_properties);
         context->subtitleAccess->saved_metadata = std::move(old_saved_metadata);
         autosaved_metadata_revision = old_auto_metadata;
+        // C1-C1c-13 (audit C2): SetSubtitlesFilename published the new relative
+        // media paths through SetMetadata (revision + listeners). Undo that the
+        // same way instead of assigning Properties behind the listeners' backs.
+        context->subtitleAccess->RestoreMetadata(old_metadata);
 		throw;
 	}
 
@@ -639,10 +646,34 @@ void SubsController::OnCommit(AssFileCommit c) {
 	while ((int)undo_stack.size() > depth)
 		undo_stack.pop_front();
 
-	if (undo_stack.size() > 1 && OPT_GET("App/Auto/Save on Every Change")->GetBool() && !filename.empty() && CanSave())
-		Save(filename);
+	// C1-C1c-13 (audit C2): the history entry above is already recorded, so a
+	// failed save on every change must not abort the commit before it is
+	// announced. Save itself rolls back (the document stays modified); the
+	// failure is reported after the commit, outside the notification.
+	if (undo_stack.size() > 1 && OPT_GET("App/Auto/Save on Every Change")->GetBool() && !filename.empty() && CanSave()) {
+		try { Save(filename); }
+		catch (...) { ReportSaveOnChangeFailure(); }
+	}
 
 	*c.commit_id = commit_id;
+}
+
+void SubsController::ReportSaveOnChangeFailure() noexcept {
+	try {
+		wxString msg;
+		try { throw; }
+		catch (agi::Exception const& e) { msg = to_wx(e.GetMessage()); }
+		catch (std::exception const& e) { msg = to_wx(std::string(e.what())); }
+		catch (...) { msg = _("Unknown error"); }
+		msg = _("Saving after the change failed: ") + msg;
+		LOG_E("subtitle/save") << from_wx(msg);
+		std::weak_ptr<int> lifetime = autosave_lifetime;
+		agi::dispatch::Main().Async([this, lifetime, msg] {
+			if (lifetime.expired()) return;
+			if (context->frame) context->frame->StatusTimeout(msg);
+		});
+	}
+	catch (...) { }
 }
 
 void SubsController::OnActiveLineChanged() {

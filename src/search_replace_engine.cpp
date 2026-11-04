@@ -307,9 +307,11 @@ bool SearchReplaceEngine::ReplaceAll() {
 	if (count > 0) {
         context->subtitleAccess->Edit(edit_scope->Lease()).UpdateRows(updates);
 		context->subtitleAccess->Edit(edit_scope->Lease()).Commit(_("replace"), AssFile::COMMIT_DIAG_TEXT);
+		edit_scope.reset(); // C1-C1c-13 (audit B6): no lease across the message box
 		wxMessageBox(fmt_plural(count, "One match was replaced.", "%d matches were replaced.", (int)count));
 	}
 	else {
+		edit_scope.reset();
 		wxMessageBox(_("No matches found."));
 	}
 

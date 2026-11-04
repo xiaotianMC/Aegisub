@@ -11,6 +11,7 @@ class SubtitleRowListEdit {
     agi::SubtitleEditGate::RevisionToken revision;
     std::vector<AssDialogueBase> originals;
     bool applied = false;
+    bool committed = false;
     void Apply() {
         if (applied) return;
         std::vector<AssDialogueBase> values;
@@ -43,7 +44,9 @@ public:
     }
     int Commit(wxString const& message, int type) {
         Apply();
-        return c->subtitleAccess->Edit(scope->Lease()).Commit(message, type);
+        auto id = c->subtitleAccess->Edit(scope->Lease()).Commit(message, type);
+        committed = true;
+        return id;
     }
     template<class Row> void Select(std::set<Row*> const& chosen, AssDialogue const* current, bool expand = true) {
         Select(Selection(chosen.begin(), chosen.end()), current, expand);
@@ -52,7 +55,11 @@ public:
         std::set<int> ids;
         for (auto row : chosen) ids.insert(row->Id);
         int active_id = current ? current->Id : 0;
-        Apply();
+        // C1-C1c-13 (audit C6): selection observers may only see the new row
+        // structure after it has been committed and announced. Selecting first
+        // published uncommitted rows to them. The undo record of the commit
+        // follows the selection (SubsController::OnSelectionChanged).
+        if (!committed) throw std::logic_error("Row-list selection must follow its commit");
         c->selectionController->SetSelectionAndActiveIDs(std::move(ids), active_id, expand);
     }
 };

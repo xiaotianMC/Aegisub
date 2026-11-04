@@ -30,6 +30,11 @@ class SubtitleProjectAccess {
     agi::signal::Signal<> metadata_changed;
     void NotifyMetadataChanged();
     void MarkMetadataSaved(ProjectMetadata const& value) { saved_metadata = value; }
+    // C1-C1c-13 (audit C2): rollback of a failed save. Like SetMetadata, a real
+    // change advances the metadata revision and notifies listeners, so they never
+    // keep values the model no longer has. Never throws: listener failures are
+    // logged, because the caller is already propagating the save failure.
+    void RestoreMetadata(ProjectMetadata const& value) noexcept;
 public:
     enum class MetadataField { AutomationScripts, ExportFilters, ExportEncoding, StyleStorage,
         AudioFile, VideoFile, TimecodesFile, KeyframesFile };
@@ -42,6 +47,16 @@ public:
     std::string AutomationSetting(std::string const&) const;
     void SetAutomationSetting(std::string, std::string);
     DEFINE_SIGNAL_ADDERS(metadata_changed, AddMetadataListener)
+    /// C1-C1c-13 (audit C6): the "link adjacent lines" follow-up of a timing
+    /// edit. It is applied in the same call as the row values, after all
+    /// validation, so a refusal leaves the live model unchanged.
+    struct AdjacentLink {
+        int id = 0;
+        bool start_changed = false;
+        int old_boundary = 0;
+        int threshold_ms = 0;
+        bool exact_milliseconds = false;
+    };
     /// Registers a change of project state outside the compared rows for the
     /// lifetime of the result (excludes comparison; no row revision change).
     /// Throws SubtitleProjectBusy during a comparison session.
@@ -75,8 +90,11 @@ public:
         // Video-property resampling only: complete same-ID/order rows, same-name
         // style values and Script Info; never replace live nodes or project state.
         void UpdateLayout(AssFile const&);
+        /// Writes the rows and then links the neighbour of `link.id`. The neighbour
+        /// search may touch any row, so it requires the complete live set as targets.
+        /// Returns whether a neighbour changed.
+        bool UpdateRowsLinkingAdjacent(std::vector<AssDialogueBase> const&, AdjacentLink const& link);
         int InsertBefore(int target_id, AssDialogueBase const&, AssStyle const* missing_style = nullptr);
-        bool LinkAdjacent(int id, bool start_changed, int old_boundary, int threshold_ms);
         int Commit(wxString const&, int type, int amend_id = -1, int single_line_id = 0);
         // Releases task registration; does not imply rollback or an Undo record.
         void End() noexcept { scope.reset(); }
@@ -128,7 +146,10 @@ public:
         void ReplaceRows(
             agi::SubtitleEditGate::RevisionToken const&, std::vector<AssDialogueBase> const& originals,
             std::vector<AssDialogueBase> const& result) const;
-        bool LinkAdjacent(int id, bool start_changed, int old_boundary, int threshold_ms, bool exact_milliseconds = false) const;
+        /// Writes the rows, then applies each link in order. Every row and link
+        /// target is validated before the first write. Returns whether any
+        /// neighbour changed.
+        bool UpdateRowsLinkingAdjacent(std::vector<AssDialogueBase> const&, std::vector<AdjacentLink> const&) const;
         int Commit(wxString const&, int type, int amend_id = -1, int single_line_id = 0) const;
     };
     SubtitleProjectAccess(AssFile&, agi::SubtitleEditGate&);

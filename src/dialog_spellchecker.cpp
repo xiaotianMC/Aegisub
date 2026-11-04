@@ -281,6 +281,7 @@ bool DialogSpellChecker::FindNext() {
 			return true;
 	}
 
+	edit_scope.reset(); // C1-C1c-13 (audit B6): no lease across the message boxes
 	if (IsShown()) {
 		wxMessageBox(_("Aegisub has finished checking spelling of this script."), _("Spell checking complete."));
 		Close();

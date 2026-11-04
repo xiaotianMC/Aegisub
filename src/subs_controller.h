@@ -126,6 +126,8 @@ private:
 	/// Autosave the file if there have been any chances since the last autosave
 
 	void OnCommit(AssFileCommit c);
+	/// Logs and (asynchronously) reports the exception being handled. Never throws.
+	void ReportSaveOnChangeFailure() noexcept;
 	void OnActiveLineChanged();
 	void OnSelectionChanged();
 	void OnTextSelectionChanged();

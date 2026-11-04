@@ -42,6 +42,7 @@
 #include "selection_controller.h"
 #include "utils.h"
 
+#include <algorithm>
 #include <list>
 #include <memory>
 
@@ -531,19 +532,24 @@ void AudioTimingControllerDialogue::DoCommit(bool user_triggered)
 			if(!live){edit.End();return;}
 			updates.push_back(line->Updated(*live));
 		}
-		edit.Update(updates);
-		auto updated_single = single_line ? edit.Read(single_line->Id) : std::optional<AssDialogueBase>{};
-
-		bool linked_neighbor = false;
+		// C1-C1c-13 (audit C6): the neighbour link is decided from the
+		// prepared values and written together with them, so a refused link
+		// cannot leave uncommitted row values behind.
+		std::optional<SubtitleProjectAccess::AdjacentLink> link;
 		if (single_line && OPT_GET("Timing/Link Adjacent Lines")->GetBool()) {
-			bool start_changed = updated_single->Start.GetMilliseconds() != old_start;
-			bool end_changed = updated_single->End.GetMilliseconds() != old_end;
+			auto const& updated_single = *std::find_if(updates.begin(), updates.end(),
+				[&](AssDialogueBase const& row) { return row.Id == single_line->Id; });
+			bool start_changed = updated_single.Start.GetMilliseconds() != old_start;
+			bool end_changed = updated_single.End.GetMilliseconds() != old_end;
 			if (start_changed != end_changed) {
 				auto old_boundary = start_changed ? old_start : old_end;
 				auto threshold_ms = static_cast<int>(OPT_GET("Timing/Adjacent Line Gap")->GetDouble() * 1000 + 0.5);
-				linked_neighbor = edit.LinkAdjacent(single_line->Id, start_changed, old_boundary, threshold_ms);
+				link = SubtitleProjectAccess::AdjacentLink{single_line->Id, start_changed, old_boundary, threshold_ms, true};
 			}
 		}
+		bool linked_neighbor = false;
+		if (link) linked_neighbor = edit.UpdateLinkingAdjacent(updates, *link);
+		else edit.Update(updates);
 
 		commit_connection.Block();
 		if (user_triggered)

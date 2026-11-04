@@ -424,58 +424,79 @@ std::string DialogStyleEditor::GetStyleName() const {
 void DialogStyleEditor::Apply(bool apply, bool close) {
 	if (apply) {
         bool source_current = store || is_new || (source_revision && source_revision->Current());
-        auto edit_scope = store ? std::optional<SubtitleProjectAccess::WriteScope>{} : c->subtitleAccess->TryWrite();
-        if (!store && !edit_scope) return;
-        std::unique_ptr<SubtitleValueEdit> staged;
-        if(!store)staged=std::make_unique<SubtitleValueEdit>(c);
+        // C1-C1c-13 (audit B6): refuse (e.g. during a comparison) before any
+        // question, but never hold the write lease across a message box: the
+        // rename question is asked first, against an independent snapshot, and
+        // every error below releases the lease before reporting.
+        if (!store && !c->subtitleAccess->TryWrite()) return;
         if (!source_current) {
             wxMessageBox(_("The subtitles changed while this style was being edited. Please reopen the style editor."),
                 _("Style Editor"), wxOK | wxICON_ERROR, this);
             return;
         }
+		std::string new_name = from_wx(StyleName->GetValue());
+		int rename_answer = wxNO;
+		if (!store && !is_new && work->name != new_name) {
+			auto snapshot = c->subtitleAccess->Snapshot();
+			StyleRenamer probe(snapshot.get(), work->name, new_name);
+			if (probe.NeedsReplace()) {
+				// See if user wants to update style name through script
+				rename_answer = wxMessageBox(
+					_("Do you want to change all instances of this style in the script to this new name?"),
+					_("Update script?"),
+					wxYES_NO | wxCANCEL);
+				if (rename_answer == wxCANCEL) return;
+			}
+		}
+
+        std::optional<SubtitleProjectAccess::WriteScope> edit_scope;
+        std::unique_ptr<SubtitleValueEdit> staged;
+        if (!store) {
+            edit_scope = c->subtitleAccess->TryWrite();
+            if (!edit_scope) return;
+        }
+        auto refuse = [&](wxString const& message, wxString const& title, long style_flags) {
+            staged.reset(); edit_scope.reset();
+            wxMessageBox(message, title, style_flags, this);
+        };
         // Never retain a mutable live style across callbacks. Resolve the
         // original object by identity, preserving behavior for duplicate names.
+        // The question above ran without the lease, so the edited style must
+        // still be the live node of that name before it is resolved.
         AssStyle *target = is_new ? pending.get() : nullptr;
         if (!is_new && store) {
             for (auto const& entry : *store) if (entry.get() == style) target = entry.get();
         }
         else if (!is_new) {
-            target=staged->Source(style);
+            bool live = false;
+            for (auto const& candidate : c->subtitleAccess->Read().Styles)
+                if (&candidate == style && candidate.name == style_name) live = true;
+            if (live) {
+                staged = std::make_unique<SubtitleValueEdit>(c);
+                target = staged->Source(style);
+            }
         }
+        else if (!store) staged = std::make_unique<SubtitleValueEdit>(c);
         if (!target) {
-            wxMessageBox(_("The style being edited no longer exists."), _("Style Editor"), wxOK | wxICON_ERROR, this);
+            refuse(_("The style being edited no longer exists."), _("Style Editor"), wxOK | wxICON_ERROR);
             return;
         }
-		std::string new_name = from_wx(StyleName->GetValue());
-
-		// Get list of existing styles
-		std::vector<std::string> styles = store ? store->GetNames() : staged->file.GetStyles();
 
 		// Check if style name is unique
 		AssStyle *existing = store ? store->GetStyle(new_name) : staged->file.GetStyle(new_name);
 		if (existing && existing != target) {
-			wxMessageBox(_("There is already a style with this name. Please choose another name."), _("Style name conflict"), wxOK | wxICON_ERROR | wxCENTER);
+			refuse(_("There is already a style with this name. Please choose another name."), _("Style name conflict"), wxOK | wxICON_ERROR | wxCENTER);
 			return;
 		}
 
 		// Style name change
 		bool did_rename = false;
 		if (work->name != new_name) {
-			if (!store && !is_new) {
+			if (!store && !is_new && rename_answer == wxYES) {
 				StyleRenamer renamer(&staged->file, work->name, new_name);
 				if (renamer.NeedsReplace()) {
-					// See if user wants to update style name through script
-					int answer = wxMessageBox(
-						_("Do you want to change all instances of this style in the script to this new name?"),
-						_("Update script?"),
-						wxYES_NO | wxCANCEL);
-
-					if (answer == wxCANCEL) return;
-
-					if (answer == wxYES) {
-						did_rename = true;
-						renamer.Replace();
-					}
+					did_rename = true;
+					renamer.Replace();
 				}
 			}
 
