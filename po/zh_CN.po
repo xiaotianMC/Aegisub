@@ -8248,6 +8248,12 @@ msgstr "把决定作为一次可撤销的修改写入当前字幕，并结束比
 msgid "Accept keeps the right side, Reject restores the left side. Browsing and deciding never change the open subtitles: they change only when you click Write to Project, as one undoable step."
 msgstr "应用更改保留右侧内容，放弃更改恢复左侧内容。浏览和决定都不会修改当前字幕：只有点击“写入工程”时才会写入，并作为一次可撤销的修改。"
 
+msgid "Take the left side (Reject). Click again to reset."
+msgstr "采用左侧内容（放弃更改）。再次点击重置。"
+
+msgid "Keep the right side (Accept). Click again to reset."
+msgstr "保留右侧内容（应用更改）。再次点击重置。"
+
 msgid "target project"
 msgstr "目标工程"
 

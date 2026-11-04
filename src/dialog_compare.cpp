@@ -38,6 +38,7 @@
 #include <wx/utils.h>
 
 #include <algorithm>
+#include <span>
 
 namespace {
 namespace model = agi::ass::compare;
@@ -129,7 +130,7 @@ wxString describe(subtitle_apply::Report const& r) {
 // ---- colours ----
 struct Palette {
     wxColour bg, text, dim, gutter, gutter_text, border, accent;
-    wxColour ins_line, ins_char, del_line, del_char, mod_mark;
+    wxColour ins_line, ins_char, del_line, del_char, mod_line, mod_mark;
     wxColour filler, hatch, fold_bg, fold_text, hover;
     wxColour accepted, rejected, partial;
 };
@@ -142,13 +143,13 @@ wxColour mix(wxColour const& a, wxColour const& b, double t) {
 Palette make_palette() {
     if (wxSystemSettings::GetAppearance().IsDark()) return {
         "#1e1e1e", "#d4d4d4", "#6e7681", "#252526", "#858585", "#3c3c3c", "#4daafc",
-        "#1f3a28", "#2f6b40", "#3d1f22", "#7d2f35", "#3b82c4",
-        "#232323", "#343434", "#1c2b3a", "#6cb6ff", "#2a2d2e",
+        "#1f3a28", "#2f6b40", "#3d1f22", "#7d2f35", "#1d3047", "#3b82c4",
+        "#232323", "#343434", "#2a2d33", "#6cb6ff", "#2a2d2e",
         "#3fb950", "#f85149", "#d29922"};
     return {
         "#ffffff", "#1f2328", "#8c959f", "#f6f8fa", "#6e7781", "#d0d7de", "#0969da",
-        "#e6ffec", "#abf2bc", "#ffebe9", "#ffc1bf", "#54aeff",
-        "#f6f8fa", "#d8dee4", "#ddf4ff", "#0969da", "#f3f4f6",
+        "#e6ffec", "#abf2bc", "#ffebe9", "#ffc1bf", "#dcebff", "#54aeff",
+        "#f6f8fa", "#d8dee4", "#eef1f5", "#0969da", "#f3f4f6",
         "#1a7f37", "#cf222e", "#9a6700"};
 }
 
@@ -156,9 +157,9 @@ enum class Part { None, Content, Check, Accept, Reject, Reset, Fold, Overview };
 
 class DialogCompare;
 
-// One side of the aligned view. Both panes show the same layout rows; the
-// right pane also carries the check boxes, the per-difference actions and the
-// overview ruler.
+// One side of the aligned view. Both panes show the same layout rows; the line
+// numbers are in the gutter between them (DiffGutter). The right pane also
+// carries the check boxes, the per-difference actions and the overview ruler.
 class DiffPane final : public wxWindow {
     DialogCompare& ed;
     Side side;
@@ -171,7 +172,7 @@ class DiffPane final : public wxWindow {
 
     struct Geometry {
         int width, height;       // drawing area (without scroll bars)
-        int check_x, number_x, marker_x, content_x, content_right, actions_x, overview_x;
+        int check_x, content_x, content_right, actions_x, overview_x;
     };
     Geometry Geo() const;
     int RowAt(int y) const;
@@ -187,9 +188,15 @@ class DiffPane final : public wxWindow {
     void DrawLine(wxDC& dc, Geometry const& g, size_t entry, int y);
     void DrawActions(wxDC& dc, Geometry const& g, size_t entry, int row, int y);
     void DrawOverview(wxDC& dc, Geometry const& g);
+    /// Repaint this pane and the gutter, which follows its scroll position.
+    void Redraw();
 public:
     DiffPane(wxWindow* parent, DialogCompare& ed, Side side);
     int Top() const { return top; }
+    /// Client x where the row area starts (after the left pane's scroll bar).
+    int RowsX() const { return side == Side::Left ? vbar->GetSize().GetWidth() : 0; }
+    /// Height of the row area (without the horizontal scroll bar).
+    int ViewHeight() const { return Geo().height; }
     int XOffset() const { return xoff; }
     int VisibleRows() const;
     /// Clamp and apply a scroll position; @p notify tells the editor (for sync).
@@ -199,8 +206,35 @@ public:
     void UpdateBars();
 };
 
+// The strip between the panes, as in Meld: each side's line numbers next to
+// its pane, a band joining the two sides of every difference (bent when the
+// panes are scrolled apart), and arrows that take one side. » carries the left
+// side over (Reject), « the right side (Accept); clicking a chosen arrow again
+// resets the difference to pending.
+class DiffGutter final : public wxWindow {
+    DialogCompare& ed;
+    int hover_row = -1;
+    Part hover_part = Part::None;
+    Side hover_side = Side::Left;
+    int tip_row = -1;
+    Part tip_part = Part::None;
+
+    struct Columns { int left_number, band, right_number, right_arrow, width; };
+    Columns Cols() const;
+    /// Gutter y of the first visible row of @p side's pane.
+    int Offset(Side side) const;
+    int RowAt(Side side, int y) const;
+    void OnPaint(wxPaintEvent&);
+    void OnMouse(wxMouseEvent& event);
+    void DrawStrip(wxDC& dc, Side side, int row, int y);
+public:
+    DiffGutter(wxWindow* parent, DialogCompare& ed);
+    int Width() const;
+};
+
 class DialogCompare final : public wxDialog {
     friend class DiffPane;
+    friend class DiffGutter;
     agi::Context *c;
     SubtitleComparison& comparison;
     view::State state;
@@ -215,11 +249,12 @@ class DialogCompare final : public wxDialog {
     std::optional<size_t> current;      // index into state.Diffs()
 
     // metrics
-    int row_h = 22, char_w = 7, number_w = 40, marker_w = 16, check_w = 24, time_w = 80, style_w = 80, actor_w = 0;
+    int row_h = 22, char_w = 7, number_w = 40, arrow_w = 18, band_w = 28, check_w = 24, time_w = 80, style_w = 80, actor_w = 0;
     int actions_w = 120, overview_w = 12, content_w = 400, button_w = 54, reset_w = 30;
     wxFont small_font;
 
     DiffPane *left, *right;
+    DiffGutter *gutter;
     wxStaticText *left_title, *right_title, *counter, *stats, *checked_count;
     wxButton *prev, *next, *accept_current, *reject_current, *undo, *redo;
     wxButton *accept_checked, *reject_checked, *accept_all, *reject_all, *finish;
@@ -247,7 +282,6 @@ public:
     // used by the panes
     view::State const& State() const { return state; }
     Palette const& Colours() const { return pal; }
-    std::vector<view::LayoutRow> const& Layout() const { return layout; }
     std::optional<size_t> Current() const { return CurrentEntry(); }
     DiffPane* PaneFor(Side s) const { return s == Side::Left ? left : right; }
     void Select(size_t entry, Side from);
@@ -257,6 +291,15 @@ public:
     void Scrolled(Side from);
     void ContextMenu(DiffPane* pane, size_t entry, wxPoint pos);
     wxString Tooltip(size_t entry, Side side) const;
+    /// Line colour of a difference on one side: modified lines blue on both
+    /// sides, added lines green, removed red; lighter where the side is empty
+    /// or the difference is decided, darker for the current one.
+    wxColour RowColour(size_t entry, Side side) const;
+    wxColour EdgeColour(size_t entry) const;
+    /// Whether layout row @p row begins (ends) a run of differences of one kind.
+    bool ChunkStart(int row) const;
+    bool ChunkEnd(int row) const;
+    void RefreshGutter() { gutter->Refresh(false); }
 };
 
 // ---- DiffPane ----
@@ -289,9 +332,7 @@ DiffPane::Geometry DiffPane::Geo() const {
     g.height = std::max(0, size.GetHeight() - hbar->GetSize().GetHeight());
     bool r = side == Side::Right;
     g.check_x = 0;
-    g.number_x = r ? ed.check_w : 0;
-    g.marker_x = g.number_x + ed.number_w;
-    g.content_x = g.marker_x + ed.marker_w;
+    g.content_x = r ? ed.check_w : 0;
     g.overview_x = r ? g.width - ed.overview_w : g.width;
     g.actions_x = r ? g.overview_x - ed.actions_w : g.width;
     g.content_right = std::max(g.content_x, g.actions_x);
@@ -315,7 +356,7 @@ void DiffPane::SetView(int new_top, int new_x, bool notify) {
     top = new_top; xoff = new_x;
     UpdateBars();
     if (top != old_top || xoff != old_x) {
-        Refresh(false);
+        Redraw();
         if (notify) ed.Scrolled(side);
     }
 }
@@ -330,10 +371,17 @@ void DiffPane::Reveal(int row) {
 void DiffPane::OnSize(wxSizeEvent&) {
     auto size = GetClientSize();
     int vw = vbar->GetBestSize().GetWidth(), hh = hbar->GetBestSize().GetHeight();
-    vbar->SetSize(size.GetWidth() - vw, 0, vw, std::max(0, size.GetHeight() - hh));
-    hbar->SetSize(0, size.GetHeight() - hh, std::max(0, size.GetWidth() - vw), hh);
+    // The left pane's vertical bar is on its outer edge, so the rows run on into the gutter.
+    bool r = side == Side::Right;
+    vbar->SetSize(r ? size.GetWidth() - vw : 0, 0, vw, std::max(0, size.GetHeight() - hh));
+    hbar->SetSize(r ? 0 : vw, size.GetHeight() - hh, std::max(0, size.GetWidth() - vw), hh);
     UpdateBars();
+    Redraw();
+}
+
+void DiffPane::Redraw() {
     Refresh(false);
+    ed.RefreshGutter();
 }
 
 void DiffPane::OnScroll(wxScrollEvent& event) {
@@ -365,17 +413,19 @@ Part DiffPane::PartAt(int row, wxPoint pt) const {
     if (lr.IsFold()) return Part::Fold;
     auto const& e = ed.state.Entries()[lr.entry];
     if (side == Side::Right && e.IsDiff()) {
-        if (pt.x < g.number_x) return Part::Check;
+        if (pt.x < g.content_x) return Part::Check;
         int y = (row - top) * ed.row_h;
+        static constexpr Part pending_parts[] = {Part::Accept, Part::Reject}, decided_parts[] = {Part::Reset};
         bool pending = ed.state.GetDecision(lr.entry) == Decision::Pending;
-        for (auto part : pending ? std::initializer_list<Part>{Part::Accept, Part::Reject} : std::initializer_list<Part>{Part::Reset})
+        for (auto part : pending ? std::span<Part const>(pending_parts) : std::span<Part const>(decided_parts))
             if (ButtonRect(g, y, part).Contains(pt)) return part;
     }
     return Part::Content;
 }
 
 void DiffPane::OnMouse(wxMouseEvent& event) {
-    auto pt = event.GetPosition();
+    auto client_pt = event.GetPosition();
+    auto pt = client_pt - wxPoint(RowsX(), 0);
     auto g = Geo();
     if (event.GetEventType() == wxEVT_MOUSEWHEEL) {
         int lines = event.GetWheelRotation() / std::max(1, event.GetWheelDelta()) * std::max(1, event.GetLinesPerAction());
@@ -438,7 +488,7 @@ void DiffPane::OnMouse(wxMouseEvent& event) {
         auto entry = ed.layout[row].entry;
         if (!ed.state.Entries()[entry].IsDiff()) return;
         ed.Select(entry, side);
-        ed.ContextMenu(this, entry, pt);
+        ed.ContextMenu(this, entry, client_pt);
     }
 }
 
@@ -462,6 +512,7 @@ void DiffPane::OnKey(wxKeyEvent& event) {
 
 void DiffPane::OnPaint(wxPaintEvent&) {
     wxAutoBufferedPaintDC dc(this);
+    dc.SetDeviceOrigin(RowsX(), 0);
     auto const& p = ed.pal;
     auto g = Geo();
     dc.SetBackground(wxBrush(p.bg));
@@ -470,10 +521,9 @@ void DiffPane::OnPaint(wxPaintEvent&) {
     int rows = (int)ed.layout.size();
     for (int row = top, y = 0; row < rows && y < g.height; ++row, y += ed.row_h)
         DrawRow(dc, g, row, y);
-    // gutter separator
     dc.SetPen(wxPen(p.border));
-    dc.DrawLine(g.content_x - 1, 0, g.content_x - 1, g.height);
     if (side == Side::Right) {
+        dc.DrawLine(g.content_x - 1, 0, g.content_x - 1, g.height);
         dc.DrawLine(g.actions_x, 0, g.actions_x, g.height);
         DrawOverview(dc, g);
     }
@@ -504,56 +554,33 @@ void DiffPane::DrawRow(wxDC& dc, Geometry const& g, int row, int y) {
     auto const& line = e.Get(side);
     auto current = ed.CurrentEntry();
     bool is_current = current && *current == entry;
-    Decision d = ed.state.GetDecision(entry);
 
-    // background
-    wxColour bg = p.bg;
-    if (e.IsDiff() && line) {
-        bg = side == Side::Right ? p.ins_line : p.del_line;
-        if (d != Decision::Pending) bg = mix(bg, p.bg, 0.55);
-    }
-    else if (row == hover_row) bg = p.hover;
+    // background: the line colour of the difference, hatched where this side is empty
+    wxColour bg = e.IsDiff() ? ed.RowColour(entry, side) : row == hover_row ? p.hover : p.bg;
     dc.SetPen(*wxTRANSPARENT_PEN);
     dc.SetBrush(wxBrush(bg));
     dc.DrawRectangle(0, y, g.width, ed.row_h);
     if (!line) {
-        dc.SetBrush(wxBrush(p.filler));
-        dc.DrawRectangle(g.content_x, y, g.content_right - g.content_x, ed.row_h);
-        dc.SetBrush(wxBrush(p.hatch, wxBRUSHSTYLE_BDIAGONAL_HATCH));
+        dc.SetBrush(wxBrush(mix(ed.EdgeColour(entry), bg, 0.55), wxBRUSHSTYLE_BDIAGONAL_HATCH));
         dc.DrawRectangle(g.content_x, y, g.content_right - g.content_x, ed.row_h);
     }
-    // gutter
-    dc.SetBrush(wxBrush(e.IsDiff() && line ? mix(bg, p.gutter, 0.35) : p.gutter));
-    dc.DrawRectangle(0, y, g.content_x - 1, ed.row_h);
-    int text_y = y + (ed.row_h - dc.GetCharHeight()) / 2;
-    if (line) {
-        dc.SetTextForeground(is_current ? p.accent : p.gutter_text);
-        auto number = wxString::Format("%zu", line->number);
-        dc.DrawText(number, g.marker_x - 4 - dc.GetTextExtent(number).GetWidth(), text_y);
-        if (e.IsDiff()) {
-            wxString mark = e.change == Change::Modified ? "~" : side == Side::Right ? "+" : wxString::FromUTF8("−");
-            // Plain inserts and removals carry NoReliableMatch; only real doubts get a mark.
-            if (e.ambiguity == model::Ambiguity::Crossing) mark = wxString::FromUTF8("⇅");
-            else if (e.ambiguity == model::Ambiguity::Duplicate || e.ambiguity == model::Ambiguity::ConflictingEvidence) mark = "?";
-            dc.SetTextForeground(side == Side::Right ? p.accepted : p.rejected);
-            dc.DrawText(mark, g.marker_x + 3, text_y);
-        }
+    if (side == Side::Right) {
+        dc.SetBrush(wxBrush(e.IsDiff() ? mix(bg, p.gutter, 0.35) : p.gutter));
+        dc.DrawRectangle(0, y, g.content_x - 1, ed.row_h);
     }
     if (side == Side::Right && e.IsDiff()) {
         int s = std::min(16, ed.row_h - 4);
         wxRendererNative::Get().DrawCheckBox(this, dc, wxRect((ed.check_w - s) / 2, y + (ed.row_h - s) / 2, s, s),
-            ed.state.Checked(entry) ? wxCONTROL_CHECKED : 0);
+            ed.state.Checked(entry) ? int(wxCONTROL_CHECKED) : 0);
     }
     if (line) DrawLine(dc, g, entry, y);
-    if (side == Side::Right) DrawActions(dc, g, entry, row, y);
-    if (is_current) {
-        dc.SetPen(wxPen(p.accent));
-        dc.DrawLine(0, y, g.width, y);
-        dc.DrawLine(0, y + ed.row_h - 1, g.width, y + ed.row_h - 1);
-        dc.SetPen(*wxTRANSPARENT_PEN);
-        dc.SetBrush(wxBrush(p.accent));
-        dc.DrawRectangle(side == Side::Right ? ed.check_w - 3 : 0, y, 3, ed.row_h);
+    // edges of each run of differences of one kind, carried on by the gutter's bands
+    if (e.IsDiff()) {
+        dc.SetPen(wxPen(is_current ? p.accent : ed.EdgeColour(entry)));
+        if (is_current || ed.ChunkStart(row)) dc.DrawLine(0, y, g.width, y);
+        if (is_current || ed.ChunkEnd(row)) dc.DrawLine(0, y + ed.row_h - 1, g.width, y + ed.row_h - 1);
     }
+    if (side == Side::Right) DrawActions(dc, g, entry, row, y);
 }
 
 void DiffPane::DrawLine(wxDC& dc, Geometry const& g, size_t entry, int y) {
@@ -710,6 +737,231 @@ void DiffPane::DrawOverview(wxDC& dc, Geometry const& g) {
     dc.DrawRectangle(g.overview_x, int(top * scale), ed.overview_w, std::max(4, int(VisibleRows() * scale)));
 }
 
+// ---- DiffGutter ----
+DiffGutter::DiffGutter(wxWindow* parent, DialogCompare& ed)
+: wxWindow(parent, -1, wxDefaultPosition, wxSize(80, 200))
+, ed(ed)
+{
+    SetBackgroundStyle(wxBG_STYLE_PAINT);
+    SetName("compare-gutter");
+    Bind(wxEVT_PAINT, &DiffGutter::OnPaint, this);
+    Bind(wxEVT_SIZE, [this](wxSizeEvent&) { Refresh(false); });
+    for (auto type : {wxEVT_LEFT_DOWN, wxEVT_LEFT_DCLICK, wxEVT_MOTION, wxEVT_LEAVE_WINDOW, wxEVT_MOUSEWHEEL})
+        Bind(type, &DiffGutter::OnMouse, this);
+}
+
+int DiffGutter::Width() const { return ed.arrow_w * 2 + ed.number_w * 2 + ed.band_w; }
+
+DiffGutter::Columns DiffGutter::Cols() const {
+    Columns c;
+    c.left_number = ed.arrow_w;
+    c.band = c.left_number + ed.number_w;
+    c.right_number = c.band + ed.band_w;
+    c.right_arrow = c.right_number + ed.number_w;
+    c.width = c.right_arrow + ed.arrow_w;
+    return c;
+}
+
+int DiffGutter::Offset(Side side) const {
+    return ed.PaneFor(side)->ClientToScreen(wxPoint(0, 0)).y - ClientToScreen(wxPoint(0, 0)).y;
+}
+
+int DiffGutter::RowAt(Side side, int y) const {
+    auto pane = ed.PaneFor(side);
+    y -= Offset(side);
+    if (y < 0 || y >= pane->ViewHeight()) return -1;
+    int row = pane->Top() + y / ed.row_h;
+    return row < (int)ed.layout.size() ? row : -1;
+}
+
+void DiffGutter::OnPaint(wxPaintEvent&) {
+    wxAutoBufferedPaintDC dc(this);
+    auto const& p = ed.pal;
+    auto c = Cols();
+    int height = GetClientSize().GetHeight(), rh = ed.row_h;
+    dc.SetBackground(wxBrush(p.gutter));
+    dc.Clear();
+    dc.SetFont(GetFont());
+    int rows = (int)ed.layout.size();
+    if (!rows) return;
+    auto pane_rows = [&](Side s) {
+        auto pane = ed.PaneFor(s);
+        return std::make_pair(pane->Top(), std::min(rows, pane->Top() + pane->ViewHeight() / rh + 2));
+    };
+    auto [left_first, left_last] = pane_rows(Side::Left);
+    auto [right_first, right_last] = pane_rows(Side::Right);
+    int off_l = Offset(Side::Left), off_r = Offset(Side::Right);
+    auto y_of = [&](Side s, int row) { return (s == Side::Left ? off_l : off_r) + (row - ed.PaneFor(s)->Top()) * rh; };
+
+    // Bands between the two number columns: one curve per row edge, so they
+    // join rows that the panes show at different heights.
+    auto curve = [&](int ya, int yb, std::vector<wxPoint>& out, bool reverse) {
+        constexpr int steps = 10;
+        for (int i = 0; i <= steps; ++i) {
+            double t = double(reverse ? steps - i : i) / steps, s = t * t * (3 - 2 * t);
+            out.emplace_back(c.band + int(t * ed.band_w + 0.5), int(ya + (yb - ya) * s + 0.5));
+        }
+    };
+    {
+        int top = std::min(off_l, off_r);
+        int bottom = std::max(off_l + ed.left->ViewHeight(), off_r + ed.right->ViewHeight());
+        wxDCClipper clip(dc, wxRect(c.band, top, ed.band_w, std::max(0, bottom - top)));
+        for (int row = std::min(left_first, right_first); row < std::max(left_last, right_last); ++row) {
+            auto const& lr = ed.layout[row];
+            bool diff = !lr.IsFold() && ed.state.Entries()[lr.entry].IsDiff();
+            if (!diff && !lr.IsFold()) continue;
+            int yl = y_of(Side::Left, row), yr = y_of(Side::Right, row);
+            std::vector<wxPoint> shape;
+            curve(yl, yr, shape, false);
+            curve(yl + rh, yr + rh, shape, true);
+            wxColour fill = p.fold_bg, edge = p.border;
+            if (diff) {
+                auto const& e = ed.state.Entries()[lr.entry];
+                fill = ed.RowColour(lr.entry, e.change == Change::Removed ? Side::Left : Side::Right);
+                edge = ed.EdgeColour(lr.entry);
+            }
+            dc.SetPen(*wxTRANSPARENT_PEN);
+            dc.SetBrush(wxBrush(fill));
+            dc.DrawPolygon((int)shape.size(), shape.data());
+            auto current = ed.CurrentEntry();
+            bool is_current = diff && current && *current == lr.entry;
+            dc.SetPen(wxPen(is_current ? p.accent : edge));
+            if (!diff || is_current || ed.ChunkStart(row)) dc.DrawLines(11, shape.data());
+            if (!diff || is_current || ed.ChunkEnd(row)) dc.DrawLines(11, shape.data() + 11);
+            if (!diff) continue;
+            // Real doubts about the match: the rows cross, or several candidates.
+            auto const& e = ed.state.Entries()[lr.entry];
+            wxString mark;
+            if (e.ambiguity == model::Ambiguity::Crossing) mark = wxString::FromUTF8("⇅");
+            else if (e.ambiguity == model::Ambiguity::Duplicate || e.ambiguity == model::Ambiguity::ConflictingEvidence) mark = "?";
+            if (!mark.empty()) {
+                auto extent = dc.GetTextExtent(mark);
+                dc.SetTextForeground(p.partial);
+                dc.DrawText(mark, c.band + (ed.band_w - extent.GetWidth()) / 2, (yl + yr + rh - extent.GetHeight()) / 2);
+            }
+        }
+    }
+    for (auto s : {Side::Left, Side::Right}) {
+        auto [first, last] = s == Side::Left ? std::make_pair(left_first, left_last) : std::make_pair(right_first, right_last);
+        int off = s == Side::Left ? off_l : off_r;
+        int x = s == Side::Left ? 0 : c.right_number;
+        wxDCClipper clip(dc, wxRect(x, off, ed.arrow_w + ed.number_w, std::max(0, std::min(height - off, ed.PaneFor(s)->ViewHeight()))));
+        for (int row = first; row < last; ++row) DrawStrip(dc, s, row, y_of(s, row));
+    }
+    dc.SetPen(wxPen(p.border));
+    dc.DrawLine(c.band, 0, c.band, height);
+    dc.DrawLine(c.right_number - 1, 0, c.right_number - 1, height);
+}
+
+void DiffGutter::DrawStrip(wxDC& dc, Side side, int row, int y) {
+    auto const& p = ed.pal;
+    auto c = Cols();
+    int rh = ed.row_h;
+    bool left = side == Side::Left;
+    int x0 = left ? 0 : c.right_number, w = ed.arrow_w + ed.number_w;
+    int number_x = left ? c.left_number : c.right_number, arrow_x = left ? 0 : c.right_arrow;
+    auto const& lr = ed.layout[row];
+    dc.SetPen(*wxTRANSPARENT_PEN);
+    if (lr.IsFold()) {
+        dc.SetBrush(wxBrush(p.fold_bg));
+        dc.DrawRectangle(x0, y, w, rh);
+        dc.SetPen(wxPen(p.border));
+        dc.DrawLine(x0, y, x0 + w, y);
+        dc.DrawLine(x0, y + rh - 1, x0 + w, y + rh - 1);
+        return;
+    }
+    auto const& e = ed.state.Entries()[lr.entry];
+    auto const& line = e.Get(side);
+    auto current = ed.CurrentEntry();
+    bool is_current = current && *current == lr.entry;
+    if (e.IsDiff()) {
+        dc.SetBrush(wxBrush(ed.RowColour(lr.entry, side)));
+        dc.DrawRectangle(x0, y, w, rh);
+        dc.SetPen(wxPen(is_current ? p.accent : ed.EdgeColour(lr.entry)));
+        if (is_current || ed.ChunkStart(row)) dc.DrawLine(x0, y, x0 + w, y);
+        if (is_current || ed.ChunkEnd(row)) dc.DrawLine(x0, y + rh - 1, x0 + w, y + rh - 1);
+    }
+    else if (row == hover_row) {
+        dc.SetBrush(wxBrush(p.hover));
+        dc.DrawRectangle(x0, y, w, rh);
+    }
+    int text_y = y + (rh - dc.GetCharHeight()) / 2;
+    if (line) {
+        auto number = wxString::Format("%zu", line->number);
+        dc.SetTextForeground(is_current ? p.accent : e.IsDiff() ? p.text : p.gutter_text);
+        int nx = left ? number_x + ed.number_w - 5 - dc.GetTextExtent(number).GetWidth() : number_x + 5;
+        dc.DrawText(number, nx, text_y);
+    }
+    if (!e.IsDiff()) return;
+    // » takes the left side (Reject), « the right side (Accept).
+    Part part = left ? Part::Reject : Part::Accept;
+    Decision d = ed.state.GetDecision(lr.entry);
+    bool chosen = d == (left ? Decision::Rejected : Decision::Accepted);
+    bool hot = row == hover_row && hover_part == part;
+    wxColour colour = d == Decision::Partial ? p.partial : left ? p.rejected : p.accepted;
+    wxRect box(arrow_x + 2, y + 3, ed.arrow_w - 4, rh - 6);
+    if (chosen || hot || d == Decision::Partial) {
+        dc.SetPen(wxPen(colour));
+        dc.SetBrush(wxBrush(chosen ? colour : hot ? mix(colour, p.bg, 0.75) : mix(colour, p.bg, 0.85)));
+        dc.DrawRoundedRectangle(box, 3);
+    }
+    wxString glyph = wxString::FromUTF8(left ? "»" : "«");
+    auto extent = dc.GetTextExtent(glyph);
+    dc.SetTextForeground(chosen ? *wxWHITE : hot ? colour : p.gutter_text);
+    dc.DrawText(glyph, box.x + (box.width - extent.GetWidth()) / 2, box.y + (box.height - extent.GetHeight()) / 2);
+}
+
+void DiffGutter::OnMouse(wxMouseEvent& event) {
+    auto type = event.GetEventType();
+    if (type == wxEVT_MOUSEWHEEL) {
+        int lines = event.GetWheelRotation() / std::max(1, event.GetWheelDelta()) * std::max(1, event.GetLinesPerAction());
+        for (auto pane : {ed.left, ed.right}) pane->SetView(pane->Top() - lines, pane->XOffset());
+        return;
+    }
+    if (type == wxEVT_LEAVE_WINDOW) {
+        if (hover_row != -1) { hover_row = -1; hover_part = Part::None; Refresh(false); }
+        return;
+    }
+    auto pt = event.GetPosition();
+    auto c = Cols();
+    Side side = pt.x < c.band + ed.band_w / 2 ? Side::Left : Side::Right;
+    int row = RowAt(side, pt.y);
+    Part part = Part::None;
+    if (row >= 0) {
+        auto const& lr = ed.layout[row];
+        if (lr.IsFold()) part = Part::Fold;
+        else if (ed.state.Entries()[lr.entry].IsDiff() && side == Side::Left && pt.x < c.left_number) part = Part::Reject;
+        else if (ed.state.Entries()[lr.entry].IsDiff() && side == Side::Right && pt.x >= c.right_arrow) part = Part::Accept;
+        else part = Part::Content;
+    }
+    if (type == wxEVT_MOTION) {
+        if (row != hover_row || part != hover_part || side != hover_side) {
+            hover_row = row; hover_part = part; hover_side = side;
+            Refresh(false);
+        }
+        if (row != tip_row || part != tip_part) {
+            tip_row = row; tip_part = part;
+            if (part == Part::Reject) SetToolTip(wxString::FromUTF8("» ") + _("Take the left side (Reject). Click again to reset."));
+            else if (part == Part::Accept) SetToolTip(wxString::FromUTF8("« ") + _("Keep the right side (Accept). Click again to reset."));
+            else if (part == Part::Content) SetToolTip(ed.Tooltip(ed.layout[row].entry, side));
+            else UnsetToolTip();
+        }
+        return;
+    }
+    if (row < 0) return;
+    size_t entry = ed.layout[row].entry;
+    switch (part) {
+        case Part::Fold: ed.ExpandFold(row); return;
+        case Part::Reject:
+        case Part::Accept: {
+            Decision want = part == Part::Accept ? Decision::Accepted : Decision::Rejected;
+            ed.Decide(entry, ed.state.GetDecision(entry) == want ? Decision::Pending : want);
+            return;
+        }
+        default: ed.Select(entry, side); return;
+    }
+}
+
 // ---- DialogCompare ----
 enum {
     ID_PREV = wxID_HIGHEST + 1, ID_NEXT, ID_ACCEPT_CURRENT, ID_REJECT_CURRENT, ID_UNDO, ID_REDO, ID_REDO_ALT,
@@ -768,6 +1020,7 @@ DialogCompare::DialogCompare(agi::Context *c, SubtitleComparison& comparison, wx
     left_title->SetFont(bold); right_title->SetFont(bold);
     left = new DiffPane(this, *this, Side::Left);
     right = new DiffPane(this, *this, Side::Right);
+    gutter = new DiffGutter(this, *this);
 
     // Fields of the current difference.
     fields_panel = new wxPanel(this, -1);
@@ -811,9 +1064,13 @@ DialogCompare::DialogCompare(agi::Context *c, SubtitleComparison& comparison, wx
     right_column->Add(right_title, wxSizerFlags().Border(wxLEFT | wxBOTTOM, 4));
     right_column->Add(right, wxSizerFlags(1).Expand());
     // The left column's width is set on resize so both sides show as much text.
+    // The gutter starts level with the panes, below the titles.
+    auto gutter_column = new wxBoxSizer(wxVERTICAL);
+    gutter_column->AddSpacer(left_title->GetBestSize().GetHeight() + 4);
+    gutter_column->Add(gutter, wxSizerFlags(1).Expand());
     auto panes = new wxBoxSizer(wxHORIZONTAL);
     panes->Add(left_column, wxSizerFlags().Expand());
-    panes->AddSpacer(8);
+    panes->Add(gutter_column, wxSizerFlags().Expand());
     panes->Add(right_column, wxSizerFlags(1).Expand());
 
     auto hint = new wxStaticText(this, -1, _("Accept keeps the right side, Reject restores the left side. Browsing and deciding never change the open subtitles: they change only when you click Write to Project, as one undoable step."));
@@ -834,8 +1091,9 @@ DialogCompare::DialogCompare(agi::Context *c, SubtitleComparison& comparison, wx
     // it gets that much more width than the left one.
     left->SetMinSize(wxSize(320, 200));
     right->SetMinSize(wxSize(320 + check_w + actions_w + overview_w, 200));
+    gutter->SetMinSize(wxSize(gutter->Width(), 200));
     Bind(wxEVT_SIZE, [this](wxSizeEvent& event) {
-        int panes = GetClientSize().GetWidth() - 16 - 8;
+        int panes = GetClientSize().GetWidth() - 16 - gutter->Width();
         int extra = check_w + actions_w + overview_w;
         left->SetMinSize(wxSize(std::max(320, (panes - extra) / 2), 200));
         event.Skip(); // the default handler lays the sizers out
@@ -931,7 +1189,9 @@ void DialogCompare::Measure() {
     }
     for (auto const& s : styles) style = std::max(style, dc.GetTextExtent(to_wx(s)).GetWidth());
     for (auto const& a : actors) actor = std::max(actor, dc.GetTextExtent(to_wx(a)).GetWidth());
-    number_w = dc.GetTextExtent(wxString::Format("%zu", max_number)).GetWidth() + 12;
+    number_w = dc.GetTextExtent(wxString::Format("%zu", max_number)).GetWidth() + 10;
+    arrow_w = std::max(18, dc.GetTextExtent(wxString::FromUTF8("»")).GetWidth() + 10);
+    band_w = std::max(24, dc.GetTextExtent(wxString::FromUTF8("⇅")).GetWidth() + 12);
     time_w = dc.GetTextExtent("0:00:00.000").GetWidth() + 14;
     style_w = std::min(style, char_w * 22) + 16;
     actor_w = actors.empty() ? 0 : std::min(actor, char_w * 16) + 16;
@@ -961,12 +1221,42 @@ void DialogCompare::RebuildLayout() {
     right->SetView(top, right->XOffset());
     left->SetView(sync ? top : (anchor ? row_of[*anchor] : left->Top()), left->XOffset());
     left->UpdateBars(); right->UpdateBars();
-    left->Refresh(false); right->Refresh(false);
+    left->Refresh(false); right->Refresh(false); gutter->Refresh(false);
 }
 
 std::optional<size_t> DialogCompare::CurrentEntry() const {
     if (!current || *current >= state.Diffs().size()) return std::nullopt;
     return state.Diffs()[*current];
+}
+
+wxColour DialogCompare::RowColour(size_t entry, Side side) const {
+    auto const& e = state.Entries()[entry];
+    wxColour c = e.change == Change::Modified ? pal.mod_line : e.change == Change::Inserted ? pal.ins_line
+        : e.change == Change::Removed ? pal.del_line : pal.bg;
+    if (!e.IsDiff()) return c;
+    if (!e.Get(side)) c = mix(c, pal.bg, 0.45);
+    if (state.GetDecision(entry) != Decision::Pending) c = mix(c, pal.bg, 0.55);
+    auto cur = CurrentEntry();
+    if (cur && *cur == entry) c = mix(c, pal.accent, 0.2);
+    return c;
+}
+
+wxColour DialogCompare::EdgeColour(size_t entry) const {
+    auto const& e = state.Entries()[entry];
+    wxColour c = e.change == Change::Modified ? pal.mod_mark : e.change == Change::Inserted ? pal.accepted : pal.rejected;
+    return mix(c, pal.bg, state.GetDecision(entry) == Decision::Pending ? 0.35 : 0.7);
+}
+
+bool DialogCompare::ChunkStart(int row) const {
+    if (row <= 0) return true;
+    auto const &a = layout[row - 1], &b = layout[row];
+    if (a.IsFold() || b.IsFold()) return true;
+    auto const &ea = state.Entries()[a.entry], &eb = state.Entries()[b.entry];
+    return !ea.IsDiff() || ea.change != eb.change;
+}
+
+bool DialogCompare::ChunkEnd(int row) const {
+    return row + 1 >= (int)layout.size() || ChunkStart(row + 1);
 }
 
 void DialogCompare::UpdateTitles() {
@@ -1052,7 +1342,7 @@ void DialogCompare::Changed() {
         finish->Enable(r.Ok());
     }
     finish->GetContainingSizer()->Layout();
-    left->Refresh(false); right->Refresh(false);
+    left->Refresh(false); right->Refresh(false); gutter->Refresh(false);
 }
 
 void DialogCompare::Go(int delta) {
