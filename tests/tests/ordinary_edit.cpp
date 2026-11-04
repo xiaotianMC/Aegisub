@@ -76,6 +76,8 @@
 #include <wx/listbox.h>
 #include <wx/checklst.h>
 #include <wx/checkbox.h>
+#include <wx/stattext.h>
+#include <wx/tglbtn.h>
 #include <wx/dataview.h>
 #include <wx/button.h>
 #include <wx/listctrl.h>
@@ -2979,23 +2981,90 @@ TEST_F(ordinary_edit, compare_window_takes_only_the_chosen_fields) {
     auto path = WriteBaseline(*c, "compare-fields2.ass", [](AssFile& f) {
         f.Events.front().Text = "baseline text"; f.Events.front().Actor = "baseline actor";
     });
-    wxString stats;
+    wxString stats, actor_tip;
+    int actor_y = -1, text_y = -1;
     CompareHook hook([&](wxDialog* dialog) {
-        Named<wxCheckBox>(dialog, "compare-field-Text");
-        auto actor = Named<wxCheckBox>(dialog, "compare-field-Actor"); ASSERT_NE(nullptr, actor);
-        EXPECT_EQ(wxCHK_UNDETERMINED, actor->Get3StateValue()); // pending
-        // Uncheck Actor: keep the left (file) side of that field only.
-        actor->Set3StateValue(wxCHK_UNCHECKED);
-        wxCommandEvent event(wxEVT_CHECKBOX, actor->GetId()); event.SetEventObject(actor);
-        actor->GetEventHandler()->ProcessEvent(event);
+        // The current difference changed two fields: each gets a detail row
+        // under it, with its own arrows in the gutter.
+        auto gutter = dialog->FindWindow("compare-gutter"); ASSERT_NE(nullptr, gutter);
+        auto hint = Named<wxStaticText>(dialog, "compare-hint"); ASSERT_NE(nullptr, hint);
+        auto mouse = [&](wxEventType type, int x, int y) {
+            wxMouseEvent event(type); event.SetPosition({x, y}); event.SetEventObject(gutter);
+            gutter->GetEventHandler()->ProcessEvent(event);
+        };
+        for (int y = 0; y < gutter->GetClientSize().GetHeight(); y += 2) {
+            mouse(wxEVT_MOTION, 4, y);
+            auto h = hint->GetLabelText();
+            if (actor_y < 0 && h.Contains("Actor: take the left side")) { actor_y = y; actor_tip = h; }
+            if (text_y < 0 && h.Contains("Text: take the left side")) text_y = y;
+        }
+        ASSERT_GE(actor_y, 0); ASSERT_GE(text_y, 0);
+        // » on the Actor row: keep the left (file) side of that field only.
+        mouse(wxEVT_LEFT_DOWN, 4, actor_y);
         stats = Label(dialog, "compare-stats");
-        EXPECT_EQ(wxCHK_CHECKED, Named<wxCheckBox>(dialog, "compare-field-Text")->Get3StateValue());
         button(dialog->FindWindow(wxID_OK), wxID_OK);
     });
     EXPECT_TRUE(ShowCompareDialog(c.get(), path));
+    EXPECT_LT(text_y, actor_y); // in field order, text first
     EXPECT_EQ("0 pending, 0 accepted, 0 rejected, 1 partial", stats);
     EXPECT_EQ("current", LiveRead(*c).Events.front().Text.get());
     EXPECT_EQ("baseline actor", LiveRead(*c).Events.front().Actor.get());
+}
+TEST_F(ordinary_edit, compare_window_filters_by_category_and_leaves_ignored_fields_alone) {
+    Input("current");
+    auto start = LiveRead(*c).Events.front().Start, end = LiveRead(*c).Events.front().End;
+    auto path = WriteBaseline(*c, "compare-filter.ass", [](AssFile& f) {
+        f.Events.front().End = f.Events.front().End + 500;      // a time-only change
+        auto line = new AssDialogue; line->Text = "added"; line->Start = 9000; line->End = 9500; f.Events.push_back(*line);
+    });
+    wxString all_counter, time_counter, time_stats, ignored_counter, ignored_stats;
+    bool time_hidden = false;
+    CompareHook hook([&](wxDialog* dialog) {
+        auto toggle = [&](char const* name) {
+            auto b = Named<wxToggleButton>(dialog, name); ASSERT_NE(nullptr, b);
+            b->SetValue(true);
+            wxCommandEvent event(wxEVT_TOGGLEBUTTON, b->GetId()); event.SetEventObject(b); event.SetInt(1);
+            b->GetEventHandler()->ProcessEvent(event);
+        };
+        auto check = [&](char const* name, bool value) {
+            auto b = Named<wxCheckBox>(dialog, name); ASSERT_NE(nullptr, b);
+            b->SetValue(value);
+            wxCommandEvent event(wxEVT_CHECKBOX, b->GetId()); event.SetEventObject(b); event.SetInt(value);
+            b->GetEventHandler()->ProcessEvent(event);
+        };
+        all_counter = Label(dialog, "compare-counter");
+        EXPECT_EQ("Time only 1", Named<wxToggleButton>(dialog, "compare-category-Time")->GetLabel());
+        EXPECT_FALSE(Named<wxToggleButton>(dialog, "compare-category-Text")->IsShown()); // nothing of that kind
+        // Only the time change: Reject All covers just what is shown.
+        toggle("compare-category-Time");
+        time_counter = Label(dialog, "compare-counter");
+        Press(dialog, "compare-reject-all");
+        time_stats = Label(dialog, "compare-stats");
+        Press(dialog, "compare-undo");
+        // Ignoring times instead: the time change is no longer a difference.
+        toggle("compare-category-all");
+        check("compare-ignore-Time", true);
+        ignored_counter = Label(dialog, "compare-counter");
+        time_hidden = !Named<wxToggleButton>(dialog, "compare-category-Time")->IsShown();
+        Press(dialog, "compare-reject-all");
+        ignored_stats = Label(dialog, "compare-stats");
+        button(dialog->FindWindow(wxID_OK), wxID_OK);
+    });
+    EXPECT_TRUE(ShowCompareDialog(c.get(), path));
+    EXPECT_EQ("Difference 1 of 2", all_counter);
+    EXPECT_EQ("Difference 1 of 1 (2 in total)", time_counter);
+    EXPECT_EQ("1 pending, 0 accepted, 1 rejected, 0 partial", time_stats);
+    EXPECT_EQ("Difference 1 of 1 (2 in total)", ignored_counter);
+    EXPECT_TRUE(time_hidden);
+    EXPECT_EQ("1 pending, 0 accepted, 1 rejected, 0 partial", ignored_stats);
+    ASSERT_EQ(2u, hook.messages.size());
+    EXPECT_NE(wxNOT_FOUND, hook.messages[0].Find("the 1 differences shown")) << hook.messages[0];
+    EXPECT_NE(wxNOT_FOUND, hook.messages[1].Find("Ignored fields keep their current choice: Start, End")) << hook.messages[1];
+    // Only the added line was written; the ignored time stayed as it was.
+    ASSERT_EQ(2u, LiveRead(*c).Events.size());
+    EXPECT_EQ(start, LiveRead(*c).Events.front().Start);
+    EXPECT_EQ(end, LiveRead(*c).Events.front().End);
+    EXPECT_EQ("added", std::next(LiveRead(*c).Events.begin())->Text.get());
 }
 TEST_F(ordinary_edit, compare_window_shows_refusals_and_batch_actions_confirm_their_scope) {
     auto path = WriteBaseline(*c, "compare-bound.ass", [](AssFile& f) {

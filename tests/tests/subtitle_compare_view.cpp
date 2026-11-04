@@ -195,6 +195,65 @@ TEST(subtitle_compare_view, layout_folds_unchanged_runs_around_context) {
     EXPECT_EQ(20u, s.Layout(false, {}, 9).size());
 }
 
+TEST(subtitle_compare_view, categories_follow_the_changed_field_groups_and_ignored_fields) {
+    Fixture f;
+    State s(f.cur, f.base, model::All, f.items);
+    auto m = f.entry(s, Change::Modified), timed = f.text(s, "timed");
+    auto gone = f.text(s, "gone"), added = f.text(s, "added");
+    EXPECT_EQ(Category::Multiple, s.CategoryOf(m));            // text, actor and layer
+    EXPECT_EQ(Category::Time, s.CategoryOf(timed));
+    EXPECT_EQ(Category::Inserted, s.CategoryOf(gone));
+    EXPECT_EQ(Category::Removed, s.CategoryOf(added));
+    EXPECT_FALSE(s.CategoryOf(0));                              // unchanged
+    // Ignoring fields narrows what counts: only the actor is left, or nothing.
+    EXPECT_EQ(Category::StyleActor, s.CategoryOf(m, model::Text | model::Layer));
+    EXPECT_EQ(model::Fields(model::Actor), s.Shown(m, model::Text | model::Layer));
+    model::Fields time = CategoryFields(Category::Time);
+    EXPECT_FALSE(s.CategoryOf(timed, time));
+    EXPECT_FALSE(s.Visible(timed, {time, std::nullopt}));
+    EXPECT_EQ(3u, s.VisibleDiffs({time, std::nullopt}).size());
+    EXPECT_EQ(Category::Inserted, s.CategoryOf(gone, model::All)); // whole lines are never ignored
+
+    auto only_time = s.VisibleDiffs({0, Category::Time});
+    ASSERT_EQ(1u, only_time.size()); EXPECT_EQ(timed, only_time[0]);
+    // The layout treats hidden differences like unchanged lines.
+    Filter filter{0, Category::Time};
+    size_t shown = 0, folded = 0;
+    for (auto const& row : s.Layout(false, {}, 0, filter)) {
+        if (row.IsFold()) { folded += row.hidden; continue; }
+        if (s.Visible(row.entry, filter)) { EXPECT_EQ(timed, row.entry); ++shown; }
+    }
+    EXPECT_EQ(1u, shown);
+    EXPECT_LE(2u, folded); // the other differences fold away (a lone line is shown, not folded)
+    EXPECT_EQ(s.Entries().size(), s.Layout(true, {}, 0, {0, Category::Time}).size());
+}
+
+TEST(subtitle_compare_view, scoped_decisions_touch_only_the_fields_in_scope) {
+    Fixture f;
+    State s(f.cur, f.base, model::All, f.items);
+    auto m = f.entry(s, Change::Modified), gone = f.text(s, "gone");
+    EXPECT_EQ(1u, s.Changing({m}, Decision::Rejected, model::Text));
+    ASSERT_TRUE(s.Decide({m}, Decision::Rejected, model::Text));
+    EXPECT_EQ(Decision::Partial, s.GetDecision(m));
+    EXPECT_EQ(Side::Left, s.Winner(m, model::Text)); EXPECT_EQ(Side::Right, s.Winner(m, model::Actor));
+    ASSERT_TRUE(s.Decide({m}, Decision::Rejected, model::Actor)); // adds to the earlier choice
+    EXPECT_EQ(Side::Left, s.Winner(m, model::Text)); EXPECT_EQ(Side::Left, s.Winner(m, model::Actor));
+    EXPECT_EQ(Side::Right, s.Winner(m, model::Layer));
+    ASSERT_TRUE(s.Decide({m}, Decision::Accepted, model::Text));
+    EXPECT_EQ(Side::Right, s.Winner(m, model::Text)); EXPECT_EQ(Side::Left, s.Winner(m, model::Actor));
+    EXPECT_EQ(0u, s.Changing({m}, Decision::Accepted, model::Text));
+    EXPECT_FALSE(s.Decide({m}, Decision::Accepted, model::Text));
+    // A scope covering every changed field is a plain decision.
+    ASSERT_TRUE(s.Decide({m}, Decision::Rejected, model::All));
+    EXPECT_EQ(Decision::Rejected, s.GetDecision(m));
+    // Whole lines ignore the scope.
+    ASSERT_TRUE(s.Decide({gone}, Decision::Rejected, model::Text));
+    EXPECT_EQ(Decision::Rejected, s.GetDecision(gone));
+    // Undo walks back one scoped step at a time.
+    ASSERT_TRUE(s.Undo()); ASSERT_TRUE(s.Undo());
+    EXPECT_EQ(Side::Right, s.Winner(m, model::Text)); EXPECT_EQ(Side::Left, s.Winner(m, model::Actor));
+}
+
 TEST(subtitle_compare_view, text_diff_marks_changed_tokens) {
     auto d = DiffText("Hello world", "Hello there world");
     EXPECT_TRUE(d.left.empty());

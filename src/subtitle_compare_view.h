@@ -34,6 +34,24 @@ enum class Decision { Pending, Accepted, Rejected, Partial };
 std::vector<model::Field> const& FieldOrder();
 char const* FieldName(model::Field);
 
+/// What kind of difference an entry is, for filtering and batch decisions.
+/// The first four are modified lines whose (shown) changes all fall in one
+/// field group; Multiple spans several groups.
+enum class Category { Time, Text, StyleActor, OtherFields, Multiple, Inserted, Removed };
+std::vector<Category> const& CategoryOrder();
+/// Stable English identifier (translated by the UI).
+char const* CategoryName(Category);
+/// The field group of a single-group category (0 for the others).
+model::Fields CategoryFields(Category);
+
+/// What the window shows: fields left out of the comparison view, and
+/// optionally a single category. Hidden differences stay pending.
+struct Filter {
+    model::Fields ignored = 0;
+    std::optional<Category> category;
+    bool Active() const { return ignored || category; }
+};
+
 /// Byte range of a UTF-8 string.
 struct Span { size_t begin = 0, end = 0; };
 struct TextDiff { std::vector<Span> left, right; };
@@ -45,6 +63,7 @@ TextDiff DiffText(std::string const& left, std::string const& right);
 /// One subtitle line as displayed on one side.
 struct Line {
     size_t number = 0;                  ///< 1-based position in its document
+    int start = 0, end = 0;             ///< times in milliseconds
     std::array<std::string, 12> values; ///< display value of each field, by bit index
     bool comment = false;
     std::string const& Value(model::Field field) const;
@@ -87,7 +106,7 @@ class State {
     model::Fields Whole(size_t entry) const;
     Side FileSide() const { return Other(project); }
     void Commit(std::vector<Step> steps);
-    Choice Target(size_t entry, Decision decision) const;
+    Choice Target(size_t entry, Decision decision, model::Fields scope) const;
 public:
     /// @param project which side shows the open project (the other shows the file)
     State(AssFile const& current, AssFile const& baseline, model::Fields comparison_fields,
@@ -110,11 +129,14 @@ public:
     std::optional<Side> Winner(size_t entry, model::Field field = model::Text) const;
     size_t Count(Decision decision) const;
     /// The decision @p decision would change for any of @p entries (non-differences ignored).
-    size_t Changing(std::vector<size_t> const& entries, Decision decision) const;
+    size_t Changing(std::vector<size_t> const& entries, Decision decision, model::Fields scope = model::All) const;
 
     /// Accepted, Rejected or Pending (reset) for every difference in @p entries,
     /// as one undo step. Returns false (and records nothing) if nothing changed.
-    bool Decide(std::vector<size_t> const& entries, Decision decision);
+    /// For modified lines, Accepted and Rejected touch only the fields in
+    /// @p scope (the others keep their choice, or the project's value); Pending
+    /// always resets the whole line.
+    bool Decide(std::vector<size_t> const& entries, Decision decision, model::Fields scope = model::All);
     /// Modified entries only: keep @p winner's value of one changed field. A pending
     /// entry becomes decided with every other field left as the project has it.
     bool SetField(size_t entry, model::Field field, Side winner);
@@ -132,9 +154,20 @@ public:
     /// from the project. Pending entries leave the project as it is.
     std::vector<subtitle_apply::Choice> Choices() const;
 
-    /// Aligned rows. Unless @p show_all, unchanged runs keep @p context entries
-    /// next to each difference and fold the rest (folds of a single entry are not
-    /// made). A fold whose first hidden entry is in @p expanded is shown in full.
-    std::vector<LayoutRow> Layout(bool show_all, std::set<size_t> const& expanded, size_t context = 3) const;
+    /// Changed fields still shown when @p ignored are left out (modified lines only).
+    model::Fields Shown(size_t entry, model::Fields ignored = 0) const;
+    /// The category of a difference under @p ignored; unset if it is not a
+    /// difference, or only ignored fields changed.
+    std::optional<Category> CategoryOf(size_t entry, model::Fields ignored = 0) const;
+    /// Whether the window shows @p entry as a difference under @p filter.
+    bool Visible(size_t entry, Filter const& filter) const;
+    /// Entry indices of the differences shown under @p filter, in display order.
+    std::vector<size_t> VisibleDiffs(Filter const& filter) const;
+
+    /// Aligned rows. Unless @p show_all, runs of entries that are not shown as
+    /// differences (under @p filter) keep @p context entries next to each
+    /// difference and fold the rest (folds of a single entry are not made). A
+    /// fold whose first hidden entry is in @p expanded is shown in full.
+    std::vector<LayoutRow> Layout(bool show_all, std::set<size_t> const& expanded, size_t context = 3, Filter const& filter = {}) const;
 };
 }

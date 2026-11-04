@@ -51,6 +51,8 @@ std::string value(AssFile const& file, AssDialogue const& line, model::Field fie
 Line make_line(AssFile const& file, AssDialogue const& line, size_t index) {
     Line out;
     out.number = index + 1;
+    out.start = line.Start.GetMilliseconds();
+    out.end = line.End.GetMilliseconds();
     for (auto field : FieldOrder()) out.values[bit(field)] = value(file, line, field);
     out.comment = line.Comment;
     return out;
@@ -102,6 +104,36 @@ std::vector<model::Field> const& FieldOrder() {
         model::Actor, model::Effect, model::Layer, model::MarginL, model::MarginR, model::MarginV,
         model::Comment, model::Extra};
     return order;
+}
+
+std::vector<Category> const& CategoryOrder() {
+    static std::vector<Category> const order{Category::Time, Category::Text, Category::StyleActor,
+        Category::OtherFields, Category::Multiple, Category::Inserted, Category::Removed};
+    return order;
+}
+
+char const* CategoryName(Category category) {
+    switch (category) {
+        case Category::Time: return "Time";
+        case Category::Text: return "Text";
+        case Category::StyleActor: return "StyleActor";
+        case Category::OtherFields: return "OtherFields";
+        case Category::Multiple: return "Multiple";
+        case Category::Inserted: return "Inserted";
+        case Category::Removed: return "Removed";
+    }
+    return "";
+}
+
+model::Fields CategoryFields(Category category) {
+    switch (category) {
+        case Category::Time: return model::Start | model::End;
+        case Category::Text: return model::Text;
+        case Category::StyleActor: return model::Style | model::Actor;
+        case Category::OtherFields:
+            return model::Layer | model::MarginL | model::MarginR | model::MarginV | model::Effect | model::Comment | model::Extra;
+        default: return 0;
+    }
 }
 
 char const* FieldName(model::Field field) {
@@ -238,18 +270,24 @@ size_t State::Count(Decision decision) const {
     return n;
 }
 
-State::Choice State::Target(size_t entry, Decision decision) const {
+State::Choice State::Target(size_t entry, Decision decision, model::Fields scope) const {
     if (decision == Decision::Pending) return {};
     if (decision != Decision::Accepted && decision != Decision::Rejected)
         throw std::invalid_argument("Only Accepted, Rejected or Pending can be chosen");
     Side winner = decision == Decision::Accepted ? Side::Right : Side::Left;
-    return {true, winner == FileSide() ? Whole(entry) : 0};
+    model::Fields whole = Whole(entry);
+    model::Fields take = winner == FileSide() ? whole : 0;
+    if (entries[entry].change != Change::Modified || (whole & scope) == whole) return {true, take};
+    // Only the fields in scope follow the decision; the others keep what they had.
+    auto const& now = choices[entry];
+    model::Fields kept = now.decided ? now.take & ~scope : 0;
+    return {true, kept | (take & scope)};
 }
 
-size_t State::Changing(std::vector<size_t> const& list, Decision decision) const {
+size_t State::Changing(std::vector<size_t> const& list, Decision decision, model::Fields scope) const {
     size_t n = 0;
     for (auto e : list)
-        if (entries.at(e).IsDiff() && !(choices[e] == Target(e, decision))) ++n;
+        if (entries.at(e).IsDiff() && !(choices[e] == Target(e, decision, scope))) ++n;
     return n;
 }
 
@@ -259,11 +297,11 @@ void State::Commit(std::vector<Step> steps) {
     redo.clear();
 }
 
-bool State::Decide(std::vector<size_t> const& list, Decision decision) {
+bool State::Decide(std::vector<size_t> const& list, Decision decision, model::Fields scope) {
     std::vector<Step> steps;
     for (auto e : list) {
         if (!entries.at(e).IsDiff()) continue;
-        auto after = Target(e, decision);
+        auto after = Target(e, decision, scope);
         if (!(choices[e] == after)) steps.push_back({e, choices[e], after});
     }
     if (steps.empty()) return false;
@@ -326,13 +364,47 @@ std::vector<subtitle_apply::Choice> State::Choices() const {
     return out;
 }
 
-std::vector<LayoutRow> State::Layout(bool show_all, std::set<size_t> const& expanded, size_t context) const {
+model::Fields State::Shown(size_t entry, model::Fields ignored) const {
+    auto const& e = entries.at(entry);
+    return e.change == Change::Modified ? e.changed & ~ignored : 0;
+}
+
+std::optional<Category> State::CategoryOf(size_t entry, model::Fields ignored) const {
+    auto const& e = entries.at(entry);
+    if (e.change == Change::Inserted) return Category::Inserted;
+    if (e.change == Change::Removed) return Category::Removed;
+    if (e.change != Change::Modified) return std::nullopt;
+    model::Fields shown = Shown(entry, ignored);
+    if (!shown) return std::nullopt;
+    std::optional<Category> found;
+    for (auto c : {Category::Time, Category::Text, Category::StyleActor, Category::OtherFields}) {
+        if (!(shown & CategoryFields(c))) continue;
+        if (found) return Category::Multiple;
+        found = c;
+    }
+    return found;
+}
+
+bool State::Visible(size_t entry, Filter const& filter) const {
+    auto category = CategoryOf(entry, filter.ignored);
+    return category && (!filter.category || *filter.category == *category);
+}
+
+std::vector<size_t> State::VisibleDiffs(Filter const& filter) const {
+    std::vector<size_t> out;
+    for (auto e : diffs) if (Visible(e, filter)) out.push_back(e);
+    return out;
+}
+
+std::vector<LayoutRow> State::Layout(bool show_all, std::set<size_t> const& expanded, size_t context, Filter const& filter) const {
     std::vector<LayoutRow> rows;
     size_t n = entries.size();
+    std::vector<bool> shown(n);
+    for (auto e : diffs) shown[e] = Visible(e, filter);
     for (size_t i = 0; i < n;) {
-        if (entries[i].IsDiff()) { rows.push_back({i, 0}); ++i; continue; }
+        if (shown[i]) { rows.push_back({i, 0}); ++i; continue; }
         size_t end = i;
-        while (end < n && !entries[end].IsDiff()) ++end;
+        while (end < n && !shown[end]) ++end;
         size_t head = i == 0 ? 0 : std::min(context, end - i);
         size_t tail = end == n ? 0 : std::min(context, end - i - head);
         size_t first = i + head, hidden = end - i - head - tail;

@@ -8254,6 +8254,96 @@ msgstr "采用左侧内容（放弃更改）。再次点击重置。"
 msgid "Keep the right side (Accept). Click again to reset."
 msgstr "保留右侧内容（应用更改）。再次点击重置。"
 
+msgid "Accept: keep the right side of this difference. Nothing is written until Write to Project."
+msgstr "应用：保留这处差异右侧的内容。点击“写入工程”之前不会修改字幕。"
+
+msgid "Reject: restore the left side of this difference. Nothing is written until Write to Project."
+msgstr "放弃：恢复这处差异左侧的内容。点击“写入工程”之前不会修改字幕。"
+
+msgid "Reset this difference to pending"
+msgstr "把这处差异重置为待处理"
+
+msgid "Select this difference for Accept Selected / Reject Selected (Space)"
+msgstr "勾选这处差异，用于“应用所选 / 放弃所选”（空格键）"
+
+msgid "Overview of all differences: click or drag to jump"
+msgstr "全部差异概览：点击或拖动跳转"
+
+msgid "Time only"
+msgstr "仅时间"
+
+msgid "Text only"
+msgstr "仅文本"
+
+msgid "Style/actor only"
+msgstr "仅样式/说话人"
+
+msgid "Other fields only"
+msgstr "仅其他字段"
+
+msgid "Several fields"
+msgstr "多项"
+
+msgid "Inserted"
+msgstr "新增"
+
+msgid "Removed"
+msgstr "删除"
+
+msgid "Style and actor"
+msgstr "样式和说话人"
+
+msgid "Other fields"
+msgstr "其他字段"
+
+msgid "+%d fields"
+msgstr "+%d 项"
+
+msgid "(empty)"
+msgstr "（空）"
+
+msgid "Right side"
+msgstr "右侧"
+
+msgid "Left side"
+msgstr "左侧"
+
+msgid " (%d in total)"
+msgstr "（共 %d 处）"
+
+msgid "Show:"
+msgstr "显示："
+
+msgid "Show only this kind of difference; Accept All and Reject All then apply to these"
+msgstr "只显示这一类差异；“应用全部更改 / 放弃全部更改”随之只作用于这一类"
+
+msgid "Show every kind of difference"
+msgstr "显示所有类别的差异"
+
+msgid "Ignore:"
+msgstr "忽略："
+
+msgid "Leave these fields out: they are not highlighted, not counted, and decisions here leave them as they are"
+msgstr "不看这些字段：不高亮、不计入差异，在此做出的决定也不改动它们"
+
+msgid "%s: keep the right side"
+msgstr "%s：保留右侧"
+
+msgid "%s: take the left side"
+msgstr "%s：采用左侧"
+
+msgid "Click to show the hidden lines"
+msgstr "点击显示隐藏的行"
+
+msgid "All"
+msgstr "全部"
+
+msgid "the %d differences shown"
+msgstr "当前显示的 %d 处差异"
+
+msgid "Ignored fields keep their current choice: %s"
+msgstr "忽略的字段保持原来的选择：%s"
+
 msgid "target project"
 msgstr "目标工程"
 
