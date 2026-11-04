@@ -578,7 +578,7 @@ void Project::CloseKeyframes() {
 	AnnounceKeyframesModified(keyframes);
 }
 
-void Project::LoadList(std::vector<agi::fs::path> const& files) {
+void Project::LoadList(std::vector<agi::fs::path> const& files, bool from_drop) {
 	// Check only: the list may contain subtitles, whose installation needs an
 	// exclusive borrow that a held registration would refuse. Each media step
 	// below takes its own registration.
@@ -593,6 +593,38 @@ void Project::LoadList(std::vector<agi::fs::path> const& files) {
 		".sub",
 		".ttxt"
 	};
+	auto is_subtitle = [&](std::string const& ext) {
+		return std::binary_search(std::begin(subsList), std::end(subsList), ext.c_str(),
+			[](const char *a, const char *b) { return strcmp(a, b) < 0; });
+	};
+
+	// Ask before loading any media or changing the current document. Use the
+	// first subtitle, just as ordinary list loading does, including TXT imports.
+	if (from_drop && (context->subsController->HasFile() || context->subsController->IsModified())) {
+		for (auto file : files) {
+			if (file.is_relative()) file = agi::fs::Absolute(file);
+			if (!agi::fs::FileExists(file)) continue;
+			auto ext = boost::to_lower_copy(file.extension().string());
+			if (ext == ".txt") {
+				// These probes do not install timecodes/keyframes or change MRU.
+				try { agi::vfr::Framerate probe(file); continue; } catch (...) { }
+				try { agi::keyframe::Load(file); continue; } catch (...) { }
+			}
+			else if (!is_subtitle(ext)) continue;
+			wxMessageDialog prompt(context->parent,
+				fmt_tl("Compare %s with the subtitles currently open?\nComparison keeps the current document open. Choose Open Normally to replace it.", file.filename()),
+				_("Compare Dropped Subtitles"), wxYES_NO | wxCANCEL | wxYES_DEFAULT | wxICON_QUESTION);
+			prompt.SetYesNoLabels(_("Compare"), _("Open Normally"));
+			auto choice = prompt.ShowModal();
+			if (choice == wxID_YES) {
+				context->videoController->Stop();
+				ShowCompareDialog(context, file);
+				return;
+			}
+			if (choice != wxID_NO || context->subsController->TryToClose() == wxCANCEL) return;
+			break;
+		}
+	}
 
 	auto video_formats = VideoProviderFactory::GetFileExtensions();
 	auto audio_formats = GetAudioProviderFileExtensions();
@@ -631,7 +663,7 @@ void Project::LoadList(std::vector<agi::fs::path> const& files) {
 			continue;
 		}
 
-		if (subs.empty() && std::binary_search(std::begin(subsList), std::end(subsList), ext.c_str(), [](const char *a, const char *b) { return strcmp(a, b) < 0; }))
+		if (subs.empty() && is_subtitle(ext))
 			subs = file;
 		if (video.empty() && search(video_formats, ext))
 			video = file;

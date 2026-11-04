@@ -2867,9 +2867,15 @@ class CompareHook : public wxModalDialogHook {
 public:
     std::vector<wxString> messages;
     int shown = 0;
+    int drop_prompts = 0, save_prompts = 0;
+    int drop_choice = wxID_CANCEL, save_choice = wxID_CANCEL;
     explicit CompareHook(std::function<void(wxDialog*)> action) : action(std::move(action)) { Register(); }
     int Enter(wxDialog* dialog) override {
-        if (auto message = dynamic_cast<wxMessageDialog*>(dialog)) { messages.push_back(message->GetMessage()); return wxID_OK; }
+        if (auto message = dynamic_cast<wxMessageDialog*>(dialog)) {
+            if (dialog->GetTitle() == "Compare Dropped Subtitles") { ++drop_prompts; return drop_choice; }
+            if (dialog->GetTitle() == "Unsaved changes") { ++save_prompts; return save_choice; }
+            messages.push_back(message->GetMessage()); return wxID_OK;
+        }
         if (dialog->GetTitle() != "Compare Subtitles") return wxID_NONE;
         ++shown;
         dialog->CallAfter([this, dialog] {
@@ -3178,4 +3184,86 @@ TEST_F(ordinary_edit, compare_command_refuses_while_editing_and_reports_unreadab
     ASSERT_EQ(3u, hook.messages.size());
     EXPECT_EQ(0, hook.shown);
     EXPECT_TRUE(c->subtitleAccess->TryWrite());
+}
+
+TEST_F(ordinary_edit, dropped_subtitles_compare_with_a_saved_document_without_replacing_it) {
+    Input("current");
+    auto original = WriteBaseline(*c, "drop-current.ass", [](AssFile&) {});
+    c->subsController->Save(original, "utf-8");
+    ASSERT_TRUE(c->subsController->HasFile()); ASSERT_FALSE(c->subsController->IsModified());
+    auto path = WriteBaseline(*c, "drop-baseline.ass", [](AssFile& f) { f.Events.front().Text = "baseline"; });
+    auto revision = c->subtitleEditGate.Revision(); auto undo = c->subsController->GetUndoDescription();
+    CompareHook hook(nullptr); hook.drop_choice = wxID_YES;
+    c->project->LoadList({path}, true);
+    EXPECT_EQ(1, hook.drop_prompts); EXPECT_EQ(1, hook.shown); EXPECT_EQ(0, hook.save_prompts);
+    EXPECT_EQ(original, c->subsController->Filename()); EXPECT_FALSE(c->subsController->IsModified());
+    EXPECT_EQ((std::vector<std::string>{"current"}), LiveTexts(*c));
+    EXPECT_EQ(revision, c->subtitleEditGate.Revision()); EXPECT_EQ(undo, c->subsController->GetUndoDescription());
+}
+TEST_F(ordinary_edit, dropped_subtitles_compare_unsaved_work_and_apply_as_one_undo_step) {
+    Input("unsaved"); ASSERT_FALSE(c->subsController->HasFile());
+    auto path = WriteBaseline(*c, "drop-unsaved.ass", [](AssFile& f) { f.Events.front().Text = "baseline"; });
+    CompareHook hook([&](wxDialog* dialog) {
+        EXPECT_EQ((std::vector<std::string>{"unsaved"}), LiveTexts(*c));
+        Press(dialog, "compare-reject-current");
+        button(dialog->FindWindow(wxID_OK), wxID_OK);
+    });
+    hook.drop_choice = wxID_YES;
+    c->project->LoadList({path}, true);
+    EXPECT_EQ(1, hook.drop_prompts); EXPECT_EQ(1, hook.shown); EXPECT_EQ(0, hook.save_prompts);
+    EXPECT_FALSE(c->subsController->HasFile());
+    EXPECT_EQ((std::vector<std::string>{"baseline"}), LiveTexts(*c));
+    c->subsController->Undo(); EXPECT_EQ((std::vector<std::string>{"unsaved"}), LiveTexts(*c));
+    c->subsController->Redo(); EXPECT_EQ((std::vector<std::string>{"baseline"}), LiveTexts(*c));
+}
+TEST_F(ordinary_edit, cancelled_subtitle_drop_changes_neither_document_nor_other_dropped_media) {
+    Input("keep"); auto revision = c->subtitleEditGate.Revision();
+    auto path = WriteBaseline(*c, "drop-cancel.ass", [](AssFile& f) { f.Events.front().Text = "other"; });
+    agi::fs::path timecodes((std::filesystem::current_path() / "drop-timecodes.txt").wstring());
+    { std::ofstream out(timecodes); out << "# timecode format v2\n0\n40\n80\n"; }
+    CompareHook hook(nullptr);
+    c->project->LoadList({timecodes, path}, true);
+    EXPECT_EQ(1, hook.drop_prompts); EXPECT_EQ(0, hook.shown); EXPECT_EQ(0, hook.save_prompts);
+    EXPECT_FALSE(c->project->CanCloseTimecodes()); EXPECT_FALSE(c->subsController->HasFile());
+    EXPECT_EQ(revision, c->subtitleEditGate.Revision());
+    EXPECT_EQ((std::vector<std::string>{"keep"}), LiveTexts(*c));
+}
+TEST_F(ordinary_edit, normal_subtitle_drop_preserves_the_unsaved_changes_confirmation) {
+    Input("keep");
+    auto path = WriteBaseline(*c, "drop-normal.ass", [](AssFile& f) { f.Events.front().Text = "other"; });
+    CompareHook hook(nullptr); hook.drop_choice = wxID_NO;
+    c->project->LoadList({path}, true); // Cancel the save/discard prompt.
+    EXPECT_EQ(1, hook.drop_prompts); EXPECT_EQ(1, hook.save_prompts); EXPECT_EQ(0, hook.shown);
+    EXPECT_EQ((std::vector<std::string>{"keep"}), LiveTexts(*c));
+    hook.save_choice = wxID_NO;
+    c->project->LoadList({path}, true); // Explicitly discard and open normally.
+    EXPECT_EQ(2, hook.drop_prompts); EXPECT_EQ(2, hook.save_prompts);
+    EXPECT_EQ(path, c->subsController->Filename());
+    EXPECT_EQ((std::vector<std::string>{"other"}), LiveTexts(*c));
+}
+TEST_F(ordinary_edit, empty_workspace_and_non_drop_opens_do_not_prompt_for_comparison) {
+    c->project->CloseSubtitles();
+    ASSERT_FALSE(c->subsController->HasFile()); ASSERT_FALSE(c->subsController->IsModified());
+    auto path = WriteBaseline(*c, "drop-first.ass", [](AssFile& f) { f.Events.front().Text = "first"; });
+    CompareHook hook(nullptr);
+    c->project->LoadList({path}, true);
+    EXPECT_EQ(0, hook.drop_prompts); EXPECT_EQ(path, c->subsController->Filename());
+    EXPECT_EQ((std::vector<std::string>{"first"}), LiveTexts(*c));
+    auto other = WriteBaseline(*c, "drop-next.ass", [](AssFile& f) { f.Events.front().Text = "next"; });
+    c->project->LoadList({other});
+    EXPECT_EQ(0, hook.drop_prompts); EXPECT_EQ(other, c->subsController->Filename());
+}
+TEST_F(ordinary_edit, timecode_only_and_busy_subtitle_drops_do_not_offer_comparison) {
+    Input("keep");
+    agi::fs::path timecodes((std::filesystem::current_path() / "drop-only-timecodes.txt").wstring());
+    { std::ofstream out(timecodes); out << "# timecode format v2\n0\n40\n80\n"; }
+    CompareHook hook(nullptr);
+    c->project->LoadList({timecodes}, true);
+    EXPECT_EQ(0, hook.drop_prompts); EXPECT_TRUE(c->project->CanCloseTimecodes());
+    auto path = WriteBaseline(*c, "drop-busy.ass", [](AssFile& f) { f.Events.front().Text = "other"; });
+    auto comparison = c->subtitleEditGate.TryBeginComparison(); ASSERT_TRUE(comparison);
+    c->project->LoadList({path}, true);
+    EXPECT_EQ(0, hook.drop_prompts); EXPECT_EQ(0, hook.shown);
+    EXPECT_EQ((std::vector<std::string>{"keep"}), LiveTexts(*c));
+    EXPECT_FALSE(hook.messages.empty());
 }

@@ -164,6 +164,7 @@ public:
 
 	/// The file's path and filename if any, or platform-appropriate "untitled"
 	agi::fs::path Filename() const;
+	bool HasFile() const { return !filename.empty(); }
 
 	/// Does the file have unsaved changes?
 	bool IsModified() const;

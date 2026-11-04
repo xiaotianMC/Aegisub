@@ -8481,3 +8481,15 @@ msgstr "与另一个字幕文件并排比较，逐项应用或放弃差异"
 
 msgid "The subtitles cannot be compared while they are being edited.\nClose any open editing tool (such as the color picker, the styling assistant or an audio edit) and try again."
 msgstr "字幕正在编辑，无法比较。\n请关闭正在使用的编辑工具（如颜色选择器、样式助手或音频编辑）后重试。"
+
+msgid "Compare Dropped Subtitles"
+msgstr "对比拖入的字幕"
+
+msgid "Compare %s with the subtitles currently open?\nComparison keeps the current document open. Choose Open Normally to replace it."
+msgstr "是否将 %s 与当前打开的字幕进行对比？\n对比会保留当前文档；选择“正常打开”则会替换当前字幕。"
+
+msgid "Compare"
+msgstr "对比"
+
+msgid "Open Normally"
+msgstr "正常打开"

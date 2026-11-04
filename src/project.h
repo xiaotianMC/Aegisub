@@ -115,7 +115,8 @@ public:
 	bool CanCloseKeyframes() const { return !keyframes_file.empty(); }
 	std::vector<int> const& Keyframes() const { return keyframes; }
 
-	void LoadList(std::vector<agi::fs::path> const& files);
+	/// File drops may offer comparison before replacing an open subtitle document.
+	void LoadList(std::vector<agi::fs::path> const& files, bool from_drop = false);
 
 	DEFINE_SIGNAL_ADDERS(AnnounceAudioProviderModified, AddAudioProviderListener)
 	DEFINE_SIGNAL_ADDERS(AnnounceVideoProviderModified, AddVideoProviderListener)
