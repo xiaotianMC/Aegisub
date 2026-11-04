@@ -294,7 +294,7 @@ struct subtitle_compare final : public Command {
 	CMD_NAME("subtitle/compare")
 	STR_MENU("Co&mpare with Subtitles File...")
 	STR_DISP("Compare with Subtitles File")
-	STR_HELP("Compare the subtitles with another file and apply chosen differences")
+	STR_HELP("Compare the subtitles with another file side by side and accept or reject each difference")
 
 	void operator()(agi::Context *c) override {
 		// Refuse before the file dialog while anything holds the subtitles
