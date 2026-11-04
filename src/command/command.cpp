@@ -20,7 +20,9 @@
 #include <libaegisub/log.h>
 #include <libaegisub/string.h>
 
+#include "include/aegisub/context.h"
 #include "include/aegisub/hotkey.h"
+#include "workspace_tabs.h"
 
 #include <wx/intl.h>
 
@@ -60,6 +62,8 @@ Command *get(std::string_view name) {
 
 void call(std::string_view name, agi::Context *c) {
 	Command &cmd = *find_command(name)->second;
+	// The comparison tab locks the subtitles: refuse commands there.
+	if (c->workspaceTabs && !c->workspaceTabs->AllowsCommand(name)) return;
 	if (cmd.Validate(c))
 		cmd(c);
 }

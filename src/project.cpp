@@ -38,6 +38,7 @@
 #include "subs_controller.h"
 #include "utils.h"
 #include "video_controller.h"
+#include "workspace_tabs.h"
 #include "video_display.h"
 #include "video_provider_manager.h"
 
@@ -131,6 +132,8 @@ std::optional<agi::SubtitleEditGate::ProjectWriteLease> Project::BeginMediaChang
 		return std::nullopt;
 	}
 	auto registration = context->subtitleEditGate.TryBeginProjectWrite();
+	if (!registration && context->workspaceTabs && context->workspaceTabs->Comparison())
+		context->workspaceTabs->ShowComparison(); // the reason, in front
 	if (!registration)
 		wxMessageBox(_("The subtitles are being compared. Finish the comparison before opening or closing files."),
 			title, wxOK | wxICON_ERROR | wxCENTER, context->parent);
@@ -618,7 +621,7 @@ void Project::LoadList(std::vector<agi::fs::path> const& files, bool from_drop) 
 			auto choice = prompt.ShowModal();
 			if (choice == wxID_YES) {
 				context->videoController->Stop();
-				ShowCompareDialog(context, file);
+				OpenCompareTab(context, file);
 				return;
 			}
 			if (choice != wxID_NO || context->subsController->TryToClose() == wxCANCEL) return;

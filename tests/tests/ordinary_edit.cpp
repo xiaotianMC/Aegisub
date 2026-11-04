@@ -24,6 +24,7 @@
 #include "dialog_style_editor.h"
 #include "ass_exporter.h"
 #include "dialogs.h"
+#include "workspace_tabs.h"
 #include "dialog_manager.h"
 #include "compat.h"
 #include "utils.h"
@@ -120,12 +121,17 @@ class ordinary_edit : public testing::Test {
 protected:
     std::unique_ptr<agi::Context> c;
     wxFrame *window = nullptr;
+    WorkspaceTabs *tabs = nullptr;
     SubsEditBox *box = nullptr;
     SubsTextEditCtrl *editor = nullptr;
     void SetUp() override {
         c = std::make_unique<agi::Context>();
         window = new wxFrame(nullptr, wxID_ANY, "isolated editing tests");
         c->parent = window;
+        tabs = new WorkspaceTabs(window, c.get());
+        tabs->SetSize(1200, 800);
+        c->workspaceTabs = tabs;
+        tabs->SetEditor(new wxPanel(tabs->Book(), -1));
         box = new SubsEditBox(window, c.get());
         for (auto child : box->GetChildren())
             if (auto text = dynamic_cast<SubsTextEditCtrl*>(child)) editor = text;
@@ -2861,27 +2867,31 @@ TEST_F(ordinary_edit, ending_a_comparison_releases_it_and_stale_or_foreign_use_i
 
 // ---- C2-B: comparison window ------------------------------------------------
 namespace {
-// Records message boxes; runs @p action on the comparison dialog once it is shown.
+// Records message boxes and answers them; Settle() runs @p action on the
+// comparison tab once it is open, then ends the comparison if still open.
 class CompareHook : public wxModalDialogHook {
-    std::function<void(wxDialog*)> action;
+    std::function<void(wxWindow*)> action;
 public:
+    static inline CompareHook* active = nullptr;
     std::vector<wxString> messages;
     int shown = 0;
     int drop_prompts = 0, save_prompts = 0;
     int drop_choice = wxID_CANCEL, save_choice = wxID_CANCEL;
-    explicit CompareHook(std::function<void(wxDialog*)> action) : action(std::move(action)) { Register(); }
+    explicit CompareHook(std::function<void(wxWindow*)> action) : action(std::move(action)) { Register(); active = this; }
+    ~CompareHook() { if (active == this) active = nullptr; }
+    void Settle(agi::Context& c) {
+        auto page = c.workspaceTabs ? c.workspaceTabs->Comparison() : nullptr;
+        if (!page) return;
+        ++shown;
+        if (action) action(page);
+        if (c.workspaceTabs->Comparison()) c.workspaceTabs->CloseComparison(false);
+    }
     int Enter(wxDialog* dialog) override {
         if (auto message = dynamic_cast<wxMessageDialog*>(dialog)) {
             if (dialog->GetTitle() == "Compare Dropped Subtitles") { ++drop_prompts; return drop_choice; }
             if (dialog->GetTitle() == "Unsaved changes") { ++save_prompts; return save_choice; }
             messages.push_back(message->GetMessage()); return wxID_OK;
         }
-        if (dialog->GetTitle() != "Compare Subtitles") return wxID_NONE;
-        ++shown;
-        dialog->CallAfter([this, dialog] {
-            if (action) action(dialog);
-            if (dialog->IsModal() && dialog->IsShown()) dialog->EndModal(wxID_CANCEL);
-        });
         return wxID_NONE;
     }
     void Exit(wxDialog*) override { }
@@ -2904,6 +2914,13 @@ wxString Report(wxWindow* dialog) {
     auto t = Named<wxTextCtrl>(dialog, "compare-report");
     return t ? t->GetValue() : wxString();
 }
+// Open the comparison tab for @p path and settle it with the active hook.
+// True if the comparison ended by writing to the subtitles.
+bool RunCompare(agi::Context* c, agi::fs::path const& path) {
+    if (!OpenCompareTab(c, path)) return false;
+    if (CompareHook::active) CompareHook::active->Settle(*c);
+    return !c->workspaceTabs->Comparison() && c->workspaceTabs->LastApplied();
+}
 agi::fs::path WriteBaseline(agi::Context& c, std::string const& name, std::function<void(AssFile&)> edit) {
     auto file = c.subtitleAccess->Snapshot();
     edit(*file);
@@ -2921,7 +2938,7 @@ TEST_F(ordinary_edit, compare_window_writes_decisions_as_one_undo_step) {
     });
     bool writer_blocked = false, unchanged_while_deciding = false;
     wxString counter, finish_first, report, stats;
-    CompareHook hook([&](wxDialog* dialog) {
+    CompareHook hook([&](wxWindow* dialog) {
         writer_blocked = !c->subtitleAccess->TryWrite();
         counter = Label(dialog, "compare-counter");
         finish_first = dialog->FindWindow(wxID_OK)->GetLabel();
@@ -2935,7 +2952,7 @@ TEST_F(ordinary_edit, compare_window_writes_decisions_as_one_undo_step) {
         stats = Label(dialog, "compare-stats");
         button(dialog->FindWindow(wxID_OK), wxID_OK);
     });
-    EXPECT_TRUE(ShowCompareDialog(c.get(), path));
+    EXPECT_TRUE(RunCompare(c.get(), path));
     EXPECT_EQ(1, hook.shown); EXPECT_TRUE(hook.messages.empty());
     EXPECT_TRUE(writer_blocked); EXPECT_TRUE(unchanged_while_deciding);
     EXPECT_EQ("Difference 1 of 2", counter);
@@ -2956,12 +2973,12 @@ TEST_F(ordinary_edit, compare_window_accepting_keeps_the_project_unchanged) {
     });
     auto texts = LiveTexts(*c); auto undo = c->subsController->GetUndoDescription();
     // Accepting keeps the open subtitles as they are: Done ends the comparison unchanged.
-    CompareHook done([&](wxDialog* dialog) {
+    CompareHook done([&](wxWindow* dialog) {
         Press(dialog, "compare-accept-current");
         EXPECT_EQ("Done", wxStripMenuCodes(dialog->FindWindow(wxID_OK)->GetLabel()));
         button(dialog->FindWindow(wxID_OK), wxID_OK);
     });
-    EXPECT_FALSE(ShowCompareDialog(c.get(), path));
+    EXPECT_FALSE(RunCompare(c.get(), path));
     EXPECT_EQ(texts, LiveTexts(*c)); EXPECT_EQ(undo, c->subsController->GetUndoDescription());
     EXPECT_TRUE(c->subtitleAccess->TryWrite());
 }
@@ -2970,12 +2987,12 @@ TEST_F(ordinary_edit, compare_window_cancel_with_decisions_confirms_and_changes_
     auto path = WriteBaseline(*c, "compare-cancel.ass", [](AssFile& f) { f.Events.front().Text = "baseline text"; });
     auto texts = LiveTexts(*c); auto undo = c->subsController->GetUndoDescription();
     bool closed = false;
-    CompareHook hook([&](wxDialog* dialog) {
+    CompareHook hook([&](wxWindow* dialog) {
         Press(dialog, "compare-reject-current");
         button(dialog->FindWindow(wxID_CANCEL), wxID_CANCEL); // confirmation answered OK by the hook
-        closed = !dialog->IsModal() || !dialog->IsShown();
+        closed = !tabs->Comparison();
     });
-    EXPECT_FALSE(ShowCompareDialog(c.get(), path));
+    EXPECT_FALSE(RunCompare(c.get(), path));
     ASSERT_EQ(1u, hook.messages.size());
     EXPECT_NE(wxNOT_FOUND, hook.messages[0].Find("discard 1 decisions")) << hook.messages[0];
     EXPECT_TRUE(closed);
@@ -2989,7 +3006,7 @@ TEST_F(ordinary_edit, compare_window_takes_only_the_chosen_fields) {
     });
     wxString stats, actor_tip;
     int actor_y = -1, text_y = -1;
-    CompareHook hook([&](wxDialog* dialog) {
+    CompareHook hook([&](wxWindow* dialog) {
         // The current difference changed two fields: each gets a detail row
         // under it, with its own arrows in the gutter.
         auto gutter = dialog->FindWindow("compare-gutter"); ASSERT_NE(nullptr, gutter);
@@ -3010,7 +3027,7 @@ TEST_F(ordinary_edit, compare_window_takes_only_the_chosen_fields) {
         stats = Label(dialog, "compare-stats");
         button(dialog->FindWindow(wxID_OK), wxID_OK);
     });
-    EXPECT_TRUE(ShowCompareDialog(c.get(), path));
+    EXPECT_TRUE(RunCompare(c.get(), path));
     EXPECT_LT(text_y, actor_y); // in field order, text first
     EXPECT_EQ("0 pending, 0 accepted, 0 rejected, 1 partial", stats);
     EXPECT_EQ("current", LiveRead(*c).Events.front().Text.get());
@@ -3023,7 +3040,7 @@ TEST_F(ordinary_edit, compare_window_decides_detail_fields_by_keyboard) {
     });
     wxString resting, first, second, clamped, after_left, after_escape, whole, undone;
     bool still_open = false;
-    CompareHook hook([&](wxDialog* dialog) {
+    CompareHook hook([&](wxWindow* dialog) {
         auto pane = dialog->FindWindow("compare-right"); ASSERT_NE(nullptr, pane);
         auto hint = Named<wxStaticText>(dialog, "compare-hint"); ASSERT_NE(nullptr, hint);
         auto key = [&](wxWindow* target, wxEventType type, int code, bool ctrl) {
@@ -3038,14 +3055,14 @@ TEST_F(ordinary_edit, compare_window_decides_detail_fields_by_keyboard) {
         after_left = Label(dialog, "compare-stats");
         key(dialog, wxEVT_CHAR_HOOK, WXK_ESCAPE, false);                           // leaves the field only
         after_escape = hint->GetLabelText();
-        still_open = dialog->IsModal() && dialog->IsShown();
+        still_open = tabs->Comparison() != nullptr;
         key(pane, wxEVT_KEY_DOWN, WXK_RIGHT, true);                                // no field: the whole line
         whole = Label(dialog, "compare-stats");
         Press(dialog, "compare-undo");
         undone = Label(dialog, "compare-stats");
         button(dialog->FindWindow(wxID_OK), wxID_OK);
     });
-    EXPECT_TRUE(ShowCompareDialog(c.get(), path));
+    EXPECT_TRUE(RunCompare(c.get(), path));
     EXPECT_NE(wxNOT_FOUND, resting.Find("Ctrl+Up/Down")) << resting;
     EXPECT_TRUE(first.StartsWith("Text: Ctrl+Left")) << first;
     EXPECT_TRUE(second.StartsWith("Actor: Ctrl+Left")) << second;
@@ -3067,7 +3084,7 @@ TEST_F(ordinary_edit, compare_window_filters_by_category_and_leaves_ignored_fiel
     });
     wxString all_counter, time_counter, time_stats, ignored_counter, ignored_stats;
     bool time_hidden = false;
-    CompareHook hook([&](wxDialog* dialog) {
+    CompareHook hook([&](wxWindow* dialog) {
         auto toggle = [&](char const* name) {
             auto b = Named<wxToggleButton>(dialog, name); ASSERT_NE(nullptr, b);
             b->SetValue(true);
@@ -3098,7 +3115,7 @@ TEST_F(ordinary_edit, compare_window_filters_by_category_and_leaves_ignored_fiel
         ignored_stats = Label(dialog, "compare-stats");
         button(dialog->FindWindow(wxID_OK), wxID_OK);
     });
-    EXPECT_TRUE(ShowCompareDialog(c.get(), path));
+    EXPECT_TRUE(RunCompare(c.get(), path));
     EXPECT_EQ("Difference 1 of 2", all_counter);
     EXPECT_EQ("Difference 1 of 1 (2 in total)", time_counter);
     EXPECT_EQ("1 pending, 0 accepted, 1 rejected, 0 partial", time_stats);
@@ -3125,7 +3142,7 @@ TEST_F(ordinary_edit, compare_window_shows_refusals_and_batch_actions_confirm_th
     auto texts = LiveTexts(*c);
     bool disabled = false, enabled_after_all = false, undone = false;
     wxString report;
-    CompareHook hook([&](wxDialog* dialog) {
+    CompareHook hook([&](wxWindow* dialog) {
         Press(dialog, "compare-reject-current");          // only one member of the group
         report = Report(dialog);
         disabled = !dialog->FindWindow(wxID_OK)->IsEnabled();
@@ -3135,7 +3152,7 @@ TEST_F(ordinary_edit, compare_window_shows_refusals_and_batch_actions_confirm_th
         undone = !dialog->FindWindow(wxID_OK)->IsEnabled();
         Press(dialog, "compare-redo");
     });
-    EXPECT_FALSE(ShowCompareDialog(c.get(), path));
+    EXPECT_FALSE(RunCompare(c.get(), path));
     EXPECT_TRUE(disabled); EXPECT_TRUE(enabled_after_all); EXPECT_TRUE(undone);
     EXPECT_NE(wxNOT_FOUND, report.Find("Bound lines must be applied together")) << report;
     ASSERT_EQ(1u, hook.messages.size());
@@ -3149,7 +3166,7 @@ TEST_F(ordinary_edit, compare_window_with_the_project_on_the_left_accepts_the_fi
         f.Events.front().Text = "revised";
         auto line = new AssDialogue; line->Text = "new line"; line->Start = 9000; line->End = 9500; f.Events.push_back(*line);
     });
-    CompareHook hook([&](wxDialog* dialog) {
+    CompareHook hook([&](wxWindow* dialog) {
         Press(dialog, "compare-swap");
         EXPECT_NE(wxNOT_FOUND, Label(dialog, "compare-left-title").Find("target project"));
         auto all = Named<wxCheckBox>(dialog, "compare-check-all"); ASSERT_NE(nullptr, all);
@@ -3160,7 +3177,7 @@ TEST_F(ordinary_edit, compare_window_with_the_project_on_the_left_accepts_the_fi
         Press(dialog, "compare-accept-checked");
         button(dialog->FindWindow(wxID_OK), wxID_OK);
     });
-    EXPECT_TRUE(ShowCompareDialog(c.get(), path));
+    EXPECT_TRUE(RunCompare(c.get(), path));
     ASSERT_EQ(1u, hook.messages.size());
     EXPECT_NE(wxNOT_FOUND, hook.messages[0].Find("the 2 selected differences")) << hook.messages[0];
     EXPECT_EQ((std::vector<std::string>{"revised", "new line"}), LiveTexts(*c));
@@ -3175,15 +3192,107 @@ TEST_F(ordinary_edit, compare_command_refuses_while_editing_and_reports_unreadab
     EXPECT_NE(wxNOT_FOUND, hook.messages[0].Find("being edited"));
     agi::fs::path bad((std::filesystem::current_path() / "compare-bad.xyz").wstring());
     { std::ofstream out(bad); out << "not subtitles"; }
-    EXPECT_FALSE(ShowCompareDialog(c.get(), bad));
+    EXPECT_FALSE(RunCompare(c.get(), bad));
     ASSERT_EQ(2u, hook.messages.size());
     EXPECT_EQ(0, hook.shown);
     // Identical file: told there is nothing to apply, no window.
     auto same = WriteBaseline(*c, "compare-same.ass", [](AssFile&) {});
-    EXPECT_FALSE(ShowCompareDialog(c.get(), same));
+    EXPECT_FALSE(RunCompare(c.get(), same));
     ASSERT_EQ(3u, hook.messages.size());
     EXPECT_EQ(0, hook.shown);
     EXPECT_TRUE(c->subtitleAccess->TryWrite());
+}
+
+TEST_F(ordinary_edit, compare_tab_locks_the_editor_until_the_comparison_ends) {
+    Input("current");
+    auto path = WriteBaseline(*c, "compare-tab.ass", [](AssFile& f) { f.Events.front().Text = "baseline"; });
+    CompareHook hook(nullptr);
+    int frame_keys = 0;
+    window->Bind(wxEVT_CHAR_HOOK, [&](wxKeyEvent& e) { ++frame_keys; e.Skip(); });
+    auto key = [&](wxWindow* target, int code, int mods) {
+        wxKeyEvent event(wxEVT_CHAR_HOOK); event.m_keyCode = code;
+        event.SetControlDown(mods & wxMOD_CONTROL); event.SetShiftDown(mods & wxMOD_SHIFT);
+        event.SetEventObject(target); target->GetEventHandler()->ProcessEvent(event);
+    };
+    // Keys in the editor reach the main window as before.
+    key(tabs->Book()->GetChildren().front(), 'S', wxMOD_CONTROL);
+    EXPECT_EQ(1, frame_keys);
+    EXPECT_FALSE(Named(tabs, "workspace-strip")->IsShown());
+
+    ASSERT_TRUE(OpenCompareTab(c.get(), path));
+    auto page = tabs->Comparison(); ASSERT_NE(nullptr, page);
+    EXPECT_TRUE(tabs->ComparisonInFront());
+    EXPECT_TRUE(Named(tabs, "workspace-strip")->IsShown());
+    EXPECT_FALSE(Named(tabs, "workspace-banner")->IsShown());
+    EXPECT_EQ("Compare: compare-tab.ass", Label(tabs, "workspace-tab-compare"));
+    EXPECT_FALSE(c->subtitleAccess->TryWrite());
+    // In front, the tab keeps menu and hotkey commands off the locked subtitles.
+    EXPECT_FALSE(tabs->AllowsCommand("edit/undo"));
+    EXPECT_NE("", Label(tabs, "workspace-notice"));
+    EXPECT_TRUE(tabs->AllowsCommand("app/exit"));
+    // Its own shortcuts work there, and no key goes on to the main window.
+    auto pane = page->FindWindow("compare-right"); ASSERT_NE(nullptr, pane);
+    Press(page, "compare-reject-current");
+    EXPECT_EQ("0 pending, 0 accepted, 1 rejected, 0 partial", Label(page, "compare-stats"));
+    key(pane, 'Z', wxMOD_CONTROL);
+    EXPECT_EQ("1 pending, 0 accepted, 0 rejected, 0 partial", Label(page, "compare-stats"));
+    key(pane, 'Y', wxMOD_CONTROL);
+    EXPECT_EQ("0 pending, 0 accepted, 1 rejected, 0 partial", Label(page, "compare-stats"));
+    key(pane, 'S', wxMOD_CONTROL);
+    EXPECT_EQ(1, frame_keys);
+
+    // The editor tab says it is locked, and leads back.
+    auto edit = Named<wxToggleButton>(tabs, "workspace-tab-edit"); ASSERT_NE(nullptr, edit);
+    wxCommandEvent toggle(wxEVT_TOGGLEBUTTON, edit->GetId()); toggle.SetEventObject(edit);
+    edit->GetEventHandler()->ProcessEvent(toggle);
+    EXPECT_FALSE(tabs->ComparisonInFront());
+    EXPECT_TRUE(Named(tabs, "workspace-banner")->IsShown());
+    EXPECT_NE(wxNOT_FOUND, Label(tabs, "workspace-banner-text").Find("compare-tab.ass"));
+    EXPECT_TRUE(tabs->AllowsCommand("edit/undo"));     // runs, and finds the subtitles locked
+    EXPECT_FALSE(c->subtitleAccess->TryWrite());
+    Press(tabs, "workspace-banner-back");
+    EXPECT_TRUE(tabs->ComparisonInFront());
+
+    // Ending it from the tab strip confirms the decision it discards.
+    Press(tabs, "workspace-tab-close");
+    ASSERT_EQ(1u, hook.messages.size());
+    EXPECT_NE(wxNOT_FOUND, hook.messages[0].Find("discard 1 decisions")) << hook.messages[0];
+    EXPECT_EQ(nullptr, tabs->Comparison());
+    EXPECT_FALSE(tabs->LastApplied());
+    EXPECT_FALSE(Named(tabs, "workspace-strip")->IsShown());
+    EXPECT_FALSE(Named(tabs, "workspace-banner")->IsShown());
+    EXPECT_TRUE(c->subtitleAccess->TryWrite());
+    EXPECT_EQ((std::vector<std::string>{"current"}), LiveTexts(*c));
+}
+TEST_F(ordinary_edit, compare_tab_is_one_at_a_time_and_refuses_drops_while_open) {
+    Input("current");
+    auto path = WriteBaseline(*c, "compare-one.ass", [](AssFile& f) { f.Events.front().Text = "baseline"; });
+    auto other = WriteBaseline(*c, "compare-two.ass", [](AssFile& f) { f.Events.front().Text = "other"; });
+    CompareHook hook(nullptr);
+    ASSERT_TRUE(OpenCompareTab(c.get(), path));
+    auto page = tabs->Comparison();
+    tabs->ShowEditor();
+    // A second comparison brings the open one to the front instead.
+    EXPECT_FALSE(OpenCompareTab(c.get(), other));
+    EXPECT_EQ(page, tabs->Comparison()); EXPECT_TRUE(tabs->ComparisonInFront());
+    ASSERT_EQ(1u, hook.messages.size());
+    EXPECT_NE(wxNOT_FOUND, hook.messages[0].Find("already open")) << hook.messages[0];
+    tabs->ShowEditor();
+    cmd::call("subtitle/compare", c.get());               // no file dialog: the open tab
+    EXPECT_TRUE(tabs->ComparisonInFront()); EXPECT_EQ(1u, hook.messages.size());
+    // Dropped files cannot replace the subtitles while they are compared.
+    tabs->ShowEditor();
+    c->project->LoadList({other}, true);
+    EXPECT_TRUE(tabs->ComparisonInFront());
+    EXPECT_EQ(0, hook.drop_prompts);
+    ASSERT_EQ(2u, hook.messages.size());
+    EXPECT_NE(wxNOT_FOUND, hook.messages[1].Find("being compared")) << hook.messages[1];
+    // Closing the window without a veto ends it without asking.
+    Press(page, "compare-reject-current");
+    EXPECT_TRUE(tabs->CloseComparison(false));
+    EXPECT_EQ(2u, hook.messages.size());
+    EXPECT_TRUE(c->subtitleAccess->TryWrite());
+    EXPECT_EQ((std::vector<std::string>{"current"}), LiveTexts(*c));
 }
 
 TEST_F(ordinary_edit, dropped_subtitles_compare_with_a_saved_document_without_replacing_it) {
@@ -3195,6 +3304,7 @@ TEST_F(ordinary_edit, dropped_subtitles_compare_with_a_saved_document_without_re
     auto revision = c->subtitleEditGate.Revision(); auto undo = c->subsController->GetUndoDescription();
     CompareHook hook(nullptr); hook.drop_choice = wxID_YES;
     c->project->LoadList({path}, true);
+    hook.Settle(*c);
     EXPECT_EQ(1, hook.drop_prompts); EXPECT_EQ(1, hook.shown); EXPECT_EQ(0, hook.save_prompts);
     EXPECT_EQ(original, c->subsController->Filename()); EXPECT_FALSE(c->subsController->IsModified());
     EXPECT_EQ((std::vector<std::string>{"current"}), LiveTexts(*c));
@@ -3203,13 +3313,14 @@ TEST_F(ordinary_edit, dropped_subtitles_compare_with_a_saved_document_without_re
 TEST_F(ordinary_edit, dropped_subtitles_compare_unsaved_work_and_apply_as_one_undo_step) {
     Input("unsaved"); ASSERT_FALSE(c->subsController->HasFile());
     auto path = WriteBaseline(*c, "drop-unsaved.ass", [](AssFile& f) { f.Events.front().Text = "baseline"; });
-    CompareHook hook([&](wxDialog* dialog) {
+    CompareHook hook([&](wxWindow* dialog) {
         EXPECT_EQ((std::vector<std::string>{"unsaved"}), LiveTexts(*c));
         Press(dialog, "compare-reject-current");
         button(dialog->FindWindow(wxID_OK), wxID_OK);
     });
     hook.drop_choice = wxID_YES;
     c->project->LoadList({path}, true);
+    hook.Settle(*c);
     EXPECT_EQ(1, hook.drop_prompts); EXPECT_EQ(1, hook.shown); EXPECT_EQ(0, hook.save_prompts);
     EXPECT_FALSE(c->subsController->HasFile());
     EXPECT_EQ((std::vector<std::string>{"baseline"}), LiveTexts(*c));

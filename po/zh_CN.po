@@ -8493,3 +8493,33 @@ msgstr "对比"
 
 msgid "Open Normally"
 msgstr "正常打开"
+
+msgid "Subtitles"
+msgstr "字幕编辑"
+
+msgid "The subtitle editor. It is locked while the comparison is open."
+msgstr "字幕编辑器。对比打开期间它处于锁定状态。"
+
+msgid "The open comparison"
+msgstr "当前打开的对比"
+
+msgid "End the comparison without writing to the subtitles"
+msgstr "结束对比，不写入字幕"
+
+msgid "Back to Comparison"
+msgstr "返回对比"
+
+msgid "End Comparison"
+msgstr "结束对比"
+
+msgid "Compare: %s"
+msgstr "对比：%s"
+
+msgid "Comparing with %s. The subtitles cannot be edited until the comparison ends."
+msgstr "正在与 %s 对比。对比结束前不能编辑字幕。"
+
+msgid "This command is not available in the comparison tab. Switch to the Subtitles tab to use it."
+msgstr "对比页中不能使用此命令，请切换到“字幕编辑”标签页。"
+
+msgid "A comparison is already open. End it before comparing with another file."
+msgstr "已经有一个对比处于打开状态。请先结束它，再与其他文件对比。"

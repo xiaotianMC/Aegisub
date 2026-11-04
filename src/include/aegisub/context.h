@@ -36,6 +36,7 @@ class BaseGrid;
 class TextSelectionController;
 class VideoController;
 class VideoDisplay;
+class WorkspaceTabs;
 class wxWindow;
 // Test-only attorney, defined solely under tests/support (enforced by the
 // owner-access API check). Production code cannot name the live model.
@@ -82,6 +83,7 @@ public:
 	std::unique_ptr<DialogManager> dialog;
 	FrameMain *frame = nullptr;
 	VideoDisplay *videoDisplay = nullptr;
+	WorkspaceTabs *workspaceTabs = nullptr; ///< The editor and comparison tabs
 
 	Context();
 	~Context();

@@ -49,6 +49,7 @@
 #include "../subs_controller.h"
 #include "../subtitle_format.h"
 #include "../utils.h"
+#include "../workspace_tabs.h"
 #include "../video_controller.h"
 
 #include <libaegisub/address_of_adaptor.h>
@@ -297,6 +298,11 @@ struct subtitle_compare final : public Command {
 	STR_HELP("Compare the subtitles with another file side by side and accept or reject each difference")
 
 	void operator()(agi::Context *c) override {
+		// One comparison at a time: bring the open one to the front.
+		if (c->workspaceTabs && c->workspaceTabs->Comparison()) {
+			c->workspaceTabs->ShowComparison();
+			return;
+		}
 		// Refuse before the file dialog while anything holds the subtitles
 		// (the probe is released at once; the comparison starts after reading).
 		if (!c->subtitleEditGate.TryBeginComparison()) {
@@ -307,7 +313,7 @@ struct subtitle_compare final : public Command {
 		c->videoController->Stop();
 		auto filename = OpenFileSelector(c, _("Compare with Subtitles File"), "Path/Last/Subtitles", "", "", SubtitleFormat::GetWildcards(0), c->parent);
 		if (!filename.empty())
-			ShowCompareDialog(c, filename);
+			OpenCompareTab(c, filename);
 	}
 };
 

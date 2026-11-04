@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: ISC
 // C2-C diff editor: compare the open subtitles with a subtitle file side by
 // side, decide on each difference, and write the decisions to the project as
-// one undoable change (docs/subtitle-compare-ui.md). Modal: while it is open
-// the comparison session freezes every other edit anyway, and nothing reaches
-// the project until "Write to Project".
+// one undoable change (docs/subtitle-compare-ui.md). It opens as a tab of the
+// main window (workspace_tabs.h): the comparison session it owns freezes every
+// other edit while it is open, and nothing reaches the project until "Write
+// to Project".
 #include "dialogs.h"
 
 #include "charset_detect.h"
@@ -16,6 +17,7 @@
 #include "subtitle_compare.h"
 #include "subtitle_compare_view.h"
 #include "subtitle_format.h"
+#include "workspace_tabs.h"
 
 #include <libaegisub/charset.h>
 #include <libaegisub/exception.h>
@@ -23,8 +25,6 @@
 #include <wx/button.h>
 #include <wx/checkbox.h>
 #include <wx/dcbuffer.h>
-#include <wx/dialog.h>
-#include <wx/display.h>
 #include <wx/menu.h>
 #include <wx/msgdlg.h>
 #include <wx/panel.h>
@@ -199,13 +199,13 @@ wxString group_label(view::Category c) {
     }
 }
 
-class DialogCompare;
+class ComparePanel;
 
 // One side of the aligned view. Both panes show the same rows; the line
 // numbers are in the gutter between them (DiffGutter). The right pane also
 // carries the check boxes, the per-difference actions and the overview ruler.
 class DiffPane final : public wxWindow {
-    DialogCompare& ed;
+    ComparePanel& ed;
     Side side;
     wxScrollBar *vbar, *hbar;
     int top = 0, xoff = 0;
@@ -240,7 +240,7 @@ class DiffPane final : public wxWindow {
     /// Repaint this pane and the gutter, which follows its scroll position.
     void Redraw();
 public:
-    DiffPane(wxWindow* parent, DialogCompare& ed, Side side);
+    DiffPane(wxWindow* parent, ComparePanel& ed, Side side);
     int Top() const { return top; }
     /// Client x where the row area starts (after the left pane's scroll bar).
     int RowsX() const { return side == Side::Left ? vbar->GetSize().GetWidth() : 0; }
@@ -262,7 +262,7 @@ public:
 // resets the difference to pending. On the detail rows of the current
 // difference the arrows choose one field.
 class DiffGutter final : public wxWindow {
-    DialogCompare& ed;
+    ComparePanel& ed;
     int hover_row = -1;
     Part hover_part = Part::None;
     Side hover_side = Side::Left;
@@ -278,15 +278,15 @@ class DiffGutter final : public wxWindow {
     void OnMouse(wxMouseEvent& event);
     void DrawStrip(wxDC& dc, Side side, int row, int y);
 public:
-    DiffGutter(wxWindow* parent, DialogCompare& ed);
+    DiffGutter(wxWindow* parent, ComparePanel& ed);
     int Width() const;
 };
 
-class DialogCompare final : public wxDialog {
+class ComparePanel final : public ComparisonPage {
     friend class DiffPane;
     friend class DiffGutter;
     agi::Context *c;
-    SubtitleComparison& comparison;
+    SubtitleComparison comparison;
     view::State state;
     Palette pal;
     wxString file_name, project_name;
@@ -335,9 +335,14 @@ class DialogCompare final : public wxDialog {
     bool ConfirmBatch(std::vector<size_t> const& entries, Decision d, bool all);
     void Batch(std::vector<size_t> const& entries, Decision d, bool all);
     void OnFinish();
-    void OnCancel();
+    /// Handle the window's own shortcuts; false for keys left to the focused control.
+    bool OnKey(wxKeyEvent& event);
+    /// Release the comparison and remove the tab.
+    void End(bool applied);
 public:
-    DialogCompare(agi::Context *c, SubtitleComparison& comparison, wxString const& name);
+    ComparePanel(wxWindow* parent, agi::Context *c, SubtitleComparison&& session, wxString const& name);
+    bool TryClose(bool ask) override;
+    void Started() override;
 
     // used by the panes and the gutter
     std::optional<size_t> CurrentEntry() const;
@@ -384,7 +389,7 @@ public:
 };
 
 // ---- DiffPane ----
-DiffPane::DiffPane(wxWindow* parent, DialogCompare& ed, Side side)
+DiffPane::DiffPane(wxWindow* parent, ComparePanel& ed, Side side)
 : wxWindow(parent, -1, wxDefaultPosition, wxSize(300, 200), wxWANTS_CHARS | wxBORDER_THEME)
 , ed(ed)
 , side(side)
@@ -964,7 +969,7 @@ void DiffPane::DrawOverview(wxDC& dc, Geometry const& g) {
 }
 
 // ---- DiffGutter ----
-DiffGutter::DiffGutter(wxWindow* parent, DialogCompare& ed)
+DiffGutter::DiffGutter(wxWindow* parent, ComparePanel& ed)
 : wxWindow(parent, -1, wxDefaultPosition, wxSize(80, 200))
 , ed(ed)
 {
@@ -1219,16 +1224,16 @@ void DiffGutter::OnMouse(wxMouseEvent& event) {
     }
 }
 
-// ---- DialogCompare ----
+// ---- ComparePanel ----
 enum {
-    ID_PREV = wxID_HIGHEST + 1, ID_NEXT, ID_ACCEPT_CURRENT, ID_REJECT_CURRENT, ID_UNDO, ID_REDO, ID_REDO_ALT,
+    ID_PREV = wxID_HIGHEST + 1, ID_NEXT, ID_ACCEPT_CURRENT, ID_REJECT_CURRENT, ID_UNDO, ID_REDO,
     ID_MENU_ACCEPT, ID_MENU_REJECT, ID_MENU_RESET, ID_MENU_CHECK, ID_MENU_FIELD,
 };
 
-DialogCompare::DialogCompare(agi::Context *c, SubtitleComparison& comparison, wxString const& name)
-: wxDialog(c->parent, -1, _("Compare Subtitles"), wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER | wxMAXIMIZE_BOX)
+ComparePanel::ComparePanel(wxWindow* parent, agi::Context *c, SubtitleComparison&& session, wxString const& name)
+: ComparisonPage(parent, -1, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL)
 , c(c)
-, comparison(comparison)
+, comparison(std::move(session))
 , state(comparison.Current(), comparison.Baseline(), comparison.Fields(), comparison.Items())
 , pal(make_palette())
 , file_name(name)
@@ -1332,8 +1337,13 @@ DialogCompare::DialogCompare(agi::Context *c, SubtitleComparison& comparison, wx
     report = new wxTextCtrl(this, -1, "", wxDefaultPosition, wxSize(-1, GetCharHeight() * 4), wxTE_MULTILINE | wxTE_READONLY);
     report->SetName("compare-report");
 
-    auto buttons = CreateStdDialogButtonSizer(wxOK | wxCANCEL);
-    finish = static_cast<wxButton*>(FindWindow(wxID_OK));
+    auto buttons = new wxStdDialogButtonSizer;
+    finish = new wxButton(this, wxID_OK);
+    auto cancel = new wxButton(this, wxID_CANCEL);
+    cancel->SetToolTip(_("End the comparison without writing to the subtitles"));
+    buttons->AddButton(finish);
+    buttons->AddButton(cancel);
+    buttons->Realize();
     finish->SetToolTip(_("Write the decisions to the open subtitles as one undoable change and end the comparison"));
 
     auto left_column = new wxBoxSizer(wxVERTICAL);
@@ -1366,6 +1376,7 @@ DialogCompare::DialogCompare(agi::Context *c, SubtitleComparison& comparison, wx
     main->Add(hint, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxTOP, 8));
     main->Add(report, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxTOP, 8));
     main->Add(buttons, wxSizerFlags().Expand().Border(wxALL, 8));
+    SetName("compare-page");
     SetSizer(main);
 
     Measure();
@@ -1384,15 +1395,6 @@ DialogCompare::DialogCompare(agi::Context *c, SubtitleComparison& comparison, wx
     if (!shown.empty()) current = shown.front();
     Relayout();
 
-    wxSize want(1200, 780);
-    int display = wxDisplay::GetFromWindow(c->parent);
-    if (display != wxNOT_FOUND) {
-        auto area = wxDisplay(display).GetClientArea();
-        want = wxSize(std::min(want.GetWidth(), area.GetWidth() * 9 / 10), std::min(want.GetHeight(), area.GetHeight() * 9 / 10));
-    }
-    SetMinSize(wxSize(860, 540));
-    SetSize(want);
-    CenterOnParent();
 
     // Events
     Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { Go(-1); }, ID_PREV);
@@ -1401,17 +1403,6 @@ DialogCompare::DialogCompare(agi::Context *c, SubtitleComparison& comparison, wx
     Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { if (auto e = CurrentEntry()) Decide(*e, Decision::Rejected); }, ID_REJECT_CURRENT);
     Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { if (state.Undo()) Changed(); }, ID_UNDO);
     Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { if (state.Redo()) Changed(); }, ID_REDO);
-    Bind(wxEVT_MENU, [this](wxCommandEvent&) { Go(-1); }, ID_PREV);
-    Bind(wxEVT_MENU, [this](wxCommandEvent&) { Go(1); }, ID_NEXT);
-    Bind(wxEVT_MENU, [this](wxCommandEvent&) { if (state.Undo()) Changed(); }, ID_UNDO);
-    Bind(wxEVT_MENU, [this](wxCommandEvent&) { if (state.Redo()) Changed(); }, ID_REDO);
-    Bind(wxEVT_MENU, [this](wxCommandEvent&) { if (state.Redo()) Changed(); }, ID_REDO_ALT);
-    wxAcceleratorEntry keys[] = {
-        {wxACCEL_NORMAL, WXK_F7, ID_NEXT}, {wxACCEL_SHIFT, WXK_F7, ID_PREV},
-        {wxACCEL_ALT, WXK_DOWN, ID_NEXT}, {wxACCEL_ALT, WXK_UP, ID_PREV},
-        {wxACCEL_CTRL, 'Z', ID_UNDO}, {wxACCEL_CTRL, 'Y', ID_REDO}, {wxACCEL_CTRL | wxACCEL_SHIFT, 'Z', ID_REDO_ALT},
-    };
-    SetAcceleratorTable(wxAcceleratorTable(std::size(keys), keys));
 
     diffs_only->Bind(wxEVT_RADIOBUTTON, [this](wxCommandEvent&) { show_all = false; expanded.clear(); Relayout(current); });
     everything->Bind(wxEVT_RADIOBUTTON, [this](wxCommandEvent&) { show_all = true; Relayout(current); });
@@ -1437,15 +1428,32 @@ DialogCompare::DialogCompare(agi::Context *c, SubtitleComparison& comparison, wx
     accept_all->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { Batch(shown, Decision::Accepted, true); });
     reject_all->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { Batch(shown, Decision::Rejected, true); });
     finish->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { OnFinish(); });
-    Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { OnCancel(); }, wxID_CANCEL);
-    Bind(wxEVT_CLOSE_WINDOW, [this](wxCloseEvent&) { OnCancel(); });
-    // Esc first leaves the keyboard's field; only then does it close the window.
+    Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { TryClose(true); }, wxID_CANCEL);
+    // Keys reach this tab before the main window: its hotkeys and menu
+    // shortcuts would act on the locked subtitles. Keys the window does not
+    // use go on to the focused control, and no further.
     Bind(wxEVT_CHAR_HOOK, [this](wxKeyEvent& event) {
-        if (event.GetKeyCode() == WXK_ESCAPE && field_cursor) { SetFieldCursor(std::nullopt); return; }
-        event.Skip();
+        if (!OnKey(event)) event.DoAllowNextEvent();
     });
 
     Changed();
+}
+
+bool ComparePanel::OnKey(wxKeyEvent& event) {
+    int key = event.GetKeyCode(), mods = event.GetModifiers();
+    if (key == WXK_ESCAPE && mods == wxMOD_NONE && field_cursor) { SetFieldCursor(std::nullopt); return true; }
+    if ((key == WXK_F7 && mods == wxMOD_NONE) || (key == WXK_DOWN && mods == wxMOD_ALT)) { Go(1); return true; }
+    if ((key == WXK_F7 && mods == wxMOD_SHIFT) || (key == WXK_UP && mods == wxMOD_ALT)) { Go(-1); return true; }
+    if (key == 'Z' && mods == wxMOD_CONTROL) { if (state.Undo()) Changed(); return true; }
+    if ((key == 'Y' && mods == wxMOD_CONTROL) || (key == 'Z' && mods == (wxMOD_CONTROL | wxMOD_SHIFT))) {
+        if (state.Redo()) Changed();
+        return true;
+    }
+    return false;
+}
+
+void ComparePanel::Started() {
+    Layout();
     if (auto e = CurrentEntry()) {
         int row = row_of[*e];
         int last = row;
@@ -1456,7 +1464,7 @@ DialogCompare::DialogCompare(agi::Context *c, SubtitleComparison& comparison, wx
     right->SetFocus();
 }
 
-void DialogCompare::Measure() {
+void ComparePanel::Measure() {
     wxClientDC dc(this);
     dc.SetFont(GetFont());
     char_w = std::max(1, dc.GetCharWidth());
@@ -1519,7 +1527,7 @@ void DialogCompare::Measure() {
     label_w += 14;
 }
 
-void DialogCompare::Relayout(std::optional<size_t> anchor) {
+void ComparePanel::Relayout(std::optional<size_t> anchor) {
     // Where the anchor entry is on screen now, in each pane.
     if (!anchor && !layout.empty()) anchor = layout[std::min<size_t>(right->Top(), layout.size() - 1)].entry;
     bool had = !layout.empty() && anchor && *anchor < row_of.size();
@@ -1557,7 +1565,7 @@ void DialogCompare::Relayout(std::optional<size_t> anchor) {
     left->Refresh(false); right->Refresh(false); gutter->Refresh(false);
 }
 
-void DialogCompare::ApplyFilter() {
+void ComparePanel::ApplyFilter() {
     shown = state.VisibleDiffs(filter);
     // A category that no longer has anything to show falls back to all.
     if (filter.category && shown.empty()) {
@@ -1575,12 +1583,12 @@ void DialogCompare::ApplyFilter() {
     Changed();
 }
 
-std::optional<size_t> DialogCompare::CurrentEntry() const {
+std::optional<size_t> ComparePanel::CurrentEntry() const {
     if (!current || !ShownDiff(*current)) return std::nullopt;
     return current;
 }
 
-std::optional<size_t> DialogCompare::CurrentIndex() const {
+std::optional<size_t> ComparePanel::CurrentIndex() const {
     auto e = CurrentEntry();
     if (!e) return std::nullopt;
     auto it = std::lower_bound(shown.begin(), shown.end(), *e);
@@ -1588,13 +1596,13 @@ std::optional<size_t> DialogCompare::CurrentIndex() const {
     return size_t(it - shown.begin());
 }
 
-void DialogCompare::SetHot(int row) {
+void ComparePanel::SetHot(int row) {
     if (row == hot) return;
     hot = row;
     left->Refresh(false); right->Refresh(false); gutter->Refresh(false);
 }
 
-wxColour DialogCompare::RowColour(size_t entry, Side side) const {
+wxColour ComparePanel::RowColour(size_t entry, Side side) const {
     auto const& e = state.Entries()[entry];
     wxColour c = e.change == Change::Modified ? pal.mod_line : e.change == Change::Inserted ? pal.ins_line
         : e.change == Change::Removed ? pal.del_line : pal.bg;
@@ -1605,13 +1613,13 @@ wxColour DialogCompare::RowColour(size_t entry, Side side) const {
     return c;
 }
 
-wxColour DialogCompare::EdgeColour(size_t entry) const {
+wxColour ComparePanel::EdgeColour(size_t entry) const {
     auto const& e = state.Entries()[entry];
     wxColour c = e.change == Change::Modified ? pal.mod_mark : e.change == Change::Inserted ? pal.accepted : pal.rejected;
     return mix(c, pal.bg, state.GetDecision(entry) == Decision::Pending ? 0.35 : 0.7);
 }
 
-wxString DialogCompare::Help(Part part, bool in_gutter, int row) const {
+wxString ComparePanel::Help(Part part, bool in_gutter, int row) const {
     bool detail = row >= 0 && row < (int)layout.size() && layout[row].IsDetail();
     auto keys = [](char const* k) { return wxString::FromUTF8(k); };
     switch (part) {
@@ -1631,7 +1639,7 @@ wxString DialogCompare::Help(Part part, bool in_gutter, int row) const {
     }
 }
 
-void DialogCompare::ShowHelp(Part part, bool in_gutter, int row) {
+void ComparePanel::ShowHelp(Part part, bool in_gutter, int row) {
     auto text = Help(part, in_gutter, row);
     // With detail rows open, the resting hint tells how to decide them by keyboard.
     bool resting = text.empty();
@@ -1641,7 +1649,7 @@ void DialogCompare::ShowHelp(Part part, bool in_gutter, int row) {
     hint->SetLabelText(text);
 }
 
-bool DialogCompare::ChunkStart(int row) const {
+bool ComparePanel::ChunkStart(int row) const {
     // Runs of shown differences of one kind; folds and detail rows break them.
     auto key = [this](int r) {
         auto const& lr = layout[r];
@@ -1652,11 +1660,11 @@ bool DialogCompare::ChunkStart(int row) const {
     return row <= 0 || key(row - 1) != key(row) || key(row) < 0;
 }
 
-bool DialogCompare::ChunkEnd(int row) const {
+bool ComparePanel::ChunkEnd(int row) const {
     return row + 1 >= (int)layout.size() || ChunkStart(row + 1);
 }
 
-void DialogCompare::UpdateTitles() {
+void ComparePanel::UpdateTitles() {
     auto project_tag = wxString::FromUTF8("  ·  ") + _("target project");
     bool project_right = state.ProjectSide() == Side::Right;
     left_title->SetLabel(fmt_tl("Original (base): %s", project_right ? file_name : project_name) + (project_right ? wxString() : project_tag));
@@ -1665,7 +1673,7 @@ void DialogCompare::UpdateTitles() {
     right_title->SetForegroundColour(project_right ? pal.accent : wxNullColour);
 }
 
-void DialogCompare::UpdateFilterBar() {
+void ComparePanel::UpdateFilterBar() {
     std::map<view::Category, int> counts;
     int all = 0;
     for (auto e : state.Diffs()) {
@@ -1683,7 +1691,7 @@ void DialogCompare::UpdateFilterBar() {
     if (changed) Layout();
 }
 
-void DialogCompare::Changed() {
+void ComparePanel::Changed() {
     size_t total = shown.size();
     auto index = CurrentIndex();
     wxString count = index ? fmt_tl("Difference %d of %d", (int)*index + 1, (int)total) : fmt_tl("%d differences", (int)total);
@@ -1726,7 +1734,7 @@ void DialogCompare::Changed() {
     left->Refresh(false); right->Refresh(false); gutter->Refresh(false);
 }
 
-void DialogCompare::Go(int delta) {
+void ComparePanel::Go(int delta) {
     size_t total = shown.size();
     if (!total) return;
     auto index = CurrentIndex();
@@ -1748,7 +1756,7 @@ void DialogCompare::Go(int delta) {
     Changed();
 }
 
-void DialogCompare::Select(size_t entry, Side from) {
+void ComparePanel::Select(size_t entry, Side from) {
     if (ShownDiff(entry) && current != entry) {
         current = entry;
         Relayout(entry); // the clicked line stays where it is; its details open below it
@@ -1767,7 +1775,7 @@ void DialogCompare::Select(size_t entry, Side from) {
     Changed();
 }
 
-void DialogCompare::Decide(size_t entry, Decision d) {
+void ComparePanel::Decide(size_t entry, Decision d) {
     if (ShownDiff(entry) && current != entry) {
         current = entry;
         Relayout(entry);
@@ -1776,11 +1784,11 @@ void DialogCompare::Decide(size_t entry, Decision d) {
     Changed();
 }
 
-void DialogCompare::SetField(size_t entry, model::Field field, Side winner) {
+void ComparePanel::SetField(size_t entry, model::Field field, Side winner) {
     if (state.SetField(entry, field, winner)) Changed();
 }
 
-std::vector<model::Field> DialogCompare::DetailFields() const {
+std::vector<model::Field> ComparePanel::DetailFields() const {
     std::vector<model::Field> out;
     auto cur = CurrentEntry();
     if (!cur) return out;
@@ -1789,7 +1797,7 @@ std::vector<model::Field> DialogCompare::DetailFields() const {
     return out;
 }
 
-void DialogCompare::SetFieldCursor(std::optional<model::Field> field) {
+void ComparePanel::SetFieldCursor(std::optional<model::Field> field) {
     if (field) {
         auto fields = DetailFields();
         if (std::find(fields.begin(), fields.end(), *field) == fields.end()) field.reset();
@@ -1809,7 +1817,7 @@ void DialogCompare::SetFieldCursor(std::optional<model::Field> field) {
     left->Refresh(false); right->Refresh(false); gutter->Refresh(false);
 }
 
-void DialogCompare::MoveFieldCursor(int delta) {
+void ComparePanel::MoveFieldCursor(int delta) {
     auto fields = DetailFields();
     if (fields.empty()) return;
     auto it = field_cursor ? std::find(fields.begin(), fields.end(), *field_cursor) : fields.end();
@@ -1819,19 +1827,19 @@ void DialogCompare::MoveFieldCursor(int delta) {
     SetFieldCursor(fields[i]);
 }
 
-void DialogCompare::ChooseSide(Side side) {
+void ComparePanel::ChooseSide(Side side) {
     auto cur = CurrentEntry();
     if (!cur) return;
     if (field_cursor) SetField(*cur, *field_cursor, side);
     else Decide(*cur, side == Side::Right ? Decision::Accepted : Decision::Rejected);
 }
 
-void DialogCompare::ToggleCheck(size_t entry) {
+void ComparePanel::ToggleCheck(size_t entry) {
     state.Check(entry, !state.Checked(entry));
     Changed();
 }
 
-void DialogCompare::ExpandFold(int row) {
+void ComparePanel::ExpandFold(int row) {
     if (row < 0 || row >= (int)layout.size() || !layout[row].IsFold()) return;
     size_t entry = layout[row].entry;
     expanded.insert(entry);
@@ -1840,13 +1848,13 @@ void DialogCompare::ExpandFold(int row) {
     Changed();
 }
 
-void DialogCompare::Scrolled(Side from) {
+void ComparePanel::Scrolled(Side from) {
     if (!sync) return;
     auto src = PaneFor(from);
     PaneFor(view::Other(from))->SetView(src->Top(), src->XOffset());
 }
 
-bool DialogCompare::ConfirmBatch(std::vector<size_t> const& entries, Decision d, bool all) {
+bool ComparePanel::ConfirmBatch(std::vector<size_t> const& entries, Decision d, bool all) {
     size_t changing = state.Changing(entries, d, Scope()), decided = 0;
     for (auto e : entries) decided += state.GetDecision(e) != Decision::Pending && state.GetDecision(e) != d;
     if (!changing) {
@@ -1871,13 +1879,13 @@ bool DialogCompare::ConfirmBatch(std::vector<size_t> const& entries, Decision d,
     return wxMessageBox(message, _("Compare Subtitles"), wxOK | wxCANCEL | wxICON_QUESTION, this) == wxOK;
 }
 
-void DialogCompare::Batch(std::vector<size_t> const& entries, Decision d, bool all) {
+void ComparePanel::Batch(std::vector<size_t> const& entries, Decision d, bool all) {
     if (entries.empty() || !ConfirmBatch(entries, d, all)) return;
     state.Decide(entries, d, Scope());
     Changed();
 }
 
-void DialogCompare::ContextMenu(DiffPane* pane, size_t entry, wxPoint pos) {
+void ComparePanel::ContextMenu(DiffPane* pane, size_t entry, wxPoint pos) {
     auto const& e = state.Entries()[entry];
     wxMenu menu;
     auto d = state.GetDecision(entry);
@@ -1910,7 +1918,7 @@ void DialogCompare::ContextMenu(DiffPane* pane, size_t entry, wxPoint pos) {
     }
 }
 
-wxString DialogCompare::Tooltip(int row, Side side) const {
+wxString ComparePanel::Tooltip(int row, Side side) const {
     if (row < 0 || row >= (int)layout.size() || layout[row].IsFold()) return {};
     size_t entry = layout[row].entry;
     auto const& e = state.Entries()[entry];
@@ -1940,11 +1948,10 @@ wxString DialogCompare::Tooltip(int row, Side side) const {
     return out;
 }
 
-void DialogCompare::OnFinish() {
+void ComparePanel::OnFinish() {
     auto choices = state.Choices();
     if (choices.empty()) {
-        comparison.End();
-        EndModal(wxID_CANCEL);
+        End(false);
         return;
     }
     subtitle_apply::Report r;
@@ -1953,24 +1960,37 @@ void DialogCompare::OnFinish() {
     }
     catch (SubtitleApplyRejected const& e) {
         wxMessageBox(to_wx(e.what()), _("Compare Subtitles"), wxOK | wxICON_ERROR, this);
-        EndModal(wxID_CANCEL);
+        End(false);
         return;
     }
     if (!r.Ok()) { report->SetValue(describe(r)); finish->Enable(false); return; }
-    EndModal(wxID_OK);
+    End(true);
 }
 
-void DialogCompare::OnCancel() {
-    if (!state.Choices().empty()) {
+void ComparePanel::End(bool applied) {
+    comparison.End();
+    if (c->workspaceTabs) c->workspaceTabs->ComparisonEnded(applied);
+}
+
+bool ComparePanel::TryClose(bool ask) {
+    if (ask && !state.Choices().empty()) {
         auto message = fmt_tl("Close the comparison and discard %d decisions that would change the open subtitles?", (int)state.Choices().size());
-        if (wxMessageBox(message, _("Compare Subtitles"), wxOK | wxCANCEL | wxICON_QUESTION, this) != wxOK) return;
+        if (wxMessageBox(message, _("Compare Subtitles"), wxOK | wxCANCEL | wxICON_QUESTION, this) != wxOK) return false;
     }
-    EndModal(wxID_CANCEL);
+    End(false);
+    return true;
 }
 }
 
-bool ShowCompareDialog(agi::Context *c, agi::fs::path const& path) {
+bool OpenCompareTab(agi::Context *c, agi::fs::path const& path) {
     auto title = _("Compare Subtitles");
+    auto tabs = c->workspaceTabs;
+    if (!tabs) return false;
+    if (tabs->Comparison()) {
+        tabs->ShowComparison();
+        wxMessageBox(_("A comparison is already open. End it before comparing with another file."), title, wxOK | wxICON_INFORMATION, c->parent);
+        return false;
+    }
     std::string encoding;
     try {
         encoding = CharSetDetect::GetEncoding(path); // asks when detection is ambiguous
@@ -2016,6 +2036,6 @@ bool ShowCompareDialog(agi::Context *c, agi::fs::path const& path) {
         wxMessageBox(_("The files have no differences that can be applied."), title, wxOK | wxICON_INFORMATION, c->parent);
         return false;
     }
-    DialogCompare dialog(c, *comparison, path.filename().wstring());
-    return dialog.ShowModal() == wxID_OK;
+    tabs->OpenComparison(new ComparePanel(tabs->Book(), c, std::move(*comparison), path.filename().wstring()), path.filename().wstring());
+    return true;
 }

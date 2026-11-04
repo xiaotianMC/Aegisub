@@ -63,8 +63,9 @@ std::string CreateDummyVideo(wxWindow *parent);
 bool ShowPasteOverDialog(wxWindow *parent);
 /// C2-B: read @p baseline, compare it with the open subtitles and let the user
 /// apply chosen differences. Reports every refusal itself.
-/// @return true if changes were applied
-bool ShowCompareDialog(agi::Context *c, agi::fs::path const& baseline);
+/// Opens as a tab of the main window and returns at once.
+/// @return true if the comparison tab opened
+bool OpenCompareTab(agi::Context *c, agi::fs::path const& baseline);
 bool ShowPlainTextImportDialog();
 void ShowAboutDialog(wxWindow *parent);
 void ShowAttachmentsDialog(agi::Context *c);

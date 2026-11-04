@@ -57,6 +57,7 @@
 #include "utils.h"
 #include "version.h"
 #include "video_box.h"
+#include "workspace_tabs.h"
 #include "video_controller.h"
 #include "video_display.h"
 
@@ -195,7 +196,10 @@ void FrameMain::EnableToolBar(agi::OptionValue const& opt) {
 
 void FrameMain::InitContents() {
 	StartupLog("Create background panel");
-	auto Panel = new wxPanel(this, -1, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL | wxCLIP_CHILDREN);
+	// The editor is the first tab; a comparison opens beside it.
+	auto tabs = new WorkspaceTabs(this, context.get());
+	context->workspaceTabs = tabs;
+	auto Panel = new wxPanel(tabs->Book(), -1, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL | wxCLIP_CHILDREN);
 
 	StartupLog("Create subtitles grid");
 	context->subsGrid = new BaseGrid(Panel, context.get());
@@ -221,6 +225,7 @@ void FrameMain::InitContents() {
 	MainSizer->Add(TopSizer,0,wxEXPAND,0);
 	MainSizer->Add(context->subsGrid,1,wxEXPAND,0);
 	Panel->SetSizer(MainSizer);
+	tabs->SetEditor(Panel);
 
 	StartupLog("Perform layout");
 	Layout();
@@ -325,6 +330,12 @@ void FrameMain::OnCloseWindow(wxCloseEvent &event) {
 
 	context->videoController->Stop();
 	context->audioController->Stop();
+
+	// An open comparison ends first: it holds the subtitles.
+	if (context->workspaceTabs && !context->workspaceTabs->CloseComparison(event.CanVeto())) {
+		event.Veto();
+		return;
+	}
 
 	// Ask user if he wants to save first
 	if (context->subsController->TryToClose(event.CanVeto()) == wxCANCEL) {
