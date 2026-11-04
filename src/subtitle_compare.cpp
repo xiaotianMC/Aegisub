@@ -23,7 +23,8 @@ model::ExtraAnalysis extras(AssFile const& file, model::Cancel const& cancel) {
     for (auto const& line : file.Events) { model::CheckCancelled(cancel); refs.push_back(line.ExtradataIds.get()); }
     return model::ResolveExtras(entries(file), refs, cancel);
 }
-bool same_style(AssStyle const& a, AssStyle const& b) {
+}
+bool SameStyle(AssStyle const& a, AssStyle const& b) {
     auto values = [](AssStyle const& s) {
         return std::tie(s.font, s.fontsize, s.primary, s.secondary, s.outline, s.shadow,
             s.bold, s.italic, s.underline, s.strikeout, s.scalex, s.scaley, s.spacing,
@@ -31,6 +32,7 @@ bool same_style(AssStyle const& a, AssStyle const& b) {
     };
     return values(a) == values(b);
 }
+namespace {
 void reset_styles(AssDialogueBlockOverride const& block, std::set<std::string>& names, model::Cancel const& cancel) {
     for (auto const& tag : block.Tags) {
         model::CheckCancelled(cancel);
@@ -100,7 +102,7 @@ Dependencies AnalyzeDependencies(AssFile const& baseline, AssFile const& current
         for (auto const& s : current.Styles) if (boost::iequals(s.name, name)) to.push_back(&s);
         StyleState state;
         if (from.size() > 1 || to.size() > 1) state = StyleState::Ambiguous;
-        else if (!to.empty()) state = from.empty() || same_style(*from[0], *to[0]) ? StyleState::Existing : StyleState::Conflict;
+        else if (!to.empty()) state = from.empty() || SameStyle(*from[0], *to[0]) ? StyleState::Existing : StyleState::Conflict;
         else state = from.empty() ? StyleState::Missing : StyleState::Importable;
         result.styles.push_back({name, state});
     }

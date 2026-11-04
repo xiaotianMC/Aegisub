@@ -2736,3 +2736,121 @@ TEST_F(document_lifecycle, failed_autosave_does_not_undo_a_later_manual_save_bas
     for(int i=0;i<100;++i){wxTheApp->ProcessPendingEvents();std::this_thread::sleep_for(std::chrono::milliseconds(10));}
     EXPECT_FALSE(std::filesystem::exists(good));
 }
+
+// ---- C2: Apply Engine ------------------------------------------------------
+namespace {
+std::vector<std::string> LiveTexts(agi::Context& c) {
+    std::vector<std::string> out;
+    for (auto const& line : LiveRead(c).Events) out.push_back(line.Text.get());
+    return out;
+}
+std::vector<int> LiveIds(agi::Context& c) {
+    std::vector<int> out;
+    for (auto const& line : LiveRead(c).Events) out.push_back(line.Id);
+    return out;
+}
+std::vector<subtitle_apply::Choice> AllChanges(SubtitleComparison const& comparison) {
+    std::vector<subtitle_apply::Choice> out;
+    for (size_t i = 0; i < comparison.Items().size(); ++i)
+        if (comparison.Items()[i].kind != agi::ass::compare::Kind::Unchanged) out.push_back({i});
+    return out;
+}
+}
+TEST_F(ordinary_edit, comparison_freezes_writers_and_apply_is_one_undoable_step) {
+    Input("current");
+    auto id = LiveRead(*c).Events.front().Id;
+    auto baseline = c->subtitleAccess->Snapshot();
+    baseline->Events.front().Text = "from baseline";
+    auto added = new AssDialogue; added->Text = "added"; added->Start = 9000; added->End = 9500;
+    baseline->Events.push_back(*added);
+    auto undo_before = c->subsController->GetUndoDescription();
+
+    auto comparison = c->subsController->BeginComparison(std::move(baseline), agi::ass::compare::All);
+    ASSERT_TRUE(comparison.Valid());
+    EXPECT_FALSE(c->subtitleAccess->TryWrite());                 // ordinary edits are frozen
+    EXPECT_FALSE(c->subtitleEditGate.TryBeginProjectWrite());    // so is project state
+    EXPECT_THROW(c->subsController->BeginComparison(c->subtitleAccess->Snapshot(), agi::ass::compare::All), SubtitleApplyRejected);
+    Input("ignored while comparing");
+    EXPECT_EQ((std::vector<std::string>{"current"}), LiveTexts(*c));
+
+    int commits = 0, type = -1;
+    agi::signal::Connection listener = LiveRead(*c).AddCommitListener([&](int t, AssDialogue const*) { ++commits; type = t; });
+    auto choices = AllChanges(comparison);
+    ASSERT_EQ(2u, choices.size());
+    EXPECT_TRUE(c->subsController->CheckApply(comparison, choices).Ok());
+    EXPECT_EQ((std::vector<std::string>{"current"}), LiveTexts(*c)); // dry run changes nothing
+    auto report = c->subsController->ApplyComparison(comparison, choices);
+    ASSERT_TRUE(report.Ok());
+    EXPECT_EQ(1u, report.modified); EXPECT_EQ(1u, report.added);
+    EXPECT_FALSE(comparison.Valid());
+    EXPECT_EQ(1, commits); EXPECT_EQ(AssFile::COMMIT_DIAG_ADDREM | AssFile::COMMIT_DIAG_FULL, type);
+    EXPECT_EQ((std::vector<std::string>{"from baseline", "added"}), LiveTexts(*c));
+    auto applied = LiveIds(*c);
+    EXPECT_EQ(id, applied[0]);                                   // the modified row keeps its identity
+    EXPECT_EQ(std::set<int>(applied.begin(), applied.end()), c->selectionController->SelectedIDs());
+    EXPECT_EQ(id, c->selectionController->ActiveID());
+    EXPECT_EQ("apply comparison", c->subsController->GetUndoDescription());
+    EXPECT_TRUE(c->subsController->IsModified());
+    EXPECT_TRUE(c->subtitleAccess->TryWrite());                  // the session is released
+
+    c->subsController->Undo();
+    EXPECT_EQ((std::vector<std::string>{"current"}), LiveTexts(*c));
+    EXPECT_EQ((std::vector<int>{id}), LiveIds(*c));
+    EXPECT_EQ(undo_before, c->subsController->GetUndoDescription());
+    c->subsController->Redo();
+    EXPECT_EQ((std::vector<std::string>{"from baseline", "added"}), LiveTexts(*c));
+    EXPECT_EQ(applied, LiveIds(*c));
+}
+TEST_F(ordinary_edit, refused_apply_changes_nothing_and_keeps_the_comparison) {
+    auto baseline = c->subtitleAccess->Snapshot();
+    for (auto text : {"g1", "g2"}) {
+        auto line = new AssDialogue; line->Text = text; line->Start = 5000; line->End = 6000;
+        baseline->Events.push_back(*line);
+    }
+    auto token = baseline->AddExtradata("aegisub.enhanced.subtitle-binding", "group");
+    for (auto& line : baseline->Events) if (line.Text.get() != "") line.ExtradataIds = std::vector<uint32_t>{token};
+    auto texts = LiveTexts(*c); auto ids = LiveIds(*c);
+    auto undo = c->subsController->GetUndoDescription(); auto revision = c->subtitleEditGate.Revision();
+
+    auto comparison = c->subsController->BeginComparison(std::move(baseline), agi::ass::compare::All);
+    auto choices = AllChanges(comparison);
+    ASSERT_EQ(2u, choices.size());
+    auto report = c->subsController->ApplyComparison(comparison, {choices[0]});
+    ASSERT_FALSE(report.Ok());
+    ASSERT_EQ(1u, report.refusals.size());
+    EXPECT_EQ(subtitle_apply::Problem::PartialBinding, report.refusals[0].problem);
+    EXPECT_EQ("group", report.refusals[0].detail);
+    EXPECT_EQ(texts, LiveTexts(*c)); EXPECT_EQ(ids, LiveIds(*c));
+    EXPECT_EQ(undo, c->subsController->GetUndoDescription());
+    EXPECT_TRUE(c->subtitleEditGate.IsCurrent(revision));
+    EXPECT_TRUE(LiveRead(*c).Extradata.empty());
+    EXPECT_TRUE(comparison.Valid());                             // the user can choose again
+    EXPECT_FALSE(c->subtitleAccess->TryWrite());
+
+    // Choosing the whole group applies it, with its binding.
+    ASSERT_TRUE(c->subsController->ApplyComparison(comparison, choices).Ok());
+    ASSERT_EQ(3u, LiveRead(*c).Events.size());
+    ASSERT_EQ(1u, LiveRead(*c).Extradata.size());
+    EXPECT_EQ("group", LiveRead(*c).Extradata.front().value);
+}
+TEST_F(ordinary_edit, ending_a_comparison_releases_it_and_stale_or_foreign_use_is_rejected) {
+    {
+        auto scope = c->subtitleAccess->TryWrite(); ASSERT_TRUE(scope);
+        EXPECT_THROW(c->subsController->BeginComparison(c->subtitleAccess->Snapshot(), agi::ass::compare::All), SubtitleApplyRejected);
+    }
+    auto baseline = c->subtitleAccess->Snapshot(); baseline->Events.front().Text = "b";
+    auto comparison = c->subsController->BeginComparison(std::move(baseline), agi::ass::compare::Text | agi::ass::compare::Start | agi::ass::compare::End);
+    ASSERT_EQ(1u, AllChanges(comparison).size());
+    comparison.End();
+    EXPECT_FALSE(comparison.Valid());
+    EXPECT_TRUE(c->subtitleAccess->TryWrite());
+    EXPECT_THROW(c->subsController->ApplyComparison(comparison, {{0}}), SubtitleApplyRejected);
+    EXPECT_EQ((std::vector<std::string>{""}), LiveTexts(*c));
+    // Choosing only Unchanged items ends nothing and changes nothing.
+    auto same = c->subsController->BeginComparison(c->subtitleAccess->Snapshot(), agi::ass::compare::All);
+    auto report = c->subsController->ApplyComparison(same, {{0}});
+    EXPECT_FALSE(report.Ok()); EXPECT_TRUE(same.Valid());
+    auto empty = c->subsController->ApplyComparison(same, {});
+    EXPECT_TRUE(empty.Ok()); EXPECT_FALSE(same.Valid());         // nothing to apply: ended unchanged
+    EXPECT_EQ((std::vector<std::string>{""}), LiveTexts(*c));
+}

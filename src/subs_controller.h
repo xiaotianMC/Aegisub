@@ -22,6 +22,7 @@
 #include <libaegisub/subtitle_edit_gate.h>
 #include "subtitle_model_installation.h"
 #include "subtitle_lua_transaction.h"
+#include "subtitle_comparison.h"
 
 #include <boost/container/list.hpp>
 #include <cstdint>
@@ -127,6 +128,11 @@ private:
     /// Install a prepared document candidate and run its post-commit plan.
     void InstallDocument(SubtitleModelCandidate&& candidate, PostCommitPlan plan);
 
+    /// Lua preparation with an optional comparison session already held by the
+    /// caller (Apply Engine); without one, the session is acquired here.
+    LuaSubtitlePublication PreparePublication(LuaSubtitleTransaction&&, LuaSubtitleResult&&,
+        std::optional<agi::SubtitleEditGate::ComparisonSession> held);
+
 	/// Autosave the file if there have been any chances since the last autosave
 
 	void OnCommit(AssFileCommit c);
@@ -207,6 +213,23 @@ public:
     LuaSubtitleTransaction BeginLuaTransaction();
     LuaSubtitlePublication PrepareLuaPublication(LuaSubtitleTransaction&&, LuaSubtitleResult&&);
     void PublishLua(LuaSubtitlePublication&&, std::set<int> selection, int active);
+
+    /// C2 Apply Engine (host thread only). Begin snapshots the document and
+    /// compares it with @p baseline (an independent model, e.g. from
+    /// subtitle_compare::ReadBaseline, with its field capabilities). The result
+    /// holds the comparison session: no other writer can run until it is applied
+    /// or ended. Throws SubtitleApplyRejected (nothing held) when the document is
+    /// being edited, compared, installed, recovered or notified.
+    SubtitleComparison BeginComparison(std::unique_ptr<AssFile> baseline,
+        agi::ass::compare::Fields fields, agi::ass::compare::Cancel const& cancel = {});
+    /// Dry run of ApplyComparison: the report it would produce. Changes nothing.
+    subtitle_apply::Report CheckApply(SubtitleComparison const&, std::vector<subtitle_apply::Choice> const&) const;
+    /// Apply the chosen items as one undoable step ("apply comparison") and end
+    /// the comparison. If the report has refusals nothing is changed and the
+    /// comparison stays valid. Applying nothing that modifies ends it unchanged.
+    /// Afterwards the applied rows are selected. A commit observer failure is
+    /// reported as for any commit (the step is recorded, the exception propagates).
+    subtitle_apply::Report ApplyComparison(SubtitleComparison&, std::vector<subtitle_apply::Choice> const&);
 
 	/// @brief Undo the last set of changes to the file
 	void Undo();

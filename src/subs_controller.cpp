@@ -21,6 +21,8 @@
 #include "ass_file.h"
 #include "subtitle_project_access.h"
 #include "subtitle_model_candidate.h"
+#include "subtitle_apply.h"
+#include "subtitle_compare.h"
 #include <boost/scope_exit.hpp>
 #include "ass_info.h"
 #include "ass_style.h"
@@ -823,6 +825,11 @@ LuaSubtitleTransaction SubsController::BeginLuaTransaction() {
 }
 
 LuaSubtitlePublication SubsController::PrepareLuaPublication(LuaSubtitleTransaction&& transaction, LuaSubtitleResult&& result) {
+    return PreparePublication(std::move(transaction), std::move(result), std::nullopt);
+}
+
+LuaSubtitlePublication SubsController::PreparePublication(LuaSubtitleTransaction&& transaction, LuaSubtitleResult&& result,
+        std::optional<agi::SubtitleEditGate::ComparisonSession> held) {
     installation->CheckThread();
     if (transaction.owner != this || !transaction.work || !transaction.expected)
         throw std::logic_error("Foreign or consumed Lua transaction");
@@ -847,7 +854,11 @@ LuaSubtitlePublication SubsController::PrepareLuaPublication(LuaSubtitleTransact
         for (auto const& line : live.Events) d.final_ids.push_back(line.Id);
         return publication;
     }
-    d.session = gate.TryBeginComparison();
+    if (held) {
+        if (!gate.Authorizes(*held)) throw LuaSubtitleRejected("The comparison session is no longer valid");
+        d.session = std::move(held);
+    }
+    else d.session = gate.TryBeginComparison();
     if (!d.session) throw LuaSubtitleRejected("The subtitles are being edited or compared");
     current(); // no writer can register while the exclusive borrow is held
 
@@ -1058,4 +1069,119 @@ void SubsController::PublishLua(LuaSubtitlePublication&& publication, std::set<i
     d.reset(); // releases the exclusive borrow and the retired state
     if (pushed && undo_stack.size() > 1 && OPT_GET("App/Auto/Save on Every Change")->GetBool() && !filename.empty() && CanSave())
         Save(filename);
+}
+
+// ---- C2: Apply Engine ------------------------------------------------------
+
+SubtitleComparison::SubtitleComparison() = default;
+SubtitleComparison::SubtitleComparison(SubtitleComparison&&) noexcept = default;
+SubtitleComparison& SubtitleComparison::operator=(SubtitleComparison&&) noexcept = default;
+SubtitleComparison::~SubtitleComparison() = default;
+bool SubtitleComparison::Valid() const { return owner && session && session->Valid(); }
+void SubtitleComparison::End() noexcept { session.reset(); }
+
+SubtitleComparison SubsController::BeginComparison(std::unique_ptr<AssFile> baseline,
+        agi::ass::compare::Fields fields, agi::ass::compare::Cancel const& cancel) {
+    installation->CheckThread();
+    if (!baseline) throw std::logic_error("Comparison requires a baseline document");
+    if (!(fields & agi::ass::compare::All)) throw std::invalid_argument("Comparison requires baseline field capabilities");
+    auto& gate = context->subtitleEditGate;
+    if (IsInstalling() || gate.NeedsRebinding())
+        throw SubtitleApplyRejected("The subtitles are being replaced or are blocked for recovery");
+    if (context->subtitleAccess->Read().IsNotifying())
+        throw SubtitleApplyRejected("The subtitles cannot be compared while the editor is still updating; try again.");
+    SubtitleComparison comparison;
+    comparison.session = gate.TryBeginComparison();
+    if (!comparison.session) throw SubtitleApplyRejected("The subtitles are being edited or compared");
+    comparison.owner = this;
+    comparison.expected = gate.Capture();
+    comparison.current = context->subtitleAccess->Snapshot();
+    comparison.baseline = std::move(baseline);
+    comparison.fields = fields & agi::ass::compare::All;
+    for (auto const& line : comparison.current->Events) comparison.current_ids.push_back(line.Id);
+    try {
+        auto base = subtitle_compare::ProjectDocument(*comparison.baseline, comparison.fields, cancel);
+        auto cur = subtitle_compare::ProjectDocument(*comparison.current, agi::ass::compare::All, cancel);
+        comparison.items = agi::ass::compare::Compare(base.document, cur.document, cancel);
+    }
+    catch (agi::ass::compare::Cancelled const&) { throw; }
+    catch (std::invalid_argument const& e) { throw SubtitleApplyRejected(e.what()); }
+    return comparison;
+}
+
+namespace {
+void check_comparison(SubtitleComparison const& comparison, agi::SubtitleEditGate const&) {
+    if (!comparison.Valid()) throw SubtitleApplyRejected("The comparison has ended");
+}
+}
+
+subtitle_apply::Report SubsController::CheckApply(SubtitleComparison const& comparison,
+        std::vector<subtitle_apply::Choice> const& choices) const {
+    installation->CheckThread();
+    if (comparison.owner != this) throw std::logic_error("Foreign comparison");
+    check_comparison(comparison, context->subtitleEditGate);
+    return subtitle_apply::Prepare(*comparison.current, *comparison.baseline, comparison.fields,
+        comparison.items, choices).report;
+}
+
+subtitle_apply::Report SubsController::ApplyComparison(SubtitleComparison& comparison,
+        std::vector<subtitle_apply::Choice> const& choices) {
+    installation->CheckThread();
+    if (comparison.owner != this) throw std::logic_error("Foreign comparison");
+    auto& gate = context->subtitleEditGate;
+    check_comparison(comparison, gate);
+    if (!gate.Authorizes(*comparison.session) || !gate.Authorizes(*comparison.expected))
+        throw SubtitleApplyRejected("The subtitles were changed or replaced during the comparison");
+    if (IsInstalling() || gate.NeedsRebinding())
+        throw SubtitleApplyRejected("The subtitles are being replaced or are blocked for recovery");
+    if (context->subtitleAccess->Read().IsNotifying())
+        throw SubtitleApplyRejected("The comparison cannot be applied while the editor is still updating; try again.");
+
+    // A fresh snapshot is the publication's work model: its nodes map one to
+    // one onto the live nodes (the session excludes every writer).
+    auto work = context->subtitleAccess->Snapshot();
+    {
+        std::vector<int> ids;
+        for (auto const& line : work->Events) ids.push_back(line.Id);
+        if (ids != comparison.current_ids) throw std::logic_error("Live document changed under a comparison session");
+    }
+    auto plan = subtitle_apply::Prepare(*work, *comparison.baseline, comparison.fields, comparison.items, choices);
+    if (!plan.report.Ok()) return plan.report;
+    if (!plan.Modifies()) { comparison.End(); return plan.report; }
+
+    for (auto const& e : plan.extradata_additions) work->Extradata.push_back(e);
+    work->next_extradata_id = std::max(work->next_extradata_id, plan.next_extradata_id);
+
+    LuaSubtitleResult result;
+    LuaSubtitleResult::Step step;
+    step.description = _("apply comparison");
+    step.type = plan.commit_type;
+    step.lines.assign(work->Info.size(), nullptr);
+    for (auto style : plan.styles) step.lines.push_back(style);
+    for (auto event : plan.events) step.lines.push_back(event);
+    result.final_lines = step.lines;
+    result.steps.push_back(std::move(step));
+    result.pool = std::move(plan.pool);
+
+    LuaSubtitleTransaction transaction;
+    transaction.owner = this;
+    transaction.expected = *comparison.expected;
+    transaction.work = std::move(work);
+    // From here the comparison's session belongs to the publication; on any
+    // failure below the comparison is over and nothing was changed.
+    auto session = std::move(comparison.session);
+    comparison.session.reset();
+    auto publication = PreparePublication(std::move(transaction), std::move(result), std::move(session));
+
+    std::set<int> selection(plan.applied_ids.begin(), plan.applied_ids.end());
+    int active = plan.applied_ids.empty() ? 0 : plan.applied_ids.front();
+    if (selection.empty()) {
+        // Only deletions: keep whatever of the previous selection survives.
+        std::set<int> survivors(publication.FinalEventIds().begin(), publication.FinalEventIds().end());
+        for (auto id : context->selectionController->SelectedIDs()) if (survivors.count(id)) selection.insert(id);
+        auto previous = context->selectionController->ActiveID();
+        active = survivors.count(previous) ? previous : (selection.empty() ? 0 : *selection.begin());
+    }
+    PublishLua(std::move(publication), std::move(selection), active);
+    return plan.report;
 }

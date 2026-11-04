@@ -7,6 +7,7 @@
 #include <libaegisub/vfr.h>
 #include <memory>
 
+class AssStyle;
 class SubtitleFormat;
 namespace subtitle_compare {
 namespace model = agi::ass::compare;
@@ -17,6 +18,8 @@ struct Projection {
 // Current in-memory documents should use All, regardless of their last save extension.
 Projection ProjectDocument(AssFile const& file, model::Fields fields = model::All,
     model::Cancel const& cancel = {});
+// Style definitions are equal field by field (the serialised cache is not used).
+bool SameStyle(AssStyle const& a, AssStyle const& b);
 enum class StyleState { Existing, Importable, Conflict, Missing, Ambiguous };
 struct StyleDependency { std::string name; StyleState state; };
 struct BindingAnalysis {
