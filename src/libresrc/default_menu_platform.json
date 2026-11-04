@@ -19,6 +19,7 @@
         { "command" : "subtitle/open/charset" },
         { "command" : "subtitle/open/video" },
         { "command" : "subtitle/open/autosave" },
+        { "command" : "subtitle/compare" },
         { "command" : "subtitle/save" },
         { "command" : "subtitle/save/as" },
         { "command" : "tool/export" },

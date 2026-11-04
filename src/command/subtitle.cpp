@@ -290,6 +290,27 @@ struct subtitle_open final : public Command {
 	}
 };
 
+struct subtitle_compare final : public Command {
+	CMD_NAME("subtitle/compare")
+	STR_MENU("Co&mpare with Subtitles File...")
+	STR_DISP("Compare with Subtitles File")
+	STR_HELP("Compare the subtitles with another file and apply chosen differences")
+
+	void operator()(agi::Context *c) override {
+		// Refuse before the file dialog while anything holds the subtitles
+		// (the probe is released at once; the comparison starts after reading).
+		if (!c->subtitleEditGate.TryBeginComparison()) {
+			wxMessageBox(_("The subtitles cannot be compared while they are being edited.\nClose any open editing tool (such as the color picker, the styling assistant or an audio edit) and try again."),
+				_("Compare Subtitles"), wxOK | wxICON_INFORMATION, c->parent);
+			return;
+		}
+		c->videoController->Stop();
+		auto filename = OpenFileSelector(c, _("Compare with Subtitles File"), "Path/Last/Subtitles", "", "", SubtitleFormat::GetWildcards(0), c->parent);
+		if (!filename.empty())
+			ShowCompareDialog(c, filename);
+	}
+};
+
 struct subtitle_open_autosave final : public Command {
 	CMD_NAME("subtitle/open/autosave")
 	STR_MENU("Open A&utosaved Subtitles...")
@@ -474,6 +495,7 @@ namespace cmd {
 		reg(std::make_unique<subtitle_new>());
 		reg(std::make_unique<subtitle_close>());
 		reg(std::make_unique<subtitle_open>());
+		reg(std::make_unique<subtitle_compare>());
 		reg(std::make_unique<subtitle_open_autosave>());
 		reg(std::make_unique<subtitle_open_charset>());
 		reg(std::make_unique<subtitle_open_video>());

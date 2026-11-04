@@ -75,6 +75,7 @@
 #include <wx/choicdlg.h>
 #include <wx/listbox.h>
 #include <wx/checklst.h>
+#include <wx/dataview.h>
 #include <wx/button.h>
 #include <wx/listctrl.h>
 #include <wx/panel.h>
@@ -2853,4 +2854,160 @@ TEST_F(ordinary_edit, ending_a_comparison_releases_it_and_stale_or_foreign_use_i
     auto empty = c->subsController->ApplyComparison(same, {});
     EXPECT_TRUE(empty.Ok()); EXPECT_FALSE(same.Valid());         // nothing to apply: ended unchanged
     EXPECT_EQ((std::vector<std::string>{""}), LiveTexts(*c));
+}
+
+// ---- C2-B: comparison window ------------------------------------------------
+namespace {
+// Records message boxes; runs @p action on the comparison dialog once it is shown.
+class CompareHook : public wxModalDialogHook {
+    std::function<void(wxDialog*)> action;
+public:
+    std::vector<wxString> messages;
+    int shown = 0;
+    explicit CompareHook(std::function<void(wxDialog*)> action) : action(std::move(action)) { Register(); }
+    int Enter(wxDialog* dialog) override {
+        if (auto message = dynamic_cast<wxMessageDialog*>(dialog)) { messages.push_back(message->GetMessage()); return wxID_OK; }
+        if (dialog->GetTitle() != "Compare Subtitles") return wxID_NONE;
+        ++shown;
+        dialog->CallAfter([this, dialog] {
+            if (action) action(dialog);
+            if (dialog->IsModal() && dialog->IsShown()) dialog->EndModal(wxID_CANCEL);
+        });
+        return wxID_NONE;
+    }
+    void Exit(wxDialog*) override { }
+};
+template<class T> T* Find(wxWindow* parent) {
+    for (auto w : descendants(parent)) if (auto t = dynamic_cast<T*>(w)) return t;
+    return nullptr;
+}
+void Toggle(wxDataViewListCtrl* list, unsigned row, bool value) {
+    list->SetToggleValue(value, row, 0);
+    wxDataViewEvent event(wxEVT_DATAVIEW_ITEM_VALUE_CHANGED, list, list->GetColumn(0), list->RowToItem(row));
+    list->GetEventHandler()->ProcessEvent(event);
+}
+wxString Report(wxWindow* dialog) {
+    for (auto w : descendants(dialog))
+        if (auto t = dynamic_cast<wxTextCtrl*>(w); t && t->IsMultiLine()) return t->GetValue();
+    return {};
+}
+agi::fs::path WriteBaseline(agi::Context& c, std::string const& name, std::function<void(AssFile&)> edit) {
+    auto file = c.subtitleAccess->Snapshot();
+    edit(*file);
+    agi::fs::path path((std::filesystem::current_path() / name).wstring());
+    SubtitleFormat::GetWriter(path)->WriteFile(file.get(), path, agi::vfr::Framerate(), "UTF-8");
+    return path;
+}
+}
+TEST_F(ordinary_edit, compare_window_applies_checked_changes_as_one_undo_step) {
+    Input("current");
+    auto id = LiveRead(*c).Events.front().Id;
+    auto path = WriteBaseline(*c, "compare-baseline.ass", [](AssFile& f) {
+        f.Events.front().Text = "from baseline";
+        auto line = new AssDialogue; line->Text = "added"; line->Start = 9000; line->End = 9500; f.Events.push_back(*line);
+    });
+    bool writer_blocked = false, apply_disabled_first = false;
+    wxString report;
+    CompareHook hook([&](wxDialog* dialog) {
+        writer_blocked = !c->subtitleAccess->TryWrite();
+        auto list = Find<wxDataViewListCtrl>(dialog); ASSERT_NE(nullptr, list);
+        ASSERT_EQ(2, list->GetItemCount());
+        auto apply = static_cast<wxButton*>(dialog->FindWindow(wxID_OK)); ASSERT_NE(nullptr, apply);
+        apply_disabled_first = !apply->IsEnabled();
+        Toggle(list, 0, true); Toggle(list, 1, true);
+        report = Report(dialog);
+        ASSERT_TRUE(apply->IsEnabled());
+        button(apply, wxID_OK);
+    });
+    EXPECT_TRUE(ShowCompareDialog(c.get(), path));
+    EXPECT_EQ(1, hook.shown); EXPECT_TRUE(hook.messages.empty());
+    EXPECT_TRUE(writer_blocked); EXPECT_TRUE(apply_disabled_first);
+    EXPECT_NE(wxNOT_FOUND, report.Find("1 modified, 1 added and 0 deleted")) << report;
+    EXPECT_EQ((std::vector<std::string>{"from baseline", "added"}), LiveTexts(*c));
+    EXPECT_EQ(id, LiveRead(*c).Events.front().Id);
+    EXPECT_EQ("apply comparison", c->subsController->GetUndoDescription());
+    EXPECT_TRUE(c->subtitleAccess->TryWrite());
+    c->subsController->Undo();
+    EXPECT_EQ((std::vector<std::string>{"current"}), LiveTexts(*c));
+}
+TEST_F(ordinary_edit, compare_window_cancel_changes_nothing_and_releases_the_session) {
+    Input("current");
+    auto path = WriteBaseline(*c, "compare-fields.ass", [](AssFile& f) {
+        f.Events.front().Text = "baseline text"; f.Events.front().Actor = "baseline actor";
+    });
+    auto texts = LiveTexts(*c); auto undo = c->subsController->GetUndoDescription();
+    // Cancel after checking: nothing applied, the session is released.
+    CompareHook cancel([&](wxDialog* dialog) {
+        auto list = Find<wxDataViewListCtrl>(dialog); ASSERT_NE(nullptr, list);
+        Toggle(list, 0, true);
+    });
+    EXPECT_FALSE(ShowCompareDialog(c.get(), path));
+    EXPECT_EQ(texts, LiveTexts(*c)); EXPECT_EQ(undo, c->subsController->GetUndoDescription());
+    EXPECT_TRUE(c->subtitleAccess->TryWrite());
+}
+TEST_F(ordinary_edit, compare_window_takes_only_the_chosen_fields) {
+    Input("current");
+    auto path = WriteBaseline(*c, "compare-fields2.ass", [](AssFile& f) {
+        f.Events.front().Text = "baseline text"; f.Events.front().Actor = "baseline actor";
+    });
+    CompareHook hook([&](wxDialog* dialog) {
+        auto list = Find<wxDataViewListCtrl>(dialog); ASSERT_NE(nullptr, list);
+        ASSERT_EQ(1, list->GetItemCount());
+        list->SelectRow(0);
+        wxDataViewEvent select(wxEVT_DATAVIEW_SELECTION_CHANGED, list, list->RowToItem(0));
+        list->GetEventHandler()->ProcessEvent(select);
+        auto fields = Find<wxCheckListBox>(dialog); ASSERT_NE(nullptr, fields);
+        ASSERT_EQ(2u, fields->GetCount()); // Text, Actor
+        // Check only the Actor field: the row becomes checked with that field alone.
+        fields->Check(1, true);
+        wxCommandEvent event(wxEVT_CHECKLISTBOX, fields->GetId()); event.SetInt(1); event.SetEventObject(fields);
+        fields->GetEventHandler()->ProcessEvent(event);
+        EXPECT_TRUE(list->GetToggleValue(0, 0));
+        button(dialog->FindWindow(wxID_OK), wxID_OK);
+    });
+    EXPECT_TRUE(ShowCompareDialog(c.get(), path));
+    EXPECT_EQ("current", LiveRead(*c).Events.front().Text.get());
+    EXPECT_EQ("baseline actor", LiveRead(*c).Events.front().Actor.get());
+}
+TEST_F(ordinary_edit, compare_window_shows_refusals_and_keeps_apply_disabled) {
+    auto path = WriteBaseline(*c, "compare-bound.ass", [](AssFile& f) {
+        auto token = f.AddExtradata("aegisub.enhanced.subtitle-binding", "group");
+        for (auto text : {"g1", "g2"}) {
+            auto line = new AssDialogue; line->Text = text; line->Start = 5000; line->End = 6000;
+            line->ExtradataIds = std::vector<uint32_t>{token}; f.Events.push_back(*line);
+        }
+    });
+    auto texts = LiveTexts(*c);
+    bool disabled = false; wxString report;
+    CompareHook hook([&](wxDialog* dialog) {
+        auto list = Find<wxDataViewListCtrl>(dialog); ASSERT_NE(nullptr, list);
+        ASSERT_EQ(2, list->GetItemCount());
+        Toggle(list, 0, true);
+        report = Report(dialog);
+        disabled = !dialog->FindWindow(wxID_OK)->IsEnabled();
+    });
+    EXPECT_FALSE(ShowCompareDialog(c.get(), path));
+    EXPECT_TRUE(disabled);
+    EXPECT_NE(wxNOT_FOUND, report.Find("Bound lines must be applied together")) << report;
+    EXPECT_EQ(texts, LiveTexts(*c));
+}
+TEST_F(ordinary_edit, compare_command_refuses_while_editing_and_reports_unreadable_files) {
+    CompareHook hook(nullptr);
+    {
+        auto scope = c->subtitleAccess->TryWrite(); ASSERT_TRUE(scope);
+        cmd::call("subtitle/compare", c.get());               // refused before any file dialog
+    }
+    ASSERT_EQ(1u, hook.messages.size());
+    EXPECT_NE(wxNOT_FOUND, hook.messages[0].Find("being edited"));
+    agi::fs::path bad((std::filesystem::current_path() / "compare-bad.xyz").wstring());
+    { std::ofstream out(bad); out << "not subtitles"; }
+    EXPECT_FALSE(ShowCompareDialog(c.get(), bad));
+    ASSERT_EQ(2u, hook.messages.size());
+    EXPECT_EQ(0, hook.shown);
+    // Identical file: told there is nothing to apply, no window.
+    auto same = WriteBaseline(*c, "compare-same.ass", [](AssFile&) {});
+    EXPECT_FALSE(ShowCompareDialog(c.get(), same));
+    ASSERT_EQ(3u, hook.messages.size());
+    EXPECT_EQ(0, hook.shown);
+    EXPECT_TRUE(c->subtitleAccess->TryWrite());
 }
