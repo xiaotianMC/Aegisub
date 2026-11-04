@@ -83,6 +83,10 @@ private:
 	/// Last autosaved version of this file
 	int autosaved_commit_id = 0;
     uint64_t autosaved_metadata_revision = 0;
+    /// C1-C1c-14 (audit C8): advanced whenever the autosave baseline is moved
+	/// (autosave queued, manual save). A failed autosave restores the previous
+	/// baseline only if nothing moved it in the meantime.
+	uint64_t autosave_epoch = 0;
 	/// Version to use for the next commit
 	/// Needed to handle Save -> Undo -> Edit, which would result in the file
 	/// being marked unmodified if we reused commit IDs

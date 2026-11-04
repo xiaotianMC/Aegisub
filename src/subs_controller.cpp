@@ -290,6 +290,13 @@ void SubtitleModelInstallation::Install(SubtitleModelCandidate&& candidate, agi:
         c->selectionController->active_id=pending->active;
         c->selectionController->model_replaced=false;
         pending->published=true;
+        // C1-C1c-14 (audit C5): the live model is the new one from here on, so
+        // new subscribers (dialogs, tools opened while recovery is blocked)
+        // read it directly and need no delivery. Retries still use the
+        // prepared list.
+        pending->commits.EndSubscriptionFreeze();
+        pending->selected_observers.EndSubscriptionFreeze();
+        pending->active_observers.EndSubscriptionFreeze();
         Confirm();
     }
     catch (...) {
@@ -453,8 +460,10 @@ void SubsController::Save(agi::fs::path const& filename, const char *encoding) {
     auto old_script_path = context->path->Decode("?script");
     auto old_saved_metadata = context->subtitleAccess->saved_metadata;
     auto old_auto_metadata = autosaved_metadata_revision;
+    auto old_autosave_epoch = autosave_epoch;
 	try {
 		autosaved_commit_id = saved_commit_id = commit_id;
+		++autosave_epoch;
 
 		// Have to set this now for the sake of things that want to save paths
 		// relative to the script in the header
@@ -472,6 +481,7 @@ void SubsController::Save(agi::fs::path const& filename, const char *encoding) {
         context->path->SetToken("?script", old_script_path);
         context->subtitleAccess->saved_metadata = std::move(old_saved_metadata);
         autosaved_metadata_revision = old_auto_metadata;
+        autosave_epoch = old_autosave_epoch;
         // C1-C1c-13 (audit C2): SetSubtitlesFilename published the new relative
         // media paths through SetMetadata (revision + listeners). Undo that the
         // same way instead of assigning Properties behind the listeners' backs.
@@ -557,7 +567,8 @@ void SubsController::RequestAutoSave() {
     std::weak_ptr<int> lifetime = autosave_lifetime;
     autosaved_commit_id = version;
     autosaved_metadata_revision = metadata_version;
-	autosave_queue->Async([this, subs_copy, name, directory, lifetime, previous, version, previous_metadata, metadata_version] {
+    auto epoch = ++autosave_epoch;
+	autosave_queue->Async([this, subs_copy, name, directory, lifetime, previous, version, previous_metadata, metadata_version, epoch] {
 		wxString msg;
         bool succeeded = false;
 
@@ -576,9 +587,9 @@ void SubsController::RequestAutoSave() {
 			msg = _("Unhandled exception when attempting to autosave file.");
 		}
 
-		agi::dispatch::Main().Async([this, lifetime, previous, version, previous_metadata, metadata_version, succeeded, msg] {
+		agi::dispatch::Main().Async([this, lifetime, previous, previous_metadata, succeeded, msg, epoch] {
             if (lifetime.expired()) return;
-            if (!succeeded && autosaved_commit_id == version && autosaved_metadata_revision == metadata_version) {
+            if (!succeeded && autosave_epoch == epoch) {
                 autosaved_commit_id = previous;autosaved_metadata_revision = previous_metadata;
             }
             if (context->frame) context->frame->StatusTimeout(msg);

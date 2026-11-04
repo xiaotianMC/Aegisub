@@ -2669,3 +2669,70 @@ TEST_F(document_lifecycle, opening_or_closing_inside_an_observer_notification_is
     c->subsController->Load(path,"utf-8");EXPECT_EQ("new 模型",LiveRead(*c).Events.front().Text.get());
     (void)first;
 }
+// C1-C1c-14 (audit C5): once the new model is published, tools and dialogs
+// opened while recovery is blocked can subscribe; they read the new model and
+// are not part of the retried delivery.
+TEST_F(document_lifecycle, subscriptions_are_allowed_while_recovery_is_blocked) {
+    auto path=Candidate("subscribe-recovery");c->subsController->Load(path,"utf-8");
+    bool fail=true;
+    agi::signal::Connection throwing=LiveRead(*c).AddCommitListener([&](int,AssDialogue const*,Ticket t){if(fail)throw std::runtime_error("observer failure");Ack(t);});
+    EXPECT_THROW(c->subsController->Close(),SubtitleModelRecoveryBlocked);
+    ASSERT_EQ(State::RecoveryBlocked,c->subsController->InstallationStatus());
+    int late_commits=0,late_selections=0;std::string seen_text="unset";
+    std::optional<agi::signal::Connection> commit,selected;
+    EXPECT_NO_THROW(commit.emplace(LiveRead(*c).AddCommitListener([&](int,AssDialogue const*,Ticket t){++late_commits;Ack(t);})));
+    EXPECT_NO_THROW(selected.emplace(c->selectionController->AddSelectionListener([&](Ticket t){++late_selections;Ack(t);})));
+    EXPECT_NO_THROW({ DialogStyling styling(c.get()); seen_text=LiveRead(*c).Events.front().Text.get(); });
+    EXPECT_EQ("",seen_text); // the published (blank) model
+    fail=false;EXPECT_TRUE(c->subsController->RetryModelInstallation());
+    EXPECT_EQ(State::Committed,c->subsController->InstallationStatus());
+    EXPECT_EQ(0,late_commits);EXPECT_EQ(0,late_selections); // not part of the retried delivery
+    Input("after recovery");EXPECT_EQ(1,late_commits);
+}
+// C1-C1c-14 (audit C7): commands that edit the active line do nothing when
+// there is none, instead of dereferencing a null line.
+TEST_F(ordinary_edit, active_line_commands_do_nothing_without_an_active_line) {
+    Input("sample");
+    c->selectionController->SetSelectionAndActiveIDs({},0);
+    ASSERT_EQ(nullptr,c->selectionController->ReadActiveLine());
+    auto description=c->subsController->GetUndoDescription();auto revision=c->subtitleEditGate.Revision();
+    EXPECT_FALSE(cmd::get("edit/line/reverse_move")->Validate(c.get()));
+    for(auto name:{"edit/line/reverse_move","subtitle/bind","subtitle/unbind","edit/revert","edit/clear","edit/clear/text",
+                   "edit/insert_original","edit/font","edit/color/primary","edit/style/bold"})
+        EXPECT_NO_THROW(cmd::call(name,c.get())) << name;
+    EXPECT_EQ(description,c->subsController->GetUndoDescription());
+    EXPECT_EQ("sample",LiveRead(*c).Events.front().Text.get());
+    (void)revision;
+}
+// C1-C1c-14 (audit C3): pasted lines keep references that resolve in this
+// document and drop the rest.
+TEST_F(ordinary_edit, pasted_lines_drop_extradata_references_that_do_not_resolve) {
+    uint32_t known=0;
+    {auto write=c->subtitleAccess->TryWrite();known=LiveWriteForTest(*c).AddExtradata("opaque","here");
+     LiveWriteForTest(*c).Commit("extradata fixture",AssFile::COMMIT_EXTRADATA);}
+    auto data="Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,{=" + std::to_string(known) + "=9999}pasted";
+    cmd::PasteSubtitleLines(c.get(),data);
+    AssDialogue const* pasted=nullptr;
+    for(auto const& row:LiveRead(*c).Events)if(row.Text.get()=="pasted")pasted=&row;
+    ASSERT_NE(nullptr,pasted);
+    EXPECT_EQ((std::vector<uint32_t>{known}),pasted->ExtradataIds.get());
+}
+// C1-C1c-14 (audit C8): an autosave that fails after a manual save already
+// covered its version must not move the autosave baseline back.
+TEST_F(document_lifecycle, failed_autosave_does_not_undo_a_later_manual_save_baseline) {
+    c->subsController->Save(Local("autosave-baseline.ass"),"utf-8");
+    auto old_dir=OPT_GET("Path/Auto/Save")->GetString();
+    BOOST_SCOPE_EXIT_ALL(old_dir) { OPT_SET("Path/Auto/Save")->SetString(old_dir); };
+    auto blocker=std::filesystem::current_path()/"autosave-blocker";
+    std::ofstream(blocker) << "a file, so the autosave directory cannot be created";
+    OPT_SET("Path/Auto/Save")->SetString((blocker/"dir").string());
+    Input("autosaved and saved");
+    c->subsController->RequestAutoSave();               // fails on the worker
+    c->subsController->Save(Local("autosave-baseline.ass"),"utf-8"); // covers the same version
+    for(int i=0;i<300;++i){wxTheApp->ProcessPendingEvents();std::this_thread::sleep_for(std::chrono::milliseconds(10));}
+    auto good=std::filesystem::current_path()/"autosave-good";
+    OPT_SET("Path/Auto/Save")->SetString(good.string());
+    c->subsController->RequestAutoSave();               // nothing new since the save
+    for(int i=0;i<100;++i){wxTheApp->ProcessPendingEvents();std::this_thread::sleep_for(std::chrono::milliseconds(10));}
+    EXPECT_FALSE(std::filesystem::exists(good));
+}

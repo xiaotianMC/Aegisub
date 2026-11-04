@@ -138,8 +138,22 @@ void paste_lines(agi::Context *c, SubtitleRowListEdit& staged, bool paste_over, 
 	Selection newsel;
 
 	boost::char_separator<char> sep("\r\n");
+	auto const& extradata = c->subtitleAccess->Read().Extradata;
 	for (auto curdata : boost::tokenizer<boost::char_separator<char>>(data, sep)) {
-		AssDialogue *inserted = paste_line(get_dialogue(curdata));
+		auto line = get_dialogue(curdata);
+		// C1-C1c-14 (audit C3): copied lines carry "{=id}" references of the
+		// document they came from. Keep the ones that resolve here (copy and
+		// paste within a document) and drop the rest instead of storing
+		// dangling references.
+		auto ids = line->ExtradataIds.get();
+		auto kept = std::remove_if(ids.begin(), ids.end(), [&](uint32_t id) {
+			return std::none_of(extradata.begin(), extradata.end(), [&](ExtradataEntry const& e) { return e.id == id; });
+		});
+		if (kept != ids.end()) {
+			ids.erase(kept, ids.end());
+			line->ExtradataIds = ids;
+		}
+		AssDialogue *inserted = paste_line(std::move(line));
 		if (!inserted)
 			break;
 
@@ -1349,13 +1363,17 @@ struct edit_line_reverse_move final : public Command {
     STR_DISP("Reverse Move Path")
     STR_HELP("Swap the active line's move start and end positions, keeping its movement times")
     bool Validate(const agi::Context *c) override {
-        AssDialogue candidate(static_cast<AssDialogueBase const&>(*c->selectionController->ReadActiveLine()));
+        auto const* active_row = c->selectionController->ReadActiveLine();
+        if (!active_row) return false; // C1-C1c-14 (audit C7)
+        AssDialogue candidate(static_cast<AssDialogueBase const&>(*active_row));
         return reverse_move_paths(&candidate, false);
     }
     void operator()(agi::Context *c) override {
         auto edit_scope = c->subtitleAccess->TryWrite();
         if (!edit_scope) return;
-        AssDialogue candidate(static_cast<AssDialogueBase const&>(*c->selectionController->ReadActiveLine()));
+        auto const* active_row = c->selectionController->ReadActiveLine();
+        if (!active_row) return; // C1-C1c-14 (audit C7)
+        AssDialogue candidate(static_cast<AssDialogueBase const&>(*active_row));
         auto line = &candidate;
         if (reverse_move_paths(line, true)) {
             auto edit=c->subtitleAccess->Edit(edit_scope->Lease());edit.UpdateRows({candidate});
@@ -1411,7 +1429,9 @@ struct edit_revert final : public Command {
 	void operator()(agi::Context *c) override {
         auto edit_scope = c->subtitleAccess->TryWrite();
         if (!edit_scope) return;
-		AssDialogue candidate(static_cast<AssDialogueBase const&>(*c->selectionController->ReadActiveLine()));
+		auto const* active_row = c->selectionController->ReadActiveLine();
+		if (!active_row) return; // C1-C1c-14 (audit C7)
+		AssDialogue candidate(static_cast<AssDialogueBase const&>(*active_row));
         auto line = &candidate;
 		line->Text = c->initialLineState->GetInitialText();
 		auto edit=c->subtitleAccess->Edit(edit_scope->Lease());edit.UpdateRows({candidate});
@@ -1428,7 +1448,9 @@ struct edit_clear final : public Command {
 	void operator()(agi::Context *c) override {
         auto edit_scope = c->subtitleAccess->TryWrite();
         if (!edit_scope) return;
-		AssDialogue candidate(static_cast<AssDialogueBase const&>(*c->selectionController->ReadActiveLine()));
+		auto const* active_row = c->selectionController->ReadActiveLine();
+		if (!active_row) return; // C1-C1c-14 (audit C7)
+		AssDialogue candidate(static_cast<AssDialogueBase const&>(*active_row));
         auto line = &candidate;
 		line->Text = "";
 		auto edit=c->subtitleAccess->Edit(edit_scope->Lease());edit.UpdateRows({candidate});
@@ -1446,7 +1468,9 @@ struct edit_clear_text final : public Command {
 	void operator()(agi::Context *c) override {
         auto edit_scope = c->subtitleAccess->TryWrite();
         if (!edit_scope) return;
-		AssDialogue candidate(static_cast<AssDialogueBase const&>(*c->selectionController->ReadActiveLine()));
+		auto const* active_row = c->selectionController->ReadActiveLine();
+		if (!active_row) return; // C1-C1c-14 (audit C7)
+		AssDialogue candidate(static_cast<AssDialogueBase const&>(*active_row));
         auto line = &candidate;
 		auto blocks = line->ParseTags();
 		line->Text = join(blocks
@@ -1468,7 +1492,9 @@ struct edit_insert_original final : public Command {
 	void operator()(agi::Context *c) override {
         auto edit_scope = c->subtitleAccess->TryWrite();
         if (!edit_scope) return;
-		AssDialogue candidate(static_cast<AssDialogueBase const&>(*c->selectionController->ReadActiveLine()));
+		auto const* active_row = c->selectionController->ReadActiveLine();
+		if (!active_row) return; // C1-C1c-14 (audit C7)
+		AssDialogue candidate(static_cast<AssDialogueBase const&>(*active_row));
         auto line = &candidate;
 		int sel_start = c->textSelectionController->GetSelectionStart();
 		int sel_end = c->textSelectionController->GetSelectionEnd();

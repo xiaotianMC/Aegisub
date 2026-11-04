@@ -60,8 +60,16 @@ namespace {
 std::unique_ptr<agi::dispatch::Queue> cache_queue;
 ASS_Library *library;
 
+// C1-C1c-14 (audit C9): libass may report messages from the font cache
+// worker at any time, including while the process exits. StopLogging()
+// turns the callback off under this mutex before the log sink is destroyed.
+std::mutex log_mutex;
+bool log_enabled = true;
+
 void msg_callback(int level, const char *fmt, va_list args, void *) {
 	if (level >= 7) return;
+	std::lock_guard<std::mutex> lock(log_mutex);
+	if (!log_enabled) return;
 	char buf[1024];
 #ifdef _WIN32
 	vsprintf_s(buf, sizeof(buf), fmt, args);
@@ -207,6 +215,11 @@ void LibassSubtitlesProvider::DrawSubtitles(VideoFrame &frame,double time) {
 namespace libass {
 std::unique_ptr<SubtitlesProvider> Create(std::string const&, agi::BackgroundRunner *br) {
 	return std::make_unique<LibassSubtitlesProvider>(br);
+}
+
+void StopLogging() {
+	std::lock_guard<std::mutex> lock(log_mutex);
+	log_enabled = false;
 }
 
 void CacheFonts() {

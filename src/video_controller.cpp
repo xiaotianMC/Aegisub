@@ -156,13 +156,16 @@ void VideoController::PlayLine() {
 
 	AssDialogue const* curline = context->selectionController->ReadActiveLine();
 	if (!curline) return;
+	const int start = curline->Start, end = curline->End;
 
-	context->audioController->PlayRange(TimeRange(curline->Start, curline->End));
+	context->audioController->PlayRange(TimeRange(start, end));
 
 	// Round-trip conversion to convert start to exact
-	int startFrame = FrameAtTime(context->selectionController->ReadActiveLine()->Start, agi::vfr::START);
+	// C1-C1c-14 (audit C7): the audio controller may change the active line;
+	// use the times read above instead of dereferencing it again.
+	int startFrame = FrameAtTime(start, agi::vfr::START);
 	start_ms = TimeAtFrame(startFrame);
-	end_frame = FrameAtTime(context->selectionController->ReadActiveLine()->End, agi::vfr::END) + 1;
+	end_frame = FrameAtTime(end, agi::vfr::END) + 1;
 
 	JumpToFrame(startFrame);
 

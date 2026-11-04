@@ -487,3 +487,41 @@ TEST(subtitle_project_access, comparison_cannot_begin_while_metadata_observers_r
     access.SetMetadata(SubtitleProjectAccess::MetadataField::VideoFile,"v.mkv");
     EXPECT_FALSE(began);EXPECT_TRUE(gate.TryBeginComparison());
 }
+
+// C1-C1c-14 (audit C3): ordinary row writes may keep a row's existing
+// references, but every new or changed one must resolve; refusals happen
+// before the first write.
+TEST(subtitle_project_access, row_writes_reject_new_unresolved_extradata_references) {
+    AssFile file; auto line = new AssDialogue; file.Events.push_back(*line);
+    auto second = new AssDialogue; file.Events.push_back(*second);
+    auto known = file.AddExtradata("opaque", "kept");
+    line->ExtradataIds = std::vector<uint32_t>{known, 4242}; // 4242: unresolved, already present
+    agi::SubtitleEditGate gate; SubtitleProjectAccess access(file, gate);
+    auto lease = gate.TryBeginWrite(); ASSERT_TRUE(lease);
+    auto edit = access.Edit(*lease);
+
+    AssDialogueBase same = *line; same.Text = "existing references are kept";
+    AssDialogueBase other = *second; other.Text = "untouched";
+    EXPECT_NO_THROW(edit.UpdateRows({same, other}));
+    EXPECT_EQ("existing references are kept", access.Read().Events.front().Text.get());
+
+    AssDialogueBase dangling = *second; dangling.Text = "never written"; dangling.ExtradataIds = std::vector<uint32_t>{999};
+    AssDialogueBase first = *line; first.Text = "not written either";
+    EXPECT_THROW(edit.UpdateRows({first, dangling}), std::invalid_argument);
+    EXPECT_EQ("existing references are kept", access.Read().Events.front().Text.get());
+    EXPECT_TRUE(access.Read().Events.back().ExtradataIds.get().empty());
+
+    AssDialogueBase resolved = *second; resolved.ExtradataIds = std::vector<uint32_t>{known};
+    EXPECT_NO_THROW(edit.UpdateRows({resolved}));
+
+    std::vector<AssDialogueBase> originals(access.Read().Events.begin(), access.Read().Events.end());
+    auto inserted = originals; AssDialogue fresh; AssDialogueBase added = fresh;
+    added.Row = 2; added.ExtradataIds = std::vector<uint32_t>{31337};
+    inserted.push_back(added);
+    try { edit.ReplaceRows(gate.Capture(), originals, inserted); ADD_FAILURE() << "accepted a dangling reference"; }
+    catch (std::invalid_argument const& e) { EXPECT_STREQ("Unresolved new extradata reference", e.what()); }
+    EXPECT_EQ(2u, access.Read().Events.size());
+    inserted.back().ExtradataIds = std::vector<uint32_t>{known};
+    EXPECT_NO_THROW(edit.ReplaceRows(gate.Capture(), originals, inserted));
+    EXPECT_EQ(3u, access.Read().Events.size());
+}

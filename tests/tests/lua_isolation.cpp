@@ -848,3 +848,35 @@ end)
     EXPECT_EQ("Busy", c->subsController->GetUndoDescription());
     EXPECT_EQ("ran", Texts()[0]);
 }
+
+// C1-C1c-14 (audit B7): an export filter runs on a worker thread; the host
+// helpers it calls answer from a snapshot captured on the host thread.
+TEST_F(lua_macro, isolation_export_filter_host_helpers_read_a_host_snapshot) {
+    auto saved = std::filesystem::current_path() / "named-export.ass";
+    c->subsController->Save(agi::fs::path(saved.wstring()), "utf-8");
+    c->subtitleAccess->SetMetadata(SubtitleProjectAccess::MetadataField::ExportEncoding, "snapshot-encoding");
+    auto path = std::filesystem::current_path() / "helpers.lua";
+    std::ofstream(path) << R"(script_name = "helpers"
+aegisub.register_filter("Host helper filter", "", 1, function(subs)
+    local props = aegisub.project_properties()
+    local text = tostring(props and props.export_encoding) .. "|" .. tostring(aegisub.file_name()) .. "|" ..
+        tostring(aegisub.decode_path("?script") ~= "?script") .. "|" .. tostring(#aegisub.keyframes()) .. "|" ..
+        tostring(aegisub.video_size()) .. "|" .. tostring(aegisub.frame_from_ms(1000))
+    for i = 1, #subs do
+        if subs[i].class == "dialogue" then local l = subs[i]; l.text = text; subs[i] = l end
+    end
+end)
+)";
+    auto script = Automation4::ScriptFactory::CreateFromFile(agi::fs::path(path.wstring()), false);
+    ASSERT_TRUE(script && script->GetLoadedState());
+    auto filters = script->GetFilters();
+    ASSERT_EQ(1u, filters.size());
+    AssFile copy(LiveRead(*c));
+    auto texts = Texts();
+    filters[0]->LoadSettings(true, c.get());
+    EXPECT_NO_THROW(filters[0]->ProcessSubs(&copy, window));
+    for (auto const& line : copy.Events)
+        EXPECT_EQ("snapshot-encoding|named-export.ass|true|0|nil|nil", line.Text.get());
+    EXPECT_EQ(texts, Texts());
+    scripts.push_back(std::move(script));
+}

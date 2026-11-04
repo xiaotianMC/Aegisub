@@ -62,6 +62,10 @@
 #include <libaegisub/lua/script_reader.h>
 #include <libaegisub/lua/utils.h>
 #include <libaegisub/path.h>
+#include <libaegisub/vfr.h>
+
+#include <optional>
+#include <wx/thread.h>
 
 #include <algorithm>
 #include <boost/algorithm/string/case_conv.hpp>
@@ -109,10 +113,54 @@ namespace {
 
 	/// Document values captured on the host thread when a macro starts, so the
 	/// script (on a worker thread) never reads the live document or controller.
+	///
+	/// C1-C1c-13 (audit B7): every host value a running script can query is
+	/// captured here, on the host thread, before the worker starts: file name,
+	/// path tokens, timecodes, keyframes, video size and aspect ratio, and the
+	/// audio selection. Macros and export filters both run with a snapshot.
 	struct RunSnapshot {
-		AssFile const* file;
+		AssFile const* file = nullptr;
 		agi::fs::path filename;
+		std::optional<agi::Path> path;
+		std::optional<ProjectProperties> properties;
+		agi::vfr::Framerate timecodes;
+		std::vector<int> keyframes;
+		bool has_video = false;
+		int video_width = 0, video_height = 0;
+		double ar_value = 0.;
+		int ar_type = 0;
+		std::optional<std::pair<int, int>> audio_selection;
 	};
+
+	RunSnapshot CaptureRunSnapshot(const agi::Context *c, AssFile const* file)
+	{
+		RunSnapshot snapshot;
+		snapshot.file = file;
+		if (!c) return snapshot;
+		if (c->subsController) snapshot.filename = c->subsController->Filename();
+		if (c->path) snapshot.path.emplace(*c->path);
+		if (c->subtitleAccess) snapshot.properties = c->subtitleAccess->Read().Properties;
+		if (c->project) {
+			snapshot.timecodes = c->project->Timecodes();
+			snapshot.keyframes = c->project->Keyframes();
+			if (auto provider = c->project->VideoProvider()) {
+				snapshot.has_video = true;
+				snapshot.video_width = provider->GetWidth();
+				snapshot.video_height = provider->GetHeight();
+				if (c->videoController) {
+					snapshot.ar_value = c->videoController->GetAspectRatioValue();
+					snapshot.ar_type = (int)c->videoController->GetAspectRatioType();
+				}
+			}
+		}
+		if (c->audioController) {
+			if (auto timing = c->audioController->GetTimingController()) {
+				auto range = timing->GetActiveLineRange();
+				snapshot.audio_selection.emplace(range.begin(), range.end());
+			}
+		}
+		return snapshot;
+	}
 
 	void set_run_snapshot(lua_State *L, RunSnapshot const* snapshot)
 	{
@@ -131,12 +179,20 @@ namespace {
 		return snapshot;
 	}
 
+	/// Without a run snapshot the live host state may only be read on the host
+	/// thread (script loading, validate, isactive, config dialogs).
+	const agi::Context *get_host_context(lua_State *L)
+	{
+		auto c = get_context(L);
+		return c && wxIsMainThread() ? c : nullptr;
+	}
+
 	int get_file_name(lua_State *L)
 	{
-		const agi::Context *c = get_context(L);
 		auto snapshot = get_run_snapshot(L);
+		const agi::Context *c = snapshot ? nullptr : get_host_context(L);
 		auto filename = snapshot ? snapshot->filename : c ? c->subsController->Filename() : agi::fs::path();
-		if (c && !filename.empty())
+		if ((snapshot || c) && !filename.empty())
 			push_value(L, filename.filename());
 		else
 			lua_pushnil(L);
@@ -225,10 +281,13 @@ namespace {
 
 	int frame_from_ms(lua_State *L)
 	{
-		const agi::Context *c = get_context(L);
 		int ms = lua_tointeger(L, -1);
 		lua_pop(L, 1);
-		if (c && c->project->Timecodes().IsLoaded())
+		auto snapshot = get_run_snapshot(L);
+		const agi::Context *c = snapshot ? nullptr : get_host_context(L);
+		if (snapshot && snapshot->timecodes.IsLoaded())
+			push_value(L, snapshot->timecodes.FrameAtTime(ms, agi::vfr::START));
+		else if (c && c->project->Timecodes().IsLoaded())
 			push_value(L, c->videoController->FrameAtTime(ms, agi::vfr::START));
 		else
 			lua_pushnil(L);
@@ -238,10 +297,13 @@ namespace {
 
 	int ms_from_frame(lua_State *L)
 	{
-		const agi::Context *c = get_context(L);
 		int frame = lua_tointeger(L, -1);
 		lua_pop(L, 1);
-		if (c && c->project->Timecodes().IsLoaded())
+		auto snapshot = get_run_snapshot(L);
+		const agi::Context *c = snapshot ? nullptr : get_host_context(L);
+		if (snapshot && snapshot->timecodes.IsLoaded())
+			push_value(L, snapshot->timecodes.TimeAtFrame(frame, agi::vfr::START));
+		else if (c && c->project->Timecodes().IsLoaded())
 			push_value(L, c->videoController->TimeAtFrame(frame, agi::vfr::START));
 		else
 			lua_pushnil(L);
@@ -250,7 +312,18 @@ namespace {
 
 	int video_size(lua_State *L)
 	{
-		const agi::Context *c = get_context(L);
+		if (auto snapshot = get_run_snapshot(L)) {
+			if (!snapshot->has_video) {
+				lua_pushnil(L);
+				return 1;
+			}
+			push_value(L, snapshot->video_width);
+			push_value(L, snapshot->video_height);
+			push_value(L, snapshot->ar_value);
+			push_value(L, snapshot->ar_type);
+			return 4;
+		}
+		const agi::Context *c = get_host_context(L);
 		if (c && c->project->VideoProvider()) {
 			auto provider = c->project->VideoProvider();
 			push_value(L, provider->GetWidth());
@@ -267,7 +340,9 @@ namespace {
 
 	int get_keyframes(lua_State *L)
 	{
-		if (const agi::Context *c = get_context(L))
+		if (auto snapshot = get_run_snapshot(L))
+			push_value(L, snapshot->keyframes);
+		else if (const agi::Context *c = get_host_context(L))
 			push_value(L, c->project->Keyframes());
 		else
 			lua_pushnil(L);
@@ -278,7 +353,10 @@ namespace {
 	{
 		std::string path = check_string(L, 1);
 		lua_pop(L, 1);
-		if (const agi::Context *c = get_context(L))
+		auto snapshot = get_run_snapshot(L);
+		if (snapshot && snapshot->path)
+			push_value(L, snapshot->path->Decode(path));
+		else if (const agi::Context *c = snapshot ? nullptr : get_host_context(L))
 			push_value(L, c->path->Decode(path));
 		else
 			push_value(L, config::path->Decode(path));
@@ -333,7 +411,16 @@ namespace {
 
 	int lua_get_audio_selection(lua_State *L)
 	{
-		const agi::Context *c = get_context(L);
+		if (auto snapshot = get_run_snapshot(L)) {
+			if (!snapshot->audio_selection) {
+				lua_pushnil(L);
+				return 1;
+			}
+			push_value(L, snapshot->audio_selection->first);
+			push_value(L, snapshot->audio_selection->second);
+			return 2;
+		}
+		const agi::Context *c = get_host_context(L);
 		if (!c || !c->audioController || !c->audioController->GetTimingController()) {
 			lua_pushnil(L);
 			return 1;
@@ -347,24 +434,26 @@ namespace {
 	int lua_set_status_text(lua_State *L)
 	{
 		const agi::Context *c = get_context(L);
-		if (!c || !c->frame) {
+		if (!c) {
 			lua_pushnil(L);
 			return 1;
 		}
 		std::string text = check_string(L, 1);
 		lua_pop(L, 1);
-		agi::dispatch::Main().Async([=] { c->frame->StatusTimeout(to_wx(text)); });
+		// The frame pointer is read on the host thread, not by the worker.
+		agi::dispatch::Main().Async([=] { if (c->frame) c->frame->StatusTimeout(to_wx(text)); });
 		return 0;
 	}
 
 	int project_properties(lua_State *L)
 	{
-		const agi::Context *c = get_context(L);
-		if (!c)
+		auto snapshot = get_run_snapshot(L);
+		const agi::Context *c = snapshot ? nullptr : get_host_context(L);
+		if (!(snapshot && snapshot->properties && snapshot->path) && !c)
 			lua_pushnil(L);
 		else {
-			auto snapshot = get_run_snapshot(L);
-			auto const& properties = snapshot ? snapshot->file->Properties : c->subtitleAccess->Read().Properties;
+			auto const& properties = snapshot ? *snapshot->properties : c->subtitleAccess->Read().Properties;
+			auto const& paths = snapshot ? *snapshot->path : *c->path;
 			lua_createtable(L, 0, 14);
 #define PUSH_FIELD(name) set_field(L, #name, properties.name)
 			PUSH_FIELD(automation_scripts);
@@ -378,10 +467,10 @@ namespace {
 			PUSH_FIELD(ar_mode);
 			PUSH_FIELD(video_position);
 #undef PUSH_FIELD
-			set_field(L, "audio_file", c->path->MakeAbsolute(properties.audio_file, "?script"));
-			set_field(L, "video_file", c->path->MakeAbsolute(properties.video_file, "?script"));
-			set_field(L, "timecodes_file", c->path->MakeAbsolute(properties.timecodes_file, "?script"));
-			set_field(L, "keyframes_file", c->path->MakeAbsolute(properties.keyframes_file, "?script"));
+			set_field(L, "audio_file", paths.MakeAbsolute(properties.audio_file, "?script"));
+			set_field(L, "video_file", paths.MakeAbsolute(properties.video_file, "?script"));
+			set_field(L, "timecodes_file", paths.MakeAbsolute(properties.timecodes_file, "?script"));
+			set_field(L, "keyframes_file", paths.MakeAbsolute(properties.keyframes_file, "?script"));
 		}
 		return 1;
 	}
@@ -449,6 +538,11 @@ namespace {
 		static int LuaRegister(lua_State *L);
 
 		void ProcessSubs(AssFile *subs, wxWindow *export_dialog) override;
+		/// The exporter calls this on the host thread right before ProcessSubs;
+		/// it is the only place the export context is known.
+		void LoadSettings(bool is_default, agi::Context *c) override;
+	private:
+		agi::Context *export_context = nullptr;
 	};
 	class LuaScript final : public Script {
 		lua_State *L = nullptr;
@@ -937,7 +1031,7 @@ namespace {
 			return;
 		}
 		AssFile& work = transaction->Work();
-		RunSnapshot snapshot{&work, c->subsController->Filename()};
+		RunSnapshot snapshot = CaptureRunSnapshot(c, &work);
 
 		set_context(L, c);
 		set_run_snapshot(L, &snapshot);
@@ -1161,6 +1255,13 @@ namespace {
 
 		LuaStackcheck stackcheck(L);
 
+		// C1-C1c-13 (audit B7): the worker reads host values from this
+		// snapshot of the export copy, never from the live project.
+		RunSnapshot snapshot = CaptureRunSnapshot(export_context, subs);
+		if (export_context) set_context(L, export_context);
+		set_run_snapshot(L, &snapshot);
+		BOOST_SCOPE_EXIT_ALL(&) { set_run_snapshot(L, nullptr); };
+
 		GetFeatureFunction("run");
 		stackcheck.check_stack(1);
 
@@ -1192,6 +1293,12 @@ namespace {
 			subsobj->Cancel();
 			throw;
 		}
+	}
+
+	void LuaExportFilter::LoadSettings(bool is_default, agi::Context *c)
+	{
+		ExportFilter::LoadSettings(is_default, c);
+		export_context = c;
 	}
 
 	std::unique_ptr<ScriptDialog> LuaExportFilter::GenerateConfigDialog(wxWindow *, agi::Context *c)

@@ -51,6 +51,7 @@ int main(int argc, char** argv) {
     cmd::clear();
     config::mru = nullptr; config::opt = nullptr; config::path = nullptr;
     wxEntryCleanup();
+    libass::StopLogging(); // C1-C1c-14 (audit C9): before the log sink goes away
     agi::log::log = nullptr;
     return result;
 }

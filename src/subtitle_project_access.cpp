@@ -336,10 +336,26 @@ void SubtitleProjectAccess::WriteAccess::SetExtradataValue(uint32_t id, std::str
     throw std::out_of_range("Subtitle extradata no longer exists");
 }
 
-void SubtitleProjectAccess::WriteAccess::UpdateRows(std::vector<AssDialogueBase> const& updates) const {
-    auto access = Check();
+namespace {
+// C1-C1c-14 (audit C3): an ordinary row write may keep the references a row
+// already has (a loaded file may contain unresolved ones), but every new or
+// changed reference must name an existing extradata entry. Line styles are
+// deliberately not validated: ASS allows lines whose style is missing (the
+// renderer falls back to Default), and loading and pasting rely on it.
+void CheckNewExtradataReferences(AssFile const& file, AssDialogueBase const& row, std::vector<uint32_t> const* previous) {
+    for (auto id : row.ExtradataIds.get()) {
+        if (previous && std::find(previous->begin(), previous->end(), id) != previous->end()) continue;
+        if (std::none_of(file.Extradata.begin(), file.Extradata.end(), [&](ExtradataEntry const& e) { return e.id == id; }))
+            throw std::invalid_argument("Unresolved new extradata reference");
+    }
+}
+}
+namespace {
+// check_references is false only for a value batch that validated its rows
+// against the extradata it installs itself (UpdateValues with COMMIT_EXTRADATA).
+void UpdateLiveRows(AssFile& file, std::vector<AssDialogueBase> const& updates, bool check_references) {
     std::unordered_map<int, AssDialogue*> live;
-    for (auto& row : access.file->Events)
+    for (auto& row : file.Events)
         if (!live.emplace(row.Id, &row).second) throw std::logic_error("Duplicate live subtitle ID");
     std::set<int> written;
     for (auto const& row : updates) {
@@ -347,8 +363,14 @@ void SubtitleProjectAccess::WriteAccess::UpdateRows(std::vector<AssDialogueBase>
         if (found == live.end()) throw std::out_of_range("Subtitle update target missing");
         if (!written.insert(row.Id).second || row.Row != found->second->Row)
             throw std::invalid_argument("Invalid or duplicate subtitle update");
+        if (check_references) CheckNewExtradataReferences(file, row, &found->second->ExtradataIds.get());
     }
     for (auto const& row : updates) static_cast<AssDialogueBase&>(*live.at(row.Id)) = row;
+}
+}
+void SubtitleProjectAccess::WriteAccess::UpdateRows(std::vector<AssDialogueBase> const& updates) const {
+    auto access = Check();
+    UpdateLiveRows(*access.file, updates, true);
 }
 bool SubtitleProjectAccess::WriteAccess::UpdateRowsLinkingAdjacent(
     std::vector<AssDialogueBase> const& updates, std::vector<AdjacentLink> const& links) const {
@@ -406,6 +428,7 @@ void SubtitleProjectAccess::WriteAccess::ReplaceRows(
     for(auto const& row:result) {
         if(row.Id<=0 || !seen.insert(row.Id).second)throw std::invalid_argument("Invalid row-list identity");
         auto found=live.find(row.Id);
+        CheckNewExtradataReferences(*access.file,row,found!=live.end()?&found->second->ExtradataIds.get():nullptr);
         if(found!=live.end())prepared.push_back(found->second);
         else {allocated.push_back(std::make_unique<AssDialogue>(row));prepared.push_back(allocated.back().get());}
     }
@@ -492,7 +515,7 @@ void SubtitleProjectAccess::WriteAccess::UpdateValues(
     }
     auto& retired=access.owner->pending_retired;retired.reserve(retired.size()+live_styles.size());
     // All validation and preparation precede the first live write.
-    if(parts & AssFile::COMMIT_DIAG_FULL)UpdateRows(rows);
+    if(parts & AssFile::COMMIT_DIAG_FULL)UpdateLiveRows(file,rows,!(parts & AssFile::COMMIT_EXTRADATA));
     if(parts & AssFile::COMMIT_STYLES) {
         EntryList<AssStyle> old;old.swap(file.Styles);
         for(size_t i=0;i<prepared.size();++i) {

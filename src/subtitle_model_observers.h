@@ -62,6 +62,7 @@ public:
     class Prepared {
         std::shared_ptr<State> state;
         std::vector<std::shared_ptr<Slot>> slots;
+        bool freezing = true;
         friend class SubtitleModelObservers;
         explicit Prepared(std::shared_ptr<State> const& value) : state(value) {
             if (state->frozen == std::numeric_limits<size_t>::max()) throw std::overflow_error("Observer preparation count exhausted");
@@ -72,8 +73,13 @@ public:
     public:
         Prepared(Prepared const&) = delete;
         Prepared& operator=(Prepared const&) = delete;
-        Prepared(Prepared&& other) noexcept : state(std::move(other.state)), slots(std::move(other.slots)) {}
-        ~Prepared() { if (state) --state->frozen; }
+        Prepared(Prepared&& other) noexcept : state(std::move(other.state)), slots(std::move(other.slots)), freezing(other.freezing) {}
+        ~Prepared() { if (state && freezing) --state->frozen; }
+        /// C1-C1c-14 (audit C5): subscription is frozen so that no subscriber can
+        /// read the old model and then miss its replacement. Once the new model
+        /// is published that can no longer happen, so the installation ends the
+        /// freeze; the prepared list itself is kept for retrying delivery.
+        void EndSubscriptionFreeze() noexcept { if (state && freezing) { --state->frozen; freezing = false; } }
         std::vector<std::string> Names() const {
             std::vector<std::string> names;
             for (auto const& slot : slots) names.push_back(slot->name);

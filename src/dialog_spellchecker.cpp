@@ -346,6 +346,7 @@ void DialogSpellChecker::Replace() {
     auto edit_scope = context->subtitleAccess->TryWrite();
     if (!edit_scope) return;
 	AssDialogue const* active_line = context->selectionController->ReadActiveLine();
+	if (!active_line) return; // C1-C1c-14 (audit C7)
 
 	// Only replace if the user hasn't changed the selection to something else
 	if (to_wx(active_line->Text.get().substr(word_start, word_len)) == orig_word->GetValue()) {

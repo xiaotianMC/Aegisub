@@ -359,6 +359,10 @@ int AegisubApp::OnExit() {
 
 	agi::xdp_utils::Cleanup();
 
+	// The libass font cache worker may still be running; it must not reach
+	// the log sink once it is gone.
+	libass::StopLogging();
+
 	// Keep this last!
 	delete agi::log::log;
 	crash_writer::Cleanup();

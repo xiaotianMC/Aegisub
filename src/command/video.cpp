@@ -364,7 +364,7 @@ struct video_frame_next_boundary final : public validator_video_loaded {
 
 		c->selectionController->NextLine();
 		AssDialogue const* new_line = c->selectionController->ReadActiveLine();
-		if (new_line != active_line)
+		if (new_line && new_line != active_line) // C1-C1c-14 (audit C7)
 		c->videoController->JumpToTime(new_line->Start);
 	}
 };
@@ -431,7 +431,7 @@ struct video_frame_prev_boundary final : public validator_video_loaded {
 
 		c->selectionController->PrevLine();
 		AssDialogue const* new_line = c->selectionController->ReadActiveLine();
-		if (new_line != active_line)
+		if (new_line && new_line != active_line) // C1-C1c-14 (audit C7)
 			c->videoController->JumpToTime(new_line->End, agi::vfr::END);
 	}
 };
