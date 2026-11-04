@@ -8344,6 +8344,12 @@ msgstr "当前显示的 %d 处差异"
 msgid "Ignored fields keep their current choice: %s"
 msgstr "忽略的字段保持原来的选择：%s"
 
+msgid "This line changed several fields, listed under it: Ctrl+Up/Down picks a field, Ctrl+Left takes the left side, Ctrl+Right keeps the right side."
+msgstr "这一行改动了多个字段，逐项列在下方：Ctrl+↑/↓ 选择字段，Ctrl+← 采用左侧，Ctrl+→ 保留右侧。"
+
+msgid "%s: Ctrl+Left takes the left side, Ctrl+Right keeps the right side, Esc leaves the field"
+msgstr "%s：Ctrl+← 采用左侧，Ctrl+→ 保留右侧，Esc 退出字段选择"
+
 msgid "target project"
 msgstr "目标工程"
 

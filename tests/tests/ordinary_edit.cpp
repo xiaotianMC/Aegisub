@@ -3010,6 +3010,48 @@ TEST_F(ordinary_edit, compare_window_takes_only_the_chosen_fields) {
     EXPECT_EQ("current", LiveRead(*c).Events.front().Text.get());
     EXPECT_EQ("baseline actor", LiveRead(*c).Events.front().Actor.get());
 }
+TEST_F(ordinary_edit, compare_window_decides_detail_fields_by_keyboard) {
+    Input("current");
+    auto path = WriteBaseline(*c, "compare-keys.ass", [](AssFile& f) {
+        f.Events.front().Text = "baseline text"; f.Events.front().Actor = "baseline actor";
+    });
+    wxString resting, first, second, clamped, after_left, after_escape, whole, undone;
+    bool still_open = false;
+    CompareHook hook([&](wxDialog* dialog) {
+        auto pane = dialog->FindWindow("compare-right"); ASSERT_NE(nullptr, pane);
+        auto hint = Named<wxStaticText>(dialog, "compare-hint"); ASSERT_NE(nullptr, hint);
+        auto key = [&](wxWindow* target, wxEventType type, int code, bool ctrl) {
+            wxKeyEvent event(type); event.m_keyCode = code; event.SetControlDown(ctrl); event.SetEventObject(target);
+            target->GetEventHandler()->ProcessEvent(event);
+        };
+        resting = hint->GetLabelText();
+        key(pane, wxEVT_KEY_DOWN, WXK_DOWN, true); first = hint->GetLabelText();
+        key(pane, wxEVT_KEY_DOWN, WXK_DOWN, true); second = hint->GetLabelText();
+        key(pane, wxEVT_KEY_DOWN, WXK_DOWN, true); clamped = hint->GetLabelText(); // stays on the last field
+        key(pane, wxEVT_KEY_DOWN, WXK_LEFT, true);                                 // Actor: the left side
+        after_left = Label(dialog, "compare-stats");
+        key(dialog, wxEVT_CHAR_HOOK, WXK_ESCAPE, false);                           // leaves the field only
+        after_escape = hint->GetLabelText();
+        still_open = dialog->IsModal() && dialog->IsShown();
+        key(pane, wxEVT_KEY_DOWN, WXK_RIGHT, true);                                // no field: the whole line
+        whole = Label(dialog, "compare-stats");
+        Press(dialog, "compare-undo");
+        undone = Label(dialog, "compare-stats");
+        button(dialog->FindWindow(wxID_OK), wxID_OK);
+    });
+    EXPECT_TRUE(ShowCompareDialog(c.get(), path));
+    EXPECT_NE(wxNOT_FOUND, resting.Find("Ctrl+Up/Down")) << resting;
+    EXPECT_TRUE(first.StartsWith("Text: Ctrl+Left")) << first;
+    EXPECT_TRUE(second.StartsWith("Actor: Ctrl+Left")) << second;
+    EXPECT_EQ(second, clamped);
+    EXPECT_EQ("0 pending, 0 accepted, 0 rejected, 1 partial", after_left);
+    EXPECT_EQ(resting, after_escape);
+    EXPECT_TRUE(still_open);
+    EXPECT_EQ("0 pending, 1 accepted, 0 rejected, 0 partial", whole);
+    EXPECT_EQ(after_left, undone);
+    EXPECT_EQ("current", LiveRead(*c).Events.front().Text.get());
+    EXPECT_EQ("baseline actor", LiveRead(*c).Events.front().Actor.get());
+}
 TEST_F(ordinary_edit, compare_window_filters_by_category_and_leaves_ignored_fields_alone) {
     Input("current");
     auto start = LiveRead(*c).Events.front().Start, end = LiveRead(*c).Events.front().End;

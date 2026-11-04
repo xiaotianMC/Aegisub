@@ -300,6 +300,7 @@ class DialogCompare final : public wxDialog {
     std::vector<int> row_of;            // entry -> its row (the fold row for hidden entries)
     std::optional<size_t> current;      // the current difference (an entry)
     int hot = -1;                       // row under the pointer, in any pane or the gutter
+    std::optional<model::Field> field_cursor; // the keyboard's field among the current difference's detail rows
 
     // metrics
     int row_h = 22, char_w = 7, number_w = 40, arrow_w = 18, band_w = 28, check_w = 24, time_w = 80, style_w = 80, actor_w = 0;
@@ -317,7 +318,9 @@ class DialogCompare final : public wxDialog {
     wxBoxSizer *filter_bar;
     wxTextCtrl *report;
     wxStaticText *hint;
-    wxString default_hint;
+    wxString default_hint, detail_hint;
+    /// The changed fields of the current difference that have detail rows.
+    std::vector<model::Field> DetailFields() const;
 
     void Measure();
     /// Rebuild the rows (after the filter, folds or the current difference
@@ -352,6 +355,12 @@ public:
     void Select(size_t entry, Side from);
     void Decide(size_t entry, Decision d);
     void SetField(size_t entry, model::Field field, Side winner);
+    /// Put the keyboard's field on @p field (a detail row of the current difference).
+    void SetFieldCursor(std::optional<model::Field> field);
+    /// Move the keyboard's field by @p delta detail rows (from none: the first or last).
+    void MoveFieldCursor(int delta);
+    /// Take @p side for the keyboard's field, or for the whole current difference.
+    void ChooseSide(Side side);
     void ToggleCheck(size_t entry);
     void ExpandFold(int row);
     void Scrolled(Side from);
@@ -559,7 +568,8 @@ void DiffPane::OnMouse(wxMouseEvent& event) {
             case Part::Reject: ed.Decide(lr.entry, Decision::Rejected); return;
             case Part::Reset: ed.Decide(lr.entry, Decision::Pending); return;
             default:
-                if (!lr.IsDetail()) ed.Select(lr.entry, side);
+                if (lr.IsDetail()) ed.SetFieldCursor(*lr.field);
+                else ed.Select(lr.entry, side);
                 return;
         }
     }
@@ -575,6 +585,17 @@ void DiffPane::OnMouse(wxMouseEvent& event) {
 
 void DiffPane::OnKey(wxKeyEvent& event) {
     int vis = VisibleRows();
+    // Ctrl+arrows decide: up and down pick a field of the current difference,
+    // left and right take that side (of the field, or of the whole line).
+    if (event.GetModifiers() == wxMOD_CONTROL) {
+        switch (event.GetKeyCode()) {
+            case WXK_UP: ed.MoveFieldCursor(-1); return;
+            case WXK_DOWN: ed.MoveFieldCursor(1); return;
+            case WXK_LEFT: ed.ChooseSide(Side::Left); return;
+            case WXK_RIGHT: ed.ChooseSide(Side::Right); return;
+            default: break;
+        }
+    }
     switch (event.GetKeyCode()) {
         case WXK_UP: SetView(top - 1, xoff, true); break;
         case WXK_DOWN: SetView(top + 1, xoff, true); break;
@@ -868,6 +889,12 @@ void DiffPane::DrawDetail(wxDC& dc, Geometry const& g, int row, int y) {
     if (ed.GroupEnd(row)) {
         dc.SetPen(wxPen(p.accent));
         dc.DrawLine(0, y + ed.row_h - 1, g.width, y + ed.row_h - 1);
+    }
+    if (ed.field_cursor == f) {
+        // the keyboard's field: a frame, solid while this pane has the focus
+        dc.SetPen(wxPen(p.accent, HasFocus() ? 2 : 1, HasFocus() ? wxPENSTYLE_SOLID : wxPENSTYLE_SHORT_DASH));
+        dc.SetBrush(*wxTRANSPARENT_BRUSH);
+        dc.DrawRectangle(g.content_x + 1, y + 1, g.content_right - g.content_x - 2, ed.row_h - 2);
     }
 }
 
@@ -1177,6 +1204,7 @@ void DiffGutter::OnMouse(wxMouseEvent& event) {
         case Part::Reject:
         case Part::Accept: {
             if (lr.IsDetail()) {
+                ed.SetFieldCursor(*lr.field);
                 ed.SetField(lr.entry, *lr.field, part == Part::Accept ? Side::Right : Side::Left);
                 return;
             }
@@ -1185,7 +1213,8 @@ void DiffGutter::OnMouse(wxMouseEvent& event) {
             return;
         }
         default:
-            if (!lr.IsDetail()) ed.Select(lr.entry, side);
+            if (lr.IsDetail()) ed.SetFieldCursor(*lr.field);
+            else ed.Select(lr.entry, side);
             return;
     }
 }
@@ -1326,6 +1355,7 @@ DialogCompare::DialogCompare(agi::Context *c, SubtitleComparison& comparison, wx
     default_hint = _("Accept keeps the right side, Reject restores the left side. Browsing and deciding never change the open subtitles: they change only when you click Write to Project, as one undoable step.");
     hint = new wxStaticText(this, -1, default_hint, wxDefaultPosition, wxDefaultSize, wxST_NO_AUTORESIZE | wxST_ELLIPSIZE_END);
     hint->SetName("compare-hint");
+    detail_hint = _("This line changed several fields, listed under it: Ctrl+Up/Down picks a field, Ctrl+Left takes the left side, Ctrl+Right keeps the right side.");
     hint->SetForegroundColour(wxSystemSettings::GetColour(wxSYS_COLOUR_GRAYTEXT));
 
     auto main = new wxBoxSizer(wxVERTICAL);
@@ -1409,6 +1439,11 @@ DialogCompare::DialogCompare(agi::Context *c, SubtitleComparison& comparison, wx
     finish->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { OnFinish(); });
     Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { OnCancel(); }, wxID_CANCEL);
     Bind(wxEVT_CLOSE_WINDOW, [this](wxCloseEvent&) { OnCancel(); });
+    // Esc first leaves the keyboard's field; only then does it close the window.
+    Bind(wxEVT_CHAR_HOOK, [this](wxKeyEvent& event) {
+        if (event.GetKeyCode() == WXK_ESCAPE && field_cursor) { SetFieldCursor(std::nullopt); return; }
+        event.Skip();
+    });
 
     Changed();
     if (auto e = CurrentEntry()) {
@@ -1505,6 +1540,9 @@ void DialogCompare::Relayout(std::optional<size_t> anchor) {
         for (auto f : view::FieldOrder())
             if (fields & f) layout.push_back({lr.entry, 0, f});
     }
+    // The keyboard's field belongs to the current difference's detail rows.
+    if (field_cursor && std::none_of(layout.begin(), layout.end(), [&](Row const& r) { return r.IsDetail() && r.field == field_cursor; }))
+        field_cursor.reset();
     row_of.assign(state.Entries().size(), 0);
     for (size_t r = 0; r < layout.size(); ++r) {
         auto const& lr = layout[r];
@@ -1575,15 +1613,16 @@ wxColour DialogCompare::EdgeColour(size_t entry) const {
 
 wxString DialogCompare::Help(Part part, bool in_gutter, int row) const {
     bool detail = row >= 0 && row < (int)layout.size() && layout[row].IsDetail();
+    auto keys = [](char const* k) { return wxString::FromUTF8(k); };
     switch (part) {
         case Part::Accept:
-            if (detail) return wxString::FromUTF8("« ") + fmt_tl("%s: keep the right side", field_label(*layout[row].field));
-            return in_gutter ? wxString::FromUTF8("« ") + _("Keep the right side (Accept). Click again to reset.")
-                : wxString::FromUTF8("✓ ") + _("Accept: keep the right side of this difference. Nothing is written until Write to Project.");
+            if (detail) return keys("« ") + fmt_tl("%s: keep the right side", field_label(*layout[row].field)) + keys(" (Ctrl+→)");
+            return (in_gutter ? keys("« ") + _("Keep the right side (Accept). Click again to reset.")
+                : keys("✓ ") + _("Accept: keep the right side of this difference. Nothing is written until Write to Project.")) + keys(" (Ctrl+→)");
         case Part::Reject:
-            if (detail) return wxString::FromUTF8("» ") + fmt_tl("%s: take the left side", field_label(*layout[row].field));
-            return in_gutter ? wxString::FromUTF8("» ") + _("Take the left side (Reject). Click again to reset.")
-                : wxString::FromUTF8("✕ ") + _("Reject: restore the left side of this difference. Nothing is written until Write to Project.");
+            if (detail) return keys("» ") + fmt_tl("%s: take the left side", field_label(*layout[row].field)) + keys(" (Ctrl+←)");
+            return (in_gutter ? keys("» ") + _("Take the left side (Reject). Click again to reset.")
+                : keys("✕ ") + _("Reject: restore the left side of this difference. Nothing is written until Write to Project.")) + keys(" (Ctrl+←)");
         case Part::Reset: return wxString::FromUTF8("↺ ") + _("Reset this difference to pending");
         case Part::Check: return _("Select this difference for Accept Selected / Reject Selected (Space)");
         case Part::Overview: return _("Overview of all differences: click or drag to jump");
@@ -1594,9 +1633,11 @@ wxString DialogCompare::Help(Part part, bool in_gutter, int row) const {
 
 void DialogCompare::ShowHelp(Part part, bool in_gutter, int row) {
     auto text = Help(part, in_gutter, row);
-    if (text.empty()) text = default_hint;
+    // With detail rows open, the resting hint tells how to decide them by keyboard.
+    bool resting = text.empty();
+    if (resting) text = DetailFields().empty() ? default_hint : detail_hint;
     if (hint->GetLabelText() == text) return;
-    hint->SetForegroundColour(text == default_hint ? wxSystemSettings::GetColour(wxSYS_COLOUR_GRAYTEXT) : pal.accent);
+    hint->SetForegroundColour(resting ? wxSystemSettings::GetColour(wxSYS_COLOUR_GRAYTEXT) : pal.accent);
     hint->SetLabelText(text);
 }
 
@@ -1680,6 +1721,8 @@ void DialogCompare::Changed() {
         finish->Enable(r.Ok());
     }
     finish->GetContainingSizer()->Layout();
+    // The resting hint follows the current difference (keys for its detail rows).
+    if (!field_cursor && hot < 0) ShowHelp(Part::None, false, -1);
     left->Refresh(false); right->Refresh(false); gutter->Refresh(false);
 }
 
@@ -1735,6 +1778,52 @@ void DialogCompare::Decide(size_t entry, Decision d) {
 
 void DialogCompare::SetField(size_t entry, model::Field field, Side winner) {
     if (state.SetField(entry, field, winner)) Changed();
+}
+
+std::vector<model::Field> DialogCompare::DetailFields() const {
+    std::vector<model::Field> out;
+    auto cur = CurrentEntry();
+    if (!cur) return out;
+    for (auto const& lr : layout)
+        if (lr.IsDetail() && lr.entry == *cur) out.push_back(*lr.field);
+    return out;
+}
+
+void DialogCompare::SetFieldCursor(std::optional<model::Field> field) {
+    if (field) {
+        auto fields = DetailFields();
+        if (std::find(fields.begin(), fields.end(), *field) == fields.end()) field.reset();
+    }
+    if (field == field_cursor) return;
+    field_cursor = field;
+    if (field) {
+        for (int r = 0; r < (int)layout.size(); ++r)
+            if (layout[r].IsDetail() && layout[r].field == field) {
+                right->Reveal(r); left->Reveal(r);
+                if (sync) left->SetView(right->Top(), right->XOffset());
+            }
+        hint->SetForegroundColour(pal.accent);
+        hint->SetLabelText(fmt_tl("%s: Ctrl+Left takes the left side, Ctrl+Right keeps the right side, Esc leaves the field", field_label(*field)));
+    }
+    else ShowHelp(Part::None, false, -1);
+    left->Refresh(false); right->Refresh(false); gutter->Refresh(false);
+}
+
+void DialogCompare::MoveFieldCursor(int delta) {
+    auto fields = DetailFields();
+    if (fields.empty()) return;
+    auto it = field_cursor ? std::find(fields.begin(), fields.end(), *field_cursor) : fields.end();
+    int i;
+    if (it == fields.end()) i = delta > 0 ? 0 : (int)fields.size() - 1;
+    else i = std::max(0, std::min((int)fields.size() - 1, int(it - fields.begin()) + delta));
+    SetFieldCursor(fields[i]);
+}
+
+void DialogCompare::ChooseSide(Side side) {
+    auto cur = CurrentEntry();
+    if (!cur) return;
+    if (field_cursor) SetField(*cur, *field_cursor, side);
+    else Decide(*cur, side == Side::Right ? Decision::Accepted : Decision::Rejected);
 }
 
 void DialogCompare::ToggleCheck(size_t entry) {
