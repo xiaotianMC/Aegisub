@@ -58,6 +58,7 @@ aegisub_src = files(
     'command/video.cpp',
     'command/vis_tool.cpp',
     'command_palette.cpp',
+    'status_info.cpp',
     'compat.cpp',
     'context.cpp',
     'dialog_about.cpp',

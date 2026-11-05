@@ -201,7 +201,7 @@ DialogStyleEditor::DialogStyleEditor(wxWindow *parent, AssStyle const* style, ag
 
 	// Create controls
 	StyleName = new wxTextCtrl(NameSizerBox, -1, to_wx(style->name));
-	FontName = new wxComboBox(FontSizerBox, -1, to_wx(style->font), wxDefaultPosition, wxSize(150, -1), 0, nullptr, wxCB_DROPDOWN);
+	FontName = new wxComboBox(FontSizerBox, -1, to_wx(style->font), wxDefaultPosition, DipSize(150, -1), 0, nullptr, wxCB_DROPDOWN);
 	auto FontSize = num_text_ctrl(FontSizerBox, &work->fontsize, 0, 10000.0, 1.0, 0);
 	BoxBold = new wxCheckBox(FontSizerBox, -1, _("&Bold"));
 	BoxItalic = new wxCheckBox(FontSizerBox, -1, _("&Italic"));
@@ -347,7 +347,7 @@ DialogStyleEditor::DialogStyleEditor(wxWindow *parent, AssStyle const* style, ag
 	// Preview
 	auto previewButton = new ColourButton(PreviewSizerBox, wxSize(45, 16), false, OPT_GET("Colour/Style Editor/Background/Preview")->GetColor());
 	PreviewText = new wxTextCtrl(PreviewSizerBox, -1, to_wx(OPT_GET("Tool/Style Editor/Preview Text")->GetString()));
-	SubsPreview = new SubtitlesPreview(PreviewSizerBox, wxSize(100, 60), wxSUNKEN_BORDER, OPT_GET("Colour/Style Editor/Background/Preview")->GetColor());
+	SubsPreview = new SubtitlesPreview(PreviewSizerBox, DipSize(100, 60), wxSUNKEN_BORDER, OPT_GET("Colour/Style Editor/Background/Preview")->GetColor());
 
 	SubsPreview->SetToolTip(_("Preview of current style"));
 	SubsPreview->SetStyle(*style);

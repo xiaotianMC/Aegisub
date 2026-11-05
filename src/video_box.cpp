@@ -28,6 +28,7 @@
 // Aegisub Project http://www.aegisub.org/
 
 #include "video_box.h"
+#include "utils.h"
 #include "theme.h"
 
 #include "ass_dialogue.h"
@@ -60,10 +61,10 @@ VideoBox::VideoBox(wxWindow *parent, bool isDetached, agi::Context *context)
 
 	auto mainToolbar = toolbar::GetToolbar(this, "video", context, "Video", false);
 
-	VideoPosition = new wxTextCtrl(this, -1, "", wxDefaultPosition, wxSize(110, -1), wxTE_READONLY);
+	VideoPosition = new wxTextCtrl(this, -1, "", wxDefaultPosition, DipSize(110, -1), wxTE_READONLY);
 	VideoPosition->SetToolTip(_("Current frame time and number"));
 
-	VideoSubsPos = new wxTextCtrl(this, -1, "", wxDefaultPosition, wxSize(110, -1), wxTE_READONLY);
+	VideoSubsPos = new wxTextCtrl(this, -1, "", wxDefaultPosition, DipSize(110, -1), wxTE_READONLY);
 	VideoSubsPos->SetToolTip(_("Time of this frame relative to start and end of current subs"));
 
 	wxArrayString choices;

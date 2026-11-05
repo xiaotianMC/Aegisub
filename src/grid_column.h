@@ -74,6 +74,11 @@ public:
 	int Width() const { return width; }
 	bool Visible() const { return visible; }
 
+	/// Space the grid adds above and below the text of a row beyond the
+	/// usual 2 pixels: rows grow with the display scale. Paint gets the y of
+	/// the text area; fills of the whole row extend by this much.
+	static inline int row_padding = 0;
+
 	virtual void UpdateWidth(const agi::Context *c, WidthHelper &helper);
 	virtual void SetByFrame(bool /* by_frame */) { }
 	void SetVisible(bool new_value) { visible = new_value; }

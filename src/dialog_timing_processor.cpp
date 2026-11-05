@@ -110,7 +110,7 @@ struct DialogTimingProcessor {
 wxTextCtrl *make_ctrl(wxWindow *parent, wxSizer *sizer, wxString const& desc, int *value, wxCheckBox *cb, wxString const& tooltip) {
 	wxIntegerValidator<int> validator(value);
 	validator.SetMin(0);
-	wxTextCtrl *ctrl = new wxTextCtrl(parent, -1, "", wxDefaultPosition, wxSize(60,-1), 0, validator);
+	wxTextCtrl *ctrl = new wxTextCtrl(parent, -1, "", wxDefaultPosition, DipSize(60,-1), 0, validator);
 	ctrl->SetToolTip(tooltip);
 	if (!desc.empty())
 		sizer->Add(new wxStaticText(parent, -1, desc), wxSizerFlags().Center().Border(wxRIGHT));
@@ -158,7 +158,7 @@ DialogTimingProcessor::DialogTimingProcessor(agi::Context *c)
 	// Styles box
 	auto LeftSizer = new wxStaticBoxSizer(wxVERTICAL,&d,_("Apply to styles"));
 	wxWindow *LeftSizerBox = LeftSizer->GetStaticBox();
-	StyleList = new wxCheckListBox(LeftSizerBox, -1, wxDefaultPosition, wxSize(150,150), to_wx(c->subtitleAccess->Read().GetStyles()));
+	StyleList = new wxCheckListBox(LeftSizerBox, -1, wxDefaultPosition, DipSize(150,150), to_wx(c->subtitleAccess->Read().GetStyles()));
 	StyleList->SetToolTip(_("Select styles to process. Unchecked ones will be ignored."));
 
 	auto all = new wxButton(LeftSizerBox,-1,_("&All"));

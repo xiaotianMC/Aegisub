@@ -165,7 +165,7 @@ struct GridColumnLayer final : GridColumn {
 			{254, 202, 202}, {165, 243, 252}, {254, 240, 138}, {251, 207, 232}};
 		wxDCPenChanger pen(dc, *wxTRANSPARENT_PEN);
 		wxDCBrushChanger brush(dc, wxBrush(colors[SubtitleBindingColorIndex(group)]));
-		dc.DrawRectangle(x + 1, y + 1, width - 1, dc.GetCharHeight() + 3);
+		dc.DrawRectangle(x + 1, y + 1 - row_padding, width - 1, dc.GetCharHeight() + 3 + 2 * row_padding);
 		auto foreground = dc.GetTextForeground();
 		dc.SetTextForeground(*wxBLACK);
 		GridColumn::Paint(dc, x, y, d, c);
@@ -374,7 +374,7 @@ public:
 			double alpha = std::min((double)(cps - cps_min + 1) / (cps_max - cps_min + 1), 1.0);
 			dc.SetBrush(wxBrush(blend(theme::Colour("Colour/Subtitle Grid/CPS Error"), dc.GetBrush().GetColour(), alpha)));
 			dc.SetPen(*wxTRANSPARENT_PEN);
-			dc.DrawRectangle(x, y + 1, width, ext.GetHeight() + 3);
+			dc.DrawRectangle(x, y + 1 - row_padding, width, ext.GetHeight() + 3 + 2 * row_padding);
 			dc.SetTextForeground(blend(*wxBLACK, tc, alpha));
 		}
 

@@ -91,6 +91,7 @@ private:
 		wxBrush Visible;
 		wxBrush SelectedComment;
 		wxBrush LeftCol;
+		wxBrush Alternate;  ///< Every other plain row
 	} row_colors;
 
 	std::vector<AssDialogue const*> index_line_map;  ///< Read-only drawing cache

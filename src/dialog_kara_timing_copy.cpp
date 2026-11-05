@@ -29,6 +29,7 @@
 // Aegisub Project http://www.aegisub.org/
 
 #include "ass_dialogue.h"
+#include "utils.h"
 #include "ass_file.h"
 #include "subtitle_project_access.h"
 #include "subtitle_dialog_edit.h"
@@ -418,8 +419,8 @@ DialogKanjiTimer::DialogKanjiTimer(agi::Context *c)
 	Interpolate->SetValue(OPT_GET("Tool/Kanji Timer/Interpolation")->GetBool());
 
 	wxArrayString styles = to_wx(c->subtitleAccess->Read().GetStyles());
-	SourceStyle = new wxComboBox(StylesBox, -1, "", wxDefaultPosition, wxSize(160, -1), styles, wxCB_READONLY);
-	DestStyle = new wxComboBox(StylesBox, -1, "", wxDefaultPosition, wxSize(160, -1), styles, wxCB_READONLY);
+	SourceStyle = new wxComboBox(StylesBox, -1, "", wxDefaultPosition, DipSize(160, -1), styles, wxCB_READONLY);
+	DestStyle = new wxComboBox(StylesBox, -1, "", wxDefaultPosition, DipSize(160, -1), styles, wxCB_READONLY);
 
 	wxStaticText *ShortcutKeys = new wxStaticText(HelpBox,-1,_("When the destination textbox has focus, use the following keys:\n\nRight Arrow: Increase dest. selection length\nLeft Arrow: Decrease dest. selection length\nUp Arrow: Increase source selection length\nDown Arrow: Decrease source selection length\nEnter: Link, accept line when done\nBackspace: Unlink last"));
 

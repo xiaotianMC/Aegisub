@@ -57,6 +57,10 @@ std::string float_to_string(double val, int precision = 3);
 /// Algorithm from http://bob.allegronetwork.com/prog/tricks.html
 int SmallestPowerOf2(int x);
 
+/// A size given in device-independent pixels, in pixels of @p window's
+/// display (of the main display without one). -1 stays -1.
+wxSize DipSize(int width, int height, wxWindow const *window = nullptr);
+
 /// @brief Launch a new copy of Aegisub.
 ///
 /// Contrary to what the name suggests, this does not close the currently
