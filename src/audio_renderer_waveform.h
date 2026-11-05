@@ -34,6 +34,8 @@
 #include <memory>
 #include <vector>
 
+#include <wx/colour.h>
+
 class AudioColorScheme;
 class wxArrayString;
 
@@ -47,6 +49,13 @@ class AudioWaveformRenderer final : public AudioRendererBitmapProvider {
 
 	/// Whether to render max+avg or just max
 	bool render_averages;
+
+	/// Whether the colour scheme draws averages only in selected ranges
+	/// (selected and primary styles) and a single colour elsewhere
+	bool averages_in_selection_only = false;
+
+	/// Whether to draw horizontal lines at the levels of DbGrid()
+	bool draw_db_grid;
 
 	void OnSetProvider() override { audio_buffer.reset(); }
 	void OnSetMillisecondsPerPixel() override { audio_buffer.reset(); }
@@ -76,4 +85,21 @@ public:
 
 	/// Get a list of waveform rendering modes
 	static wxArrayString GetWaveformStyles();
+
+	/// A level of the dB scale and its distance from the centre line
+	struct DbLevel {
+		int db;     ///< Level in dBFS, negative
+		int offset; ///< Pixels above (and below) the centre line
+	};
+	/// The levels of the dB scale shown for a display @p height pixels high
+	/// at @p amplitude_scale, at least @p min_gap pixels apart and from the
+	/// centre and the edges. The amplitude stays linear: -6 dB is drawn at
+	/// half the height of 0 dB.
+	static std::vector<DbLevel> DbGrid(int height, float amplitude_scale, int min_gap);
+	/// Smallest distance between two lines of the dB scale
+	static int DbGridGap(int /* height */) { return 16; }
+	/// Colour of the lines of the dB scale
+	static wxColour DbGridColour() { return wxColour(24, 66, 40); }
+	/// Colour of the dB values drawn over the waveform
+	static wxColour DbLabelColour() { return wxColour(120, 170, 140); }
 };

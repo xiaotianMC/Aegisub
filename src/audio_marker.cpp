@@ -21,6 +21,8 @@
 
 #include "audio_marker.h"
 
+#include "audio_renderer_waveform.h"
+
 #include "include/aegisub/context.h"
 #include "options.h"
 #include "pen.h"
@@ -195,7 +197,23 @@ SecondsMarkerProvider::SecondsMarkerProvider()
 : pen(std::make_unique<Pen>("Colour/Audio Display/Seconds Line", 1, wxPENSTYLE_DOT))
 , enabled(OPT_GET("Audio/Display/Draw/Seconds"))
 , enabled_opt_changed(OPT_SUB("Audio/Display/Draw/Seconds", &SecondsMarkerProvider::EnabledOptChanged, this))
+, scale_pen(AudioWaveformRenderer::DbGridColour(), 1, wxPENSTYLE_SOLID)
 {
+	for (auto name : {"Colour/Audio Display/Seconds Line", "Colour/Audio Display/Waveform", "Audio/Spectrum"})
+		style_opt_changed.push_back(OPT_SUB(name, [this] { UpdateStyle(); AnnounceMarkerMoved(); }));
+	UpdateStyle();
+}
+
+SecondsMarkerProvider::~SecondsMarkerProvider() = default;
+
+wxPen SecondsMarkerProvider::Style() const {
+	return scale_style ? scale_pen : static_cast<wxPen const&>(*pen);
+}
+
+void SecondsMarkerProvider::UpdateStyle() {
+	scale_style = !OPT_GET("Audio/Spectrum")->GetBool()
+		&& OPT_GET("Colour/Audio Display/Waveform")->GetString() == "Studio"
+		&& OPT_GET("Colour/Audio Display/Seconds Line")->IsDefault();
 }
 
 void SecondsMarkerProvider::EnabledOptChanged() {
@@ -206,7 +224,7 @@ void SecondsMarkerProvider::GetMarkers(TimeRange const& range, AudioMarkerVector
 	if (!enabled->GetBool()) return;
 
 	if ((range.length() + 999) / 1000 > (int)markers.size())
-		markers.resize((range.length() + 999) / 1000, Marker(pen.get()));
+		markers.resize((range.length() + 999) / 1000, Marker(this));
 
 	size_t i = 0;
 	for (int time = ((range.begin() + 999) / 1000) * 1000; time < range.end(); time += 1000) {
@@ -216,5 +234,5 @@ void SecondsMarkerProvider::GetMarkers(TimeRange const& range, AudioMarkerVector
 }
 
 wxPen SecondsMarkerProvider::Marker::GetStyle() const {
-	return *style;
+	return owner->Style();
 }

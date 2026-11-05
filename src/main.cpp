@@ -53,6 +53,7 @@
 #include "project.h"
 #include "subs_controller.h"
 #include "startup_window.h"
+#include "audio_colorscheme.h"
 #include "subtitles_provider_libass.h"
 #include "utils.h"
 #include "value_event.h"
@@ -218,6 +219,8 @@ bool AegisubApp::OnInit() {
 		}
 	}
 #endif
+
+	MigrateAudioColourSchemes();
 
 	// Init commands.
 	cmd::init_builtin_commands();

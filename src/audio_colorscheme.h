@@ -103,3 +103,9 @@ public:
 		return wxColour(color[0], color[1], color[2]);
 	}
 };
+
+/// Make colour schemes added in later versions available to a configuration
+/// saved before them (it stores the list of schemes): "Studio" is added to
+/// "Audio/Colour Schemes", and a waveform still using the earlier default
+/// "Green" switches to it. Runs once: afterwards the list has "Studio".
+void MigrateAudioColourSchemes();

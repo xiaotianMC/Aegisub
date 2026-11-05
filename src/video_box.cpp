@@ -82,9 +82,11 @@ VideoBox::VideoBox(wxWindow *parent, bool isDetached, agi::Context *context)
 	toolbarSizer->Add(visualToolBar, wxSizerFlags(1));
 	toolbarSizer->Add(visualSubToolBar, wxSizerFlags());
 
+	// The visual tools sit to the right of the video, between it and the
+	// audio display in the main window.
 	auto topSizer = new wxBoxSizer(wxHORIZONTAL);
-	topSizer->Add(toolbarSizer, 0, wxEXPAND);
 	topSizer->Add(videoDisplay, isDetached, isDetached ? wxEXPAND : 0);
+	topSizer->Add(toolbarSizer, 0, wxEXPAND);
 
 	auto videoBottomSizer = new wxBoxSizer(wxHORIZONTAL);
 	videoBottomSizer->Add(mainToolbar, wxSizerFlags(0).Center());

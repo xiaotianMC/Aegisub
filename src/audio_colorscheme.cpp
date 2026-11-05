@@ -36,6 +36,8 @@
 #include <libaegisub/exception.h>
 #include <libaegisub/string.h>
 
+#include <algorithm>
+
 AudioColorScheme::AudioColorScheme(int prec, std::string const& scheme_name, int audio_rendering_style)
 : palette((3<<prec) + 3)
 , factor((size_t)1<<prec)
@@ -68,4 +70,13 @@ AudioColorScheme::AudioColorScheme(int prec, std::string const& scheme_name, int
 			&palette[i * 3 + 1],
 			&palette[i * 3 + 2]);
 	}
+}
+
+void MigrateAudioColourSchemes() {
+	auto schemes = OPT_GET("Audio/Colour Schemes")->GetListString();
+	if (std::find(schemes.begin(), schemes.end(), "Studio") != schemes.end()) return;
+	schemes.insert(schemes.begin(), "Studio");
+	OPT_SET("Audio/Colour Schemes")->SetListString(std::move(schemes));
+	if (OPT_GET("Colour/Audio Display/Waveform")->GetString() == "Green")
+		OPT_SET("Colour/Audio Display/Waveform")->SetString("Studio");
 }

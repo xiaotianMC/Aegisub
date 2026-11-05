@@ -1,6 +1,7 @@
 // Copyright (c) 2026, Aegisub contributors
 // SPDX-License-Identifier: ISC
 #include <gtest/gtest.h>
+#include <set>
 #include "include/aegisub/context.h"
 #include "ass_file.h"
 #include "ass_dialogue.h"
@@ -43,10 +44,15 @@
 #include "audio_display.h"
 #include "audio_box.h"
 #include "audio_karaoke.h"
+#include "audio_renderer_waveform.h"
+#include "audio_marker.h"
+#include "audio_colorscheme.h"
+#include "audio_rendering_style.h"
 #include "audio_edit_session.h"
 #include "ass_karaoke.h"
 #include "project.h"
 #include "video_display.h"
+#include "video_box.h"
 #include "video_controller.h"
 #include "async_video_provider.h"
 #include "video_frame.h"
@@ -833,6 +839,26 @@ TEST_F(ordinary_edit, status_bar_shows_the_current_line_and_the_file_state) {
     EXPECT_NE("Comparing with other.ass", status_info::File(c.get()));
 }
 
+TEST_F(ordinary_edit, visual_tools_sit_to_the_right_of_the_video) {
+    for (bool detached : {false, true}) {
+        auto video_box = new VideoBox(window, detached, c.get());
+        VideoDisplay *display = nullptr;
+        std::vector<wxToolBar*> bars;
+        for (auto child : video_box->GetChildren()) {
+            if (auto d = dynamic_cast<VideoDisplay*>(child)) display = d;
+            if (auto bar = dynamic_cast<wxToolBar*>(child); bar && bar->HasFlag(wxTB_VERTICAL)) bars.push_back(bar);
+        }
+        ASSERT_NE(nullptr, display);
+        ASSERT_EQ(2u, bars.size()) << "the visual tools and their sub-tools";
+        display->SetMinSize(wxSize(320, 240));
+        video_box->SetSize(0, 0, 600, 400);
+        video_box->Layout();
+        for (auto bar : bars)
+            EXPECT_GE(bar->GetPosition().x, display->GetRect().GetRight()) << "detached: " << detached;
+        video_box->Destroy();
+    }
+}
+
 class audio_edit : public ordinary_edit {
 protected:
     agi::ass::Karaoke karaoke;
@@ -871,6 +897,93 @@ protected:
         display->GetEventHandler()->ProcessEvent(event);
     }
 };
+TEST_F(audio_edit, studio_waveform_shades_only_selected_ranges_and_draws_a_db_scale) {
+    // The dB scale: 0 dB at the edge, -6 dB at half the height, linear amplitude.
+    auto levels = AudioWaveformRenderer::DbGrid(200, 1.f, 16);
+    ASSERT_GE(levels.size(), 3u);
+    EXPECT_EQ(0, levels[0].db);
+    EXPECT_EQ(100, levels[0].offset);
+    auto minus6 = std::find_if(levels.begin(), levels.end(), [](auto const& l) { return l.db == -6; });
+    ASSERT_NE(levels.end(), minus6);
+    EXPECT_EQ(50, minus6->offset);
+    for (size_t i = 1; i < levels.size(); ++i) {
+        EXPECT_LT(levels[i].db, levels[i - 1].db);
+        EXPECT_GE(levels[i - 1].offset - levels[i].offset, 16);
+    }
+    EXPECT_GE(levels.back().offset, 16);
+    // Zoomed in vertically, 0 dB is off the display.
+    auto zoomed = AudioWaveformRenderer::DbGrid(200, 4.f, 16);
+    ASSERT_FALSE(zoomed.empty());
+    EXPECT_LT(zoomed.front().db, 0);
+    EXPECT_TRUE(AudioWaveformRenderer::DbGrid(20, 1.f, 16).empty());
+
+    c->project->LoadAudio("dummy-audio:noise?sr=44100&bd=16&ch=1&ln=441000");
+    // Spread of lightness over the waveform's colours (not the black
+    // background or the dark scale lines): one shade, or peaks and averages.
+    // Lines are antialiased on some platforms, so blends of a shade appear too.
+    auto spread = [&](std::string const& scheme, AudioRenderingStyle style) {
+        AudioWaveformRenderer renderer(scheme);
+        renderer.SetProvider(c->project->AudioProvider());
+        renderer.SetMillisecondsPerPixel(10);
+        renderer.SetAmplitudeScale(0.5f);
+        wxBitmap bmp(32, 200, 24);
+        renderer.Render(bmp, 0, style);
+        auto image = bmp.ConvertToImage();
+        int low = 255, high = 0;
+        for (int y = 0; y < image.GetHeight(); ++y)
+            for (int x = 0; x < image.GetWidth(); ++x) {
+                int r = image.GetRed(x, y), g = image.GetGreen(x, y), b = image.GetBlue(x, y);
+                int lightness = (std::max({r, g, b}) + std::min({r, g, b})) / 2;
+                if (lightness < 80) continue;
+                low = std::min(low, lightness);
+                high = std::max(high, lightness);
+            }
+        return high < low ? 0 : high - low;
+    };
+    OPT_SET("Audio/Display/Waveform Style")->SetInt(0);
+    OPT_SET("Audio/Display/Draw/dB Scale")->SetBool(true);
+    EXPECT_LT(spread("Studio", AudioStyle_Normal), 40) << "one shade outside the selection";
+    EXPECT_LT(spread("Studio", AudioStyle_Inactive), 40);
+    EXPECT_GT(spread("Studio", AudioStyle_Primary), 80) << "peaks and averages in the selection";
+    EXPECT_GT(spread("Studio", AudioStyle_Selected), 80);
+    // The earlier schemes keep following the waveform style.
+    EXPECT_LT(spread("Green", AudioStyle_Primary), 40);
+
+    // Seconds lines: like the dB scale with Studio, unless the user chose a colour.
+    {
+        OPT_SET("Audio/Spectrum")->SetBool(false);
+        OPT_SET("Audio/Display/Draw/Seconds")->SetBool(true);
+        OPT_SET("Colour/Audio Display/Seconds Line")->Reset();
+        OPT_SET("Colour/Audio Display/Waveform")->SetString("Studio");
+        SecondsMarkerProvider seconds;
+        AudioMarkerVector markers;
+        seconds.GetMarkers(TimeRange(0, 3000), markers);
+        ASSERT_FALSE(markers.empty());
+        auto colour = [&] { return markers[0]->GetStyle().GetColour(); };
+        EXPECT_EQ(AudioWaveformRenderer::DbGridColour(), colour());
+        OPT_SET("Colour/Audio Display/Waveform")->SetString("Green");
+        EXPECT_EQ(to_wx(OPT_GET("Colour/Audio Display/Seconds Line")->GetColor()), colour());
+        OPT_SET("Colour/Audio Display/Waveform")->SetString("Studio");
+        OPT_SET("Audio/Spectrum")->SetBool(true);
+        EXPECT_NE(AudioWaveformRenderer::DbGridColour(), colour()) << "the spectrum keeps its colours";
+        OPT_SET("Audio/Spectrum")->SetBool(false);
+        OPT_SET("Colour/Audio Display/Seconds Line")->SetColor(agi::Color(200, 10, 10));
+        EXPECT_EQ(wxColour(200, 10, 10), colour()) << "a colour the user chose wins";
+        OPT_SET("Colour/Audio Display/Seconds Line")->Reset();
+    }
+
+    // A configuration saved before the scheme existed gets it once.
+    OPT_SET("Audio/Colour Schemes")->SetListString({"Green", "Icy Blue"});
+    OPT_SET("Colour/Audio Display/Waveform")->SetString("Green");
+    MigrateAudioColourSchemes();
+    EXPECT_EQ("Studio", OPT_GET("Audio/Colour Schemes")->GetListString().at(0));
+    EXPECT_EQ("Studio", OPT_GET("Colour/Audio Display/Waveform")->GetString());
+    OPT_SET("Colour/Audio Display/Waveform")->SetString("Green");
+    MigrateAudioColourSchemes();
+    EXPECT_EQ("Green", OPT_GET("Colour/Audio Display/Waveform")->GetString()) << "a later choice stays";
+    EXPECT_EQ(3u, OPT_GET("Audio/Colour Schemes")->GetListString().size());
+}
+
 TEST_F(audio_edit, dialogue_manual_drag_cancel_never_writes_or_adds_history) {
     auto description=c->subsController->GetUndoDescription();
     auto token=Timing()->MarkerLifetime();

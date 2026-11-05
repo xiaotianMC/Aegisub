@@ -201,6 +201,7 @@ void Audio(wxTreebook *book, Preferences *parent) {
 	p->OptionAdd(display, _("Seconds boundaries"), "Audio/Display/Draw/Seconds");
 	p->CellSkip(display);
 	p->OptionChoice(display, _("Waveform Style"), AudioWaveformRenderer::GetWaveformStyles(), "Audio/Display/Waveform Style");
+	p->OptionAdd(display, _("dB scale on the waveform"), "Audio/Display/Draw/dB Scale");
 
 	auto label = p->PageSizer(_("Audio labels"));
 	p->OptionFont(label, "Audio/Karaoke/");

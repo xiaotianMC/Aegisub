@@ -35,6 +35,9 @@
 #include <libaegisub/audio/provider.h>
 
 #include <algorithm>
+#include <cmath>
+
+#include <libaegisub/exception.h>
 #include <wx/dcmemory.h>
 
 enum {
@@ -47,10 +50,33 @@ enum {
 
 AudioWaveformRenderer::AudioWaveformRenderer(std::string const& color_scheme_name)
 : render_averages(OPT_GET("Audio/Display/Waveform Style")->GetInt() == Waveform_MaxAvg)
+, draw_db_grid(OPT_GET("Audio/Display/Draw/dB Scale")->GetBool())
 {
 	colors.reserve(AudioStyle_MAX);
 	for (int i = 0; i < AudioStyle_MAX; ++i)
 		colors.emplace_back(6, color_scheme_name, i);
+	try {
+		averages_in_selection_only = OPT_GET("Colour/Schemes/" + color_scheme_name + "/Averages In Selection Only")->GetBool();
+	}
+	catch (agi::InternalError const&) {
+		// Schemes from before the option keep the waveform style setting.
+	}
+}
+
+std::vector<AudioWaveformRenderer::DbLevel> AudioWaveformRenderer::DbGrid(int height, float amplitude_scale, int min_gap) {
+	std::vector<DbLevel> levels;
+	int half = height / 2;
+	if (half <= 0 || amplitude_scale <= 0) return levels;
+	int last = half + min_gap; // Offset of the last level kept, starting past the edge
+	for (int db : {0, -3, -6, -9, -12, -18, -24, -30, -36, -48, -60}) {
+		int offset = static_cast<int>(std::pow(10.0, db / 20.0) * amplitude_scale * half + 0.5);
+		if (offset > half - (db == 0 ? 0 : min_gap / 2)) continue; // Above the edge
+		if (offset < min_gap) break;   // Too close to the centre
+		if (last - offset < min_gap) continue;
+		levels.push_back({db, offset});
+		last = offset;
+	}
+	return levels;
 }
 
 AudioWaveformRenderer::~AudioWaveformRenderer() { }
@@ -86,6 +112,19 @@ void AudioWaveformRenderer::Render(wxBitmap &bmp, int start, AudioRenderingStyle
 	wxPen pen_peaks(wxPen(pal->get(0.4f)));
 	wxPen pen_avgs(wxPen(pal->get(0.7f)));
 
+	// Schemes made for it show the two shades only where the lines are selected.
+	bool selected = style == AudioStyle_Selected || style == AudioStyle_Primary;
+	bool averages = averages_in_selection_only ? selected : render_averages;
+
+	// The dB scale, behind the waveform
+	if (draw_db_grid) {
+		dc.SetPen(wxPen(DbGridColour()));
+		for (auto const& level : DbGrid(rect.height, amplitude_scale, DbGridGap(rect.height))) {
+			dc.DrawLine(0, midpoint - level.offset, rect.width, midpoint - level.offset);
+			dc.DrawLine(0, midpoint + level.offset, rect.width, midpoint + level.offset);
+		}
+	}
+
 	for (int x = 0; x < rect.width; ++x)
 	{
 		provider->GetAudio(audio_buffer.get(), (int64_t)cur_sample, (int64_t)pixel_samples);
@@ -116,14 +155,15 @@ void AudioWaveformRenderer::Render(wxBitmap &bmp, int start, AudioRenderingStyle
 
 		dc.SetPen(pen_peaks);
 		dc.DrawLine(x, midpoint - peak_max, x, midpoint - peak_min);
-		if (render_averages) {
+		if (averages) {
 			dc.SetPen(pen_avgs);
 			dc.DrawLine(x, midpoint - avg_max, x, midpoint - avg_min);
 		}
 	}
 
-	// Horizontal zero-point line
-	if (render_averages)
+	// Horizontal zero-point line, in the waveform's colour for schemes that
+	// shade only the selection
+	if (averages && !averages_in_selection_only)
 		dc.SetPen(wxPen(pal->get(1.0f)));
 	else
 		dc.SetPen(pen_peaks);
@@ -134,7 +174,7 @@ void AudioWaveformRenderer::Render(wxBitmap &bmp, int start, AudioRenderingStyle
 void AudioWaveformRenderer::RenderBlank(wxDC &dc, const wxRect &rect, AudioRenderingStyle style)
 {
 	const AudioColorScheme *pal = &colors[style];
-	wxColor line(pal->get(1.0));
+	wxColor line(pal->get(averages_in_selection_only ? 0.4f : 1.0f));
 	wxColor bg(pal->get(0.0));
 
 	// Draw the line as background above and below, and line in the middle, to avoid

@@ -8597,3 +8597,7 @@ msgstr "正在与 %s 对比"
 #: src/status_info.cpp
 msgid "No unsaved changes"
 msgstr "没有未保存的更改"
+
+#: src/preferences.cpp
+msgid "dB scale on the waveform"
+msgstr "在波形上显示 dB 刻度"

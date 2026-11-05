@@ -875,6 +875,7 @@ void AudioDisplay::OnPaint(wxPaintEvent&)
 				std::max(0, TimeFromRelativeX(updrect.x + updrect.width + foot_size)));
 
 			PaintAudio(dc, updtime, updrect);
+			PaintDbScale(dc, updrect);
 			PaintMarkers(gcdc, updtime);
 			PaintLabels(dc, updtime);
 		}
@@ -905,6 +906,43 @@ void AudioDisplay::PaintAudio(wxDC &dc, const TimeRange updtime, const wxRect up
 		if (range_x2 > range_x1)
 			audio_renderer->Render(dc, wxPoint(range_x1, audio_top),
 				range_x1 + scroll_left, range_x2 - range_x1, range_style);
+	}
+}
+
+void AudioDisplay::PaintDbScale(wxDC &dc, wxRect const& updrect)
+{
+	if (OPT_GET("Audio/Spectrum")->GetBool() || !OPT_GET("Audio/Display/Draw/dB Scale")->GetBool()) return;
+	auto levels = AudioWaveformRenderer::DbGrid(audio_height, audio_renderer->GetAmplitudeScale(),
+		AudioWaveformRenderer::DbGridGap(audio_height));
+	if (levels.empty()) return;
+
+	wxFont font = GetFont();
+	font.SetFractionalPointSize(font.GetFractionalPointSize() * 0.8);
+	wxDCFontChanger font_changer(dc, font);
+	wxDCTextColourChanger colour_changer(dc, AudioWaveformRenderer::DbLabelColour());
+	wxDCPenChanger pen_changer(dc, *wxTRANSPARENT_PEN);
+	wxDCBrushChanger brush_changer(dc, *wxBLACK_BRUSH);
+	int label_width = dc.GetTextExtent("-60").GetWidth() + FromDIP(6);
+	if (updrect.x > label_width) return; // The values are only at the left edge
+
+	int midpoint = audio_top + audio_height / 2;
+	int text_height = dc.GetCharHeight();
+	for (auto const& level : levels) {
+		auto text = std::to_wstring(level.db);
+		for (int y : {midpoint - level.offset, midpoint + level.offset}) {
+			// Above the line in the upper half, below it in the lower half,
+			// so the text stays inside the display
+			int top = y < midpoint ? y - text_height : y + 1;
+			if (top < audio_top) top = y + 1;
+			if (top + text_height > audio_top + audio_height) top = y - text_height;
+			if (top < audio_top) continue;
+			// On a black plate: the waveform runs under the values
+			auto extent = dc.GetTextExtent(text);
+			dc.SetPen(*wxTRANSPARENT_PEN);
+			dc.SetBrush(*wxBLACK_BRUSH);
+			dc.DrawRectangle(0, top, extent.GetWidth() + FromDIP(5), extent.GetHeight());
+			dc.DrawText(text, FromDIP(3), top);
+		}
 	}
 }
 
@@ -1285,6 +1323,7 @@ void AudioDisplay::OnAudioOpen(agi::AudioProvider *provider)
 				controller->AddTimingControllerListener(&AudioDisplay::OnTimingController, this),
 				OPT_SUB("Audio/Spectrum", &AudioDisplay::ReloadRenderingSettings, this),
 				OPT_SUB("Audio/Display/Waveform Style", &AudioDisplay::ReloadRenderingSettings, this),
+				OPT_SUB("Audio/Display/Draw/dB Scale", &AudioDisplay::ReloadRenderingSettings, this),
 				OPT_SUB("Colour/Audio Display/Spectrum", &AudioDisplay::ReloadRenderingSettings, this),
 				OPT_SUB("Colour/Audio Display/Waveform", &AudioDisplay::ReloadRenderingSettings, this),
 				OPT_SUB("Audio/Renderer/Spectrum/Quality", &AudioDisplay::ReloadRenderingSettings, this),

@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <wx/pen.h>
 #include "time_range.h"
 
 #include <libaegisub/signal.h>
@@ -174,10 +175,10 @@ public:
 /// Marker provider for lines every second
 class SecondsMarkerProvider final : public AudioMarkerProvider {
 	struct Marker final : public AudioMarker {
-		Pen *style;
+		SecondsMarkerProvider const *owner;
 		int position = 0;
 
-		Marker(Pen *style) : style(style) { }
+		Marker(SecondsMarkerProvider const *owner) : owner(owner) { }
 		int GetPosition() const override { return position; }
 		FeetStyle GetFeet() const override { return Feet_None; }
 		wxPen GetStyle() const override;
@@ -198,7 +199,17 @@ class SecondsMarkerProvider final : public AudioMarkerProvider {
 
 	void EnabledOptChanged();
 
+	/// The Studio waveform draws the lines like its dB scale, unless the
+	/// user chose a colour for them
+	bool scale_style = false;
+	wxPen scale_pen;
+	std::vector<agi::signal::Connection> style_opt_changed;
+	void UpdateStyle();
+
 public:
 	SecondsMarkerProvider();
+	~SecondsMarkerProvider();
+	/// Pen the lines are drawn with now
+	wxPen Style() const;
 	void GetMarkers(TimeRange const& range, AudioMarkerVector &out) const override;
 };
