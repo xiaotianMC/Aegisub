@@ -64,6 +64,8 @@ private:
 	void InitContents();
 
 	void UpdateTitle();
+	/// Refresh the line and file fields of the status bar.
+	void UpdateStatus();
 
 	void OnKeyDown(wxKeyEvent &event);
 	void OnMouseWheel(wxMouseEvent &evt);

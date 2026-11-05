@@ -26,6 +26,9 @@
 #include "dialogs.h"
 #include "theme.h"
 #include "command_palette.h"
+#include "preferences.h"
+#include "status_info.h"
+#include <wx/checkbox.h>
 #include "include/aegisub/toolbar.h"
 #include "libresrc/libresrc.h"
 #include "visual_tool_rectangle.h"
@@ -749,6 +752,79 @@ TEST_F(ordinary_edit, main_toolbar_groups_dialogs_in_dropdowns_and_has_a_classic
     OPT_SET("App/Classic Toolbar")->SetBool(false);
     EXPECT_EQ(15u, buttons().size());
     bar->Destroy();
+}
+
+TEST_F(ordinary_edit, preferences_search_highlights_labels_and_shows_a_matching_page) {
+    OPT_SET("Tool/Preferences/Page")->SetInt(0);
+    Preferences prefs(window);
+    ASSERT_EQ(0u, prefs.CurrentPage());
+
+    prefs.Search("undo levels");
+    ASSERT_FALSE(prefs.MatchingPages().empty());
+    EXPECT_EQ(0u, prefs.MatchingPages().front());
+    EXPECT_EQ(0u, prefs.CurrentPage()) << "the page shown has a match: stay";
+    auto controls = prefs.MatchingControls(0);
+    ASSERT_EQ(1u, controls.size());
+    EXPECT_EQ("Undo Levels", controls[0]->GetLabel());
+    EXPECT_EQ(wxFONTWEIGHT_BOLD, controls[0]->GetFont().GetWeight());
+    EXPECT_FALSE(prefs.SearchStatus().empty());
+
+    // Words in any case and without spaces; the shown page moves to a match.
+    prefs.Search("MOUSE WHEEL");
+    ASSERT_FALSE(prefs.MatchingPages().empty());
+    EXPECT_NE(0u, prefs.CurrentPage());
+    EXPECT_EQ(prefs.MatchingPages().front(), prefs.CurrentPage());
+    EXPECT_EQ(wxFONTWEIGHT_NORMAL, controls[0]->GetFont().GetWeight()) << "no longer matched";
+
+    // Page names count: the hotkeys page has no labels of its own.
+    prefs.Search("hotkeys");
+    EXPECT_FALSE(prefs.MatchingPages().empty());
+
+    prefs.Search("qqqzzzxx");
+    EXPECT_TRUE(prefs.MatchingPages().empty());
+    EXPECT_EQ(_("No matching settings"), prefs.SearchStatus());
+
+    prefs.Search("");
+    EXPECT_TRUE(prefs.MatchingPages().empty());
+    EXPECT_TRUE(prefs.SearchStatus().empty());
+    for (size_t page = 0; page < 20; ++page) EXPECT_TRUE(prefs.MatchingControls(page).empty());
+}
+
+TEST_F(ordinary_edit, status_bar_shows_the_current_line_and_the_file_state) {
+    std::vector<int> ids;
+    {
+        auto write = c->subtitleAccess->TryWrite();
+        auto& file = LiveWriteForTest(*c);
+        for (int i = 0; i < 2; ++i) {
+            auto line = new AssDialogue;
+            line->Start = 1000 * (i + 1); line->End = 1000 * (i + 2);
+            file.Events.push_back(*line);
+        }
+        file.Commit("", AssFile::COMMIT_DIAG_ADDREM);
+    }
+    for (auto const& line : LiveRead(*c).Events) ids.push_back(line.Id);
+    ASSERT_EQ(3u, ids.size());
+
+    c->selectionController->SetSelectionAndActiveIDs({ids[1]}, ids[1]);
+    EXPECT_EQ(wxString::FromUTF8("Line 2 of 3 · 0:00:01.00 → 0:00:02.00"), status_info::Line(c.get()));
+    c->selectionController->SetSelectionAndActiveIDs({ids[1], ids[2]}, ids[2]);
+    EXPECT_EQ(wxString::FromUTF8("Line 3 of 3 (2 selected) · 0:00:02.00 → 0:00:03.00"), status_info::Line(c.get()));
+    c->selectionController->SetSelectionAndActiveIDs({}, 0);
+    EXPECT_TRUE(status_info::Line(c.get()).empty());
+
+    EXPECT_EQ(c->subsController->IsModified() ? _("Unsaved changes") : _("No unsaved changes"), status_info::File(c.get()));
+
+    // The tabs announce a comparison opening and ending.
+    int changes = 0;
+    auto connection = tabs->AddChangeListener([&] { ++changes; });
+    auto page = new testing_comparison_page(tabs->Book());
+    tabs->OpenComparison(page, "other.ass");
+    EXPECT_GT(changes, 0);
+    EXPECT_EQ("Comparing with other.ass", status_info::File(c.get()));
+    changes = 0;
+    tabs->ComparisonEnded(false);
+    EXPECT_GT(changes, 0);
+    EXPECT_NE("Comparing with other.ass", status_info::File(c.get()));
 }
 
 class audio_edit : public ordinary_edit {

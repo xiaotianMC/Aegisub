@@ -8565,3 +8565,35 @@ msgstr "执行"
 
 msgid "Classic main toolbar (every button)"
 msgstr "经典主工具栏（显示全部按钮）"
+
+#: src/preferences.cpp
+msgid "Search settings (name or pinyin)"
+msgstr "搜索设置（名称或拼音）"
+
+#: src/preferences.cpp
+msgid "No matching settings"
+msgstr "没有匹配的设置"
+
+#: src/preferences.cpp
+msgid "%d matches on %d pages, Enter shows the next page"
+msgstr "找到 %d 项，分布在 %d 页，按回车切换到下一页"
+
+#: src/preferences.cpp
+msgid "Shade every other row"
+msgstr "隔行加底色"
+
+#: src/status_info.cpp
+msgid "Line %d of %d (%d selected) · %s"
+msgstr "第 %d 行，共 %d 行（选中 %d 行）· %s"
+
+#: src/status_info.cpp
+msgid "Line %d of %d · %s"
+msgstr "第 %d 行，共 %d 行 · %s"
+
+#: src/status_info.cpp
+msgid "Comparing with %s"
+msgstr "正在与 %s 对比"
+
+#: src/status_info.cpp
+msgid "No unsaved changes"
+msgstr "没有未保存的更改"

@@ -33,6 +33,7 @@
 ///
 
 #include "auto4_lua.h"
+#include "utils.h"
 
 #include "colour_button.h"
 #include "compat.h"
@@ -226,7 +227,7 @@ namespace Automation4 {
 			// Same serialisation interface as single-line edit
 			wxControl *Create(wxWindow *parent) override {
 				cw = new wxTextCtrl(parent, -1, "", wxDefaultPosition, wxDefaultSize, wxTE_MULTILINE, StringBinder(&text));
-				cw->SetMinSize(wxSize(0, 30));
+				cw->SetMinSize(DipSize(0, 30));
 				cw->SetToolTip(to_wx(hint));
 				return cw;
 			}

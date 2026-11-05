@@ -111,7 +111,7 @@ DialogAttachments::DialogAttachments(agi::Context *c)
 {
 	d.SetIcons(GETICONS(attach_button));
 
-	listView = new wxListView(&d, -1, wxDefaultPosition, wxSize(500, 200));
+	listView = new wxListView(&d, -1, wxDefaultPosition, DipSize(500, 200));
 	UpdateList();
 
 	auto attachFont = new wxButton(&d, -1, _("Attach &Font"));

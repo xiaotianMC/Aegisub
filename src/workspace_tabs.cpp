@@ -110,6 +110,7 @@ void WorkspaceTabs::ComparisonEnded(bool applied) {
     last_applied = applied;
     auto old = page;
     page = nullptr;
+    name.clear();
     // The page is still running the handler that ended it: remove it now and
     // destroy it once that handler returned.
     book->RemovePage(book->FindPage(old));
@@ -162,6 +163,7 @@ void WorkspaceTabs::Update() {
     GetSizer()->Show(strip, open);
     GetSizer()->Show(banner, open && !front);
     Layout();
+    changed();
 }
 
 bool WorkspaceTabs::Permits(std::string_view command) const {

@@ -20,6 +20,7 @@
 ///
 
 #include "dialog_translation.h"
+#include "utils.h"
 #include "subtitle_dialog_edit.h"
 
 #include "include/aegisub/context.h"
@@ -83,7 +84,7 @@ DialogTranslation::DialogTranslation(agi::Context *c)
 		line_number_display = new wxStaticText(original_box->GetStaticBox(), -1, "");
 		original_box->Add(line_number_display, 0, wxBOTTOM, 5);
 
-		original_text = new wxStyledTextCtrl(original_box->GetStaticBox(), -1, wxDefaultPosition, wxSize(320, 80));
+		original_text = new wxStyledTextCtrl(original_box->GetStaticBox(), -1, wxDefaultPosition, DipSize(320, 80));
 		original_text->SetWrapMode(wxSTC_WRAP_WORD);
 		original_text->SetMarginWidth(1, 0);
 		original_text->StyleSetForeground(1, wxColour(10, 60, 200));
@@ -96,7 +97,7 @@ DialogTranslation::DialogTranslation(agi::Context *c)
 	{
 		wxStaticBoxSizer *translated_box = new wxStaticBoxSizer(wxVERTICAL, this, _("Translation"));
 
-		translated_text = new SubsTextEditCtrl(translated_box->GetStaticBox(), wxSize(320, 80), 0, nullptr);
+		translated_text = new SubsTextEditCtrl(translated_box->GetStaticBox(), DipSize(320, 80), 0, nullptr);
 		translated_text->SetWrapMode(wxSTC_WRAP_WORD);
 		translated_text->SetMarginWidth(1, 0);
 		translated_text->SetFocus();

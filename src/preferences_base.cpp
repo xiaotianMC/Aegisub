@@ -17,6 +17,7 @@
 /// @ingroup configuration_ui
 
 #include "preferences_base.h"
+#include "utils.h"
 
 #include "colour_button.h"
 #include "compat.h"
@@ -228,7 +229,7 @@ void OptionPage::OptionBrowse(PageSection section, const wxString &name, const c
 		throw agi::InternalError("Option must be agi::OptionType::String for BrowseButton.");
 
 	auto text = new wxTextCtrl(section.box, -1 , to_wx(opt->GetString()));
-	text->SetMinSize(wxSize(160, -1));
+	text->SetMinSize(DipSize(160, -1));
 	text->Bind(wxEVT_TEXT, StringUpdater(opt_name, parent));
 
 	auto browse = new wxButton(section.box, -1, _("Browse..."));
@@ -260,7 +261,7 @@ void OptionPage::OptionFont(PageSection section, std::string opt_prefix) {
 	parent->AddChangeableOption(size_opt->GetName());
 
 	auto font_name = new wxTextCtrl(section.box, -1, to_wx(face_opt->GetString()));
-	font_name->SetMinSize(wxSize(160, -1));
+	font_name->SetMinSize(DipSize(160, -1));
 	font_name->Bind(wxEVT_TEXT, StringUpdater(face_opt->GetName().c_str(), parent));
 	font_name->SetHint(wxNORMAL_FONT->GetFaceName());
 

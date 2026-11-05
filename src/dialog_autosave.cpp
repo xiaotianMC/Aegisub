@@ -15,6 +15,7 @@
 // Aegisub Project http://www.aegisub.org/
 
 #include "compat.h"
+#include "utils.h"
 #include "format.h"
 #include "libresrc/libresrc.h"
 #include "options.h"
@@ -64,7 +65,7 @@ public:
 };
 
 DialogAutosave::DialogAutosave(wxWindow *parent)
-: d(parent, -1, _("Open autosave file"), wxDefaultPosition, wxSize(800, 350), wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
+: d(parent, -1, _("Open autosave file"), wxDefaultPosition, DipSize(800, 350), wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
 {
 	d.SetIcons(GETICONS(open_toolbutton));
 

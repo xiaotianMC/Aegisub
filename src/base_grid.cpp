@@ -66,6 +66,14 @@ enum {
 	MENU_SHOW_COL = (wxID_HIGHEST + 1) + 2000 // Needs 15 IDs after this
 };
 
+namespace {
+/// @p a over @p b with opacity @p alpha.
+wxColour Mix(wxColour const& a, wxColour const& b, double alpha) {
+	auto channel = [&](unsigned char x, unsigned char y) { return static_cast<unsigned char>(x * alpha + y * (1 - alpha) + 0.5); };
+	return wxColour(channel(a.Red(), b.Red()), channel(a.Green(), b.Green()), channel(a.Blue(), b.Blue()));
+}
+}
+
 BaseGrid::BaseGrid(wxWindow* parent, agi::Context *context)
 : wxWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxWANTS_CHARS | wxSUNKEN_BORDER)
 , scrollBar(new wxScrollBar(this, GRID_SCROLLBAR, wxDefaultPosition, wxDefaultSize, wxSB_VERTICAL))
@@ -112,6 +120,7 @@ BaseGrid::BaseGrid(wxWindow* parent, agi::Context *context)
 		OPT_SUB("Colour/Subtitle Grid/Lines", &BaseGrid::UpdateStyle, this),
 		OPT_SUB("Colour/Subtitle Grid/Selection", &BaseGrid::UpdateStyle, this),
 		OPT_SUB("Colour/Subtitle Grid/Standard", &BaseGrid::UpdateStyle, this),
+		OPT_SUB("Subtitle/Grid/Alternate Rows", [this] { Refresh(false); }),
 
 		theme::AddChangeListener([this] { UpdateStyle(); }),
 		OPT_SUB("Subtitle/Grid/Highlight Subtitles in Frame", &BaseGrid::OnHighlightVisibleChange, this),
@@ -197,8 +206,10 @@ void BaseGrid::UpdateStyle() {
 	wxClientDC dc(this);
 	dc.SetFont(font);
 
-	// Set line height
-	lineHeight = dc.GetCharHeight() + 4;
+	// Set line height: the text and 2 pixels above and below it, growing
+	// with the display scale.
+	GridColumn::row_padding = std::max(0, (FromDIP(4) - 4) / 2);
+	lineHeight = dc.GetCharHeight() + 4 + 2 * GridColumn::row_padding;
 
 	// Set row brushes
 	row_colors.Default.SetColour(theme::Colour("Colour/Subtitle Grid/Background/Background"));
@@ -208,6 +219,7 @@ void BaseGrid::UpdateStyle() {
 	row_colors.Visible.SetColour(theme::Colour("Colour/Subtitle Grid/Background/Inframe"));
 	row_colors.SelectedComment.SetColour(theme::Colour("Colour/Subtitle Grid/Background/Selected Comment"));
 	row_colors.LeftCol.SetColour(theme::Colour("Colour/Subtitle Grid/Left Column"));
+	row_colors.Alternate.SetColour(Mix(theme::Colour("Colour/Subtitle Grid/Standard"), row_colors.Default.GetColour(), theme::IsDark() ? 0.045 : 0.035));
 
 	if (width_helper)
 		width_helper->ClearCache();
@@ -332,6 +344,8 @@ void BaseGrid::OnPaint(wxPaintEvent &) {
 	wxColour text_standard(theme::Colour("Colour/Subtitle Grid/Standard"));
 	wxColour text_selection(theme::Colour("Colour/Subtitle Grid/Selection"));
 	wxColour text_collision(theme::Colour("Colour/Subtitle Grid/Collision"));
+	wxColour accent = theme::UiColours().accent;
+	bool alternate_rows = OPT_GET("Subtitle/Grid/Alternate Rows")->GetBool();
 
 	// First grid row
 	wxPen grid_pen(theme::Colour("Colour/Subtitle Grid/Lines"));
@@ -346,7 +360,7 @@ void BaseGrid::OnPaint(wxPaintEvent &) {
 			left += (columns[col]->Width() - 6 - ext.GetWidth()) / 2;
 		}
 
-		dc.DrawText(str, left, y + 2);
+		dc.DrawText(str, left, y + 2 + GridColumn::row_padding);
 	};
 
 	// Paint header
@@ -393,6 +407,8 @@ void BaseGrid::OnPaint(wxPaintEvent &) {
 				color = row_colors.Visible;
 			visible_rows.push_back(i + yPos);
 		}
+		if (color == row_colors.Default && (i + yPos) % 2 == 1 && alternate_rows)
+			color = row_colors.Alternate;
 		dc.SetBrush(color);
 
 		// Draw row background color
@@ -405,6 +421,8 @@ void BaseGrid::OnPaint(wxPaintEvent &) {
 			dc.SetTextForeground(text_collision);
 		else if (inSel)
 			dc.SetTextForeground(text_selection);
+		else if (curDiag->Comment)
+			dc.SetTextForeground(Mix(text_standard, color.GetColour(), 0.55));
 		else
 			dc.SetTextForeground(text_standard);
 
@@ -413,8 +431,14 @@ void BaseGrid::OnPaint(wxPaintEvent &) {
 		int y = (i + 1) * lineHeight;
 		for (size_t j : agi::util::range(columns.size())) {
 			if (paint_columns[j])
-				columns[j]->Paint(dc, x, y, curDiag, context);
+				columns[j]->Paint(dc, x, y + GridColumn::row_padding, curDiag, context);
 			x += columns[j]->Width();
+		}
+
+		// Selected rows: a bar in the accent colour at the left edge.
+		if (inSel) {
+			dc.SetBrush(wxBrush(accent));
+			dc.DrawRectangle(0, y + 1, FromDIP(3), lineHeight - 1);
 		}
 
 		// Draw grid

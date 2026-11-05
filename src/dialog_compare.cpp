@@ -7,6 +7,7 @@
 // other edit while it is open, and nothing reaches the project until "Write
 // to Project".
 #include "dialogs.h"
+#include "utils.h"
 
 #include "charset_detect.h"
 #include "compat.h"
@@ -392,7 +393,7 @@ public:
 
 // ---- DiffPane ----
 DiffPane::DiffPane(wxWindow* parent, ComparePanel& ed, Side side)
-: wxWindow(parent, -1, wxDefaultPosition, wxSize(300, 200), wxWANTS_CHARS | wxBORDER_THEME)
+: wxWindow(parent, -1, wxDefaultPosition, DipSize(300, 200), wxWANTS_CHARS | wxBORDER_THEME)
 , ed(ed)
 , side(side)
 {
@@ -972,7 +973,7 @@ void DiffPane::DrawOverview(wxDC& dc, Geometry const& g) {
 
 // ---- DiffGutter ----
 DiffGutter::DiffGutter(wxWindow* parent, ComparePanel& ed)
-: wxWindow(parent, -1, wxDefaultPosition, wxSize(80, 200))
+: wxWindow(parent, -1, wxDefaultPosition, DipSize(80, 200))
 , ed(ed)
 {
     SetBackgroundStyle(wxBG_STYLE_PAINT);
@@ -1384,7 +1385,7 @@ ComparePanel::ComparePanel(wxWindow* parent, agi::Context *c, SubtitleComparison
     Measure();
     // The right pane also holds the check boxes, actions and overview ruler:
     // it gets that much more width than the left one.
-    left->SetMinSize(wxSize(320, 200));
+    left->SetMinSize(DipSize(320, 200));
     right->SetMinSize(wxSize(320 + check_w + actions_w + overview_w + 2 * delta_w, 200));
     gutter->SetMinSize(wxSize(gutter->Width(), 200));
     Bind(wxEVT_SIZE, [this](wxSizeEvent& event) {

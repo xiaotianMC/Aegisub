@@ -25,8 +25,11 @@
 #include <vector>
 
 #include <wx/dialog.h>
+#include <wx/font.h>
 
 class wxButton;
+class wxSearchCtrl;
+class wxStaticText;
 class wxTreebook;
 namespace agi { class OptionValue; }
 
@@ -40,6 +43,25 @@ private:
 	std::map<std::string, std::unique_ptr<agi::OptionValue>> pending_changes;
 	std::vector<Thunk> pending_callbacks;
 	std::vector<std::string> option_names;
+
+	/// A label of a page that the search box looks in.
+	struct SearchEntry {
+		wxWindow *window;          ///< nullptr for the page's own name
+		size_t page;
+		std::vector<std::wstring> texts; ///< Label, its pinyin and initials, normalised
+		wxFont font;
+		wxColour colour;           ///< Explicitly set colour, invalid if none
+		bool matched = false;
+	};
+	wxSearchCtrl *search;
+	wxStaticText *search_status;
+	std::vector<SearchEntry> search_entries;
+	std::vector<size_t> matching_pages;
+	std::wstring search_query; ///< Normalised
+
+	void IndexPages();
+	void ShowMatches();
+	void NextMatchingPage();
 
 	void OnOK(wxCommandEvent &);
 	void OnCancel(wxCommandEvent &);
@@ -64,4 +86,17 @@ public:
 	/// simply revert to the default config file as a bunch of things other than
 	/// user options are stored in it. Perhaps that should change in the future.
 	void AddChangeableOption(std::string const& name);
+
+	/// Search the labels of every page for @p query (by text, pinyin or pinyin
+	/// initials); matching labels are highlighted and the first matching page
+	/// is shown if the current one has no match. Empty clears the search.
+	void Search(wxString const& query);
+	/// Pages with a match, in order.
+	std::vector<size_t> const& MatchingPages() const { return matching_pages; }
+	/// Highlighted controls on @p page.
+	std::vector<wxWindow*> MatchingControls(size_t page) const;
+	/// Page shown now.
+	size_t CurrentPage() const;
+	/// What the search found, as shown beside the search box.
+	wxString SearchStatus() const;
 };

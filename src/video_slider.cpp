@@ -58,7 +58,7 @@ VideoSlider::VideoSlider (wxWindow* parent, agi::Context *c)
 }))
 {
 	SetClientSize(20,25);
-	SetMinSize(wxSize(20, 25));
+	SetMinSize(DipSize(20, 25));
 	SetBackgroundStyle(wxBG_STYLE_PAINT);
 
 	c->videoSlider = this;

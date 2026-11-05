@@ -394,6 +394,7 @@
 			"Font Size" : 10
 		},
 		"Grid" : {
+			"Alternate Rows" : true,
 			"Column" : [
 				{"bool" : true}
 			],

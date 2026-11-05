@@ -44,6 +44,7 @@ class WorkspaceTabs final : public wxPanel {
     wxString name;
     bool last_applied = false;
     agi::signal::Connection theme_changed;
+    agi::signal::Signal<> changed;
 
     void Select(bool comparison);
     void Update();
@@ -64,6 +65,10 @@ public:
     bool CloseComparison(bool ask = true);
 
     ComparisonPage *Comparison() const { return page; }
+    /// File name shown on the comparison tab, empty when none is open.
+    wxString const& ComparisonName() const { return name; }
+    /// Called after a comparison opened or ended, or the tab in front changed.
+    DEFINE_SIGNAL_ADDERS(changed, AddChangeListener)
     bool ComparisonInFront() const;
     void ShowEditor() { Select(false); }
     void ShowComparison() { Select(true); }

@@ -28,6 +28,7 @@
 // Aegisub Project http://www.aegisub.org/
 
 #include "compat.h"
+#include "utils.h"
 #include "dialog_manager.h"
 #include "format.h"
 #include "include/aegisub/context.h"
@@ -99,7 +100,7 @@ public:
 LogWindow::LogWindow(agi::Context *c)
 : wxDialog(c->parent, -1, _("Log window"), wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX | wxRESIZE_BORDER)
 {
-	wxTextCtrl *text_ctrl = new wxTextCtrl(this, -1, "", wxDefaultPosition, wxSize(700,300), wxTE_MULTILINE|wxTE_READONLY);
+	wxTextCtrl *text_ctrl = new wxTextCtrl(this, -1, "", wxDefaultPosition, DipSize(700,300), wxTE_MULTILINE|wxTE_READONLY);
 	text_ctrl->SetDefaultStyle(wxTextAttr(wxNullColour, wxNullColour, wxFont(8, wxFONTFAMILY_MODERN, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_NORMAL)));
 
 	wxSizer *sizer = new wxBoxSizer(wxVERTICAL);

@@ -86,6 +86,10 @@ std::string float_to_string(double val, int precision) {
 	return s;
 }
 
+wxSize DipSize(int width, int height, wxWindow const *window) {
+	return wxWindow::FromDIP(wxSize(width, height), window);
+}
+
 int SmallestPowerOf2(int x) {
 	x--;
 	x |= (x >> 1);

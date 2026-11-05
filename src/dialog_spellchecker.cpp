@@ -15,6 +15,7 @@
 // Aegisub Project http://www.aegisub.org/
 
 #include "ass_dialogue.h"
+#include "utils.h"
 #include "ass_file.h"
 #include "subtitle_project_access.h"
 #include "compat.h"
@@ -133,7 +134,7 @@ DialogSpellChecker::DialogSpellChecker(agi::Context *context)
 	});
 
 	// List of suggested corrections
-	suggest_list = new wxListBox(this, -1, wxDefaultPosition, wxSize(300, 150));
+	suggest_list = new wxListBox(this, -1, wxDefaultPosition, DipSize(300, 150));
 	suggest_list->Bind(wxEVT_LISTBOX, &DialogSpellChecker::OnChangeSuggestion, this);
 	suggest_list->Bind(wxEVT_LISTBOX_DCLICK, &DialogSpellChecker::OnReplace, this);
 	bottom_left_sizer->Add(suggest_list, wxSizerFlags(1).Expand());

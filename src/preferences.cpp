@@ -17,12 +17,15 @@
 /// @ingroup configuration_ui
 
 #include "preferences.h"
+#include "utils.h"
 
 #include "ass_style_storage.h"
 #include "audio_provider_factory.h"
+#include "command_palette.h"
 #include "audio_renderer_waveform.h"
 #include "command/command.h"
 #include "compat.h"
+#include "format.h"
 #include "help_button.h"
 #include "hotkey_data_view_model.h"
 #include "include/aegisub/audio_player.h"
@@ -31,6 +34,7 @@
 #include "libresrc/libresrc.h"
 #include "options.h"
 #include "preferences_base.h"
+#include "theme.h"
 #include "video_provider_manager.h"
 
 #ifdef WITH_PORTAUDIO
@@ -51,11 +55,13 @@
 #include <wx/event.h>
 #include <wx/listctrl.h>
 #include <wx/msgdlg.h>
+#include <wx/settings.h>
 #include <wx/srchctrl.h>
 #include <wx/sizer.h>
 #include <wx/spinctrl.h>
 #include <wx/statbox.h>
 #include <wx/stattext.h>
+#include <wx/treectrl.h>
 #include <wx/treebook.h>
 
 namespace {
@@ -299,6 +305,7 @@ void Interface(wxTreebook *book, Preferences *parent) {
 	auto grid = p->PageSizer(_("Grid"));
 	p->OptionAdd(grid, _("Focus grid on click"), "Subtitle/Grid/Focus Allow");
 	p->OptionAdd(grid, _("Highlight visible subtitles"), "Subtitle/Grid/Highlight Subtitles in Frame");
+	p->OptionAdd(grid, _("Shade every other row"), "Subtitle/Grid/Alternate Rows");
 	p->OptionAdd(grid, _("Hide overrides symbol"), "Subtitle/Grid/Hide Overrides Char");
 	p->OptionFont(grid, "Subtitle/Grid/");
 
@@ -621,7 +628,7 @@ public:
 			size.x += GetView()->FromDIP(icon_width);
 			return size;
 		}
-		return wxSize(80,20);
+		return DipSize(80,20);
 	}
 
 	bool GetValueFromEditorCtrl(wxWindow* editor, wxVariant &var) override {
@@ -671,7 +678,7 @@ public:
 	}
 
 	bool GetValue(wxVariant &) const override { return false; }
-	wxSize GetSize() const override { return !value ? wxSize(80, 20) : GetTextExtent(value); }
+	wxSize GetSize() const override { return !value ? DipSize(80, 20) : GetTextExtent(value); }
 	bool HasEditorCtrl() const override { return true; }
 };
 
@@ -829,6 +836,18 @@ Preferences::Preferences(wxWindow *parent): wxDialog(parent, -1, _("Preferences"
 
 	book->Fit();
 
+	search = new wxSearchCtrl(this, -1, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(260), -1), wxTE_PROCESS_ENTER);
+	search->SetName("preferences_search");
+	search->SetDescriptiveText(_("Search settings (name or pinyin)"));
+	search->ShowCancelButton(true);
+	search_status = new wxStaticText(this, -1, wxEmptyString);
+	search_status->SetForegroundColour(wxSystemSettings::GetColour(wxSYS_COLOUR_GRAYTEXT));
+	IndexPages();
+	search->Bind(wxEVT_TEXT, [this](wxCommandEvent&) { Search(search->GetValue()); });
+	search->Bind(wxEVT_TEXT_ENTER, [this](wxCommandEvent&) { NextMatchingPage(); });
+	search->Bind(wxEVT_SEARCHCTRL_SEARCH_BTN, [this](wxCommandEvent&) { NextMatchingPage(); });
+	search->Bind(wxEVT_SEARCHCTRL_CANCEL_BTN, [this](wxCommandEvent&) { search->Clear(); });
+
 	book->ChangeSelection(OPT_GET("Tool/Preferences/Page")->GetInt());
 	book->Bind(wxEVT_TREEBOOK_PAGE_CHANGED, [](wxBookCtrlEvent &evt) {
 		OPT_SET("Tool/Preferences/Page")->SetInt(evt.GetSelection());
@@ -844,7 +863,12 @@ Preferences::Preferences(wxWindow *parent): wxDialog(parent, -1, _("Preferences"
 	buttonSizer->Add(stdButtonSizer, wxSizerFlags(0).Expand());
 
 	// Main Sizer
+	wxSizer *searchSizer = new wxBoxSizer(wxHORIZONTAL);
+	searchSizer->Add(search, wxSizerFlags().CenterVertical());
+	searchSizer->Add(search_status, wxSizerFlags(1).CenterVertical().Border(wxLEFT));
+
 	wxSizer *mainSizer = new wxBoxSizer(wxVERTICAL);
+	mainSizer->Add(searchSizer, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxTOP));
 	mainSizer->Add(book, wxSizerFlags(1).Expand().Border());
 	mainSizer->Add(buttonSizer, wxSizerFlags(0).Expand().Border(wxALL & ~wxTOP));
 
@@ -857,6 +881,126 @@ Preferences::Preferences(wxWindow *parent): wxDialog(parent, -1, _("Preferences"
 	Bind(wxEVT_BUTTON, &Preferences::OnApply, this, wxID_APPLY);
 	Bind(wxEVT_BUTTON, std::bind(&HelpButton::OpenPage, "Options"), wxID_HELP);
 	defaultButton->Bind(wxEVT_BUTTON, &Preferences::OnResetDefault, this);
+}
+
+namespace {
+std::wstring WithoutSpaces(std::wstring text) {
+	std::erase_if(text, [](wchar_t ch) { return std::iswspace(ch) || ch == L':' || ch == L'：'; });
+	return text;
+}
+
+/// The label of a control the search looks at, empty for other controls.
+wxString SearchLabel(wxWindow *window) {
+	if (dynamic_cast<wxStaticText*>(window) || dynamic_cast<wxCheckBox*>(window) || dynamic_cast<wxStaticBox*>(window))
+		return wxControl::RemoveMnemonics(window->GetLabel());
+	return {};
+}
+
+void CollectLabels(wxWindow *window, std::vector<wxWindow*>& out) {
+	for (auto child : window->GetChildren()) {
+		if (!SearchLabel(child).empty()) out.push_back(child);
+		CollectLabels(child, out);
+	}
+}
+
+/// Tree items of the book in page order.
+void CollectTreeItems(wxTreeCtrl *tree, wxTreeItemId parent, std::vector<wxTreeItemId>& out) {
+	wxTreeItemIdValue cookie;
+	for (auto item = tree->GetFirstChild(parent, cookie); item.IsOk(); item = tree->GetNextChild(parent, cookie)) {
+		out.push_back(item);
+		CollectTreeItems(tree, item, out);
+	}
+}
+}
+
+void Preferences::IndexPages() {
+	auto texts = [](wxString const& label) {
+		std::vector<std::wstring> out;
+		for (auto const& key : palette::MakeKeys(label.ToStdWstring(), ""))
+			if (!key.text.empty()) out.push_back(WithoutSpaces(key.text));
+		return out;
+	};
+	for (size_t page = 0; page < book->GetPageCount(); ++page) {
+		search_entries.push_back({nullptr, page, texts(book->GetPageText(page)), {}, {}});
+		std::vector<wxWindow*> labels;
+		CollectLabels(book->GetPage(page), labels);
+		for (auto window : labels)
+			search_entries.push_back({window, page, texts(SearchLabel(window)), window->GetFont(),
+				window->UseForegroundColour() ? window->GetForegroundColour() : wxColour()});
+	}
+}
+
+void Preferences::Search(wxString const& query) {
+	auto wanted = WithoutSpaces(palette::NormaliseQuery(query.ToStdWstring()));
+	search_query = wanted;
+	matching_pages.clear();
+	for (auto& entry : search_entries) {
+		entry.matched = !wanted.empty() && std::any_of(entry.texts.begin(), entry.texts.end(),
+			[&](std::wstring const& text) { return text.find(wanted) != text.npos; });
+		if (entry.matched && (matching_pages.empty() || matching_pages.back() != entry.page))
+			matching_pages.push_back(entry.page);
+	}
+	ShowMatches();
+	if (!matching_pages.empty() && std::find(matching_pages.begin(), matching_pages.end(), CurrentPage()) == matching_pages.end())
+		book->SetSelection(matching_pages.front());
+}
+
+void Preferences::ShowMatches() {
+	auto accent = theme::UiColours().accent;
+	bool searching = !search_query.empty();
+	for (auto& entry : search_entries) {
+		// A section box passes its font and colour on to the controls in it:
+		// it counts for the page but is not restyled.
+		if (!entry.window || dynamic_cast<wxStaticBox*>(entry.window)) continue;
+		if (entry.matched) {
+			entry.window->SetFont(entry.font.Bold());
+			entry.window->SetForegroundColour(accent);
+		}
+		else {
+			entry.window->SetFont(entry.font);
+			entry.window->SetForegroundColour(entry.colour);
+		}
+		entry.window->Refresh();
+	}
+
+	auto tree = book->GetTreeCtrl();
+	std::vector<wxTreeItemId> items;
+	CollectTreeItems(tree, tree->GetRootItem(), items);
+	if (tree->GetRootItem().IsOk() && !(tree->GetWindowStyle() & wxTR_HIDE_ROOT))
+		items.insert(items.begin(), tree->GetRootItem());
+	auto dim = wxSystemSettings::GetColour(wxSYS_COLOUR_GRAYTEXT);
+	for (size_t page = 0; page < items.size(); ++page) {
+		bool match = std::find(matching_pages.begin(), matching_pages.end(), page) != matching_pages.end();
+		tree->SetItemBold(items[page], searching && match);
+		tree->SetItemTextColour(items[page], searching && !match ? dim : wxNullColour);
+	}
+
+	search_status->SetLabel(SearchStatus());
+	Layout();
+}
+
+void Preferences::NextMatchingPage() {
+	if (matching_pages.empty()) return;
+	auto next = std::upper_bound(matching_pages.begin(), matching_pages.end(), CurrentPage());
+	book->SetSelection(next == matching_pages.end() ? matching_pages.front() : *next);
+}
+
+std::vector<wxWindow*> Preferences::MatchingControls(size_t page) const {
+	std::vector<wxWindow*> out;
+	for (auto const& entry : search_entries)
+		if (entry.matched && entry.window && entry.page == page) out.push_back(entry.window);
+	return out;
+}
+
+size_t Preferences::CurrentPage() const {
+	return static_cast<size_t>(book->GetSelection());
+}
+
+wxString Preferences::SearchStatus() const {
+	if (search_query.empty()) return {};
+	if (matching_pages.empty()) return _("No matching settings");
+	size_t count = std::count_if(search_entries.begin(), search_entries.end(), [](SearchEntry const& entry) { return entry.matched; });
+	return fmt_tl("%d matches on %d pages, Enter shows the next page", count, matching_pages.size());
 }
 
 void ShowPreferences(wxWindow *parent) {

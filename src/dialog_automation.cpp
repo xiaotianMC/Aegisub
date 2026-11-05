@@ -28,6 +28,7 @@
 // Aegisub Project http://www.aegisub.org/
 
 #include "auto4_base.h"
+#include "utils.h"
 #include "compat.h"
 #include "command/command.h"
 #include "dialog_manager.h"
@@ -113,7 +114,7 @@ DialogAutomation::DialogAutomation(agi::Context *c)
 	SetIcons(GETICONS(automation_toolbutton));
 
 	// create main controls
-	list = new wxListView(this, -1, wxDefaultPosition, wxSize(600, 175), wxLC_REPORT|wxLC_SINGLE_SEL);
+	list = new wxListView(this, -1, wxDefaultPosition, DipSize(600, 175), wxLC_REPORT|wxLC_SINGLE_SEL);
 	wxButton *add_button = new wxButton(this, -1, _("&Add"));
 	remove_button = new wxButton(this, -1, _("&Remove"));
 	reload_button = new wxButton(this, -1, _("Re&load"));

@@ -54,6 +54,7 @@
 #include "project.h"
 #include "subs_controller.h"
 #include "subs_edit_box.h"
+#include "status_info.h"
 #include "utils.h"
 #include "version.h"
 #include "video_box.h"
@@ -61,6 +62,7 @@
 #include "workspace_tabs.h"
 #include "video_controller.h"
 #include "video_display.h"
+#include "selection_controller.h"
 
 #include <libaegisub/dispatch.h>
 #include <libaegisub/log.h>
@@ -69,6 +71,7 @@
 #include <wx/msgdlg.h>
 #include <wx/sizer.h>
 #include <wx/statline.h>
+#include <wx/statusbr.h>
 #include <wx/sysopt.h>
 #include <wx/toolbar.h>
 
@@ -137,7 +140,12 @@ FrameMain::FrameMain()
 	menu::GetMenuBar("main", this, (wxID_HIGHEST + 1) + 10000, context.get());
 
 	StartupLog("Create status bar");
-	CreateStatusBar(2);
+	// Menu help, timed messages, the current line, the file's state.
+	CreateStatusBar(4);
+	{
+		int widths[] = {-3, -2, -3, -1};
+		GetStatusBar()->SetStatusWidths(4, widths);
+	}
 
 	StartupLog("Set icon");
 #ifdef _WIN32
@@ -228,6 +236,9 @@ void FrameMain::InitContents() {
 	MainSizer->Add(context->subsGrid,1,wxEXPAND,0);
 	Panel->SetSizer(MainSizer);
 	tabs->SetEditor(Panel);
+	BindConnection(tabs->AddChangeListener(&FrameMain::UpdateStatus, this));
+	BindConnection(context->selectionController->AddActiveLineListener("frame_main.AddActiveLineListener", [this](SubtitleModelRebindTicket ticket) { UpdateStatus(); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime)));
+	BindConnection(context->selectionController->AddSelectionListener("frame_main.AddSelectionListener", [this](SubtitleModelRebindTicket ticket) { UpdateStatus(); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime)));
 
 	StartupLog("Perform layout");
 	Layout();
@@ -265,7 +276,14 @@ void FrameMain::SetDisplayMode(int video, int audio) {
 	if (didFreeze) Thaw();
 }
 
+void FrameMain::UpdateStatus() {
+	if (!GetStatusBar() || GetStatusBar()->GetFieldsCount() < 4) return;
+	SetStatusText(status_info::Line(context.get()), 2);
+	SetStatusText(status_info::File(context.get()), 3);
+}
+
 void FrameMain::UpdateTitle() {
+	UpdateStatus();
 	wxString newTitle;
 	if (context->subsController->IsModified()) newTitle << "* ";
 	newTitle << context->subsController->Filename().filename().wstring();
