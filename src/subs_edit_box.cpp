@@ -255,12 +255,13 @@ SubsEditBox::SubsEditBox(wxWindow *parent, agi::Context *context)
 	OnSize(evt);
 
 	file_changed_slot = c->subtitleAccess->Read().AddCommitListener("subs_edit_box.AddCommitListener", [this](int type, AssDialogue const*, SubtitleModelRebindTicket ticket) { OnCommit(type); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime));
-	connections = agi::signal::make_vector({
+	for (auto& connection : agi::signal::make_vector({
 		context->project->AddTimecodesListener(&SubsEditBox::UpdateFrameTiming, this),
 		context->selectionController->AddActiveLineListener("subs_edit_box.AddActiveLineListener", [this](SubtitleModelRebindTicket ticket) { OnActiveLineChanged(); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime)),
 		context->selectionController->AddSelectionListener("subs_edit_box.AddSelectionListener", [this](SubtitleModelRebindTicket ticket) { OnSelectedSetChanged(); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime)),
 		context->initialLineState->AddChangeListener(&SubsEditBox::OnLineInitialTextChanged, this),
-	 });
+	 }))
+		connections.push_back(std::move(connection)); // kept with the button icons' listeners
 
 	context->textSelectionController->SetControl(edit_ctrl);
 	edit_ctrl->SetFocus();
@@ -306,6 +307,7 @@ void SubsEditBox::MakeButton(const char *cmd_name) {
 	cmd::Command *command = cmd::get(cmd_name);
 	wxBitmapButton *btn = new wxBitmapButton(this, -1, command->Icon());
 	tool_tip_bindings.emplace_back(btn, command->StrHelp(), "Subtitle Edit Box", cmd_name);
+	connections.push_back(theme::AddChangeListener([btn, command] { btn->SetBitmap(command->Icon()); }));
 
 	middle_right_sizer->Add(btn, wxSizerFlags().Expand());
 	btn->Bind(wxEVT_BUTTON, std::bind(&SubsEditBox::CallCommand, this, cmd_name));

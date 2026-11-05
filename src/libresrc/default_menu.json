@@ -140,7 +140,9 @@
         { "command" : "grid/tags/simplify" },
         { "command" : "grid/tags/hide" },
         {},
-        { "command" : "app/toggle/toolbar" }
+        { "command" : "app/toggle/toolbar" },
+        {},
+        { "command" : "app/command_palette" }
     ],
     "main/preferences" : [
         { "command" : "app/language" },

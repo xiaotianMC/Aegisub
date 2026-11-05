@@ -73,4 +73,6 @@ public:
     /// Whether the menu or hotkey command @p name may run now. When it may
     /// not, the tab strip says why.
     bool AllowsCommand(std::string_view name);
+    /// Whether @p name may run now, without saying why not.
+    bool Permits(std::string_view name) const;
 };

@@ -1,5 +1,8 @@
 {
     "Default" : {
+        "app/command_palette" : [
+            "Ctrl-Shift-P"
+        ],
         "app/minimize" : [
             "Ctrl-M"
         ],

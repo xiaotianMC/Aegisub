@@ -3,6 +3,8 @@
 
 #include "visual_tool_rectangle.h"
 
+#include "theme.h"
+
 #include "ass_dialogue.h"
 #include "ass_file.h"
 #include "ass_style.h"
@@ -28,31 +30,21 @@ wxString DrawingShapeLabel(DrawingShape shape) {
 }
 
 wxBitmapBundle DrawingShapeIcon(DrawingShape shape, int size) {
-	wxBitmap bitmap(size, size, 32);
-	wxMemoryDC dc(bitmap);
-	dc.SetBackground(*wxWHITE_BRUSH);
-	dc.Clear();
-	dc.SetPen(wxPen(wxColour(30, 110, 190)));
-	dc.SetBrush(wxBrush(wxColour(45, 135, 220)));
-	int lo = size / 5, hi = size * 4 / 5, mid = size / 2;
-	if (shape == DrawingShape::Rectangle) dc.DrawRectangle(lo, lo, hi - lo, hi - lo);
-	else if (shape == DrawingShape::Ellipse) dc.DrawEllipse(lo, lo, hi - lo, hi - lo);
-	else if (shape == DrawingShape::Triangle) {
-		wxPoint points[] = {{mid, lo}, {hi, hi}, {lo, hi}};
-		dc.DrawPolygon(3, points);
+	// Drawn like Aegisub's own visual_rectangle icon (docs/art-sources), as
+	// SVG so it is sharp at any scale. A corner mark advertises the flyout.
+	const char *body = "";
+	switch (shape) {
+		case DrawingShape::Rectangle: body = "<rect x='8' y='14' width='44' height='32'/>"; break;
+		case DrawingShape::Ellipse: body = "<ellipse cx='30' cy='30' rx='22' ry='18'/>"; break;
+		case DrawingShape::Triangle: body = "<path d='M30 8L54 50H6Z'/>"; break;
+		case DrawingShape::Polygon: body = "<path d='M6 10H54L34 30L54 50H6Z'/>"; break;
 	}
-	else {
-		wxPoint points[] = {{lo, lo}, {hi, lo}, {mid, mid}, {hi, hi}, {lo, hi}};
-		dc.DrawPolygon(5, points);
-	}
-	// A small corner marker advertises the shape flyout.
-	dc.SetPen(*wxBLACK_PEN);
-	dc.SetBrush(*wxBLACK_BRUSH);
-	wxPoint arrow[] = {{size - 5, size - 2}, {size - 2, size - 5}, {size - 2, size - 2}};
-	dc.DrawPolygon(3, arrow);
-	dc.SelectObject(wxNullBitmap);
-	bitmap.SetMask(new wxMask(bitmap, *wxWHITE));
-	return wxBitmapBundle::FromBitmap(bitmap);
+	auto mark = theme::IsDark() ? "#c8ccd2" : "#253e68";
+	auto svg = agi::format(
+		"<svg xmlns='http://www.w3.org/2000/svg' width='64' height='64' viewBox='0 0 64 64'>"
+		"<g fill='#608bd4' stroke='%s' stroke-width='4' stroke-linejoin='round'>%s</g>"
+		"<path d='M63 50V63H50Z' fill='%s'/></svg>", mark, body, mark);
+	return wxBitmapBundle::FromSVG(svg.c_str(), wxSize(size, size));
 }
 
 VisualToolRectangle::VisualToolRectangle(VideoDisplay *parent, agi::Context *context)

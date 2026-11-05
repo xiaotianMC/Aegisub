@@ -8541,3 +8541,27 @@ msgstr "深色"
 
 msgid "The subtitle grid and edit box switch at once; some window controls switch fully only after a restart."
 msgstr "字幕网格和编辑框会立即切换；部分窗口控件需要重启后才能完全切换。"
+
+msgid "&Command Palette..."
+msgstr "命令面板(&C)…"
+
+msgid "Command Palette"
+msgstr "命令面板"
+
+msgid "Find and run any command by its name"
+msgstr "按名称查找并执行任意命令"
+
+msgid "Not available now"
+msgstr "当前不可用"
+
+msgid "Type a command name, pinyin or command id"
+msgstr "输入命令名称、拼音或命令 ID"
+
+msgid "No matching commands"
+msgstr "没有匹配的命令"
+
+msgid "Run"
+msgstr "执行"
+
+msgid "Classic main toolbar (every button)"
+msgstr "经典主工具栏（显示全部按钮）"

@@ -35,6 +35,7 @@
 
 #include <libaegisub/log.h>
 
+#include "../command_palette.h"
 #include "../compat.h"
 #include "../dialog_detached_video.h"
 #include "../dialog_manager.h"
@@ -59,6 +60,19 @@ struct app_about final : public Command {
 
 	void operator()(agi::Context *c) override {
 		ShowAboutDialog(c->parent);
+	}
+};
+
+struct app_command_palette final : public Command {
+	CMD_NAME("app/command_palette")
+	STR_MENU("&Command Palette...")
+	STR_DISP("Command Palette")
+	STR_HELP("Find and run any command by its name")
+
+	void operator()(agi::Context *c) override {
+		// Run the chosen command once the palette has closed.
+		auto name = ShowCommandPalette(c);
+		if (!name.empty()) cmd::call(name, c);
 	}
 };
 
@@ -349,6 +363,7 @@ struct app_show_all final : public Command {
 namespace cmd {
 	void init_app() {
 		reg(std::make_unique<app_about>());
+		reg(std::make_unique<app_command_palette>());
 		reg(std::make_unique<app_display_audio_subs>());
 		reg(std::make_unique<app_display_full>());
 		reg(std::make_unique<app_display_subs>());
