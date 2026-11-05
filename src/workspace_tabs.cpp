@@ -28,7 +28,9 @@ WorkspaceTabs::WorkspaceTabs(wxWindow *parent, agi::Context *c)
     edit_tab = new wxToggleButton(strip, -1, _("Subtitles"), wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT);
     edit_tab->SetName("workspace-tab-edit");
     edit_tab->SetToolTip(_("The subtitle editor. It is locked while the comparison is open."));
-    compare_tab = new wxToggleButton(strip, -1, "", wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT);
+    // A label from the start: wxGTK 3.3 styles a toggle button through its
+    // label widget, which an empty button lacks (GTK criticals on SetFont).
+    compare_tab = new wxToggleButton(strip, -1, _("Compare"), wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT);
     compare_tab->SetName("workspace-tab-compare");
     compare_tab->SetToolTip(_("The open comparison"));
     close_tab = new wxButton(strip, -1, wxString::FromUTF8("✕"), wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT);
