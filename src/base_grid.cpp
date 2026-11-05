@@ -29,6 +29,8 @@
 
 #include "base_grid.h"
 
+#include "theme.h"
+
 #include "include/aegisub/context.h"
 #include "include/aegisub/hotkey.h"
 #include "include/aegisub/menu.h"
@@ -111,6 +113,7 @@ BaseGrid::BaseGrid(wxWindow* parent, agi::Context *context)
 		OPT_SUB("Colour/Subtitle Grid/Selection", &BaseGrid::UpdateStyle, this),
 		OPT_SUB("Colour/Subtitle Grid/Standard", &BaseGrid::UpdateStyle, this),
 
+		theme::AddChangeListener([this] { UpdateStyle(); }),
 		OPT_SUB("Subtitle/Grid/Highlight Subtitles in Frame", &BaseGrid::OnHighlightVisibleChange, this),
 		OPT_SUB("Subtitle/Grid/Hide Overrides", [&](agi::OptionValue const&) { Refresh(false); }),
 	});
@@ -198,13 +201,13 @@ void BaseGrid::UpdateStyle() {
 	lineHeight = dc.GetCharHeight() + 4;
 
 	// Set row brushes
-	row_colors.Default.SetColour(to_wx(OPT_GET("Colour/Subtitle Grid/Background/Background")->GetColor()));
-	row_colors.Header.SetColour(to_wx(OPT_GET("Colour/Subtitle Grid/Header")->GetColor()));
-	row_colors.Selection.SetColour(to_wx(OPT_GET("Colour/Subtitle Grid/Background/Selection")->GetColor()));
-	row_colors.Comment.SetColour(to_wx(OPT_GET("Colour/Subtitle Grid/Background/Comment")->GetColor()));
-	row_colors.Visible.SetColour(to_wx(OPT_GET("Colour/Subtitle Grid/Background/Inframe")->GetColor()));
-	row_colors.SelectedComment.SetColour(to_wx(OPT_GET("Colour/Subtitle Grid/Background/Selected Comment")->GetColor()));
-	row_colors.LeftCol.SetColour(to_wx(OPT_GET("Colour/Subtitle Grid/Left Column")->GetColor()));
+	row_colors.Default.SetColour(theme::Colour("Colour/Subtitle Grid/Background/Background"));
+	row_colors.Header.SetColour(theme::Colour("Colour/Subtitle Grid/Header"));
+	row_colors.Selection.SetColour(theme::Colour("Colour/Subtitle Grid/Background/Selection"));
+	row_colors.Comment.SetColour(theme::Colour("Colour/Subtitle Grid/Background/Comment"));
+	row_colors.Visible.SetColour(theme::Colour("Colour/Subtitle Grid/Background/Inframe"));
+	row_colors.SelectedComment.SetColour(theme::Colour("Colour/Subtitle Grid/Background/Selected Comment"));
+	row_colors.LeftCol.SetColour(theme::Colour("Colour/Subtitle Grid/Left Column"));
 
 	if (width_helper)
 		width_helper->ClearCache();
@@ -326,12 +329,12 @@ void BaseGrid::OnPaint(wxPaintEvent &) {
 	dc.DrawRectangle(0, lineHeight, columns[0]->Width(), h-lineHeight);
 
 	// Row colors
-	wxColour text_standard(to_wx(OPT_GET("Colour/Subtitle Grid/Standard")->GetColor()));
-	wxColour text_selection(to_wx(OPT_GET("Colour/Subtitle Grid/Selection")->GetColor()));
-	wxColour text_collision(to_wx(OPT_GET("Colour/Subtitle Grid/Collision")->GetColor()));
+	wxColour text_standard(theme::Colour("Colour/Subtitle Grid/Standard"));
+	wxColour text_selection(theme::Colour("Colour/Subtitle Grid/Selection"));
+	wxColour text_collision(theme::Colour("Colour/Subtitle Grid/Collision"));
 
 	// First grid row
-	wxPen grid_pen(to_wx(OPT_GET("Colour/Subtitle Grid/Lines")->GetColor()));
+	wxPen grid_pen(theme::Colour("Colour/Subtitle Grid/Lines"));
 	dc.SetPen(grid_pen);
 	dc.DrawLine(0, 0, w, 0);
 	dc.SetPen(*wxTRANSPARENT_PEN);
@@ -435,7 +438,7 @@ void BaseGrid::OnPaint(wxPaintEvent &) {
 	}
 
 	if (active_line && active_line->Row >= yPos && active_line->Row < yPos + nDraw) {
-		dc.SetPen(wxPen(to_wx(OPT_GET("Colour/Subtitle Grid/Active Border")->GetColor())));
+		dc.SetPen(wxPen(theme::Colour("Colour/Subtitle Grid/Active Border")));
 		dc.SetBrush(*wxTRANSPARENT_BRUSH);
 		dc.DrawRectangle(0, (active_line->Row - yPos + 1) * lineHeight, w, lineHeight + 1);
 	}

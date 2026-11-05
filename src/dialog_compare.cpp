@@ -17,6 +17,7 @@
 #include "subtitle_compare.h"
 #include "subtitle_compare_view.h"
 #include "subtitle_format.h"
+#include "theme.h"
 #include "workspace_tabs.h"
 
 #include <libaegisub/charset.h>
@@ -144,7 +145,7 @@ wxColour mix(wxColour const& a, wxColour const& b, double t) {
 }
 
 Palette make_palette() {
-    if (wxSystemSettings::GetAppearance().IsDark()) return {
+    if (theme::IsDark()) return {
         "#1e1e1e", "#d4d4d4", "#6e7681", "#252526", "#858585", "#3c3c3c", "#4daafc",
         "#1f3a28", "#2f6b40", "#3d1f22", "#7d2f35", "#1d3047", "#3b82c4",
         "#232323", "#343434", "#2a2d33", "#6cb6ff", "#2a2d2e",
@@ -289,6 +290,7 @@ class ComparePanel final : public ComparisonPage {
     SubtitleComparison comparison;
     view::State state;
     Palette pal;
+    agi::signal::Connection theme_changed;
     wxString file_name, project_name;
 
     // what is shown
@@ -1434,6 +1436,12 @@ ComparePanel::ComparePanel(wxWindow* parent, agi::Context *c, SubtitleComparison
     // use go on to the focused control, and no further.
     Bind(wxEVT_CHAR_HOOK, [this](wxKeyEvent& event) {
         if (!OnKey(event)) event.DoAllowNextEvent();
+    });
+
+    // Follow the appearance while open.
+    theme_changed = theme::AddChangeListener([this] {
+        pal = make_palette();
+        for (auto w : {static_cast<wxWindow*>(left), static_cast<wxWindow*>(right), static_cast<wxWindow*>(gutter)}) w->Refresh(false);
     });
 
     Changed();

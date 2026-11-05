@@ -15,6 +15,7 @@
 // Aegisub Project http://www.aegisub.org/
 
 #include "grid_column.h"
+#include "theme.h"
 
 #include "ass_dialogue.h"
 #include "ass_file.h"
@@ -328,7 +329,6 @@ class GridColumnCPS final : public GridColumn {
 	const agi::OptionValue *ignore_punctuation = OPT_GET("Subtitle/Character Counter/Ignore Punctuation");
 	const agi::OptionValue *cps_warn = OPT_GET("Subtitle/Character Counter/CPS Warning Threshold");
 	const agi::OptionValue *cps_error = OPT_GET("Subtitle/Character Counter/CPS Error Threshold");
-	const agi::OptionValue *bg_color = OPT_GET("Colour/Subtitle Grid/CPS Error");
 
 public:
 	COLUMN_HEADER(_("CPS"))
@@ -372,7 +372,7 @@ public:
 		int cps_max = std::max<int>(cps_min, cps_error->GetInt());
 		if (cps > cps_min) {
 			double alpha = std::min((double)(cps - cps_min + 1) / (cps_max - cps_min + 1), 1.0);
-			dc.SetBrush(wxBrush(blend(to_wx(bg_color->GetColor()), dc.GetBrush().GetColour(), alpha)));
+			dc.SetBrush(wxBrush(blend(theme::Colour("Colour/Subtitle Grid/CPS Error"), dc.GetBrush().GetColour(), alpha)));
 			dc.SetPen(*wxTRANSPARENT_PEN);
 			dc.DrawRectangle(x, y + 1, width, ext.GetHeight() + 3);
 			dc.SetTextForeground(blend(*wxBLACK, tc, alpha));

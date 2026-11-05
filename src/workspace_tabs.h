@@ -7,6 +7,8 @@
 // commands other than application ones are refused.
 #pragma once
 
+#include <libaegisub/signal.h>
+
 #include <wx/panel.h>
 
 #include <string_view>
@@ -41,6 +43,7 @@ class WorkspaceTabs final : public wxPanel {
     ComparisonPage *page = nullptr;
     wxString name;
     bool last_applied = false;
+    agi::signal::Connection theme_changed;
 
     void Select(bool comparison);
     void Update();

@@ -28,6 +28,7 @@
 // Aegisub Project http://www.aegisub.org/
 
 #include "subs_edit_ctrl.h"
+#include "theme.h"
 
 #include "ass_dialogue.h"
 #include "ass_file.h"
@@ -184,6 +185,7 @@ SubsTextEditCtrl::SubsTextEditCtrl(wxWindow* parent, wxSize wsize, long style, a
 	Subscribe("Karaoke Variable");
 
 	BindConnection(OPT_SUB("Colour/Subtitle/Background", &SubsTextEditCtrl::SetStyles, this));
+	BindConnection(theme::AddChangeListener([this] { SetStyles(); }));
 	BindConnection(OPT_SUB("Subtitle/Highlight/Syntax", &SubsTextEditCtrl::UpdateStyle, this));
 	BindConnection(OPT_SUB("App/Call Tips", &SubsTextEditCtrl::UpdateCallTip, this));
 
@@ -470,10 +472,10 @@ void SubsTextEditCtrl::OnKeyDown(wxKeyEvent &event) {
 void SubsTextEditCtrl::SetSyntaxStyle(int id, wxFont &font, std::string const& name, wxColor const& default_background) {
 	StyleSetFont(id, font);
 	StyleSetBold(id, OPT_GET("Colour/Subtitle/Syntax/Bold/" + name)->GetBool());
-	StyleSetForeground(id, to_wx(OPT_GET("Colour/Subtitle/Syntax/" + name)->GetColor()));
+	StyleSetForeground(id, theme::Colour("Colour/Subtitle/Syntax/" + name));
 	const agi::OptionValue *background = OPT_GET("Colour/Subtitle/Syntax/Background/" + name);
 	if (background->GetType() == agi::OptionType::Color)
-		StyleSetBackground(id, to_wx(background->GetColor()));
+		StyleSetBackground(id, theme::Colour("Colour/Subtitle/Syntax/Background/" + name));
 	else
 		StyleSetBackground(id, default_background);
 }
@@ -485,7 +487,7 @@ void SubsTextEditCtrl::SetStyles() {
 	if (!fontname.empty()) font.SetFaceName(fontname);
 	font.SetPointSize(OPT_GET("Subtitle/Edit Box/Font Size")->GetInt());
 
-	auto default_background = to_wx(OPT_GET("Colour/Subtitle/Background")->GetColor());
+	auto default_background = theme::Colour("Colour/Subtitle/Background");
 
 	namespace ss = agi::ass::SyntaxStyle;
 	SetSyntaxStyle(ss::NORMAL, font, "Normal", default_background);

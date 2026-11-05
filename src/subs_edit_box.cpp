@@ -33,6 +33,7 @@
 /// @ingroup main_ui
 
 #include "subs_edit_box.h"
+#include "theme.h"
 
 #include "ass_dialogue.h"
 #include "ass_file.h"
@@ -712,7 +713,7 @@ void SubsEditBox::UpdateCharacterCount(std::string const& text) {
 	char_count->SetValue(std::to_wstring(length));
 	size_t limit = (size_t)OPT_GET("Subtitle/Character Limit")->GetInt();
 	if (limit && length > limit)
-		char_count->SetBackgroundColour(to_wx(OPT_GET("Colour/Subtitle/Syntax/Background/Error")->GetColor()));
+		char_count->SetBackgroundColour(theme::Colour("Colour/Subtitle/Syntax/Background/Error"));
 	else
 		char_count->SetBackgroundColour(wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOW));
 }

@@ -8523,3 +8523,21 @@ msgstr "对比页中不能使用此命令，请切换到“字幕编辑”标签
 
 msgid "A comparison is already open. End it before comparing with another file."
 msgstr "已经有一个对比处于打开状态。请先结束它，再与其他文件对比。"
+
+msgid "Appearance"
+msgstr "外观"
+
+msgid "Theme"
+msgstr "主题"
+
+msgid "Follow system"
+msgstr "跟随系统"
+
+msgid "Light"
+msgstr "浅色"
+
+msgid "Dark"
+msgstr "深色"
+
+msgid "The subtitle grid and edit box switch at once; some window controls switch fully only after a restart."
+msgstr "字幕网格和编辑框会立即切换；部分窗口控件需要重启后才能完全切换。"

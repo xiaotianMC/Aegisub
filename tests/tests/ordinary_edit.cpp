@@ -24,6 +24,7 @@
 #include "dialog_style_editor.h"
 #include "ass_exporter.h"
 #include "dialogs.h"
+#include "theme.h"
 #include "workspace_tabs.h"
 #include "dialog_manager.h"
 #include "compat.h"
@@ -3293,6 +3294,42 @@ TEST_F(ordinary_edit, compare_tab_is_one_at_a_time_and_refuses_drops_while_open)
     EXPECT_EQ(2u, hook.messages.size());
     EXPECT_TRUE(c->subtitleAccess->TryWrite());
     EXPECT_EQ((std::vector<std::string>{"current"}), LiveTexts(*c));
+}
+
+TEST_F(ordinary_edit, dark_appearance_uses_dark_defaults_only_for_unchanged_colours) {
+    auto restore = OPT_GET("App/Theme")->GetInt();
+    theme::Init();
+    int notified = 0;
+    agi::signal::Connection listener = theme::AddChangeListener([&] { ++notified; });
+    std::string const background = "Colour/Subtitle Grid/Background/Background";
+    ASSERT_TRUE(theme::HasDarkDefault(background));
+    EXPECT_FALSE(theme::HasDarkDefault("Colour/Audio Display/Play Cursor")); // drawn on the dark waveform
+
+    OPT_SET("App/Theme")->SetInt(int(theme::Mode::Light));
+    EXPECT_FALSE(theme::IsDark());
+    EXPECT_EQ(wxColour(255, 255, 255), theme::Colour(background));
+    OPT_SET("App/Theme")->SetInt(int(theme::Mode::Dark));
+    EXPECT_TRUE(theme::IsDark());
+    EXPECT_EQ(wxColour(0x1e, 0x1f, 0x22), theme::Colour(background));
+    EXPECT_EQ(2, notified);                                  // each change of the setting
+    // A colour the user chose is kept in either appearance.
+    OPT_SET(background)->SetColor(agi::Color(10, 20, 30));
+    EXPECT_EQ(wxColour(10, 20, 30), theme::Colour(background));
+    OPT_SET(background)->Reset();
+    EXPECT_EQ(wxColour(0x1e, 0x1f, 0x22), theme::Colour(background));
+    // Options without a dark default read as they are.
+    EXPECT_EQ(to_wx(OPT_GET("Colour/Audio Display/Play Cursor")->GetColor()), theme::Colour("Colour/Audio Display/Play Cursor"));
+    // The tab strip and banner follow the change.
+    auto path = WriteBaseline(*c, "theme-tab.ass", [](AssFile& f) { f.Events.front().Text = "other"; });
+    CompareHook hook(nullptr);
+    ASSERT_TRUE(OpenCompareTab(c.get(), path));
+    tabs->ShowEditor();
+    EXPECT_EQ(theme::UiColours().notice_back, Named(tabs, "workspace-banner")->GetBackgroundColour());
+    OPT_SET("App/Theme")->SetInt(int(theme::Mode::Light));
+    EXPECT_EQ(theme::UiColours().notice_back, Named(tabs, "workspace-banner")->GetBackgroundColour());
+    EXPECT_EQ(wxColour(0xff, 0xf4, 0xce), Named(tabs, "workspace-banner")->GetBackgroundColour());
+    tabs->CloseComparison(false);
+    OPT_SET("App/Theme")->SetInt(restore);
 }
 
 TEST_F(ordinary_edit, dropped_subtitles_compare_with_a_saved_document_without_replacing_it) {

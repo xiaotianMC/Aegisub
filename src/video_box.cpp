@@ -28,6 +28,7 @@
 // Aegisub Project http://www.aegisub.org/
 
 #include "video_box.h"
+#include "theme.h"
 
 #include "ass_dialogue.h"
 #include "ass_file.h"
@@ -119,8 +120,8 @@ void VideoBox::UpdateTimeBoxes() {
 	VideoPosition->SetValue(fmt_wx("%s - %d", agi::Time(time).GetAssFormatted(true), frame));
 	if (boost::binary_search(context->project->Keyframes(), frame)) {
 		// Set the background color to indicate this is a keyframe
-		VideoPosition->SetBackgroundColour(to_wx(OPT_GET("Colour/Subtitle Grid/Background/Selection")->GetColor()));
-		VideoPosition->SetForegroundColour(to_wx(OPT_GET("Colour/Subtitle Grid/Selection")->GetColor()));
+		VideoPosition->SetBackgroundColour(theme::Colour("Colour/Subtitle Grid/Background/Selection"));
+		VideoPosition->SetForegroundColour(theme::Colour("Colour/Subtitle Grid/Selection"));
 	}
 	else {
 		VideoPosition->SetBackgroundColour(wxNullColour);

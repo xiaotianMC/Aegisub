@@ -57,6 +57,7 @@
 #include "utils.h"
 #include "version.h"
 #include "video_box.h"
+#include "theme.h"
 #include "workspace_tabs.h"
 #include "video_controller.h"
 #include "video_display.h"
@@ -153,6 +154,7 @@ FrameMain::FrameMain()
 
 	StartupLog("Set up drag/drop target");
 	SetDropTarget(new AegisubFileDropTarget(context.get()));
+	Bind(wxEVT_SYS_COLOUR_CHANGED, [](wxSysColourChangedEvent& event) { theme::SystemColoursChanged(); event.Skip(); });
 
 	StartupLog("Load default file");
 	context->project->CloseSubtitles();

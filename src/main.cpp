@@ -33,6 +33,7 @@
 ///
 
 #include "main.h"
+#include "theme.h"
 
 #include "command/command.h"
 #include "include/aegisub/hotkey.h"
@@ -258,6 +259,10 @@ bool AegisubApp::OnInit() {
 			OPT_SET("App/Language")->SetString(lang);
 		}
 		locale.Init(lang);
+
+		// Before the first window: Windows applies dark mode only then.
+		StartupLog("Apply appearance");
+		theme::Init();
 
 #ifdef __APPLE__
 		// When run from an app bundle, LC_CTYPE defaults to "C", which breaks on

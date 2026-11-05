@@ -273,6 +273,13 @@ void Video(wxTreebook *book, Preferences *parent) {
 void Interface(wxTreebook *book, Preferences *parent) {
 	auto p = new OptionPage(book, parent, _("Interface"));
 
+	auto appearance = p->PageSizer(_("Appearance"));
+	const wxString themes[] = { _("Follow system"), _("Light"), _("Dark") };
+	p->OptionChoice(appearance, _("Theme"), wxArrayString(3, themes), "App/Theme");
+	// Custom-drawn parts switch at once; toolkit controls fully only after a restart.
+	appearance.sizer->AddSpacer(0);
+	appearance.sizer->Add(new wxStaticText(appearance.box, -1, _("The subtitle grid and edit box switch at once; some window controls switch fully only after a restart.")));
+
 	auto edit_box = p->PageSizer(_("Edit Box"));
 	p->OptionAdd(edit_box, _("Enable call tips"), "App/Call Tips");
 	p->OptionAdd(edit_box, _("Enable ASS autocompletion"), "Subtitle/Edit Box/Auto Completion");

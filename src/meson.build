@@ -139,6 +139,7 @@ aegisub_src = files(
     'subtitles_provider_libass.cpp',
     'text_file_reader.cpp',
     'text_file_writer.cpp',
+    'theme.cpp',
     'text_selection_controller.cpp',
     'thesaurus.cpp',
     'timeedit_ctrl.cpp',

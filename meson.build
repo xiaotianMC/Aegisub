@@ -352,6 +352,12 @@ check_deps = [
 if host_machine.system() == 'linux'
     if cc.get_define('__WXGTK3__', dependencies: wx_defines_dep, prefix: '#include <wx/defs.h>') != ''
         check_deps += [['libportal-gtk3', [], 'libportal', [], []]]
+        # The appearance setting (theme.cpp) asks GTK for its dark variant.
+        gtk3_dep = dependency('gtk+-3.0', required: false)
+        if gtk3_dep.found()
+            deps += gtk3_dep
+            conf.set('WITH_GTK3_APPEARANCE', 1)
+        endif
     else
         check_deps += [['libportal', [], 'libportal', [], []]]
     endif

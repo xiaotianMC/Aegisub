@@ -5,6 +5,7 @@
 #include "format.h"
 #include "include/aegisub/context.h"
 #include "base_grid.h"
+#include "theme.h"
 
 #include <wx/button.h>
 #include <wx/settings.h>
@@ -52,11 +53,8 @@ WorkspaceTabs::WorkspaceTabs(wxWindow *parent, agi::Context *c)
     // The editor tab's lock notice.
     banner = new wxPanel(this);
     banner->SetName("workspace-banner");
-    bool dark = wxSystemSettings::GetAppearance().IsDark();
-    banner->SetBackgroundColour(dark ? wxColour(0x4a, 0x3f, 0x1c) : wxColour(0xff, 0xf4, 0xce));
     banner_text = new wxStaticText(banner, -1, "");
     banner_text->SetName("workspace-banner-text");
-    banner_text->SetForegroundColour(dark ? wxColour(0xf3, 0xe6, 0xb5) : wxColour(0x5c, 0x44, 0x00));
     auto back = new wxButton(banner, -1, _("Back to Comparison"));
     back->SetName("workspace-banner-back");
     auto end = new wxButton(banner, -1, _("End Comparison"));
@@ -82,6 +80,7 @@ WorkspaceTabs::WorkspaceTabs(wxWindow *parent, agi::Context *c)
     back->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { Select(true); });
     close_tab->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { CloseComparison(); });
     end->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { CloseComparison(); });
+    theme_changed = theme::AddChangeListener([this] { Update(); });
     Update();
 }
 
@@ -145,8 +144,8 @@ void WorkspaceTabs::Update() {
     bool open = page != nullptr, front = ComparisonInFront();
     // The front tab is pressed, bold and in the accent colour: a pressed
     // toggle alone is hard to tell apart in some themes.
-    bool dark = wxSystemSettings::GetAppearance().IsDark();
-    auto accent = dark ? wxColour(0x6f, 0xb0, 0xff) : wxColour(0x1a, 0x63, 0xc4);
+    auto colours = theme::UiColours();
+    auto accent = colours.accent;
     auto plain = wxSystemSettings::GetColour(wxSYS_COLOUR_BTNTEXT);
     for (auto [tab, on] : {std::pair{edit_tab, !front}, std::pair{compare_tab, front}}) {
         tab->SetValue(on);
@@ -157,6 +156,9 @@ void WorkspaceTabs::Update() {
         compare_tab->SetLabel(fmt_tl("Compare: %s", name));
         banner_text->SetLabel(fmt_tl("Comparing with %s. The subtitles cannot be edited until the comparison ends.", name));
     }
+    banner->SetBackgroundColour(colours.notice_back);
+    banner_text->SetForegroundColour(colours.notice_text);
+    banner->Refresh();
     GetSizer()->Show(strip, open);
     GetSizer()->Show(banner, open && !front);
     Layout();
