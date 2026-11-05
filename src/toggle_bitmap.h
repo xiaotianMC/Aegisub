@@ -36,6 +36,8 @@
 
 #include "tooltip_binding.h"
 
+#include <libaegisub/signal.h>
+
 #include <wx/bmpbndl.h>
 #include <wx/control.h>
 
@@ -47,6 +49,7 @@ class ToggleBitmap final : public wxControl {
 	cmd::Command &command;
 	wxBitmapBundle imgs;
 	ToolTipBinding tool_tip_binding;
+	agi::signal::Connection theme_changed;
 
 	void OnMouseEvent(wxMouseEvent &evt);
 	void OnPaint(wxPaintEvent &evt);

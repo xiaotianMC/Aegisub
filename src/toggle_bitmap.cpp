@@ -35,6 +35,7 @@
 #include "toggle_bitmap.h"
 
 #include "command/command.h"
+#include "theme.h"
 
 #include <wx/dcbuffer.h>
 #include <wx/settings.h>
@@ -56,6 +57,11 @@ ToggleBitmap::ToggleBitmap(wxWindow *parent, agi::Context *context, const char *
 	SetBackgroundStyle(wxBG_STYLE_PAINT);
 
 	Bind(wxEVT_PAINT, &ToggleBitmap::OnPaint, this);
+	// Icons follow the appearance (dark adapted ones in the dark appearance).
+	theme_changed = theme::AddChangeListener([this, icon_size] {
+		imgs = command.Icon(icon_size);
+		Refresh(false);
+	});
 	Bind(wxEVT_LEFT_DOWN, &ToggleBitmap::OnMouseEvent, this);
 }
 

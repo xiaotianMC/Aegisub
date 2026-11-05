@@ -42,6 +42,9 @@ agi::signal::UnscopedConnection AddChangeListener(std::function<void()> listener
 struct Ui {
     wxColour accent;            ///< Selected tab, titles, focus marks
     wxColour notice_back, notice_text; ///< Notice bars (e.g. a locked editor)
+    wxColour list_back, list_text;     ///< Custom-drawn lists (the command palette)
+    wxColour list_dim;                 ///< Secondary text in them: help, shortcuts
+    wxColour list_selected;            ///< The selected row's background
 };
 Ui UiColours();
 }

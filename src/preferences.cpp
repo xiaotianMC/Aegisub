@@ -100,8 +100,8 @@ void General(wxTreebook *book, Preferences *parent) {
 	auto general = p->PageSizer(_("General"));
 	p->OptionAdd(general, _("Check for updates on startup"), "App/Auto/Check For Updates");
 	p->OptionAdd(general, _("Show main toolbar"), "App/Show Toolbar");
+	p->OptionAdd(general, _("Classic main toolbar (every button)"), "App/Classic Toolbar");
 	p->OptionAdd(general, _("Save UI state in subtitles files"), "App/Save UI State");
-	p->CellSkip(general);
 
 	p->OptionAdd(general, _("Toolbar Icon Size"), "App/Toolbar Icon Size");
 	wxString autoload_modes[] = { _("Never"), _("Always"), _("Ask") };

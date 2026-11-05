@@ -164,9 +164,12 @@ void WorkspaceTabs::Update() {
     Layout();
 }
 
+bool WorkspaceTabs::Permits(std::string_view command) const {
+    return !ComparisonInFront() || command.starts_with("app/") || command.starts_with("help/");
+}
+
 bool WorkspaceTabs::AllowsCommand(std::string_view command) {
-    if (!ComparisonInFront()) return true;
-    if (command.starts_with("app/") || command.starts_with("help/")) return true;
+    if (Permits(command)) return true;
     notice->SetLabel(_("This command is not available in the comparison tab. Switch to the Subtitles tab to use it."));
     strip->Layout();
     return false;

@@ -47,6 +47,18 @@ wxBitmapBundle libresrc_getbitmapbundle(const LibresrcBlob *images, size_t count
 
 wxIconBundle libresrc_geticonbundle(const LibresrcBlob *images, size_t count);
 
+// Bitmap bundles made after this are adapted for a dark background: dark
+// glyphs (bold, play, arrows...) and black parts reaching the icon's edge are
+// lightened, so they stay visible; colours are kept (docs/icons.md).
+void libresrc_set_dark(bool dark);
+bool libresrc_dark();
+
+class wxImage;
+// The adaptation itself. @p glyph: the icon is drawn mostly in dark colours,
+// as libresrc_is_glyph says of its largest image; all its dark parts are lightened.
+void libresrc_adapt_for_dark(wxImage& image, bool glyph);
+bool libresrc_is_glyph(wxImage const& image);
+
 #define GETBUNDLE(a, h) libresrc_getbitmapbundle(a, sizeof(a) / sizeof(*a), h)
 #define GETBUNDLEDIR(a, h, d) libresrc_getbitmapbundle(a, sizeof(a) / sizeof(*a), h, d)
 #define GETICONS(a) libresrc_geticonbundle(a, sizeof(a) / sizeof(*a))

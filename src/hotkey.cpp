@@ -60,6 +60,11 @@ namespace {
 	};
 #endif
 
+	const char *added_hotkeys_command_palette[][3] = {
+		{"app/command_palette", "Default", "Ctrl-Shift-P"},
+		{nullptr}
+	};
+
 	void migrate_hotkeys(const char *added[][3]) {
 		auto hk_map = hotkey::inst->GetHotkeyMap();
 		bool changed = false;
@@ -161,6 +166,11 @@ void init() {
 
 		hotkey::inst->SetHotkeyMap(std::move(hk_map));
 		migrations.emplace_back("duplicate -> split");
+	}
+
+	if (boost::find(migrations, "app/command_palette") == end(migrations)) {
+		migrate_hotkeys(added_hotkeys_command_palette);
+		migrations.emplace_back("app/command_palette");
 	}
 
 #ifdef __WXMAC__

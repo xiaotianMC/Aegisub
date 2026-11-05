@@ -4,6 +4,7 @@
 
 #include "compat.h"
 #include "options.h"
+#include "libresrc/libresrc.h"
 
 #include <libaegisub/color.h>
 
@@ -121,12 +122,13 @@ void Apply() {
 void Notify() {
     bool dark = IsDark();
     last_dark = dark;
+    libresrc_set_dark(dark);
     changed();
 }
 }
 
 void Init() {
-    auto mode = CurrentMode();
+    [[maybe_unused]] auto mode = CurrentMode();
 #if defined(__WXMSW__) && wxCHECK_VERSION(3, 3, 0)
     // Windows themes its own controls only from startup.
     if (mode != Mode::Light && wxTheApp)
@@ -134,6 +136,7 @@ void Init() {
 #endif
     Apply();
     last_dark = IsDark();
+    libresrc_set_dark(last_dark);
     mode_listener = OPT_SUB("App/Theme", [] { Apply(); Notify(); });
 }
 
@@ -173,7 +176,9 @@ agi::signal::UnscopedConnection AddChangeListener(std::function<void()> listener
 }
 
 Ui UiColours() {
-    if (IsDark()) return {{0x6f, 0xb0, 0xff}, {0x4a, 0x3f, 0x1c}, {0xf3, 0xe6, 0xb5}};
-    return {{0x1a, 0x63, 0xc4}, {0xff, 0xf4, 0xce}, {0x5c, 0x44, 0x00}};
+    if (IsDark()) return {{0x6f, 0xb0, 0xff}, {0x4a, 0x3f, 0x1c}, {0xf3, 0xe6, 0xb5},
+                          {0x25, 0x26, 0x29}, {0xd8, 0xda, 0xde}, {0x8b, 0x90, 0x99}, {0x2b, 0x3f, 0x5c}};
+    return {{0x1a, 0x63, 0xc4}, {0xff, 0xf4, 0xce}, {0x5c, 0x44, 0x00},
+            {0xff, 0xff, 0xff}, {0x1f, 0x23, 0x28}, {0x6a, 0x73, 0x7d}, {0xdc, 0xe8, 0xfa}};
 }
 }

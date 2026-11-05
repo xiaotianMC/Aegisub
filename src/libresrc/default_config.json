@@ -9,6 +9,10 @@
 			"Save on Every Change" : false
 		},
 		"Call Tips" : false,
+		"Classic Toolbar" : false,
+		"Command Palette" : {
+			"Recent" : [{"string": ""}]
+		},
 		"First Start" : true,
 		"Hotkey Migrations" : [{"string": "placeholder since empty arrays aren't supported"}],
 		"Language" : "",

@@ -25,6 +25,12 @@
 #include "ass_exporter.h"
 #include "dialogs.h"
 #include "theme.h"
+#include "command_palette.h"
+#include "include/aegisub/toolbar.h"
+#include "libresrc/libresrc.h"
+#include "visual_tool_rectangle.h"
+#include <wx/bmpbuttn.h>
+#include <wx/menu.h>
 #include "workspace_tabs.h"
 #include "dialog_manager.h"
 #include "compat.h"
@@ -118,6 +124,11 @@ std::vector<wxWindow*> descendants(wxWindow* parent) {
 void button(wxWindow* window, int id) {
     wxCommandEvent event(wxEVT_BUTTON,id); event.SetEventObject(window); window->GetEventHandler()->ProcessEvent(event);
 }
+struct testing_comparison_page final : ComparisonPage {
+    using ComparisonPage::ComparisonPage;
+    bool TryClose(bool) override { return true; }
+    void Started() override {}
+};
 class ordinary_edit : public testing::Test {
 protected:
     std::unique_ptr<agi::Context> c;
@@ -506,6 +517,238 @@ TEST_F(ordinary_edit, all_migrated_command_operators_reject_comparison_before_an
         EXPECT_EQ(id,c->selectionController->ReadActiveLine()->Id);
     }
     cmd::PasteSubtitleLines(c.get(),"blocked\nblocked"); EXPECT_EQ(1u,LiveRead(*c).Events.size());
+}
+
+TEST_F(ordinary_edit, command_palette_matches_word_starts_runs_and_pinyin) {
+    auto keys = palette::MakeKeys(L"Open Subtitles...", "subtitle/open");
+    auto match = palette::BestMatch(palette::NormaliseQuery(L"O S"), keys);
+    ASSERT_TRUE(match);
+    EXPECT_EQ((std::vector<size_t>{0, 5}), match->positions) << "the s that starts a word";
+    EXPECT_FALSE(palette::BestMatch(L"xyz", keys));
+    auto run = palette::BestMatch(L"sub", keys), scattered = palette::BestMatch(L"sbs", keys);
+    ASSERT_TRUE(run && scattered);
+    EXPECT_GT(run->score, scattered->score);
+    auto by_id = palette::BestMatch(L"subtitleopen", keys);
+    ASSERT_TRUE(by_id);
+    EXPECT_TRUE(by_id->positions.empty()) << "the command id is searched but not drawn";
+
+    ASSERT_EQ(L"zi", palette::Pinyin(L'\u5b57')) << "ICU's Han-Latin transliterator";
+    auto chinese = palette::MakeKeys(L"\u6253\u5f00\u5b57\u5e55...", "subtitle/open"); // 打开字幕
+    auto initials = palette::BestMatch(L"dkzm", chinese);
+    ASSERT_TRUE(initials);
+    EXPECT_EQ((std::vector<size_t>{0, 1, 2, 3}), initials->positions);
+    auto syllables = palette::BestMatch(L"zimu", chinese);
+    ASSERT_TRUE(syllables);
+    EXPECT_EQ((std::vector<size_t>{2, 3}), syllables->positions);
+    auto characters = palette::BestMatch(palette::NormaliseQuery(L"\u5b57\u5e55"), chinese);
+    ASSERT_TRUE(characters);
+    EXPECT_EQ((std::vector<size_t>{2, 3}), characters->positions);
+}
+
+TEST_F(ordinary_edit, command_palette_lists_commands_remembers_choices_and_runs_after_closing) {
+    OPT_SET("App/Command Palette/Recent")->SetListString({});
+    {
+        CommandPalette palette(c.get());
+        auto all = palette.Shown();
+        EXPECT_GT(all.size(), 200u);
+        EXPECT_EQ(all.end(), std::find(all.begin(), all.end(), "app/command_palette"));
+        EXPECT_TRUE(std::none_of(all.begin(), all.end(), [](auto const& name) { return name.starts_with("recent/"); }));
+        auto exit = std::find(all.begin(), all.end(), "app/exit");
+        ASSERT_NE(all.end(), exit);
+        EXPECT_EQ("Ctrl-Q", palette.ShownItem(exit - all.begin()).hotkey);
+
+        palette.SetQuery("copy coordinates");
+        ASSERT_FALSE(palette.Shown().empty());
+        EXPECT_EQ("video/copy_coordinates", palette.Shown()[0]);
+        EXPECT_FALSE(palette.ShownItem(0).enabled) << "no video is open";
+        EXPECT_FALSE(palette.Accept());
+        EXPECT_TRUE(palette.Chosen().empty());
+
+        palette.SetQuery("hide tags");
+        ASSERT_FALSE(palette.Shown().empty());
+        EXPECT_EQ("grid/tags/hide", palette.Shown()[0]);
+        palette.SetQuery("qqqqzzzz");
+        EXPECT_TRUE(palette.Shown().empty());
+        EXPECT_FALSE(palette.Accept());
+    }
+
+    // Through the command: the palette closes, then the chosen command runs.
+    OPT_SET("Subtitle/Grid/Hide Overrides")->SetInt(0);
+    // The query is typed before the palette is first drawn: the fixture has
+    // no video display, which some commands' state needs (the app always has one).
+    struct Choose : wxModalDialogHook {
+        Choose() { Register(); }
+        int Enter(wxDialog *dialog) override {
+            auto palette = dynamic_cast<CommandPalette*>(dialog);
+            if (!palette) return wxID_NONE;
+            palette->SetQuery("grid tags hide");
+            palette->CallAfter([palette] { EXPECT_TRUE(palette->Accept()); });
+            return wxID_NONE;
+        }
+        void Exit(wxDialog *) override {}
+    } choose;
+    cmd::call("app/command_palette", c.get());
+    EXPECT_EQ(2, OPT_GET("Subtitle/Grid/Hide Overrides")->GetInt());
+    EXPECT_EQ("grid/tags/hide", OPT_GET("App/Command Palette/Recent")->GetListString().at(0));
+
+    // Recent first when nothing is typed; a setting that is on is marked.
+    CommandPalette::Remember("app/exit");
+    CommandPalette again(c.get());
+    auto order = again.Shown();
+    ASSERT_GE(order.size(), 2u);
+    EXPECT_EQ("app/exit", order[0]);
+    EXPECT_EQ("grid/tags/hide", order[1]);
+    EXPECT_TRUE(again.ShownItem(1).checkable && again.ShownItem(1).checked);
+
+    // While the comparison tab is in front only application commands run.
+    auto page = new testing_comparison_page(tabs->Book());
+    tabs->OpenComparison(page, "other.ass");
+    CommandPalette locked(c.get());
+    locked.SetQuery("hide tags");
+    ASSERT_FALSE(locked.Shown().empty());
+    EXPECT_FALSE(locked.ShownItem(0).enabled);
+    locked.SetQuery("app/exit");
+    ASSERT_FALSE(locked.Shown().empty());
+    EXPECT_TRUE(locked.ShownItem(0).enabled);
+    tabs->ComparisonEnded(false);
+}
+
+double MeanLightness(wxImage const& image, bool *any_dark_inside = nullptr) {
+    double total = 0, sum = 0;
+    auto alpha = image.HasAlpha() ? image.GetAlpha() : nullptr;
+    int w = image.GetWidth(), h = image.GetHeight();
+    if (any_dark_inside) *any_dark_inside = false;
+    for (int y = 0; y < h; ++y) for (int x = 0; x < w; ++x) {
+        int i = y * w + x, a = alpha ? alpha[i] : 255;
+        if (a < 128) continue;
+        auto rgb = image.GetData() + i * 3;
+        double l = (std::max({rgb[0], rgb[1], rgb[2]}) + std::min({rgb[0], rgb[1], rgb[2]})) / 510.0;
+        total += 1; sum += l;
+        if (any_dark_inside && l < 0.25 && x > 0 && y > 0 && x < w - 1 && y < h - 1) {
+            bool inside = true;
+            for (int dy = -1; dy <= 1; ++dy) for (int dx = -1; dx <= 1; ++dx)
+                if (alpha && alpha[(y + dy) * w + x + dx] < 128) inside = false;
+            if (inside) *any_dark_inside = true;
+        }
+    }
+    return total ? sum / total : 0;
+}
+
+wxImage IconImage(wxBitmapBundle const& bundle, int size) {
+    return bundle.GetBitmap(wxSize(size, size)).ConvertToImage();
+}
+
+TEST_F(ordinary_edit, dark_appearance_lightens_dark_icons_and_keeps_coloured_ones) {
+    BOOST_SCOPE_EXIT_ALL() { OPT_SET("App/Theme")->SetInt(1); };
+    OPT_SET("App/Theme")->SetInt(1);
+    theme::Init();
+    ASSERT_FALSE(libresrc_dark());
+    auto bold_light = IconImage(cmd::get("edit/style/bold")->Icon(16), 16);
+    auto save_light = IconImage(cmd::get("subtitle/save")->Icon(24), 24);
+    EXPECT_LT(MeanLightness(bold_light), 0.3);
+
+    OPT_SET("App/Theme")->SetInt(2);
+    ASSERT_TRUE(libresrc_dark()) << "the appearance reaches the icon loader before windows are told";
+    auto bold_dark = IconImage(cmd::get("edit/style/bold")->Icon(16), 16);
+    EXPECT_GT(MeanLightness(bold_dark), 0.6) << "a dark glyph becomes light";
+
+    // A coloured icon keeps its colours: only near-black parts at its edge change.
+    auto save_dark = IconImage(cmd::get("subtitle/save")->Icon(24), 24);
+    ASSERT_EQ(save_light.GetSize(), save_dark.GetSize());
+    int changed = 0, opaque = 0;
+    for (int i = 0; i < save_light.GetWidth() * save_light.GetHeight(); ++i) {
+        if (save_light.GetAlpha()[i] < 128) continue;
+        ++opaque;
+        if (memcmp(save_light.GetData() + i * 3, save_dark.GetData() + i * 3, 3)) ++changed;
+    }
+    EXPECT_LT(changed, opaque / 3);
+
+    // A black mark drawn on a light part (the plus on the zoom lens) keeps its contrast.
+    bool dark_inside = false;
+    MeanLightness(IconImage(cmd::get("video/zoom/in")->Icon(24), 24), &dark_inside);
+    EXPECT_TRUE(dark_inside);
+
+    // The rule itself, on a black square with a black dot inside a white one.
+    wxImage glyph(8, 8); glyph.SetAlpha(); memset(glyph.GetData(), 0, 8 * 8 * 3); memset(glyph.GetAlpha(), 255, 64);
+    EXPECT_TRUE(libresrc_is_glyph(glyph));
+    libresrc_adapt_for_dark(glyph, true);
+    EXPECT_GT(MeanLightness(glyph), 0.8);
+    wxImage marked(8, 8); marked.SetAlpha(); memset(marked.GetData(), 255, 8 * 8 * 3); memset(marked.GetAlpha(), 255, 64);
+    memset(marked.GetAlpha(), 0, 8); // a transparent top row
+    for (int x = 0; x < 8; ++x) { auto p = marked.GetData() + (8 + x) * 3; p[0] = p[1] = p[2] = 0; } // black outline under it
+    auto dot = marked.GetData() + (4 * 8 + 4) * 3; dot[0] = dot[1] = dot[2] = 0;
+    EXPECT_FALSE(libresrc_is_glyph(marked));
+    libresrc_adapt_for_dark(marked, false);
+    EXPECT_GT(marked.GetData()[(8 + 3) * 3], 200) << "the black edge is lightened";
+    EXPECT_EQ(0, marked.GetData()[(4 * 8 + 4) * 3]) << "the dot inside is kept";
+
+    // Edit box buttons and the shape tool icon follow at once.
+    wxBitmapButton *bold_button = nullptr;
+    for (auto child : box->GetChildren())
+        if (auto button = dynamic_cast<wxBitmapButton*>(child); button && !bold_button) bold_button = button;
+    ASSERT_NE(nullptr, bold_button);
+    EXPECT_GT(MeanLightness(bold_button->GetBitmap().ConvertToImage()), 0.6);
+    OPT_SET("App/Theme")->SetInt(1);
+    EXPECT_LT(MeanLightness(bold_button->GetBitmap().ConvertToImage()), 0.3);
+
+    auto shape = DrawingShapeIcon(DrawingShape::Triangle, 24).GetBitmap(wxSize(48, 48)).ConvertToImage();
+    ASSERT_TRUE(shape.HasAlpha());
+    EXPECT_EQ(48, shape.GetWidth());
+    EXPECT_EQ(0, shape.GetAlpha()[0]) << "transparent around the shape";
+    EXPECT_GT(shape.GetAlpha()[24 * 48 + 24], 200);
+}
+
+TEST_F(ordinary_edit, main_toolbar_groups_dialogs_in_dropdowns_and_has_a_classic_layout) {
+    BOOST_SCOPE_EXIT_ALL() { OPT_SET("App/Classic Toolbar")->SetBool(false); };
+    OPT_SET("App/Classic Toolbar")->SetBool(false);
+    OPT_SET("App/Theme")->SetInt(1);
+    theme::Init();
+    auto bar = toolbar::GetToolbar(window, "main", c.get(), "Default");
+    auto buttons = [&] {
+        std::vector<wxToolBarToolBase const*> found;
+        for (size_t i = 0; i < bar->GetToolsCount(); ++i)
+            if (auto tool = bar->GetToolByPos(i); !tool->IsSeparator()) found.push_back(tool);
+        return found;
+    };
+    auto grouped = buttons();
+    EXPECT_EQ(15u, grouped.size());
+    int dropdowns = 0;
+    wxToolBarToolBase const *jump = nullptr;
+    size_t menu_entries = 0;
+    for (auto tool : grouped)
+        if (tool->GetKind() == wxITEM_DROPDOWN) {
+            ++dropdowns;
+            ASSERT_NE(nullptr, tool->GetDropdownMenu());
+            menu_entries += tool->GetDropdownMenu()->GetMenuItemCount();
+            if (tool->GetLabel() == cmd::get("video/jump")->StrDisplay(c.get())) jump = tool;
+        }
+    EXPECT_EQ(3, dropdowns);
+    EXPECT_EQ(15u, menu_entries) << "every grouped command, the button's own one first";
+    ASSERT_NE(nullptr, jump);
+    auto jump_menu = jump->GetDropdownMenu();
+    ASSERT_EQ(3u, jump_menu->GetMenuItemCount());
+    EXPECT_EQ(cmd::get("video/jump/start")->StrDisplay(c.get()), jump_menu->FindItemByPosition(1)->GetItemLabelText());
+
+    // Opening a dropdown enables its entries as a menu would: no video is open.
+    for (auto item : jump_menu->GetMenuItems()) item->Enable(true);
+    wxCommandEvent open(wxEVT_TOOL_DROPDOWN, jump->GetId());
+    open.SetEventObject(bar);
+    bar->GetEventHandler()->ProcessEvent(open);
+    EXPECT_FALSE(jump_menu->FindItemByPosition(1)->IsEnabled());
+
+    // The classic layout: every command a button of its own.
+    OPT_SET("App/Classic Toolbar")->SetBool(true);
+    auto classic = buttons();
+    EXPECT_EQ(27u, classic.size());
+    EXPECT_TRUE(std::none_of(classic.begin(), classic.end(), [](auto tool) { return tool->GetKind() == wxITEM_DROPDOWN; }));
+
+    // The appearance rebuilds it with icons for the new background.
+    OPT_SET("App/Theme")->SetInt(2);
+    EXPECT_EQ(27u, buttons().size());
+    OPT_SET("App/Theme")->SetInt(1);
+    OPT_SET("App/Classic Toolbar")->SetBool(false);
+    EXPECT_EQ(15u, buttons().size());
+    bar->Destroy();
 }
 
 class audio_edit : public ordinary_edit {
