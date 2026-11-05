@@ -18,6 +18,7 @@
 ///
 
 #include "dialog_progress.h"
+#include "theme.h"
 
 #include "compat.h"
 #include "utils.h"
@@ -108,7 +109,7 @@ public:
 };
 
 DialogProgress::DialogProgress(wxWindow *parent, wxString const& title_text, wxString const& message)
-: wxDialog(parent, -1, title_text, wxDefaultPosition, wxDefaultSize, wxBORDER_RAISED)
+: wxDialog(parent, -1, title_text, wxDefaultPosition, wxDefaultSize, theme::Border(wxBORDER_RAISED))
 , pulse_timer(GetEventHandler())
 {
 	title = new wxStaticText(this, -1, title_text, wxDefaultPosition, wxDefaultSize, wxALIGN_CENTRE | wxST_NO_AUTORESIZE);

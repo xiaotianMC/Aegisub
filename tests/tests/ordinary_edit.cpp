@@ -646,6 +646,12 @@ TEST_F(ordinary_edit, dark_appearance_lightens_dark_icons_and_keeps_coloured_one
     OPT_SET("App/Theme")->SetInt(1);
     theme::Init();
     ASSERT_FALSE(libresrc_dark());
+    // Only Windows with wxWidgets 3.3 draws its own controls dark; elsewhere
+    // borders are left to the toolkit's theme.
+#if !defined(__WXMSW__)
+    EXPECT_FALSE(theme::NativeDark());
+#endif
+    if (!theme::NativeDark()) EXPECT_EQ(long(wxBORDER_SUNKEN), theme::Border(wxBORDER_SUNKEN));
     auto bold_light = IconImage(cmd::get("edit/style/bold")->Icon(16), 16);
     auto save_light = IconImage(cmd::get("subtitle/save")->Icon(24), 24);
     EXPECT_LT(MeanLightness(bold_light), 0.3);

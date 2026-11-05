@@ -25,7 +25,7 @@
 各平台如何让原生控件变深：
 
 - **Linux（GTK3）**：深色时，若装有当前主题的 `-dark` 版本（如 `Yaru-dark`）就切换过去，否则打开 GTK 的“偏好深色”；浅色时去掉主题名的 `-dark` 后缀；跟随系统时恢复启动时的主题。只在 GTK3 构建且找到 `gtk+-3.0` 时编译（`WITH_GTK3_APPEARANCE`）。实测 Yaru 主题只开“偏好深色”时输入框仍是白色，因此优先切换到 `-dark` 主题。
-- **Windows**：wxWidgets 3.3 起在启动时调用 `MSWEnableDarkMode`。3.2 下 Windows 原生控件不能变深，因此“跟随系统”按浅色处理；手动选“深色”时只有自绘部分变深。
+- **Windows**：内置 wxWidgets 已升级到 3.3.4（见 [升级到 wxWidgets 3.3](wx33.md)），启动时调用 `MSWEnableDarkMode`，原生控件一起变深；凹陷 / 凸起边框改为平边框，启动页也跟随外观。若自行用 wx 3.2 构建，Windows 原生控件不能变深，“跟随系统”按浅色处理，手动选“深色”时只有自绘部分变深。
 - **macOS**：跟随系统外观；手动选浅色或深色只影响自绘部分（未实现强制系统外观）。
 
 ## 切换时机
@@ -42,6 +42,5 @@
 ## 未处理
 
 - 图标在深色下的调整见 [图标与工具栏](icons.md)。
-- 启动页（Windows）仍是固定浅色。
-- Windows / macOS 未构建验证；`MSWEnableDarkMode` 一段只在 Windows + wx 3.3 下编译。
+- Windows / macOS 未在本机构建验证；`MSWEnableDarkMode` 一段只在 Windows + wx 3.3 下编译。
 - 其他对话框（样式管理、首选项等）都是原生控件，跟随系统主题，没有逐个检查。

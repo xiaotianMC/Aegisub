@@ -246,6 +246,9 @@ else
         # Aegisub registers only wxPNGHandler. Avoid building the unused TIFF
         # codec and its additional zlib/JPEG dependency plumbing.
         'wxUSE_LIBTIFF': 'OFF',
+        # Nor WebP (new in wxWidgets 3.3): its bundled static library is not
+        # built position-independent and cannot go into a shared fallback wx.
+        'wxUSE_LIBWEBP': 'OFF',
         'wxUSE_ZLIB': 'sys',            # supplied by Meson below
         'CMAKE_BUILD_TYPE': build_type,
         'wxUSE_IMAGE': true,
@@ -292,6 +295,9 @@ else
 
     if wx.target_list().contains('wxtiff')
         error('wxWidgets unexpectedly built wxtiff despite wxUSE_LIBTIFF=OFF')
+    endif
+    if wx.target_list().contains('webp')
+        error('wxWidgets unexpectedly built libwebp despite wxUSE_LIBWEBP=OFF')
     endif
 
     if wx_libpng == 'builtin' and not wx.target_list().contains('wxpng')

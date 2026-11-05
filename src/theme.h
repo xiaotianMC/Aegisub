@@ -25,6 +25,15 @@ void Init();
 /// Whether the dark appearance is in use.
 bool IsDark();
 
+/// Whether the toolkit itself draws its controls dark: Windows with
+/// wxWidgets 3.3, decided once at startup. Elsewhere the toolkit's theme
+/// draws borders and the like, and this is false.
+bool NativeDark();
+
+/// @p border (a wxBORDER_* style), or a flat border when NativeDark():
+/// Windows draws sunken and raised borders light even in its dark mode.
+long Border(long border);
+
 /// The colour option @p option as the interface should show it: its dark
 /// default in the dark appearance when the user has not changed it.
 wxColour Colour(std::string const& option);

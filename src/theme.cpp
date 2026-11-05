@@ -23,6 +23,7 @@ namespace {
 agi::signal::Signal<> changed;
 agi::signal::Connection mode_listener;
 bool last_dark = false;
+bool native_dark = false;
 
 // Dark defaults of the interface colour options. Colours drawn over video or
 // on the audio display (already dark) are not listed: they do not follow the
@@ -132,7 +133,8 @@ void Init() {
 #if defined(__WXMSW__) && wxCHECK_VERSION(3, 3, 0)
     // Windows themes its own controls only from startup.
     if (mode != Mode::Light && wxTheApp)
-        wxTheApp->MSWEnableDarkMode(mode == Mode::Dark ? wxApp::DarkMode_Always : wxApp::DarkMode_Auto);
+        native_dark = wxTheApp->MSWEnableDarkMode(mode == Mode::Dark ? wxApp::DarkMode_Always : wxApp::DarkMode_Auto)
+            && (mode == Mode::Dark || wxSystemSettings::GetAppearance().IsDark());
 #endif
     Apply();
     last_dark = IsDark();
@@ -152,6 +154,16 @@ bool IsDark() {
 #else
     return wxSystemSettings::GetAppearance().IsDark();
 #endif
+}
+
+bool NativeDark() {
+    return native_dark;
+}
+
+long Border(long border) {
+    if (!native_dark) return border;
+    if (border == wxBORDER_SUNKEN || border == wxBORDER_RAISED) return wxBORDER_SIMPLE;
+    return border;
 }
 
 wxColour Colour(std::string const& option) {

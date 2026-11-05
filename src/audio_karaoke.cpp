@@ -15,6 +15,7 @@
 // Aegisub Project http://www.aegisub.org/
 
 #include "audio_karaoke.h"
+#include "theme.h"
 
 #include "include/aegisub/context.h"
 
@@ -57,7 +58,7 @@ static inline size_t last_lt_or_eq(Container const& c, Value const& v) {
 }
 
 AudioKaraoke::AudioKaraoke(wxWindow *parent, agi::Context *c)
-: wxWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL | wxBORDER_SUNKEN)
+: wxWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL | theme::Border(wxBORDER_SUNKEN))
 , c(c)
 , file_changed(c->subtitleAccess->Read().AddCommitListener("audio_karaoke.AddCommitListener", [this](int type, AssDialogue const* line, SubtitleModelRebindTicket ticket) { OnFileChanged(type, line); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime)))
 , audio_opened(c->project->AddAudioProviderListener(&AudioKaraoke::OnAudioOpened, this))

@@ -33,6 +33,7 @@
 ///
 
 #include "dialog_style_editor.h"
+#include "theme.h"
 
 #include "ass_dialogue.h"
 #include "ass_file.h"
@@ -347,7 +348,7 @@ DialogStyleEditor::DialogStyleEditor(wxWindow *parent, AssStyle const* style, ag
 	// Preview
 	auto previewButton = new ColourButton(PreviewSizerBox, wxSize(45, 16), false, OPT_GET("Colour/Style Editor/Background/Preview")->GetColor());
 	PreviewText = new wxTextCtrl(PreviewSizerBox, -1, to_wx(OPT_GET("Tool/Style Editor/Preview Text")->GetString()));
-	SubsPreview = new SubtitlesPreview(PreviewSizerBox, DipSize(100, 60), wxSUNKEN_BORDER, OPT_GET("Colour/Style Editor/Background/Preview")->GetColor());
+	SubsPreview = new SubtitlesPreview(PreviewSizerBox, DipSize(100, 60), theme::Border(wxSUNKEN_BORDER), OPT_GET("Colour/Style Editor/Background/Preview")->GetColor());
 
 	SubsPreview->SetToolTip(_("Preview of current style"));
 	SubsPreview->SetStyle(*style);
