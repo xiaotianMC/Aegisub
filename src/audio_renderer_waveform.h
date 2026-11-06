@@ -99,7 +99,7 @@ public:
 	/// Smallest distance between two lines of the dB scale
 	static int DbGridGap(int /* height */) { return 16; }
 	/// Colour of the lines of the dB scale
-	static wxColour DbGridColour() { return wxColour(24, 66, 40); }
+	static wxColour DbGridColour() { return wxColour(78, 78, 78); }
 	/// Colour of the dB values drawn over the waveform
-	static wxColour DbLabelColour() { return wxColour(120, 170, 140); }
+	static wxColour DbLabelColour() { return wxColour(170, 170, 170); }
 };

@@ -98,7 +98,10 @@
 #include <wx/dataview.h>
 #include <wx/button.h>
 #include <wx/listctrl.h>
+#include <functional>
 #include <wx/panel.h>
+#include <wx/sizer.h>
+#include <wx/slider.h>
 #include <fstream>
 #include <filesystem>
 #include <boost/scope_exit.hpp>
@@ -3852,4 +3855,106 @@ TEST_F(ordinary_edit, timecode_only_and_busy_subtitle_drops_do_not_offer_compari
     EXPECT_EQ(0, hook.drop_prompts); EXPECT_EQ(0, hook.shown);
     EXPECT_EQ((std::vector<std::string>{"keep"}), LiveTexts(*c));
     EXPECT_FALSE(hook.messages.empty());
+}
+TEST_F(audio_edit, visual_tools_are_centred_between_the_video_and_the_waveform) {
+    // The main window's arrangement: video, then the audio box 5 px further.
+    auto root=new wxPanel(window);root->SetSize(0,0,1400,700);
+    auto video_box=new VideoBox(root,false,c.get());
+    auto audio_box=c->audioBox=new AudioBox(root,c.get());
+    auto tools=new wxBoxSizer(wxVERTICAL);tools->Add(audio_box,0,wxEXPAND);tools->AddStretchSpacer(1);
+    auto top=new wxBoxSizer(wxHORIZONTAL);top->Add(video_box,0,wxEXPAND);top->Add(tools,1,wxEXPAND|wxLEFT|wxRIGHT|wxBOTTOM,5);
+    root->SetSizer(top);
+    video_box->SetToolbarGap(5+audio_box->DisplayInset());
+    VideoDisplay *display=nullptr;std::vector<wxToolBar*> bars;
+    for(auto child:video_box->GetChildren()){
+        if(auto d=dynamic_cast<VideoDisplay*>(child))display=d;
+        if(auto b=dynamic_cast<wxToolBar*>(child);b&&b->HasFlag(wxTB_VERTICAL))bars.push_back(b);
+    }
+    ASSERT_NE(nullptr,display);ASSERT_EQ(2u,bars.size());
+    display->SetMinSize(wxSize(640,360));
+    root->Layout();
+    auto x_in_root=[&](wxWindow*w){int x=0;for(;w&&w!=root;w=w->GetParent())x+=w->GetPosition().x;return x;};
+    AudioDisplay* waveform=nullptr;
+    std::function<void(wxWindow*)> find=[&](wxWindow*w){for(auto ch:w->GetChildren()){if(auto d=dynamic_cast<AudioDisplay*>(ch))waveform=d;find(ch);}};
+    find(audio_box);ASSERT_NE(nullptr,waveform);
+    int video_right=x_in_root(display)+display->GetSize().x;
+    int bar_left=x_in_root(bars[0]),bar_right=bar_left+bars[0]->GetSize().x;
+    int wave_left=x_in_root(audio_box)+audio_box->DisplayInset();
+    EXPECT_GT(bar_left-video_right,0);
+    EXPECT_EQ(bar_left-video_right,wave_left-bar_right) << "video " << video_right << ", tools " << bar_left << ".." << bar_right << ", waveform " << wave_left;
+}
+
+TEST_F(audio_edit, scrollbar_thumb_edges_zoom_and_alt_wheel_zooms) {
+    window->SetSize(1100,400);window->Show(); // the scrollbar captures the mouse while dragging
+    auto box=c->audioBox=new AudioBox(window,c.get());
+    box->SetSize(0,0,1000,260);box->Layout();wxYield();
+    int sliders=0;
+    std::function<void(wxWindow*)> count=[&](wxWindow*w){for(auto ch:w->GetChildren()){if(dynamic_cast<wxSlider*>(ch))++sliders;count(ch);}};
+    count(box);
+    EXPECT_EQ(2,sliders) << "vertical zoom and volume; horizontal zoom lives on the scrollbar";
+    AudioDisplay* display=nullptr;
+    std::function<void(wxWindow*)> find=[&](wxWindow*w){for(auto ch:w->GetChildren()){if(auto d=dynamic_cast<AudioDisplay*>(ch))display=d;find(ch);}};
+    find(box);ASSERT_NE(nullptr,display);
+    c->project->LoadAudio("dummy-audio:silence?sr=44100&bd=16&ch=1&ln=441000");
+    display->SetZoomLevel(-50); // a wide thumb
+    const int width=display->GetClientSize().x, bar_y=display->GetClientSize().y-5;
+    const double duration=display->GetDuration();
+    ASSERT_GT(width,500);ASSERT_GT(duration,display->MaxVisibleDuration()*2);
+    auto mouse=[&](wxEventType type,int x,bool down) {
+        wxMouseEvent event(type);event.SetLeftDown(down);event.SetPosition({x,bar_y});event.SetEventObject(display);
+        display->GetEventHandler()->ProcessEvent(event);
+    };
+    auto visible=[&]{double ms=display->GetMillisecondsPerPixel();double left=display->GetScrollLeft()*ms;return std::pair{left,left+width*ms};};
+    auto bar_x=[&](double t){return int(t*width/duration);};
+    auto drag=[&](int from,int to){mouse(wxEVT_LEFT_DOWN,from,true);mouse(wxEVT_MOTION,(from+to)/2,true);mouse(wxEVT_MOTION,to,true);mouse(wxEVT_LEFT_UP,to,false);};
+    const double bar_ms=duration/width; // time one pixel of the bar stands for
+
+    // Scroll to the middle by dragging the thumb's middle.
+    auto [l0,r0]=visible();
+    ASSERT_GT(bar_x(r0)-bar_x(l0),60);
+    drag((bar_x(l0)+bar_x(r0))/2,width/2);
+    auto [l1,r1]=visible();
+    EXPECT_GT(l1,l0);EXPECT_NEAR(r0-l0,r1-l1,1) << "moving does not zoom";
+    EXPECT_NEAR(width/2,(bar_x(l1)+bar_x(r1))/2,2);
+
+    // Right edge inwards: the left edge stays, less time is shown.
+    drag(bar_x(r1),bar_x(r1)-40);
+    auto [l2,r2]=visible();
+    EXPECT_NEAR(l1,l2,display->GetMillisecondsPerPixel()+1);
+    EXPECT_NEAR(r2,(bar_x(r1)-40)*bar_ms,bar_ms+display->GetMillisecondsPerPixel());
+    EXPECT_GT(display->GetZoomLevel(),-50);
+    EXPECT_EQ(AudioDisplay::NearestZoomLevel(display->GetMillisecondsPerPixel()),display->GetZoomLevel());
+    EXPECT_EQ(display->GetZoomLevel(),OPT_GET("Audio/Zoom/Horizontal")->GetInt()) << "the zoom is kept";
+
+    // Left edge outwards: the right edge stays, more time is shown.
+    drag(bar_x(l2),bar_x(l2)-20);
+    auto [l3,r3]=visible();
+    EXPECT_NEAR(r2,r3,2*display->GetMillisecondsPerPixel()+1);
+    EXPECT_GT(r3-l3,r2-l2);
+    EXPECT_LT(l3,l2);
+
+    // The span stops at the deepest zoom instead of crossing over...
+    drag(bar_x(l3),bar_x(r3)+30);
+    auto [l4,r4]=visible();
+    EXPECT_NEAR(display->MinVisibleDuration(),r4-l4,display->GetMillisecondsPerPixel()+1);
+    EXPECT_NEAR(r3,r4,2*display->GetMillisecondsPerPixel()+1);
+    EXPECT_EQ(30,display->GetZoomLevel());
+    // ...and at the widest.
+    display->SetZoomLevel(-30);
+    auto [l5,r5]=visible();
+    drag(bar_x(r5),width-1);
+    auto [l6,r6]=visible();
+    EXPECT_NEAR(display->MaxVisibleDuration(),r6-l6,display->GetMillisecondsPerPixel()+1);
+    EXPECT_NEAR(l5,l6,display->GetMillisecondsPerPixel()+1);
+
+    // Alt + wheel zooms whatever the wheel's default is.
+    for(bool default_zoom:{false,true}){
+        OPT_SET("Audio/Wheel Default to Zoom")->SetBool(default_zoom);
+        display->SetZoomLevel(0);
+        wxMouseEvent wheel(wxEVT_MOUSEWHEEL);wheel.SetAltDown(true);wheel.m_wheelRotation=120;wheel.m_wheelDelta=120;
+        wheel.SetPosition({width/2,80});wheel.SetEventObject(display);
+        display->GetEventHandler()->ProcessEvent(wheel);
+        EXPECT_EQ(1,display->GetZoomLevel()) << "wheel defaults to zoom: " << default_zoom;
+        EXPECT_EQ(1,OPT_GET("Audio/Zoom/Horizontal")->GetInt());
+    }
 }

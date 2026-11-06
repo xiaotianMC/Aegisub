@@ -132,6 +132,9 @@ class AudioDisplay: public wxWindow {
 	/// Zoom level given as a number, see SetZoomLevel for details
 	int zoom_level;
 
+	/// Apply a new scale, keeping the time under relative x @p anchor in place
+	void ApplyMsPerPixel(double new_ms_per_pixel, double anchor);
+
 	/// Absolute pixel position of the tracking cursor (mouse or playback)
 	int track_cursor_pos = -1;
 	/// Label to show by track cursor
@@ -201,7 +204,6 @@ class AudioDisplay: public wxWindow {
 	void OnMouseEnter(wxMouseEvent&);
 	void OnMouseLeave(wxMouseEvent&);
 
-	int GetDuration() const;
 
 	void OnAudioOpen(agi::AudioProvider *provider);
 	void OnPlaybackPosition(int ms_position);
@@ -262,6 +264,30 @@ public:
 	/// The zoom levels generally go from +30 to -30. It is possible to zoom in
 	/// more than +30.
 	void SetZoomLevel(int new_zoom_level);
+
+	/// @brief Zoom so that exactly @p begin..@p end (ms) fills the display
+	///
+	/// Used by the scrollbar's edge handles: the zoom is continuous, not one
+	/// of the levels. The zoom level becomes the nearest level and is saved
+	/// as the horizontal zoom option. The span is limited to what the zoom
+	/// levels allow.
+	void ZoomToTimeRange(double begin, double end);
+
+	/// Shortest and longest spans of the display width in ms, at the highest
+	/// and lowest zoom levels
+	double MinVisibleDuration() const;
+	double MaxVisibleDuration() const;
+
+	/// The zoom level whose scale is closest to @p ms_per_pixel
+	static int NearestZoomLevel(double ms_per_pixel);
+
+	/// Milliseconds per pixel at a zoom level
+	static double ZoomLevelMsPerPixel(int level);
+
+	double GetMillisecondsPerPixel() const { return ms_per_pixel; }
+	int GetScrollLeft() const { return scroll_left; }
+	/// Duration of the open audio in ms, 0 without audio
+	int GetDuration() const;
 
 	/// @brief Get the zoom level
 	/// @return The zoom level

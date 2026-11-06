@@ -48,6 +48,7 @@
 #include <libaegisub/audio/provider.h>
 
 #include <algorithm>
+#include <cmath>
 
 #include <wx/dcbuffer.h>
 #include <wx/dcgraph.h>
@@ -138,7 +139,15 @@ class AudioDisplayScrollbar final : public AudioDisplayInteractionObject {
 	wxRect bounds;
 	wxRect thumb;
 
-	bool dragging = false;   ///< user is dragging with the primary mouse button
+	/// What the primary button is dragging
+	enum class Drag { None, Move, Jump, Left, Right };
+	Drag drag = Drag::None;
+	/// Press position inside the thumb, kept while moving it
+	int grab_offset = 0;
+	/// Time in ms of the edge that stays put while the other one is dragged
+	double fixed_time = 0;
+	/// Width of the edge handles that resize the view
+	static const int handle_width = 6;
 
 	int data_length = 1; ///< total amount of data in control
 	int page_length = 1; ///< amount of data in one page
@@ -156,8 +165,11 @@ class AudioDisplayScrollbar final : public AudioDisplayInteractionObject {
 	void RecalculateThumb()
 	{
 		thumb.width = std::max<int>(min_width, (int64_t)bounds.width * page_length / data_length);
+		// Stays inside the bar so both of its edge handles can be reached
+		thumb.width = std::min(thumb.width, std::max(min_width, bounds.width));
 		thumb.height = height;
-		thumb.x = int((int64_t)bounds.width * position / data_length);
+		thumb.x = std::min(int((int64_t)bounds.width * position / data_length), bounds.width - thumb.width);
+		thumb.x = std::max(0, thumb.x);
 		thumb.y = bounds.y;
 	}
 
@@ -216,25 +228,81 @@ public:
 		RecalculateThumb();
 	}
 
+	/// What a press at @p x grabs
+	Drag HitTest(int x) const
+	{
+		// The handles reach a little outside the thumb, and never meet in a
+		// narrow thumb: the middle of it still moves it.
+		const int reach = std::min(handle_width, std::max(2, thumb.width / 3));
+		if (x >= thumb.x - 3 && x < thumb.x + reach) return Drag::Left;
+		if (x > thumb.GetRight() - reach && x <= thumb.GetRight() + 3) return Drag::Right;
+		if (x >= thumb.x && x <= thumb.GetRight()) return Drag::Move;
+		return Drag::Jump;
+	}
+
+	/// Time in ms at @p x on the bar, which stands for the whole audio
+	double TimeAt(int x) const
+	{
+		return std::clamp(x, 0, bounds.width) * double(display->GetDuration()) / std::max(1, bounds.width);
+	}
+
 	bool OnMouseEvent(wxMouseEvent &event) override
 	{
-		if (event.LeftIsDown())
+		const int x = event.GetPosition().x;
+		if (event.LeftDown())
 		{
-			const int thumb_left = event.GetPosition().x - thumb.width/2;
-			const int data_length_less_page = data_length - page_length;
-			const int shaft_length_less_thumb = bounds.width - thumb.width;
-
-			display->ScrollPixelToLeft((int64_t)data_length_less_page * thumb_left / shaft_length_less_thumb);
-
-			dragging = true;
-		}
-		else if (event.LeftUp())
-		{
-			dragging = false;
+			drag = HitTest(x);
+			grab_offset = drag == Drag::Move ? x - thumb.x : thumb.width / 2;
+			const double ms = display->GetMillisecondsPerPixel();
+			const double left = display->GetScrollLeft() * ms;
+			const double right = left + display->GetClientSize().GetWidth() * ms;
+			fixed_time = drag == Drag::Left ? right : left;
+			if (drag == Drag::Jump) drag = Drag::Move;
 		}
 
-		return dragging;
+		if (event.LeftIsDown() && drag != Drag::None)
+		{
+			if (drag == Drag::Move)
+			{
+				const int thumb_left = x - grab_offset;
+				const int data_length_less_page = data_length - page_length;
+				const int shaft_length_less_thumb = std::max(1, bounds.width - thumb.width);
+				display->ScrollPixelToLeft((int64_t)data_length_less_page * thumb_left / shaft_length_less_thumb);
+			}
+			else
+			{
+				// The other edge stays where it is; the span follows the mouse
+				const double min_span = display->MinVisibleDuration();
+				const double max_span = display->MaxVisibleDuration();
+				const double t = TimeAt(x);
+				double span = drag == Drag::Left ? fixed_time - t : t - fixed_time;
+				span = std::clamp(span, min_span, max_span);
+				if (drag == Drag::Left)
+					display->ZoomToTimeRange(fixed_time - span, fixed_time);
+				else
+					display->ZoomToTimeRange(fixed_time, fixed_time + span);
+			}
+			return true;
+		}
+
+		if (event.LeftUp())
+			drag = Drag::None;
+
+		if (drag == Drag::None)
+		{
+			const Drag hit = bounds.Contains(event.GetPosition()) ? HitTest(x) : Drag::Jump;
+			display->SetCursor(hit == Drag::Left || hit == Drag::Right ? wxCursor(wxCURSOR_SIZEWE) : wxNullCursor);
+		}
+		return false;
 	}
+
+	/// Where a press on the bar would resize the view, for tests
+	bool IsResizeHandle(int x) const
+	{
+		auto hit = HitTest(x);
+		return hit == Drag::Left || hit == Drag::Right;
+	}
+	const wxRect& GetThumb() const { return thumb; }
 
 	void Paint(wxDC &dc, bool has_focus, int load_progress)
 	{
@@ -266,10 +334,19 @@ public:
 		dc.SetPen(wxPen(colours.Light()));
 		dc.SetBrush(wxBrush(colours.Light()));
 		dc.DrawRectangle(thumb);
+
+		// Grips at both ends: drag them to zoom
+		if (thumb.width >= 3 * handle_width)
+		{
+			dc.SetPen(wxPen(colours.Dark()));
+			for (int x : {thumb.x + 3, thumb.x + 5, thumb.GetRight() - 3, thumb.GetRight() - 5})
+				dc.DrawLine(x, thumb.y + 4, x, thumb.GetBottom() - 3);
+		}
 	}
 };
 
 const int AudioDisplayScrollbar::min_width;
+const int AudioDisplayScrollbar::handle_width;
 
 class AudioDisplayTimeline final : public AudioDisplayInteractionObject {
 	int duration = 0;          ///< Total duration in ms
@@ -702,20 +779,54 @@ void AudioDisplay::ScrollTimeRangeInView(const TimeRange &range)
 	}
 }
 
+double AudioDisplay::ZoomLevelMsPerPixel(int level)
+{
+	const int base_pixels_per_second = 50; /// @todo Make this customisable
+	const double base_ms_per_pixel = 1000.0 / base_pixels_per_second;
+	return 100.0 * base_ms_per_pixel / GetZoomLevelFactor(level);
+}
+
+int AudioDisplay::NearestZoomLevel(double ms)
+{
+	int best = 0;
+	double best_distance = -1;
+	for (int level = -50; level <= 30; ++level)
+	{
+		double distance = std::abs(std::log(ZoomLevelMsPerPixel(level) / ms));
+		// Levels below -30 all share the widest scale: keep the one nearest 0
+		if (best_distance < 0 || distance <= best_distance + 1e-9)
+		{
+			best = level;
+			best_distance = distance;
+		}
+	}
+	return best;
+}
+
+double AudioDisplay::MinVisibleDuration() const
+{
+	return ZoomLevelMsPerPixel(30) * std::max(1, GetClientSize().GetWidth());
+}
+
+double AudioDisplay::MaxVisibleDuration() const
+{
+	return ZoomLevelMsPerPixel(-50) * std::max(1, GetClientSize().GetWidth());
+}
+
 void AudioDisplay::SetZoomLevel(int new_zoom_level)
 {
 	zoom_level = new_zoom_level;
-
-	const int factor = GetZoomLevelFactor(zoom_level);
-	const int base_pixels_per_second = 50; /// @todo Make this customisable
-	const double base_ms_per_pixel = 1000.0 / base_pixels_per_second;
-	const double new_ms_per_pixel = 100.0 * base_ms_per_pixel / factor;
-
+	const double new_ms_per_pixel = ZoomLevelMsPerPixel(zoom_level);
 	if (ms_per_pixel == new_ms_per_pixel) return;
 
 	int client_width = GetClientSize().GetWidth();
-	double cursor_pos = track_cursor_pos >= 0 ? track_cursor_pos - scroll_left : client_width / 2.0;
-	double cursor_time = (scroll_left + cursor_pos) * ms_per_pixel;
+	ApplyMsPerPixel(new_ms_per_pixel, track_cursor_pos >= 0 ? track_cursor_pos - scroll_left : client_width / 2.0);
+}
+
+void AudioDisplay::ApplyMsPerPixel(double new_ms_per_pixel, double anchor)
+{
+	int client_width = GetClientSize().GetWidth();
+	double anchor_time = (scroll_left + anchor) * ms_per_pixel;
 
 	ms_per_pixel = new_ms_per_pixel;
 	pixel_audio_width = std::max(1, int(GetDuration() / ms_per_pixel));
@@ -724,16 +835,33 @@ void AudioDisplay::SetZoomLevel(int new_zoom_level)
 	scrollbar->ChangeLengths(pixel_audio_width, client_width);
 	timeline->ChangeZoom(ms_per_pixel);
 
-	ScrollPixelToLeft(AbsoluteXFromTime(cursor_time) - cursor_pos);
+	ScrollPixelToLeft(int(std::lround(anchor_time / ms_per_pixel - anchor)));
 	if (track_cursor_pos >= 0)
-		track_cursor_pos = AbsoluteXFromTime(cursor_time);
+		track_cursor_pos = AbsoluteXFromTime(int(anchor_time));
 	Refresh();
+}
+
+void AudioDisplay::ZoomToTimeRange(double begin, double end)
+{
+	const int client_width = std::max(1, GetClientSize().GetWidth());
+	double span = std::clamp(end - begin, MinVisibleDuration(), MaxVisibleDuration());
+	const double new_ms_per_pixel = span / client_width;
+
+	zoom_level = NearestZoomLevel(new_ms_per_pixel);
+	OPT_SET("Audio/Zoom/Horizontal")->SetInt(zoom_level);
+
+	if (new_ms_per_pixel != ms_per_pixel)
+	{
+		// Anchor the left edge: the caller places it afterwards anyway
+		ApplyMsPerPixel(new_ms_per_pixel, 0);
+	}
+	ScrollPixelToLeft(int(std::lround(begin / ms_per_pixel)));
 }
 
 wxString AudioDisplay::GetZoomLevelDescription(int level) const
 {
 	const int factor = GetZoomLevelFactor(level);
-	const int base_pixels_per_second = 50; /// @todo Make this customisable along with the above
+	const int base_pixels_per_second = 50;
 	const int second_pixels = 100 * base_pixels_per_second / factor;
 
 	return fmt_tl("%d%%, %d pixel/second", factor, second_pixels);

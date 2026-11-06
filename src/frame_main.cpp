@@ -230,6 +230,8 @@ void FrameMain::InitContents() {
 	TopSizer = new wxBoxSizer(wxHORIZONTAL);
 	TopSizer->Add(videoBox, 0, wxEXPAND, 0);
 	TopSizer->Add(ToolsSizer, 1, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 5);
+	// The visual tools sit in the middle between the video and the waveform
+	videoBox->SetToolbarGap(5 + audioBox->DisplayInset());
 	MainSizer = new wxBoxSizer(wxVERTICAL);
 	MainSizer->Add(new wxStaticLine(Panel),0,wxEXPAND,0);
 	MainSizer->Add(TopSizer,0,wxEXPAND,0);

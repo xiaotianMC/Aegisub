@@ -67,7 +67,6 @@ class AudioBox final : public wxSashWindow, private agi::signal::ConnectionScope
 	/// The audio display in the box
 	AudioDisplay *audioDisplay;
 
-	wxSlider *HorizontalZoom;
 	wxSlider *VerticalZoom;
 	wxSlider *VolumeBar;
 
@@ -76,7 +75,6 @@ class AudioBox final : public wxSashWindow, private agi::signal::ConnectionScope
 
 	void SetHorizontalZoom(int new_zoom);
 	void OnAudioOpen();
-	void OnHorizontalZoom(wxScrollEvent &event);
 	void OnMouseWheel(wxMouseEvent &evt);
 	void OnSashDrag(wxSashEvent &event);
 	void OnVerticalLink(agi::OptionValue const& opt);
@@ -84,6 +82,8 @@ class AudioBox final : public wxSashWindow, private agi::signal::ConnectionScope
 	void OnVolume(wxScrollEvent &event);
 
 public:
+	/// Distance from the left edge of the box to the waveform
+	int DisplayInset() const;
 	AudioBox(wxWindow *parent, agi::Context *context);
 
 	void ShowKaraokeBar(bool show);

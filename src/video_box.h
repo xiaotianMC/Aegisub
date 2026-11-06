@@ -36,6 +36,7 @@
 #include <wx/panel.h>
 
 namespace agi { struct Context; }
+class wxSizerItem;
 class wxTextCtrl;
 
 /// @class VideoBox
@@ -53,6 +54,11 @@ private:
 	/// Update VideoPosition and VideoSubsPos
 	void UpdateTimeBoxes();
 
+	wxSizerItem *toolbar_item = nullptr;
+
 public:
 	VideoBox(wxWindow *parent, bool isDetached, agi::Context *context);
+
+	/// Put @p gap pixels between the video and the visual tools to their right
+	void SetToolbarGap(int gap);
 };

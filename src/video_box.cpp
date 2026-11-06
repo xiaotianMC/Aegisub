@@ -86,7 +86,7 @@ VideoBox::VideoBox(wxWindow *parent, bool isDetached, agi::Context *context)
 	// audio display in the main window.
 	auto topSizer = new wxBoxSizer(wxHORIZONTAL);
 	topSizer->Add(videoDisplay, isDetached, isDetached ? wxEXPAND : 0);
-	topSizer->Add(toolbarSizer, 0, wxEXPAND);
+	toolbar_item = topSizer->Add(toolbarSizer, 0, wxEXPAND);
 
 	auto videoBottomSizer = new wxBoxSizer(wxHORIZONTAL);
 	videoBottomSizer->Add(mainToolbar, wxSizerFlags(0).Center());
@@ -140,4 +140,12 @@ void VideoBox::UpdateTimeBoxes() {
 			time - active_line->Start,
 			time - active_line->End));
 	}
+}
+
+void VideoBox::SetToolbarGap(int gap) {
+	// Same space on both sides of the visual tools: the caller passes the
+	// space between them and whatever is to their right.
+	toolbar_item->SetFlag(wxEXPAND | wxLEFT);
+	toolbar_item->SetBorder(gap);
+	Layout();
 }
