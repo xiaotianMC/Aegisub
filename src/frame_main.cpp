@@ -399,3 +399,15 @@ void FrameMain::OnKeyDown(wxKeyEvent &event) {
 void FrameMain::OnMouseWheel(wxMouseEvent &evt) {
 	ForwardMouseWheelEvent(this, evt);
 }
+
+#ifdef __WXMSW__
+#include <wx/msw/wrapwin.h>
+
+WXLRESULT FrameMain::MSWWindowProc(WXUINT message, WXWPARAM wParam, WXLPARAM lParam) {
+	// Alt + wheel zooms the audio: releasing Alt afterwards must not select
+	// the menu bar, or the next wheel turns still count as Alt + wheel.
+	if (message == WM_SYSCOMMAND && (wParam & 0xFFF0) == SC_KEYMENU && lParam == 0 && TakeAltUsedForWheel())
+		return 0;
+	return wxFrame::MSWWindowProc(message, wParam, lParam);
+}
+#endif

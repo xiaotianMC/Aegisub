@@ -44,6 +44,7 @@
 #include "audio_display.h"
 #include "audio_box.h"
 #include "audio_karaoke.h"
+#include "audio_levels.h"
 #include "audio_renderer_waveform.h"
 #include "audio_marker.h"
 #include "audio_colorscheme.h"
@@ -3968,7 +3969,7 @@ TEST_F(audio_edit, scrollbar_thumb_edges_zoom_and_alt_wheel_zooms) {
     int sliders=0;
     std::function<void(wxWindow*)> count=[&](wxWindow*w){for(auto ch:w->GetChildren()){if(dynamic_cast<wxSlider*>(ch))++sliders;count(ch);}};
     count(box);
-    EXPECT_EQ(2,sliders) << "vertical zoom and volume; horizontal zoom lives on the scrollbar";
+    EXPECT_EQ(0,sliders) << "zoom and volume are drawn tracks; horizontal zoom lives on the scrollbar";
     AudioDisplay* display=nullptr;
     std::function<void(wxWindow*)> find=[&](wxWindow*w){for(auto ch:w->GetChildren()){if(auto d=dynamic_cast<AudioDisplay*>(ch))display=d;find(ch);}};
     find(box);ASSERT_NE(nullptr,display);
@@ -4034,4 +4035,131 @@ TEST_F(audio_edit, scrollbar_thumb_edges_zoom_and_alt_wheel_zooms) {
         EXPECT_EQ(1,display->GetZoomLevel()) << "wheel defaults to zoom: " << default_zoom;
         EXPECT_EQ(1,OPT_GET("Audio/Zoom/Horizontal")->GetInt());
     }
+}
+TEST_F(audio_edit, alt_wheel_zoom_does_not_leave_alt_to_the_menu_bar) {
+    // After Alt + wheel, releasing Alt must not select the menu bar (Windows),
+    // which would keep later turns counting as Alt + wheel; Alt alone later
+    // still does.
+    ResetAltUsedForWheel();
+    EXPECT_FALSE(TakeAltUsedForWheel());
+    NoteAltUsedForWheel();
+    EXPECT_TRUE(TakeAltUsedForWheel()) << "the release right after zooming";
+    EXPECT_FALSE(TakeAltUsedForWheel()) << "only once";
+    NoteAltUsedForWheel();ResetAltUsedForWheel();
+    EXPECT_FALSE(TakeAltUsedForWheel()) << "a turn without Alt forgets it";
+
+    // The wheel itself: Alt zooms, a plain turn right after scrolls.
+    auto box=c->audioBox=new AudioBox(window,c.get());
+    box->SetSize(0,0,1000,260);box->Layout();
+    AudioDisplay* display=nullptr;
+    std::function<void(wxWindow*)> find=[&](wxWindow*w){for(auto ch:w->GetChildren()){if(auto d=dynamic_cast<AudioDisplay*>(ch))display=d;find(ch);}};
+    find(box);ASSERT_NE(nullptr,display);
+    c->project->LoadAudio("dummy-audio:silence?sr=44100&bd=16&ch=1&ln=441000");
+    OPT_SET("Audio/Wheel Default to Zoom")->SetBool(false);
+    display->SetZoomLevel(0);display->ScrollPixelToLeft(2000);
+    auto wheel=[&](bool alt){
+        wxMouseEvent event(wxEVT_MOUSEWHEEL);event.SetAltDown(alt);event.m_wheelRotation=-120;event.m_wheelDelta=120;
+        event.SetPosition({400,80});event.SetEventObject(display);display->GetEventHandler()->ProcessEvent(event);
+    };
+    wheel(true);
+    EXPECT_EQ(-1,display->GetZoomLevel());
+    int scroll=display->GetScrollLeft();
+    wheel(false);
+    EXPECT_EQ(-1,display->GetZoomLevel()) << "no more zooming once Alt is up";
+    EXPECT_NE(scroll,display->GetScrollLeft()) << "it scrolls";
+    EXPECT_FALSE(TakeAltUsedForWheel());
+}
+
+TEST_F(audio_edit, level_tracks_set_zoom_and_volume_with_link_and_reset) {
+    window->SetSize(1100,400);window->Show(); // the tracks capture the mouse while dragging
+    auto box=c->audioBox=new AudioBox(window,c.get());
+    box->SetSize(0,0,1000,300);box->Layout();wxYield();
+    c->project->LoadAudio("dummy-audio:silence?sr=44100&bd=16&ch=1&ln=441000");
+    OPT_SET("Audio/Link")->SetBool(false);
+    box->ResetLevels();
+    AudioLevels *levels=box->Levels();
+    ASSERT_NE(nullptr,levels);
+    ASSERT_GT(levels->GetClientSize().y,120);
+    auto mouse=[&](wxEventType type,wxPoint p,bool down,bool shift=false){
+        wxMouseEvent e(type);e.SetLeftDown(down);e.SetShiftDown(shift);e.SetPosition(p);e.SetEventObject(levels);
+        levels->GetEventHandler()->ProcessEvent(e);
+    };
+    using Part=AudioLevels::Part;
+    auto zoom_handle=[&]{return levels->HandleAt(Part::Zoom,levels->GetZoom());};
+    auto volume_handle=[&]{return levels->HandleAt(Part::Volume,levels->GetVolume());};
+    EXPECT_EQ(Part::Zoom,levels->HitTest(zoom_handle()));
+    EXPECT_EQ(Part::Volume,levels->HitTest(volume_handle()));
+    EXPECT_LT(zoom_handle().x,volume_handle().x) << "zoom on the left, volume on the right";
+
+    // Drag the zoom handle up: zoom grows, the option and the waveform follow.
+    wxPoint start=zoom_handle();
+    mouse(wxEVT_LEFT_DOWN,start,true);
+    mouse(wxEVT_MOTION,start-wxPoint(0,30),true);
+    mouse(wxEVT_LEFT_UP,start-wxPoint(0,30),false);
+    int zoom=levels->GetZoom();
+    EXPECT_GT(zoom,AudioLevels::neutral_position);
+    EXPECT_EQ(zoom,OPT_GET("Audio/Zoom/Vertical")->GetInt());
+    EXPECT_EQ(AudioLevels::neutral_position,levels->GetVolume()) << "not linked: the volume stays";
+
+    // Shift drags a quarter as fast.
+    start=zoom_handle();
+    mouse(wxEVT_LEFT_DOWN,start,true);
+    mouse(wxEVT_MOTION,start+wxPoint(0,40),true,true);
+    mouse(wxEVT_LEFT_UP,start+wxPoint(0,40),false,true);
+    int fine=zoom-levels->GetZoom();
+    start=zoom_handle();
+    mouse(wxEVT_LEFT_DOWN,start,true);
+    mouse(wxEVT_MOTION,start+wxPoint(0,40),true);
+    mouse(wxEVT_LEFT_UP,start+wxPoint(0,40),false);
+    int coarse=zoom-fine-levels->GetZoom();
+    EXPECT_GT(fine,0);EXPECT_NEAR(coarse,fine*4,4);
+
+    // Volume: a click on its track jumps there; double-click back to neutral.
+    wxRect column(levels->HandleAt(Part::Volume,AudioLevels::max_position),levels->HandleAt(Part::Volume,AudioLevels::min_position));
+    mouse(wxEVT_LEFT_DOWN,wxPoint(column.x,column.y+5),true);
+    mouse(wxEVT_LEFT_UP,wxPoint(column.x,column.y+5),false);
+    EXPECT_GT(levels->GetVolume(),90);
+    EXPECT_EQ(levels->GetVolume(),OPT_GET("Audio/Volume")->GetInt());
+    mouse(wxEVT_LEFT_DCLICK,volume_handle(),false);
+    EXPECT_EQ(AudioLevels::neutral_position,levels->GetVolume());
+
+    // Wheel: one step per notch.
+    int before=levels->GetVolume();
+    wxMouseEvent wheel(wxEVT_MOUSEWHEEL);wheel.m_wheelRotation=240;wheel.m_wheelDelta=120;wheel.SetPosition(volume_handle());wheel.SetEventObject(levels);
+    levels->GetEventHandler()->ProcessEvent(wheel);
+    EXPECT_EQ(before+2,levels->GetVolume());
+
+    // The link button, left in the bottom row: one track sets both.
+    wxSize size=levels->GetClientSize();
+    wxPoint link(size.x/4,size.y-5), reset(size.x*3/4,size.y-5);
+    EXPECT_EQ(Part::Link,levels->HitTest(link));
+    EXPECT_EQ(Part::Reset,levels->HitTest(reset));
+    EXPECT_LT(link.x,reset.x) << "reset to the right of link";
+    mouse(wxEVT_LEFT_DOWN,link,true);mouse(wxEVT_LEFT_UP,link,false);
+    EXPECT_TRUE(OPT_GET("Audio/Link")->GetBool());
+    EXPECT_TRUE(levels->IsLinked());
+    EXPECT_EQ(levels->GetZoom(),levels->GetVolume()) << "linking takes the zoom's value";
+    EXPECT_EQ(Part::Zoom,levels->HitTest(wxPoint(size.x*3/4,zoom_handle().y))) << "one track across";
+    start=zoom_handle();
+    mouse(wxEVT_LEFT_DOWN,start,true);mouse(wxEVT_MOTION,start-wxPoint(0,10),true);mouse(wxEVT_LEFT_UP,start-wxPoint(0,10),false);
+    EXPECT_EQ(levels->GetZoom(),levels->GetVolume());
+    EXPECT_EQ(levels->GetZoom(),OPT_GET("Audio/Volume")->GetInt());
+
+    // Reset, right of link: both neutral, still linked.
+    mouse(wxEVT_LEFT_DOWN,reset,true);mouse(wxEVT_LEFT_UP,reset,false);
+    EXPECT_EQ(AudioLevels::neutral_position,levels->GetZoom());
+    EXPECT_EQ(AudioLevels::neutral_position,levels->GetVolume());
+    EXPECT_EQ(AudioLevels::neutral_position,OPT_GET("Audio/Zoom/Vertical")->GetInt());
+    EXPECT_EQ(AudioLevels::neutral_position,OPT_GET("Audio/Volume")->GetInt());
+    EXPECT_TRUE(OPT_GET("Audio/Link")->GetBool());
+    ASSERT_NE(nullptr,cmd::get("audio/opt/reset_levels")) << "also in the command palette";
+    OPT_SET("Audio/Link")->SetBool(false);
+    EXPECT_FALSE(levels->IsLinked());
+
+    // Texts below the tracks.
+    EXPECT_EQ(wxString::FromUTF8("1.0\u00d7"),AudioLevels::ZoomText(50));
+    EXPECT_EQ(wxString::FromUTF8("8.0\u00d7"),AudioLevels::ZoomText(100));
+    EXPECT_EQ("0dB",AudioLevels::VolumeText(50));
+    EXPECT_EQ("+18dB",AudioLevels::VolumeText(100));
+    EXPECT_EQ("-18dB",AudioLevels::VolumeText(25));
 }

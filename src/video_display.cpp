@@ -498,7 +498,7 @@ void VideoDisplay::OnMouseWheel(wxMouseEvent& event) {
 			// picture inside the preview without changing the window zoom or
 			// the video's share of the workspace. Ctrl and Shift keep their
 			// configured scroll actions.
-			if (!event.CmdDown() && !event.ShiftDown()
+			if (!WheelCmdDown(event) && !WheelShiftDown(event)
 				&& (pan_mode || ToolIsType(typeid(VisualToolScale)))) {
 				double factor = 1 + 0.125 * wheel / event.GetWheelDelta();
 				ZoomAndPan(contentZoomValue * factor, GetZoomAnchorPoint(scaled_position), scaled_position);
@@ -506,11 +506,11 @@ void VideoDisplay::OnMouseWheel(wxMouseEvent& event) {
 			}
 
 			const char *opt = "Scroll Action";
-			if (event.CmdDown() && event.ShiftDown()) {
+			if (WheelCmdDown(event) && WheelShiftDown(event)) {
 				return;
-			} else if (event.CmdDown()) {
+			} else if (WheelCmdDown(event)) {
 				opt = "Ctrl Scroll Action";
-			} else if (event.ShiftDown()) {
+			} else if (WheelShiftDown(event)) {
 				opt = "Shift Scroll Action";
 			}
 

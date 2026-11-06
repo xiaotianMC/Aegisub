@@ -989,6 +989,7 @@ void AudioDisplay::OnPaint(wxPaintEvent&)
 	wxRect audio_bounds(0, audio_top, GetClientSize().GetWidth(), audio_height);
 	bool redraw_scrollbar = false;
 	bool redraw_timeline = false;
+	bool redraw_db_scale = false;
 
 	for (wxRegionIterator region(GetUpdateRegion()); region; ++region)
 	{
@@ -1005,14 +1006,22 @@ void AudioDisplay::OnPaint(wxPaintEvent&)
 				std::max(0, TimeFromRelativeX(updrect.x + updrect.width + foot_size)));
 
 			PaintAudio(dc, updtime, updrect);
-			PaintDbScale(dc, updrect);
 			PaintMarkers(gcdc, updtime);
 			PaintLabels(dc, updtime);
+			redraw_db_scale |= updrect.x <= DbScaleWidth(dc);
 		}
 	}
 
 	if (track_cursor_pos >= 0)
 		PaintTrackCursor(dc);
+
+	// Over everything else and in the same place whatever the scroll
+	// position: markers, labels and the cursor pass under the values.
+	if (redraw_db_scale)
+	{
+		wxDCClipper clip(dc, audio_bounds);
+		PaintDbScale(dc);
+	}
 
 	if (redraw_scrollbar)
 		scrollbar->Paint(dc, HasFocus(), audio_load_position);
@@ -1056,19 +1065,18 @@ int AudioDisplay::DbLabelGap() const
 	return std::max(FromDIP(16), height + FromDIP(4));
 }
 
-void AudioDisplay::PaintDbScale(wxDC &dc, wxRect const& updrect)
+int AudioDisplay::DbScaleWidth(wxDC &dc) const
 {
-	if (OPT_GET("Audio/Spectrum")->GetBool() || !OPT_GET("Audio/Display/Draw/dB Scale")->GetBool()) return;
-	auto levels = AudioWaveformRenderer::DbGrid(audio_height, audio_renderer->GetAmplitudeScale(), DbLabelGap());
-	if (levels.empty()) return;
+	wxDCFontChanger font_changer(dc, DbLabelFont());
+	return dc.GetTextExtent("-60").GetWidth() + FromDIP(6);
+}
 
+void AudioDisplay::PaintDbScale(wxDC &dc)
+{
 	wxDCFontChanger font_changer(dc, DbLabelFont());
 	wxDCTextColourChanger colour_changer(dc, AudioWaveformRenderer::DbLabelColour());
 	wxDCPenChanger pen_changer(dc, *wxTRANSPARENT_PEN);
 	wxDCBrushChanger brush_changer(dc, *wxBLACK_BRUSH);
-	int label_width = dc.GetTextExtent("-60").GetWidth() + FromDIP(6);
-	if (updrect.x > label_width) return; // The values are only at the left edge
-
 	for (auto const& label : DbLabelRects(dc))
 	{
 		dc.DrawRectangle(label.rect);

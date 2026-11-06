@@ -538,6 +538,22 @@ struct audio_vertical_link final : public Command {
 	}
 };
 
+struct audio_reset_levels final : public Command {
+	CMD_NAME("audio/opt/reset_levels")
+	STR_MENU("Reset vertical zoom and volume")
+	STR_DISP("Reset vertical zoom and volume")
+	STR_HELP("Reset the waveform's vertical zoom and the audio volume to their defaults")
+	CMD_TYPE(COMMAND_VALIDATE)
+
+	bool Validate(const agi::Context *c) override {
+		return c->audioBox != nullptr;
+	}
+
+	void operator()(agi::Context *c) override {
+		if (c->audioBox) c->audioBox->ResetLevels();
+	}
+};
+
 struct audio_karaoke final : public Command {
 	CMD_NAME("audio/karaoke")
 	CMD_ICON(kara_mode)
@@ -589,6 +605,7 @@ namespace cmd {
 		reg(std::make_unique<audio_stop>());
 		reg(std::make_unique<audio_toggle_spectrum>());
 		reg(std::make_unique<audio_vertical_link>());
+		reg(std::make_unique<audio_reset_levels>());
 		reg(std::make_unique<audio_view_spectrum>());
 		reg(std::make_unique<audio_view_waveform>());
 	}

@@ -39,22 +39,16 @@
 #include "audio_timing.h"
 #include "options.h"
 #include "project.h"
-#include "toggle_bitmap.h"
+#include "audio_levels.h"
+#include "command/command.h"
 #include "utils.h"
 
 #include <cmath>
 #include <wx/panel.h>
-#include <wx/slider.h>
 #include <wx/scrolbar.h>
 #include <wx/sizer.h>
-#include <wx/slider.h>
 #include <wx/string.h>
 #include <wx/toolbar.h>
-
-enum {
-	Audio_Vertical_Zoom = 1601,
-	Audio_Volume
-};
 
 AudioBox::AudioBox(wxWindow *parent, agi::Context *context)
 : wxSashWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxCLIP_CHILDREN)
@@ -63,8 +57,12 @@ AudioBox::AudioBox(wxWindow *parent, agi::Context *context)
 , audio_open_connection(context->audioController->AddAudioPlayerOpenListener(&AudioBox::OnAudioOpen, this))
 , panel(new wxPanel(this, -1, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL | wxBORDER_NONE))
 , audioDisplay(new AudioDisplay(panel, context->audioController.get(), context))
-, VerticalZoom(new wxSlider(panel, Audio_Vertical_Zoom, OPT_GET("Audio/Zoom/Vertical")->GetInt(), 0, 100, wxDefaultPosition, wxDefaultSize, wxSL_VERTICAL|wxSL_BOTH|wxSL_INVERSE))
-, VolumeBar(new wxSlider(panel, Audio_Volume, OPT_GET("Audio/Volume")->GetInt(), 0, 100, wxDefaultPosition, wxDefaultSize, wxSL_VERTICAL|wxSL_BOTH|wxSL_INVERSE))
+, levels(new AudioLevels(panel, {
+	[this](int pos) { SetVerticalZoom(pos); },
+	[this](int pos) { SetVolume(pos); },
+	[this] { cmd::call("audio/opt/vertical_link", this->context); },
+	[this] { cmd::call("audio/opt/reset_levels", this->context); },
+}))
 {
 	SetSashVisible(wxSASH_BOTTOM, true);
 	// A block on the backdrop (docs/theme.md): the resize strip below it is
@@ -79,31 +77,18 @@ AudioBox::AudioBox(wxWindow *parent, agi::Context *context)
 	});
 	Bind(wxEVT_SASH_DRAGGED, &AudioBox::OnSashDrag, this);
 
-	VerticalZoom->SetToolTip(_("Vertical zoom"));
-	VolumeBar->SetToolTip(_("Audio Volume"));
-
-	bool link = OPT_GET("Audio/Link")->GetBool();
-	if (link) {
-		VolumeBar->SetValue(VerticalZoom->GetValue());
-		VolumeBar->Enable(false);
-	}
-
-	// VertVol sider
-	wxSizer *VertVol = new wxBoxSizer(wxHORIZONTAL);
-	VertVol->Add(VerticalZoom,1,wxEXPAND,0);
-	VertVol->Add(VolumeBar,1,wxEXPAND,0);
-	wxSizer *VertVolArea = new wxBoxSizer(wxVERTICAL);
-	VertVolArea->Add(VertVol,1,wxEXPAND,0);
-
-	auto link_btn = new ToggleBitmap(panel, context, "audio/opt/vertical_link", 16, "Audio", FromDIP(wxSize(20, -1)));
-	link_btn->SetMaxSize(wxDefaultSize);
-	VertVolArea->Add(link_btn, 0, wxEXPAND, 0);
+	// Vertical zoom and volume: slim tracks drawn like the waveform
+	// (docs/audio-waveform.md), with the link and reset buttons below them
+	levels->SetZoom(mid<int>(1, OPT_GET("Audio/Zoom/Vertical")->GetInt(), 100));
+	levels->SetVolume(mid<int>(1, OPT_GET("Audio/Volume")->GetInt(), 100));
+	levels->SetLinked(OPT_GET("Audio/Link")->GetBool());
+	if (levels->IsLinked()) levels->SetVolume(levels->GetZoom());
 	BindConnection(OPT_SUB("Audio/Link", &AudioBox::OnVerticalLink, this));
 
 	// Top sizer
 	wxSizer *TopSizer = new wxBoxSizer(wxHORIZONTAL);
 	TopSizer->Add(audioDisplay,1,wxEXPAND,0);
-	TopSizer->Add(VertVolArea,0,wxEXPAND,0);
+	TopSizer->Add(levels,0,wxEXPAND,0);
 
 	context->karaoke = new AudioKaraoke(panel, context);
 
@@ -127,19 +112,17 @@ AudioBox::AudioBox(wxWindow *parent, agi::Context *context)
 
 	// Horizontal zoom is on the scrollbar: drag the ends of its thumb
 	audioDisplay->SetZoomLevel(OPT_GET("Audio/Zoom/Horizontal")->GetInt());
-	audioDisplay->SetAmplitudeScale(pow(mid(1, VerticalZoom->GetValue(), 100) / 50.0, 3));
+	audioDisplay->SetAmplitudeScale(pow(levels->GetZoom() / 50.0, 3));
 }
 
-BEGIN_EVENT_TABLE(AudioBox,wxSashWindow)
-	EVT_COMMAND_SCROLL(Audio_Vertical_Zoom, AudioBox::OnVerticalZoom)
-	EVT_COMMAND_SCROLL(Audio_Volume, AudioBox::OnVolume)
-END_EVENT_TABLE()
 
 void AudioBox::OnMouseWheel(wxMouseEvent &evt) {
 	if (!ForwardMouseWheelEvent(audioDisplay, evt))
 		return;
 	// Alt + wheel always zooms horizontally
-	bool zoom = evt.AltDown() || evt.CmdDown() != OPT_GET("Audio/Wheel Default to Zoom")->GetBool();
+	const bool alt = WheelAltDown(evt);
+	if (alt) NoteAltUsedForWheel(); else ResetAltUsedForWheel();
+	bool zoom = alt || WheelCmdDown(evt) != OPT_GET("Audio/Wheel Default to Zoom")->GetBool();
 	if (!zoom) {
 		int amount = -evt.GetWheelRotation();
 		// If the user did a horizontal scroll the amount should be inverted
@@ -182,35 +165,36 @@ void AudioBox::SetHorizontalZoom(int new_zoom) {
 	OPT_SET("Audio/Zoom/Horizontal")->SetInt(new_zoom);
 }
 
-void AudioBox::OnVerticalZoom(wxScrollEvent &event) {
-	int pos = mid(1, event.GetPosition(), 100);
+void AudioBox::SetVerticalZoom(int pos) {
+	pos = mid(1, pos, 100);
+	levels->SetZoom(pos);
 	OPT_SET("Audio/Zoom/Vertical")->SetInt(pos);
 	double value = pow(pos / 50.0, 3);
 	audioDisplay->SetAmplitudeScale(value);
-	if (!VolumeBar->IsEnabled()) {
-		VolumeBar->SetValue(pos);
-		controller->SetVolume(value);
-	}
+	if (levels->IsLinked())
+		SetVolume(pos);
 }
 
-void AudioBox::OnVolume(wxScrollEvent &event) {
-	int pos = mid(1, event.GetPosition(), 100);
+void AudioBox::SetVolume(int pos) {
+	pos = mid(1, pos, 100);
+	levels->SetVolume(pos);
 	OPT_SET("Audio/Volume")->SetInt(pos);
 	controller->SetVolume(pow(pos / 50.0, 3));
 }
 
+void AudioBox::ResetLevels() {
+	SetVerticalZoom(AudioLevels::neutral_position);
+	SetVolume(AudioLevels::neutral_position);
+}
+
 void AudioBox::OnVerticalLink(agi::OptionValue const& opt) {
-	if (opt.GetBool()) {
-		int pos = mid(1, VerticalZoom->GetValue(), 100);
-		double value = pow(pos / 50.0, 3);
-		controller->SetVolume(value);
-		VolumeBar->SetValue(pos);
-	}
-	VolumeBar->Enable(!opt.GetBool());
+	levels->SetLinked(opt.GetBool());
+	if (opt.GetBool())
+		SetVolume(levels->GetZoom());
 }
 
 void AudioBox::OnAudioOpen() {
-	controller->SetVolume(pow(mid(1, VolumeBar->GetValue(), 100) / 50.0, 3));
+	controller->SetVolume(pow(levels->GetVolume() / 50.0, 3));
 }
 
 void AudioBox::ShowKaraokeBar(bool show) {

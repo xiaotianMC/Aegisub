@@ -179,7 +179,10 @@ class AudioDisplay: public wxWindow {
 	/// @param updtime Time range to repaint
 	void PaintLabels(wxDC &dc, TimeRange updtime);
 	/// Paint the values of the dB scale at the left edge (waveform only)
-	void PaintDbScale(wxDC &dc, wxRect const& updrect);
+	/// The dB scale's values at the left edge, over everything else
+	void PaintDbScale(wxDC &dc);
+	/// Width of the strip at the left edge the values take
+	int DbScaleWidth(wxDC &dc) const;
 	wxFont DbLabelFont() const;
 
 	/// Paint the track cursor

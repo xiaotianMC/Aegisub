@@ -21,6 +21,7 @@ aegisub_src = files(
     'subtitle_format_registry.cpp',
     'async_video_provider.cpp',
     'audio_box.cpp',
+    'audio_levels.cpp',
     'audio_colorscheme.cpp',
     'audio_controller.cpp',
     'audio_display.cpp',
