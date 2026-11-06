@@ -44,12 +44,13 @@
 #include "video_controller.h"
 #include "video_display.h"
 #include "video_slider.h"
+#include "video_time_label.h"
+#include "command/command.h"
 
 #include <boost/range/algorithm/binary_search.hpp>
 #include <wx/combobox.h>
 #include <wx/sizer.h>
 #include <wx/statline.h>
-#include <wx/textctrl.h>
 #include <wx/toolbar.h>
 
 VideoBox::VideoBox(wxWindow *parent, bool isDetached, agi::Context *context)
@@ -64,21 +65,34 @@ VideoBox::VideoBox(wxWindow *parent, bool isDetached, agi::Context *context)
 	auto toolsArea = new wxPanel(this, -1);
 	theme::UseSurface(toolsArea);
 
-	auto videoSlider = new VideoSlider(videoArea, context);
-	videoSlider->SetToolTip(_("Seek video"));
+	auto videoSlider = slider = new VideoSlider(videoArea, context);
 
 	auto mainToolbar = toolbar::GetToolbar(videoArea, "video", context, "Video", false);
 
-	VideoPosition = new wxTextCtrl(videoArea, -1, "", wxDefaultPosition, DipSize(110, -1), wxTE_READONLY);
-	VideoPosition->SetToolTip(_("Current frame time and number"));
+	// Readouts drawn on the block: fixed width so the row holds still,
+	// clicking the time jumps, right-click copies (docs/main-window.md)
+	VideoPosition = new VideoTimeLabel(videoArea, "0:00:00.000 000000", true, false);
+	VideoPosition->SetToolTip(_("Current frame time and number") + "\n" + _("Click to jump to a time or frame; right-click to copy"));
+	VideoPosition->SetClickHandler([context] { cmd::call("video/jump", context); });
+	VideoPosition->SetCopyItems({
+		{_("Copy time"), [this, context] { return context->project->VideoProvider() ? VideoPosition->GetMain() : wxString(); }},
+		{_("Copy frame number"), [this, context] { return context->project->VideoProvider() ? VideoPosition->GetSecondary() : wxString(); }},
+	});
 
-	VideoSubsPos = new wxTextCtrl(videoArea, -1, "", wxDefaultPosition, DipSize(110, -1), wxTE_READONLY);
-	VideoSubsPos->SetToolTip(_("Time of this frame relative to start and end of current subs"));
+	VideoSubsPos = new VideoTimeLabel(videoArea, "+0000000ms +0000000ms", false, true);
+	VideoSubsPos->SetToolTip(_("Time of this frame relative to start and end of current subs") + "\n" + _("Right-click to copy"));
+	VideoSubsPos->SetCopyItems({{_("Copy"), [this, context]() -> wxString {
+		AssDialogue const* line = context->selectionController->ReadActiveLine();
+		if (!line || !context->project->VideoProvider()) return "";
+		int time = context->videoController->TimeAtFrame(context->videoController->GetFrameN(), agi::vfr::EXACT);
+		return fmt_wx("%+dms; %+dms", time - line->Start, time - line->End);
+	}}});
 
 	wxArrayString choices;
 	for (int i = 1; i <= 24; ++i)
 		choices.Add(fmt_wx("%g%%", i * 12.5));
-	auto zoomBox = new wxComboBox(videoArea, -1, "75%", wxDefaultPosition, wxDefaultSize, choices, wxCB_DROPDOWN | wxTE_PROCESS_ENTER);
+	auto zoomBox = new wxComboBox(videoArea, -1, "75%", wxDefaultPosition, wxSize(FromDIP(90), -1), choices, wxCB_DROPDOWN | wxTE_PROCESS_ENTER);
+	zoomBox->SetToolTip(_("Video zoom"));
 
 	auto visualToolBar = toolbar::GetToolbar(toolsArea, "visual_tools", context, "Video", true);
 	auto visualSubToolBar = new wxToolBar(toolsArea, -1, wxDefaultPosition, wxDefaultSize, wxTB_VERTICAL | wxTB_BOTTOM | wxTB_NODIVIDER | wxTB_FLAT);
@@ -94,16 +108,19 @@ VideoBox::VideoBox(wxWindow *parent, bool isDetached, agi::Context *context)
 	for (wxWindow *bar : {static_cast<wxWindow*>(mainToolbar), static_cast<wxWindow*>(visualToolBar), static_cast<wxWindow*>(visualSubToolBar)})
 		theme::UseSurface(bar);
 
+	// Buttons, readouts, then the zoom at the far right
+	const int gap = theme::BlockGap(this);
 	auto videoBottomSizer = new wxBoxSizer(wxHORIZONTAL);
 	videoBottomSizer->Add(mainToolbar, wxSizerFlags(0).Center());
-	videoBottomSizer->Add(VideoPosition, wxSizerFlags(1).Center().Border(wxLEFT));
-	videoBottomSizer->Add(VideoSubsPos, wxSizerFlags(1).Center().Border(wxLEFT));
-	videoBottomSizer->Add(zoomBox, wxSizerFlags(0).Center().Border(wxLEFT | wxRIGHT));
+	videoBottomSizer->Add(VideoPosition, wxSizerFlags(0).Expand().Border(wxLEFT, gap));
+	videoBottomSizer->Add(VideoSubsPos, wxSizerFlags(0).Expand());
+	videoBottomSizer->AddStretchSpacer(1);
+	videoBottomSizer->Add(zoomBox, wxSizerFlags(0).Center().Border(wxLEFT, gap));
 
 	auto VideoSizer = new wxBoxSizer(wxVERTICAL);
 	VideoSizer->Add(videoDisplay, 1, isDetached ? wxEXPAND : 0, 0);
-	VideoSizer->Add(videoSlider, 0, wxEXPAND, 0);
-	VideoSizer->Add(videoBottomSizer, 0, wxEXPAND | wxBOTTOM, 5);
+	VideoSizer->Add(videoSlider, 0, wxEXPAND | wxTOP, gap);
+	VideoSizer->Add(videoBottomSizer, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, gap);
 	videoArea->SetSizer(VideoSizer);
 
 	// The visual tools sit to the right of the video, between it and the
@@ -126,32 +143,37 @@ VideoBox::VideoBox(wxWindow *parent, bool isDetached, agi::Context *context)
 }
 
 void VideoBox::UpdateTimeBoxes() {
-	if (!context->project->VideoProvider()) return;
+	const wxString none(wxUniChar(0x2014)); // em dash
+	if (!context->project->VideoProvider()) {
+		VideoPosition->SetParts(none);
+		VideoSubsPos->SetParts(none);
+		slider->SetLineRange(-1, -1);
+		return;
+	}
 
 	int frame = context->videoController->GetFrameN();
 	int time = context->videoController->TimeAtFrame(frame, agi::vfr::EXACT);
 
-	// Set the text box for frame number and time
-	VideoPosition->SetValue(fmt_wx("%s - %d", agi::Time(time).GetAssFormatted(true), frame));
-	if (boost::binary_search(context->project->Keyframes(), frame)) {
-		// Set the background color to indicate this is a keyframe
-		VideoPosition->SetBackgroundColour(theme::Colour("Colour/Subtitle Grid/Background/Selection"));
-		VideoPosition->SetForegroundColour(theme::Colour("Colour/Subtitle Grid/Selection"));
-	}
-	else {
-		VideoPosition->SetBackgroundColour(wxNullColour);
-		VideoPosition->SetForegroundColour(wxNullColour);
-	}
+	// Time, frame number dimmer, and a badge on keyframes
+	VideoPosition->SetParts(agi::Time(time).GetAssFormatted(true), fmt_wx("%d", frame),
+		boost::binary_search(context->project->Keyframes(), frame));
 
 	AssDialogue const* active_line = context->selectionController->ReadActiveLine();
-	if (!active_line)
-		VideoSubsPos->SetValue("");
-	else {
-		VideoSubsPos->SetValue(fmt_wx(
-			"%+dms; %+dms",
-			time - active_line->Start,
-			time - active_line->End));
+	if (!active_line) {
+		VideoSubsPos->SetParts(none);
+		slider->SetLineRange(-1, -1);
+		return;
 	}
+	// A true minus sign for reading; copying gives plain ASCII
+	auto offset = [](int ms) {
+		wxString text = fmt_wx("%+dms", ms);
+		if (ms < 0) text.replace(0, 1, wxString(wxUniChar(0x2212))); // minus sign
+		return text;
+	};
+	VideoSubsPos->SetParts(offset(time - active_line->Start), offset(time - active_line->End));
+	slider->SetLineRange(
+		context->videoController->FrameAtTime(active_line->Start, agi::vfr::START),
+		context->videoController->FrameAtTime(active_line->End, agi::vfr::END));
 }
 
 void VideoBox::SetToolbarGap(int gap) {

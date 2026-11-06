@@ -7,7 +7,7 @@
 ## 规则
 
 - **界面颜色选项含义不变**：深色外观下，用户**没改过**的界面颜色读作它的深色默认值；改过的颜色在两种外观下都照用户的设置。判断依据是配置项是否仍为出厂值（`OptionValue::IsDefault()`），所以以后把颜色改回默认，也会自动恢复跟随外观。
-- **哪些颜色跟随外观**：字幕网格的全部颜色、编辑框的背景和语法高亮、视频位置框（关键帧时借用网格选中色）、字数超限提示。
+- **哪些颜色跟随外观**：字幕网格的全部颜色、编辑框的背景和语法高亮、视频进度条和下方的时间读数（见 [主界面](main-window.md#视频进度条与下方控件)）、字数超限提示。
 - **哪些不跟随**：音频波形和频谱（本来就是深色底）、视频画面上的可视化工具、样式编辑器的预览背景、虚拟视频的上次颜色。这些画在画面或波形上，和界面明暗无关。
 - **对比页、标签条、锁定提示条**：使用主题模块提供的强调色和提示条颜色，深色下也有对应配色。
 
@@ -20,7 +20,7 @@
 | 系统颜色变化（跟随系统时） | `src/frame_main.cpp`（`wxEVT_SYS_COLOUR_CHANGED`） |
 | 字幕网格、CPS 列 | `src/base_grid.cpp`、`src/grid_column.cpp` |
 | 编辑框语法高亮 | `src/subs_edit_ctrl.cpp` |
-| 视频位置框、字数提示 | `src/video_box.cpp`、`src/subs_edit_box.cpp` |
+| 视频进度条、时间读数、字数提示 | `src/video_slider.cpp`、`src/video_time_label.cpp`、`src/subs_edit_box.cpp` |
 | 对比页、标签条 | `src/dialog_compare.cpp`、`src/workspace_tabs.cpp` |
 | 首选项 | `src/preferences.cpp`（界面页“外观”） |
 

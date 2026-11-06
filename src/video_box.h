@@ -37,7 +37,8 @@
 
 namespace agi { struct Context; }
 class wxSizerItem;
-class wxTextCtrl;
+class VideoSlider;
+class VideoTimeLabel;
 
 /// @class VideoBox
 /// @brief The box containing the video display and associated controls
@@ -48,10 +49,11 @@ protected:
 private:
 	std::vector<agi::signal::Connection> connections;
 	agi::Context *context;     ///< Project context
-	wxTextCtrl *VideoPosition; ///< Current frame/time
-	wxTextCtrl *VideoSubsPos;  ///< Time relative to the active subtitle line
+	VideoSlider *slider;           ///< Seek bar, showing the active line's span
+	VideoTimeLabel *VideoPosition; ///< Current frame/time
+	VideoTimeLabel *VideoSubsPos;  ///< Time relative to the active subtitle line
 
-	/// Update VideoPosition and VideoSubsPos
+	/// Update VideoPosition, VideoSubsPos and the line's span on the slider
 	void UpdateTimeBoxes();
 
 	wxSizerItem *toolbar_item = nullptr;

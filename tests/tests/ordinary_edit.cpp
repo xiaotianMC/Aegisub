@@ -54,6 +54,8 @@
 #include "project.h"
 #include "video_display.h"
 #include "video_box.h"
+#include "video_slider.h"
+#include "video_time_label.h"
 #include "video_controller.h"
 #include "async_video_provider.h"
 #include "video_frame.h"
@@ -960,6 +962,82 @@ TEST_F(ordinary_edit, visual_tools_sit_to_the_right_of_the_video) {
             EXPECT_GE(x_in_box(bar), x_in_box(display) + display->GetSize().x) << "detached: " << detached;
         video_box->Destroy();
     }
+}
+
+// Fetch a frame with the main dispatch queue running, so libass finishes its
+// setup on it and closing the video does not wait for it (see visual_edit).
+void PumpFirstFrame(agi::Context *c, wxWindow *window) {
+    wxEventLoop loop;
+    wxEventLoopActivator activate(&loop);
+    auto provider=c->project->VideoProvider();
+    std::thread reader([&] {
+        try { provider->GetFrame(0,0); } catch (...) {}
+        window->CallAfter([&] { loop.Exit(); });
+    });
+    loop.Run();reader.join();
+}
+TEST_F(ordinary_edit, video_slider_and_readouts_are_flat_and_hold_still) {
+    OPT_SET("Video/Subtitle Sync")->SetBool(false);
+    agi::fs::path kf((std::filesystem::current_path() / "slider-keyframes.txt").wstring());
+    {std::ofstream out(kf.string());out<<"# keyframe format v1\nfps 0\n0\n50\n150\n";}
+    {auto scope=c->subtitleAccess->TryWrite();
+     auto& row=LiveWriteForTest(*c).Events.front();row.Start=2000;row.End=4000;
+     LiveWriteForTest(*c).Commit("line",AssFile::COMMIT_DIAG_TIME);}
+    auto video_box=new VideoBox(window,false,c.get());
+    BOOST_SCOPE_EXIT_ALL(&) { video_box->Destroy(); c->project->CloseVideo(); c->project->CloseKeyframes(); };
+    VideoSlider *slider=nullptr;std::vector<VideoTimeLabel*> labels;wxComboBox *zoom=nullptr;int text_ctrls=0;
+    std::function<void(wxWindow*)> find=[&](wxWindow*w){for(auto ch:w->GetChildren()){
+        if(auto s=dynamic_cast<VideoSlider*>(ch))slider=s;
+        if(auto l=dynamic_cast<VideoTimeLabel*>(ch))labels.push_back(l);
+        if(auto z=dynamic_cast<wxComboBox*>(ch))zoom=z;
+        if(dynamic_cast<wxTextCtrl*>(ch)&&!dynamic_cast<wxComboBox*>(ch))++text_ctrls;
+        find(ch);}};
+    find(video_box);
+    ASSERT_NE(nullptr,slider);ASSERT_EQ(2u,labels.size());ASSERT_NE(nullptr,zoom);
+    EXPECT_EQ(0,text_ctrls) << "the readouts are drawn, not text boxes";
+    auto position=labels[0],relative=labels[1];
+
+    // Without video: dashes and no line span.
+    EXPECT_EQ(wxString::FromUTF8("—"),position->GetMain());
+    EXPECT_EQ(-1,slider->GetLineStart());
+
+    c->project->LoadVideo("?dummy:25:250:640:480:64:64:64:");
+    ASSERT_NE(nullptr,c->project->VideoProvider());
+    PumpFirstFrame(c.get(),window);
+    c->project->LoadKeyframes(kf);
+    video_box->SetSize(0,0,900,600);video_box->Layout();
+
+    // The active line's frames are marked on the slider.
+    EXPECT_EQ(c->videoController->FrameAtTime(2000,agi::vfr::START),slider->GetLineStart());
+    EXPECT_EQ(c->videoController->FrameAtTime(4000,agi::vfr::END),slider->GetLineEnd());
+    EXPECT_LT(slider->GetLineStart(),slider->GetLineEnd());
+
+    // The track runs between equal margins, the last frame at the far end.
+    int w=slider->GetClientSize().x;
+    EXPECT_EQ(w-slider->XAtFrame(249),slider->XAtFrame(0));
+    EXPECT_GT(slider->XAtFrame(0),0);
+
+    // Time, frame number and a keyframe badge instead of a coloured box;
+    // the width does not change from frame to frame.
+    c->videoController->JumpToFrame(50);
+    EXPECT_EQ("0:00:02.000",position->GetMain());
+    EXPECT_EQ("50",position->GetSecondary());
+    EXPECT_TRUE(position->BadgeShown());
+    int width=position->GetSize().x;
+    c->videoController->JumpToFrame(51);
+    EXPECT_FALSE(position->BadgeShown());
+    EXPECT_EQ("51",position->GetSecondary());
+    EXPECT_EQ(width,position->GetSize().x);
+
+    // Offsets from the line's start and end, a true minus for negatives.
+    c->videoController->JumpToFrame(c->videoController->FrameAtTime(3000,agi::vfr::START));
+    EXPECT_EQ(wxString::FromUTF8("+1000ms"),relative->GetMain());
+    EXPECT_EQ(wxString::FromUTF8("−1000ms"),relative->GetSecondary());
+
+    // The zoom sits at the right edge of the video block, a gap inside it.
+    wxWindow *block=zoom->GetParent();
+    EXPECT_EQ(block->GetClientSize().x-theme::BlockGap(video_box),zoom->GetPosition().x+zoom->GetSize().x);
+    EXPECT_LT(relative->GetPosition().x+relative->GetSize().x,zoom->GetPosition().x);
 }
 
 class audio_edit : public ordinary_edit {

@@ -7038,6 +7038,35 @@ msgstr "当前帧时间和序号"
 msgid "Time of this frame relative to start and end of current subs"
 msgstr "该帧时间，相对于当前字幕的开始与结束时间"
 
+#: ../src/video_box.cpp
+msgid "Click to jump to a time or frame; right-click to copy"
+msgstr "单击可跳转到指定时间或帧；右键可复制"
+
+#: ../src/video_box.cpp
+msgid "Right-click to copy"
+msgstr "右键可复制"
+
+#: ../src/video_box.cpp
+msgid "Copy time"
+msgstr "复制时间"
+
+#: ../src/video_box.cpp
+msgid "Copy frame number"
+msgstr "复制帧号"
+
+#: ../src/video_box.cpp
+msgid "Copy"
+msgstr "复制"
+
+#: ../src/video_box.cpp
+msgid "Video zoom"
+msgstr "视频缩放"
+
+#: ../src/video_slider.cpp
+#, c-format
+msgid "%s, frame %d"
+msgstr "%s，第 %d 帧"
+
 #: ../src/video_controller.cpp:228
 #, c-format
 msgid ""

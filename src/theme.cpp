@@ -237,6 +237,13 @@ void Use(wxWindow *window, wxColour (*colour)()) {
 void UseSurface(wxWindow *window) { Use(window, Surface); }
 void UseBackdrop(wxWindow *window) { Use(window, Backdrop); }
 
+wxColour Mix(wxColour const& from, wxColour const& to, double share) {
+    auto channel = [share](unsigned char a, unsigned char b) {
+        return static_cast<unsigned char>(a + (b - a) * share + 0.5);
+    };
+    return wxColour(channel(from.Red(), to.Red()), channel(from.Green(), to.Green()), channel(from.Blue(), to.Blue()));
+}
+
 Ui UiColours() {
     if (IsDark()) return {{0x6f, 0xb0, 0xff}, {0x4a, 0x3f, 0x1c}, {0xf3, 0xe6, 0xb5},
                           {0x25, 0x26, 0x29}, {0xd8, 0xda, 0xde}, {0x8b, 0x90, 0x99}, {0x2b, 0x3f, 0x5c}};

@@ -73,4 +73,8 @@ int BlockGap(wxWindow const *window);
 /// of appearance, for as long as it exists.
 void UseSurface(wxWindow *window);
 void UseBackdrop(wxWindow *window);
+
+/// @p from moved @p share (0–1) of the way towards @p to, for the shades
+/// custom-drawn controls derive from the block and text colours.
+wxColour Mix(wxColour const& from, wxColour const& to, double share);
 }

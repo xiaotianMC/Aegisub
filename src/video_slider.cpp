@@ -37,29 +37,39 @@
 #include "async_video_provider.h"
 #include "base_grid.h"
 #include "command/command.h"
+#include "compat.h"
+#include "format.h"
 #include "include/aegisub/context.h"
 #include "include/aegisub/hotkey.h"
 #include "options.h"
 #include "project.h"
+#include "theme.h"
 #include "utils.h"
 #include "video_controller.h"
 
+#include <libaegisub/ass/time.h>
+
+#include <algorithm>
+
 #include <wx/dcbuffer.h>
+#include <wx/dcgraph.h>
+#include <wx/intl.h>
 #include <wx/settings.h>
 
 VideoSlider::VideoSlider (wxWindow* parent, agi::Context *c)
-: wxWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxWANTS_CHARS | wxFULL_REPAINT_ON_RESIZE)
+: wxWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxWANTS_CHARS | wxFULL_REPAINT_ON_RESIZE | wxBORDER_NONE)
 , c(c)
 , connections(agi::signal::make_vector({
 	OPT_SUB("Video/Slider/Show Keyframes", [this] { Refresh(false); }),
 	c->videoController->AddSeekListener(&VideoSlider::SetValue, this),
 	c->project->AddVideoProviderListener(&VideoSlider::VideoOpened, this),
 	c->project->AddKeyframesListener(&VideoSlider::KeyframesChanged, this),
+	theme::AddChangeListener([this] { Refresh(false); }),
 }))
 {
-	SetClientSize(20,25);
-	SetMinSize(DipSize(20, 25));
+	SetMinSize(wxSize(FromDIP(20), FromDIP(22)));
 	SetBackgroundStyle(wxBG_STYLE_PAINT);
+	SetToolTip(_("Seek video"));
 
 	c->videoSlider = this;
 	VideoOpened(c->project->VideoProvider());
@@ -71,6 +81,14 @@ void VideoSlider::SetValue(int value) {
 	if (GetXAtValue(val) != GetXAtValue(value))
 		Refresh(false);
 	val = value;
+}
+
+void VideoSlider::SetLineRange(int start, int end) {
+	if (start < 0 || end < start) start = end = -1;
+	if (start == line_start && end == line_end) return;
+	line_start = start;
+	line_end = end;
+	Refresh(false);
 }
 
 void VideoSlider::VideoOpened(AsyncVideoProvider *provider) {
@@ -85,19 +103,34 @@ void VideoSlider::KeyframesChanged(std::vector<int> const& newKeyframes) {
 	Refresh(false);
 }
 
-int VideoSlider::GetValueAtX(int x) {
-	int w = GetClientSize().GetWidth();
-	// Special case
-	if (w <= 10) return 0;
-
-	return (int64_t)(x-5)*(int64_t)max/(int64_t)(w-10);
+int VideoSlider::Margin() const {
+	// The largest handle and its focus ring fit at either end
+	return FromDIP(10);
 }
 
-int VideoSlider::GetXAtValue(int value) {
-	if (max <= 0) return 0;
+int VideoSlider::GetValueAtX(int x) const {
+	int w = GetClientSize().GetWidth() - 2 * Margin();
+	if (w <= 0 || max <= 0) return 0;
+	return mid(0, (int)(((int64_t)(x - Margin()) * max + w / 2) / w), max);
+}
 
-	int w = GetClientSize().GetWidth();
-	return (int64_t)value*(int64_t)(w-10)/(int64_t)max+5;
+int VideoSlider::GetXAtValue(int value) const {
+	int w = GetClientSize().GetWidth() - 2 * Margin();
+	if (max <= 0 || w <= 0) return Margin();
+	return (int)((int64_t)value * w / max) + Margin();
+}
+
+void VideoSlider::UpdateToolTip(int x) {
+	if (!c->project->VideoProvider()) {
+		hover_frame = -1;
+		SetToolTip(_("Seek video"));
+		return;
+	}
+	int frame = GetValueAtX(x);
+	if (frame == hover_frame) return;
+	hover_frame = frame;
+	auto time = agi::Time(c->videoController->TimeAtFrame(frame, agi::vfr::EXACT)).GetAssFormatted(true);
+	SetToolTip(_("Seek video") + "\n" + fmt_tl("%s, frame %d", time, frame));
 }
 
 BEGIN_EVENT_TABLE(VideoSlider, wxWindow)
@@ -110,6 +143,19 @@ BEGIN_EVENT_TABLE(VideoSlider, wxWindow)
 END_EVENT_TABLE()
 
 void VideoSlider::OnMouse(wxMouseEvent &event) {
+	if (event.Leaving()) {
+		hover = false;
+		Refresh(false);
+		event.Skip();
+		return;
+	}
+	if (!hover && (event.Entering() || event.Moving() || event.Dragging())) {
+		hover = true;
+		Refresh(false);
+	}
+	if (event.Moving() || event.Dragging() || event.Entering())
+		UpdateToolTip(event.GetX());
+
 	bool had_focus = HasFocus();
 	if (event.ButtonDown())
 		SetFocus();
@@ -118,9 +164,9 @@ void VideoSlider::OnMouse(wxMouseEvent &event) {
 		int x = event.GetX();
 
 		// If the slider didn't already have focus, don't seek if the user
-		// clicked very close to the current location as they were probably
-		// just trying to focus the slider
-		if (!had_focus && abs(x - GetXAtValue(val)) < 4)
+		// clicked on the handle as they were probably just trying to focus
+		// the slider
+		if (!had_focus && abs(x - GetXAtValue(val)) < FromDIP(4))
 			return;
 
 		// Shift click to snap to keyframe
@@ -179,88 +225,80 @@ void VideoSlider::OnKeyDown(wxKeyEvent &event) {
 }
 
 void VideoSlider::OnPaint(wxPaintEvent &) {
-	wxAutoBufferedPaintDC dc(this);
-	int w,h;
+	wxAutoBufferedPaintDC buffered(this);
+	wxGCDC dc(buffered); // smooth circles
+	int w, h;
 	GetClientSize(&w, &h);
 
-	// Colors
-	wxColour shad = wxSystemSettings::GetColour(wxSYS_COLOUR_3DDKSHADOW);
-	wxColour high = wxSystemSettings::GetColour(wxSYS_COLOUR_3DLIGHT);
-	wxColour face = wxSystemSettings::GetColour(wxSYS_COLOUR_3DFACE);
-	wxColour sel(123,251,232);
-	wxColour notSel(sel.Red()*2/5,sel.Green()*2/5,sel.Blue()*2/5);
-	wxColour bord(0,0,0);
-	int x1,x2,y1,y2;
+	// Shades of the block's colour, like the other drawn tracks
+	wxColour surface = theme::Surface();
+	wxColour text = wxSystemSettings::GetColour(wxSYS_COLOUR_BTNTEXT);
+	wxColour accent = theme::UiColours().accent;
+	wxColour groove = theme::Mix(surface, text, 0.22);
+	wxColour tick = theme::Mix(surface, text, 0.5);
+	wxColour line_tint = theme::Mix(surface, accent, theme::IsDark() ? 0.3 : 0.2);
+	wxColour focus_ring = theme::Mix(surface, accent, 0.4);
 
-	// Background
 	dc.SetPen(*wxTRANSPARENT_PEN);
-	dc.SetBrush(face);
-	dc.DrawRectangle(0,0,w,h);
+	dc.SetBrush(wxBrush(surface));
+	dc.DrawRectangle(0, 0, w, h);
 
-	// Selection border
-	if (HasFocus()) {
-		dc.SetBrush(*wxTRANSPARENT_BRUSH);
-		dc.SetPen(wxPen(shad, 1, wxPENSTYLE_DOT));
-		dc.DrawRectangle(0,0,w,h);
+	bool has_video = c->project->VideoProvider() != nullptr;
+	int left = Margin(), right = w - Margin();
+	if (right <= left) return;
+	int track = FromDIP(hover ? 6 : 4);
+	int cy = h / 2 + FromDIP(2); // room for the keyframe ticks above
+	int track_top = cy - track / 2;
+
+	// The active line's time, behind the track
+	if (has_video && line_start >= 0) {
+		int x1 = GetXAtValue(line_start), x2 = GetXAtValue(std::min(line_end, max));
+		if (x2 - x1 < FromDIP(2)) x2 = x1 + FromDIP(2);
+		dc.SetBrush(wxBrush(line_tint));
+		dc.DrawRectangle(x1, cy - FromDIP(7), x2 - x1, FromDIP(14));
 	}
 
-	// Draw slider
-	x1 = 5;
-	x2 = w-5;
-	y1 = 8;
-	y2 = h-8;
-	dc.SetPen(wxPen(shad));
-	dc.DrawLine(x1,y1,x2,y1);
-	dc.DrawLine(x1,y1,x1,y2);
-	dc.SetPen(wxPen(high));
-	dc.DrawLine(x1,y2,x2,y2);
-	dc.DrawLine(x2,y1,x2,y2);
+	// Track, played part in the accent colour
+	dc.SetBrush(wxBrush(groove));
+	dc.DrawRectangle(left, track_top, right - left, track);
+	if (!has_video) return;
+	int cur = GetXAtValue(val);
+	dc.SetBrush(wxBrush(accent));
+	dc.DrawRectangle(left, track_top, cur - left, track);
 
-	// Draw keyframes
-	int curX;
+	// Keyframes as ticks above the track
 	if (OPT_GET("Video/Slider/Show Keyframes")->GetBool()) {
-		dc.SetPen(wxPen(shad));
+		dc.SetBrush(wxBrush(tick));
+		int tick_w = std::max(1, FromDIP(1));
+		int tick_bottom = cy - FromDIP(5);
+		int tick_top = tick_bottom - FromDIP(5);
+		int last = -1;
 		for (int frame : keyframes) {
-			curX = GetXAtValue(frame);
-			dc.DrawLine(curX,2,curX,8);
+			int x = GetXAtValue(frame);
+			if (x == last) continue;
+			last = x;
+			dc.DrawRectangle(x, tick_top, tick_w, tick_bottom - tick_top);
 		}
 	}
 
-	// Draw cursor
-	curX = GetXAtValue(val);
-
-	// Fill bg
-	dc.SetBrush(wxBrush(face));
-	dc.SetPen(*wxTRANSPARENT_PEN);
-	dc.DrawRectangle(curX-2,y1-1,4,y2-y1+5);
-	dc.SetBrush(wxNullBrush);
-
-	// Draw cursor highlights
-	dc.SetPen(wxPen(high));
-	dc.DrawLine(curX,y1-2,curX-4,y1+2);
-	dc.DrawLine(curX-3,y1+2,curX-3,y2+5);
-
-	// Draw cursor shades
-	dc.SetPen(wxPen(shad));
-	dc.DrawLine(curX+1,y1-1,curX+4,y1+2);
-	dc.DrawLine(curX+3,y1+2,curX+3,y2+5);
-	dc.DrawLine(curX-3,y2+4,curX+3,y2+4);
-
-	// Draw cursor outline
-	dc.SetPen(wxPen(bord));
-	dc.DrawLine(curX,y1-3,curX-4,y1+1);
-	dc.DrawLine(curX,y1-3,curX+4,y1+1);
-	dc.DrawLine(curX-4,y1+1,curX-4,y2+5);
-	dc.DrawLine(curX+4,y1+1,curX+4,y2+5);
-	dc.DrawLine(curX-3,y2+5,curX+4,y2+5);
-	dc.DrawLine(curX-3,y2,curX+4,y2);
-
-	// Draw selection
-	dc.SetPen(*wxTRANSPARENT_PEN);
-	dc.SetBrush(HasFocus() ? wxBrush(sel) : wxBrush(notSel));
-	dc.DrawRectangle(curX-3,y2+1,7,4);
+	// Handle: a ring in the block's colour sets it off the played part;
+	// focus adds an outer ring, a keyframe a hollow centre
+	int radius = FromDIP(hover ? 7 : 6);
+	if (HasFocus()) {
+		dc.SetBrush(wxBrush(focus_ring));
+		dc.DrawCircle(cur, cy, radius + FromDIP(3));
+	}
+	dc.SetBrush(wxBrush(surface));
+	dc.DrawCircle(cur, cy, radius + FromDIP(1));
+	dc.SetBrush(wxBrush(accent));
+	dc.DrawCircle(cur, cy, radius);
+	if (std::binary_search(keyframes.begin(), keyframes.end(), val)) {
+		dc.SetBrush(wxBrush(surface));
+		dc.DrawCircle(cur, cy, FromDIP(2));
+	}
 }
 
-void VideoSlider::OnFocus(wxFocusEvent &) {
+void VideoSlider::OnFocus(wxFocusEvent &event) {
 	Refresh(false);
+	event.Skip();
 }
