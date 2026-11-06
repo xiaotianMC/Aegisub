@@ -9,6 +9,7 @@
 			"Save on Every Change" : false
 		},
 		"Call Tips" : false,
+		"Classic Icons" : false,
 		"Classic Toolbar" : false,
 		"Command Palette" : {
 			"Recent" : [{"string": ""}]

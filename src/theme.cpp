@@ -25,6 +25,7 @@ namespace theme {
 namespace {
 agi::signal::Signal<> changed;
 agi::signal::Connection mode_listener;
+agi::signal::Connection icons_listener;
 bool last_dark = false;
 bool native_dark = false;
 
@@ -143,6 +144,12 @@ void Init() {
     last_dark = IsDark();
     libresrc_set_dark(last_dark);
     mode_listener = OPT_SUB("App/Theme", [] { Apply(); Notify(); });
+    // Icons are remade on appearance changes: so they are for the icon style
+    libresrc_set_classic(OPT_GET("App/Classic Icons")->GetBool());
+    icons_listener = OPT_SUB("App/Classic Icons", [] {
+        libresrc_set_classic(OPT_GET("App/Classic Icons")->GetBool());
+        Notify();
+    });
 }
 
 bool IsDark() {

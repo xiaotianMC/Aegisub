@@ -4,6 +4,7 @@
 #include "visual_tool_rectangle.h"
 
 #include "theme.h"
+#include "libresrc/libresrc.h"
 
 #include "ass_dialogue.h"
 #include "ass_file.h"
@@ -30,6 +31,16 @@ wxString DrawingShapeLabel(DrawingShape shape) {
 }
 
 wxBitmapBundle DrawingShapeIcon(DrawingShape shape, int size) {
+	if (!libresrc_classic()) {
+		const char *name = "shape_rectangle";
+		switch (shape) {
+			case DrawingShape::Rectangle: break;
+			case DrawingShape::Ellipse: name = "shape_ellipse"; break;
+			case DrawingShape::Triangle: name = "shape_triangle"; break;
+			case DrawingShape::Polygon: name = "shape_polygon"; break;
+		}
+		return libresrc_modern_bundle(libresrc_modern_icon(name), size, 0, true);
+	}
 	// Drawn like Aegisub's own visual_rectangle icon (docs/art-sources), as
 	// SVG so it is sharp at any scale. A corner mark advertises the flyout.
 	const char *body = "";

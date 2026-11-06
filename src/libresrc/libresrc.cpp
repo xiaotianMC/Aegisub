@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <string>
 #include <vector>
 
 #include <wx/bitmap.h>
@@ -43,6 +44,7 @@ wxIcon libresrc_geticon(const unsigned char *buff, size_t size) {
 
 namespace {
 bool dark_mode = false;
+bool classic_icons = false;
 
 struct Hsl { double h, s, l; };
 
@@ -94,6 +96,23 @@ void EnsureAlpha(wxImage& image) {
 
 void libresrc_set_dark(bool dark) { dark_mode = dark; }
 bool libresrc_dark() { return dark_mode; }
+void libresrc_set_classic(bool classic) { classic_icons = classic; }
+bool libresrc_classic() { return classic_icons; }
+
+wxBitmapBundle libresrc_modern_bundle(const char *body, int height, int dir, bool flyout) {
+	// Toolbar text colours, a little softer than black or white
+	const std::string colour = dark_mode ? "#d0d0d0" : "#404040";
+	std::string svg = "<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'>";
+	svg += dir == wxLayout_RightToLeft ? "<g transform='matrix(-1 0 0 1 16 0)'>" : "<g>";
+	svg += "<g fill='none' stroke='@' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'>";
+	svg += body;
+	svg += "</g>";
+	if (flyout) svg += "<path d='M15.5 12.5V15.5H12.5Z' fill='@'/>";
+	svg += "</g></svg>";
+	for (size_t pos; (pos = svg.find('@')) != std::string::npos; )
+		svg.replace(pos, 1, colour);
+	return wxBitmapBundle::FromSVG(svg.c_str(), wxSize(height, height));
+}
 
 bool libresrc_is_glyph(wxImage const& image) {
 	if (!image.IsOk()) return false;
@@ -154,13 +173,21 @@ void libresrc_adapt_for_dark(wxImage& image, bool glyph) {
 		if (alpha[i] > 0 && alpha[i] < 128 && dark(i)) Lighten(rgb + i * 3);
 }
 
-wxBitmapBundle libresrc_getbitmapbundle(const LibresrcBlob *images, size_t count, int height, int dir) {
+wxBitmapBundle libresrc_getbitmapbundle(const char *name, const LibresrcBlob *images, size_t count, int height, int dir) {
 	// This function should only ever be called on the GUI thread but declaring this thread_local is the safe way
-	thread_local std::map<std::tuple<const LibresrcBlob *, int, int, bool>, wxBitmapBundle> cache;
-	auto key = std::make_tuple(images, height, dir, dark_mode);
+	thread_local std::map<std::tuple<const LibresrcBlob *, int, int, bool, bool>, wxBitmapBundle> cache;
+	auto key = std::make_tuple(images, height, dir, dark_mode, classic_icons);
 
 	if (auto cached = cache.find(key); cached != cache.end()) {
 		return cached->second;
+	}
+
+	if (!classic_icons) {
+		if (auto body = libresrc_modern_icon(name)) {
+			auto bundle = libresrc_modern_bundle(body, height, dir);
+			cache[key] = bundle;
+			return bundle;
+		}
 	}
 
 	std::vector<wxImage> decoded;

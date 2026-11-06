@@ -652,8 +652,9 @@ wxImage IconImage(wxBitmapBundle const& bundle, int size) {
 }
 
 TEST_F(ordinary_edit, dark_appearance_lightens_dark_icons_and_keeps_coloured_ones) {
-    BOOST_SCOPE_EXIT_ALL() { OPT_SET("App/Theme")->SetInt(1); };
+    BOOST_SCOPE_EXIT_ALL() { OPT_SET("App/Theme")->SetInt(1); OPT_SET("App/Classic Icons")->SetBool(false); };
     OPT_SET("App/Theme")->SetInt(1);
+    OPT_SET("App/Classic Icons")->SetBool(true); // The coloured bitmaps
     theme::Init();
     ASSERT_FALSE(libresrc_dark());
     // Only Windows with wxWidgets 3.3 draws its own controls dark; elsewhere
@@ -715,6 +716,76 @@ TEST_F(ordinary_edit, dark_appearance_lightens_dark_icons_and_keeps_coloured_one
     EXPECT_EQ(48, shape.GetWidth());
     EXPECT_EQ(0, shape.GetAlpha()[0]) << "transparent around the shape";
     EXPECT_GT(shape.GetAlpha()[24 * 48 + 24], 200);
+}
+
+TEST_F(ordinary_edit, toolbar_icons_are_monochrome_in_the_appearance_colour_unless_classic) {
+    BOOST_SCOPE_EXIT_ALL() { OPT_SET("App/Theme")->SetInt(1); OPT_SET("App/Classic Icons")->SetBool(false); };
+    OPT_SET("App/Theme")->SetInt(1);
+    OPT_SET("App/Classic Icons")->SetBool(false);
+    theme::Init();
+    ASSERT_FALSE(libresrc_classic());
+
+    // Every toolbar's commands have one, and so do the sub-tools and shapes.
+    for (auto name : {"visual_move_conv_move", "visual_move_conv_pos", "shape_rectangle", "shape_ellipse",
+                      "shape_triangle", "shape_polygon", "visual_vector_clip_freehand_smooth"})
+        EXPECT_NE(nullptr, libresrc_modern_icon(name)) << name;
+    EXPECT_EQ(nullptr, libresrc_modern_icon("eyedropper_tool")) << "others keep their bitmaps";
+    EXPECT_EQ(nullptr, libresrc_modern_icon("visual_rectang")) << "exact names only";
+
+    // One colour: dark grey on light, light grey on dark, at any size.
+    auto colours = [](wxImage image) {
+        if (!image.HasAlpha()) image.InitAlpha();
+        std::set<std::tuple<int, int, int>> found;
+        const unsigned char *rgb = image.GetData(), *alpha = image.GetAlpha();
+        for (int i = 0, n = image.GetWidth() * image.GetHeight(); i < n; ++i)
+            // To the nearest 8: antialiased edges are a unit or two off
+            if (alpha[i] > 200) found.emplace((rgb[i * 3] + 4) / 8 * 8, (rgb[i * 3 + 1] + 4) / 8 * 8, (rgb[i * 3 + 2] + 4) / 8 * 8);
+        return found;
+    };
+    for (auto name : {"subtitle/save", "audio/play/selection", "audio/opt/autocommit", "video/play",
+                      "video/tool/drag", "video/tool/vclip/line", "help/video", "app/options", "time/snap/scene"})
+        EXPECT_EQ(1u, colours(IconImage(cmd::get(name)->Icon(16), 16)).size()) << name;
+    for (int size : {16, 24, 32}) {
+        auto save = IconImage(cmd::get("subtitle/save")->Icon(size), size);
+        ASSERT_TRUE(save.HasAlpha());
+        EXPECT_EQ(size, save.GetWidth());
+        EXPECT_EQ(0, save.GetAlpha()[0]) << "transparent around the drawing";
+        auto found = colours(save);
+        ASSERT_EQ(1u, found.size()) << size;
+        EXPECT_EQ(std::make_tuple(0x40, 0x40, 0x40), *found.begin());
+    }
+    OPT_SET("App/Theme")->SetInt(2);
+    auto dark = colours(IconImage(cmd::get("subtitle/save")->Icon(24), 24));
+    ASSERT_EQ(1u, dark.size());
+    EXPECT_EQ(std::make_tuple(0xd0, 0xd0, 0xd0), *dark.begin());
+    OPT_SET("App/Theme")->SetInt(1);
+
+    // Right to left, the drawing is mirrored.
+    auto next = IconImage(cmd::get("time/next")->Icon(32), 32);
+    auto next_rtl = IconImage(cmd::get("time/next")->Icon(32, wxLayout_RightToLeft), 32);
+    // Compared as shapes: antialiasing differs a little either way round
+    auto shape_of = [](wxImage const& image) {
+        std::string mask;
+        for (int i = 0; i < image.GetWidth() * image.GetHeight(); ++i) mask += image.GetAlpha()[i] > 128 ? '#' : '.';
+        return mask;
+    };
+    EXPECT_EQ(shape_of(next.Mirror()), shape_of(next_rtl));
+    EXPECT_NE(shape_of(next), shape_of(next_rtl)) << "not symmetric";
+
+    // The shape tool's icon has the flyout corner.
+    auto shape = DrawingShapeIcon(DrawingShape::Ellipse, 32).GetBitmap(wxSize(32, 32)).ConvertToImage();
+    EXPECT_GT(shape.GetAlpha()[30 * 32 + 30], 200);
+
+    // Classic: the coloured bitmaps again, and toolbars are rebuilt with them.
+    auto bar = toolbar::GetToolbar(window, "main", c.get(), "Default");
+    auto first_icon = [&] { return bar->GetToolByPos(0)->GetNormalBitmap().ConvertToImage(); };
+    EXPECT_EQ(1u, colours(first_icon()).size());
+    OPT_SET("App/Classic Icons")->SetBool(true);
+    EXPECT_TRUE(libresrc_classic());
+    EXPECT_GT(colours(first_icon()).size(), 1u) << "the bitmap's own colours";
+    OPT_SET("App/Classic Icons")->SetBool(false);
+    EXPECT_EQ(1u, colours(first_icon()).size());
+    bar->Destroy();
 }
 
 TEST_F(ordinary_edit, main_toolbar_groups_dialogs_in_dropdowns_and_has_a_classic_layout) {
