@@ -248,8 +248,11 @@ void VideoTimeLabel::OnMouse(wxMouseEvent &event) {
 		hover = false;
 		if (on_commit) Refresh(false);
 	}
-	else if (event.LeftDown() && on_commit)
-		StartEditing();
+	else if (event.LeftDown() && on_commit && editable && !IsEditing()) {
+		// Once the click is over, so nothing takes the focus back from the box
+		CallAfter([this] { StartEditing(); });
+		return;
+	}
 	event.Skip();
 }
 

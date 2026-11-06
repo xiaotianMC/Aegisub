@@ -153,7 +153,8 @@ void VideoSlider::OnMouse(wxMouseEvent &event) {
 		hover = true;
 		Refresh(false);
 	}
-	if (event.Moving() || event.Dragging() || event.Entering())
+	// Not while dragging: the handle has to keep up with the mouse
+	if (event.Moving() || event.Entering())
 		UpdateToolTip(event.GetX());
 
 	bool had_focus = HasFocus();
@@ -188,6 +189,10 @@ void VideoSlider::OnMouse(wxMouseEvent &event) {
 			SetValue(go);
 		}
 
+		// Paint the handle now rather than when the queue is idle: while
+		// dragging, mouse moves keep coming and the paint would trail the
+		// video
+		Update();
 		c->videoController->JumpToFrame(val);
 	}
 	else if (event.GetWheelRotation() != 0 && ForwardMouseWheelEvent(this, event)) {

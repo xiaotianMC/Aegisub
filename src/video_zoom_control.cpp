@@ -16,8 +16,8 @@
 #include <wx/settings.h>
 
 namespace {
-constexpr double step = .25;
-constexpr double min_zoom = .25;
+constexpr double step = .125; // as the zoom has always stepped
+constexpr double min_zoom = .125;
 constexpr double max_zoom = 10;
 }
 
@@ -25,7 +25,7 @@ VideoZoomControl::VideoZoomControl(wxWindow *parent)
 : wxWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE | wxFULL_REPAINT_ON_RESIZE)
 {
 	SetBackgroundStyle(wxBG_STYLE_PAINT);
-	int value_width = GetTextExtent("300%").x + FromDIP(28);
+	int value_width = GetTextExtent("187.5%").x + FromDIP(24);
 	SetMinSize(wxSize(2 * ButtonWidth() + value_width, FromDIP(28)));
 	Bind(wxEVT_PAINT, &VideoZoomControl::OnPaint, this);
 	for (auto type : {wxEVT_LEFT_DOWN, wxEVT_LEFT_UP, wxEVT_LEFT_DCLICK, wxEVT_MOTION, wxEVT_ENTER_WINDOW, wxEVT_LEAVE_WINDOW})
@@ -43,13 +43,11 @@ std::vector<int> VideoZoomControl::Presets() {
 }
 
 double VideoZoomControl::StepIn(double zoom) {
-	double n = std::floor(zoom / step + 1e-6);
-	return std::min(max_zoom, (n + 1) * step);
+	return std::min(max_zoom, zoom + step);
 }
 
 double VideoZoomControl::StepOut(double zoom) {
-	double n = std::ceil(zoom / step - 1e-6);
-	return std::max(min_zoom, (n - 1) * step);
+	return std::max(min_zoom, zoom - step);
 }
 
 void VideoZoomControl::SetZoom(double new_zoom) {
@@ -59,7 +57,9 @@ void VideoZoomControl::SetZoom(double new_zoom) {
 }
 
 wxString VideoZoomControl::ZoomText() const {
-	return fmt_wx("%d%%", static_cast<int>(std::lround(zoom * 100)));
+	// Steps of 12.5% show their half percent; other zooms (a resized
+	// detached video) are rounded to one decimal
+	return fmt_wx("%g%%", std::round(zoom * 1000) / 10);
 }
 
 int VideoZoomControl::ButtonWidth() const {

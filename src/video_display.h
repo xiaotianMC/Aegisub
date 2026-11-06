@@ -103,9 +103,6 @@ class VideoDisplay final : public wxGLCanvas {
 	/// The zoom level of the video inside the viewport.
 	double contentZoomValue = 1;
 
-	/// Wheel movement towards the next window zoom step, for smooth scrolling
-	double zoom_wheel_rest = 0;
-
 	bool isZoomGestureActive = false;
 	double contentZoomAtGestureStart = 1;
 	Vector2D zoomGestureAnchorPoint = {0, 0};

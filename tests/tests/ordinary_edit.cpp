@@ -1052,9 +1052,17 @@ TEST_F(ordinary_edit, video_slider_and_readouts_are_flat_and_hold_still) {
     EXPECT_EQ("+1000ms",relative->GetMain());
     EXPECT_EQ(wxString(wxUniChar(0x2212))+"1000ms",relative->GetSecondary());
 
-    // Clicking the time turns it into a text box only while typing.
+    // Clicking the time turns it into a text box only while typing. The
+    // click is handled and the label never takes the focus, or the toolkit
+    // would focus it after the click and close the box straight away.
     ASSERT_NE(nullptr,position->EditBox());
     EXPECT_FALSE(position->IsEditing());
+    EXPECT_FALSE(position->AcceptsFocus());
+    {wxMouseEvent click(wxEVT_LEFT_DOWN);click.SetPosition({20,position->GetSize().y/2});click.SetEventObject(position);
+     EXPECT_TRUE(position->GetEventHandler()->ProcessEvent(click)) << "not skipped";
+     wxYield();
+     EXPECT_TRUE(position->IsEditing()) << "the box opens once the click is over";
+     position->CancelEditing();}
     int height=position->GetSize().y;
     position->StartEditing();
     EXPECT_TRUE(position->IsEditing());
@@ -1076,18 +1084,16 @@ TEST_F(ordinary_edit, video_slider_and_readouts_are_flat_and_hold_still) {
     EXPECT_FALSE(position->IsEditing());
     EXPECT_EQ(249,c->videoController->GetFrameN());
 
-    // Zoom in whole percent: − and + step by 25%, presets are whole numbers.
+    // − and + keep the 12.5% steps; the presets are whole percentages.
     display->SetWindowZoom(.75);
     EXPECT_EQ("75%",zoom->ZoomText());
     zoom->Press(VideoZoomControl::Part::In);
-    EXPECT_DOUBLE_EQ(1.,display->GetWindowZoom());
-    EXPECT_EQ("100%",zoom->ZoomText());
+    EXPECT_DOUBLE_EQ(.875,display->GetWindowZoom());
+    EXPECT_EQ("87.5%",zoom->ZoomText());
     zoom->Press(VideoZoomControl::Part::Out);zoom->Press(VideoZoomControl::Part::Out);
-    EXPECT_DOUBLE_EQ(.5,display->GetWindowZoom());
+    EXPECT_DOUBLE_EQ(.625,display->GetWindowZoom());
     EXPECT_DOUBLE_EQ(.25,VideoZoomControl::StepIn(.125));
-    EXPECT_DOUBLE_EQ(.75,VideoZoomControl::StepIn(.6));
-    EXPECT_DOUBLE_EQ(.5,VideoZoomControl::StepOut(.6));
-    EXPECT_DOUBLE_EQ(.25,VideoZoomControl::StepOut(.25));
+    EXPECT_DOUBLE_EQ(.125,VideoZoomControl::StepOut(.125));
     for(int p:VideoZoomControl::Presets())EXPECT_EQ(0,p%25);
     cmd::call("video/zoom/in",c.get());
     EXPECT_DOUBLE_EQ(.75,display->GetWindowZoom()) << "the zoom commands step the same way";

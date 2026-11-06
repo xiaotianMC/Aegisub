@@ -522,17 +522,7 @@ void VideoDisplay::OnMouseWheel(wxMouseEvent& event) {
 					dir = -1;
 					[[fallthrough]];
 				case SCALE_VIDEO:
-				{
-					// Whole steps of the zoom control, so the zoom stays a round percentage
-					// (touchpads send fractions of a step: they add up)
-					zoom_wheel_rest += double(dir * wheel) / event.GetWheelDelta();
-					int steps = static_cast<int>(zoom_wheel_rest);
-					zoom_wheel_rest -= steps;
-					double zoom = windowZoomValue;
-					for (; steps > 0; --steps) zoom = VideoZoomControl::StepIn(zoom);
-					for (; steps < 0; ++steps) zoom = VideoZoomControl::StepOut(zoom);
-					SetWindowZoom(zoom);
-				}
+					SetWindowZoom(windowZoomValue + dir * .125 * (wheel / event.GetWheelDelta()));
 					break;
 
 				case ZOOM_VIDEO_REV:

@@ -1,8 +1,8 @@
 // Copyright (c) 2026, Aegisub contributors
 // SPDX-License-Identifier: ISC
 // The video zoom below the video (docs/main-window.md): − and + buttons
-// either side of the zoom in whole percent; clicking the value opens the
-// presets.
+// either side of the zoom, stepping 12.5% as always; clicking the value
+// opens the presets, in whole percent.
 #pragma once
 
 #include <libaegisub/signal.h>
@@ -21,14 +21,14 @@ public:
 	/// Show @p zoom (1 = 100%)
 	void SetZoom(double zoom);
 	double GetZoom() const { return zoom; }
-	/// Text shown for the zoom: a whole percentage
+	/// Text shown for the zoom, e.g. "75%" or "87.5%"
 	wxString ZoomText() const;
 	/// Called with the zoom asked for by −, + or a preset
 	void SetHandler(std::function<void(double)> handler) { on_zoom = std::move(handler); }
 
 	/// Zoom presets, in whole percent
 	static std::vector<int> Presets();
-	/// The next step up or down from @p zoom: multiples of 25%
+	/// One step up or down from @p zoom: 12.5%
 	static double StepIn(double zoom);
 	static double StepOut(double zoom);
 

@@ -53,6 +53,10 @@ public:
 	/// Right-click menu entries copying parts of the text
 	void SetCopyItems(std::vector<CopyItem> items);
 
+	/// Never takes the keyboard itself: a click must leave it with the text box
+	bool AcceptsFocus() const override { return false; }
+	bool AcceptsFocusFromKeyboard() const override { return false; }
+
 private:
 	wxString main, secondary, badge_text = "K";
 	bool badge, dim, badge_on = false;
