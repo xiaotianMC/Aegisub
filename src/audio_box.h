@@ -82,8 +82,6 @@ class AudioBox final : public wxSashWindow, private agi::signal::ConnectionScope
 	void OnVolume(wxScrollEvent &event);
 
 public:
-	/// Distance from the left edge of the box to the waveform
-	int DisplayInset() const;
 	AudioBox(wxWindow *parent, agi::Context *context);
 
 	void ShowKaraokeBar(bool show);

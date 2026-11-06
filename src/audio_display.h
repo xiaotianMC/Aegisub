@@ -180,6 +180,7 @@ class AudioDisplay: public wxWindow {
 	void PaintLabels(wxDC &dc, TimeRange updtime);
 	/// Paint the values of the dB scale at the left edge (waveform only)
 	void PaintDbScale(wxDC &dc, wxRect const& updrect);
+	wxFont DbLabelFont() const;
 
 	/// Paint the track cursor
 	/// @param dc DC to paint to
@@ -272,6 +273,13 @@ public:
 	/// as the horizontal zoom option. The span is limited to what the zoom
 	/// levels allow.
 	void ZoomToTimeRange(double begin, double end);
+
+	/// A value of the dB scale where it is drawn
+	struct DbLabel { wxString text; wxRect rect; };
+	/// The values of the dB scale drawn on @p dc, none overlapping
+	std::vector<DbLabel> DbLabelRects(wxDC &dc) const;
+	/// Smallest distance between dB lines: one value and a little
+	int DbLabelGap() const;
 
 	/// Shortest and longest spans of the display width in ms, at the highest
 	/// and lowest zoom levels

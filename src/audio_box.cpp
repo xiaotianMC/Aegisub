@@ -57,16 +57,26 @@ enum {
 };
 
 AudioBox::AudioBox(wxWindow *parent, agi::Context *context)
-: wxSashWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxSW_3D | wxCLIP_CHILDREN)
+: wxSashWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxCLIP_CHILDREN)
 , controller(context->audioController.get())
 , context(context)
 , audio_open_connection(context->audioController->AddAudioPlayerOpenListener(&AudioBox::OnAudioOpen, this))
-, panel(new wxPanel(this, -1, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL | theme::Border(wxBORDER_RAISED)))
+, panel(new wxPanel(this, -1, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL | wxBORDER_NONE))
 , audioDisplay(new AudioDisplay(panel, context->audioController.get(), context))
 , VerticalZoom(new wxSlider(panel, Audio_Vertical_Zoom, OPT_GET("Audio/Zoom/Vertical")->GetInt(), 0, 100, wxDefaultPosition, wxDefaultSize, wxSL_VERTICAL|wxSL_BOTH|wxSL_INVERSE))
 , VolumeBar(new wxSlider(panel, Audio_Volume, OPT_GET("Audio/Volume")->GetInt(), 0, 100, wxDefaultPosition, wxDefaultSize, wxSL_VERTICAL|wxSL_BOTH|wxSL_INVERSE))
 {
 	SetSashVisible(wxSASH_BOTTOM, true);
+	// A block on the backdrop (docs/theme.md): the resize strip below it is
+	// the gap to the next block, drawn in the backdrop's colour.
+	SetDefaultBorderSize(theme::BlockGap(this));
+	theme::UseBackdrop(this);
+	theme::UseSurface(panel);
+	Bind(wxEVT_PAINT, [this](wxPaintEvent&) {
+		wxPaintDC dc(this);
+		dc.SetBackground(wxBrush(GetBackgroundColour()));
+		dc.Clear();
+	});
 	Bind(wxEVT_SASH_DRAGGED, &AudioBox::OnSashDrag, this);
 
 	VerticalZoom->SetToolTip(_("Vertical zoom"));
@@ -100,7 +110,9 @@ AudioBox::AudioBox(wxWindow *parent, agi::Context *context)
 	// Main sizer
 	auto MainSizer = new wxBoxSizer(wxVERTICAL);
 	MainSizer->Add(TopSizer,1,wxEXPAND|wxALL,3);
-	MainSizer->Add(toolbar::GetToolbar(panel, "audio", context, "Audio"),0,wxEXPAND|wxLEFT|wxRIGHT,3);
+	auto audio_toolbar = toolbar::GetToolbar(panel, "audio", context, "Audio");
+	theme::UseSurface(audio_toolbar); // The block's colour, not the toolbar's own
+	MainSizer->Add(audio_toolbar,0,wxEXPAND|wxLEFT|wxRIGHT,3);
 	MainSizer->Add(context->karaoke,0,wxEXPAND|wxALL,3);
 	MainSizer->Show(context->karaoke, false);
 	panel->SetSizer(MainSizer);
@@ -236,9 +248,4 @@ void AudioBox::ScrollToActiveLine(ScrollMode mode) {
 				break;
 		}
 	}
-}
-
-int AudioBox::DisplayInset() const {
-	auto border = [](wxWindow const *w) { return (w->GetSize().x - w->GetClientSize().x) / 2; };
-	return panel->GetPosition().x + border(panel) + audioDisplay->GetPosition().x + border(audioDisplay);
 }

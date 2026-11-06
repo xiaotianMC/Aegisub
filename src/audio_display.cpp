@@ -665,7 +665,7 @@ public:
 };
 
 AudioDisplay::AudioDisplay(wxWindow *parent, AudioController *controller, agi::Context *context)
-: wxWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxWANTS_CHARS|wxBORDER_SIMPLE)
+: wxWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxWANTS_CHARS|wxBORDER_NONE)
 , audio_open_connection(context->project->AddAudioProviderListener(&AudioDisplay::OnAudioOpen, this))
 , context(context)
 , audio_renderer(std::make_unique<AudioRenderer>())
@@ -934,7 +934,9 @@ void AudioDisplay::ReloadRenderingSettings()
 	else
 	{
 		colour_scheme_name = OPT_GET("Colour/Audio Display/Waveform")->GetString();
-		audio_renderer_provider = std::make_unique<AudioWaveformRenderer>(colour_scheme_name);
+		auto waveform = std::make_unique<AudioWaveformRenderer>(colour_scheme_name);
+		waveform->SetDbGridGap(DbLabelGap());
+		audio_renderer_provider = std::move(waveform);
 	}
 
 	audio_renderer->SetRenderer(audio_renderer_provider.get());
@@ -1037,41 +1039,67 @@ void AudioDisplay::PaintAudio(wxDC &dc, const TimeRange updtime, const wxRect up
 	}
 }
 
+wxFont AudioDisplay::DbLabelFont() const
+{
+	wxFont font = GetFont();
+	font.SetFractionalPointSize(font.GetFractionalPointSize() * 0.8);
+	return font;
+}
+
+int AudioDisplay::DbLabelGap() const
+{
+	// Lines at least one value and a little apart: their values never touch,
+	// whatever the font and display scale.
+	int height = 0;
+	wxFont font = DbLabelFont();
+	GetTextExtent("-60", nullptr, &height, nullptr, nullptr, &font);
+	return std::max(FromDIP(16), height + FromDIP(4));
+}
+
 void AudioDisplay::PaintDbScale(wxDC &dc, wxRect const& updrect)
 {
 	if (OPT_GET("Audio/Spectrum")->GetBool() || !OPT_GET("Audio/Display/Draw/dB Scale")->GetBool()) return;
-	auto levels = AudioWaveformRenderer::DbGrid(audio_height, audio_renderer->GetAmplitudeScale(),
-		AudioWaveformRenderer::DbGridGap(audio_height));
+	auto levels = AudioWaveformRenderer::DbGrid(audio_height, audio_renderer->GetAmplitudeScale(), DbLabelGap());
 	if (levels.empty()) return;
 
-	wxFont font = GetFont();
-	font.SetFractionalPointSize(font.GetFractionalPointSize() * 0.8);
-	wxDCFontChanger font_changer(dc, font);
+	wxDCFontChanger font_changer(dc, DbLabelFont());
 	wxDCTextColourChanger colour_changer(dc, AudioWaveformRenderer::DbLabelColour());
 	wxDCPenChanger pen_changer(dc, *wxTRANSPARENT_PEN);
 	wxDCBrushChanger brush_changer(dc, *wxBLACK_BRUSH);
 	int label_width = dc.GetTextExtent("-60").GetWidth() + FromDIP(6);
 	if (updrect.x > label_width) return; // The values are only at the left edge
 
-	int midpoint = audio_top + audio_height / 2;
-	int text_height = dc.GetCharHeight();
-	for (auto const& level : levels) {
-		auto text = std::to_wstring(level.db);
-		for (int y : {midpoint - level.offset, midpoint + level.offset}) {
-			// Above the line in the upper half, below it in the lower half,
-			// so the text stays inside the display
-			int top = y < midpoint ? y - text_height : y + 1;
-			if (top < audio_top) top = y + 1;
-			if (top + text_height > audio_top + audio_height) top = y - text_height;
-			if (top < audio_top) continue;
-			// On a black plate: the waveform runs under the values
-			auto extent = dc.GetTextExtent(text);
-			dc.SetPen(*wxTRANSPARENT_PEN);
-			dc.SetBrush(*wxBLACK_BRUSH);
-			dc.DrawRectangle(0, top, extent.GetWidth() + FromDIP(5), extent.GetHeight());
-			dc.DrawText(text, FromDIP(3), top);
+	for (auto const& label : DbLabelRects(dc))
+	{
+		dc.DrawRectangle(label.rect);
+		dc.DrawText(label.text, label.rect.x + FromDIP(3), label.rect.y);
+	}
+}
+
+std::vector<AudioDisplay::DbLabel> AudioDisplay::DbLabelRects(wxDC &dc) const
+{
+	std::vector<DbLabel> labels;
+	if (OPT_GET("Audio/Spectrum")->GetBool() || !OPT_GET("Audio/Display/Draw/dB Scale")->GetBool()) return labels;
+	const int midpoint = audio_top + audio_height / 2;
+	const int bottom = audio_top + audio_height;
+	for (auto const& level : AudioWaveformRenderer::DbGrid(audio_height, audio_renderer->GetAmplitudeScale(), DbLabelGap()))
+	{
+		wxString text = std::to_wstring(level.db);
+		wxSize extent = dc.GetTextExtent(text);
+		for (int y : {midpoint - level.offset, midpoint + level.offset})
+		{
+			// Centred on its line, pushed inside at the edges, on a black
+			// plate as the waveform runs under it
+			int top = std::clamp(y - extent.y / 2, audio_top, bottom - extent.y);
+			wxRect rect(0, top, extent.x + FromDIP(5), extent.y);
+			if (top < audio_top) continue; // Taller than the display
+			// Never on top of another value
+			if (std::any_of(labels.begin(), labels.end(), [&](DbLabel const& l) { return l.rect.Intersects(rect); }))
+				continue;
+			labels.push_back({text, rect});
 		}
 	}
+	return labels;
 }
 
 void AudioDisplay::PaintMarkers(wxDC &dc, TimeRange updtime)

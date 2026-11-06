@@ -73,6 +73,19 @@ AudioColorScheme::AudioColorScheme(int prec, std::string const& scheme_name, int
 }
 
 void MigrateAudioColourSchemes() {
+	// The first Studio drew its time ruler and scrollbar green on black; they
+	// are grey now. Only colours still at that first value change.
+	auto update = [](const char *name, agi::Color old_value, agi::Color new_value) {
+		auto opt = OPT_SET(std::string("Colour/Schemes/Studio/") + name);
+		if (opt->GetColor() == old_value) opt->SetColor(new_value);
+	};
+	update("UI/Light", agi::Color(64, 220, 152), agi::Color(150, 150, 150));
+	update("UI/Dark", agi::Color(0, 0, 0), agi::Color(38, 38, 38));
+	update("UI/Selection", agi::Color(18, 64, 44), agi::Color(28, 84, 58));
+	update("UI Focused/Light", agi::Color(120, 240, 186), agi::Color(196, 196, 196));
+	update("UI Focused/Dark", agi::Color(0, 0, 0), agi::Color(38, 38, 38));
+	update("UI Focused/Selection", agi::Color(18, 64, 44), agi::Color(28, 84, 58));
+
 	auto schemes = OPT_GET("Audio/Colour Schemes")->GetListString();
 	if (std::find(schemes.begin(), schemes.end(), "Studio") != schemes.end()) return;
 	schemes.insert(schemes.begin(), "Studio");

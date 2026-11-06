@@ -224,18 +224,21 @@ void FrameMain::InitContents() {
 	auto EditBox = new SubsEditBox(Panel, context.get());
 
 	StartupLog("Arrange main sizers");
+	// Blocks on a backdrop, the same gap everywhere and no borders
+	// (docs/theme.md). The audio box's resize strip is the gap below it.
+	theme::UseBackdrop(Panel);
+	const int gap = theme::BlockGap(Panel);
 	ToolsSizer = new wxBoxSizer(wxVERTICAL);
 	ToolsSizer->Add(audioBox, 0, wxEXPAND);
 	ToolsSizer->Add(EditBox, 1, wxEXPAND);
 	TopSizer = new wxBoxSizer(wxHORIZONTAL);
 	TopSizer->Add(videoBox, 0, wxEXPAND, 0);
-	TopSizer->Add(ToolsSizer, 1, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 5);
-	// The visual tools sit in the middle between the video and the waveform
-	videoBox->SetToolbarGap(5 + audioBox->DisplayInset());
+	TopSizer->Add(ToolsSizer, 1, wxEXPAND | wxLEFT, gap);
+	// The visual tools sit in the middle between the video and the audio
+	videoBox->SetToolbarGap(gap);
 	MainSizer = new wxBoxSizer(wxVERTICAL);
-	MainSizer->Add(new wxStaticLine(Panel),0,wxEXPAND,0);
-	MainSizer->Add(TopSizer,0,wxEXPAND,0);
-	MainSizer->Add(context->subsGrid,1,wxEXPAND,0);
+	MainSizer->Add(TopSizer, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, gap);
+	MainSizer->Add(context->subsGrid, 1, wxEXPAND | wxALL, gap);
 	Panel->SetSizer(MainSizer);
 	tabs->SetEditor(Panel);
 	BindConnection(tabs->AddChangeListener(&FrameMain::UpdateStatus, this));

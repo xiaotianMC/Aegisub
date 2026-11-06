@@ -56,37 +56,43 @@ VideoBox::VideoBox(wxWindow *parent, bool isDetached, agi::Context *context)
 : wxPanel(parent, -1)
 , context(context)
 {
-	auto videoSlider = new VideoSlider(this, context);
+	// Two blocks on the backdrop (docs/theme.md): the video with its
+	// controls, and the visual tools to its right.
+	theme::UseBackdrop(this);
+	auto videoArea = new wxPanel(this, -1);
+	theme::UseSurface(videoArea);
+	auto toolsArea = new wxPanel(this, -1);
+	theme::UseSurface(toolsArea);
+
+	auto videoSlider = new VideoSlider(videoArea, context);
 	videoSlider->SetToolTip(_("Seek video"));
 
-	auto mainToolbar = toolbar::GetToolbar(this, "video", context, "Video", false);
+	auto mainToolbar = toolbar::GetToolbar(videoArea, "video", context, "Video", false);
 
-	VideoPosition = new wxTextCtrl(this, -1, "", wxDefaultPosition, DipSize(110, -1), wxTE_READONLY);
+	VideoPosition = new wxTextCtrl(videoArea, -1, "", wxDefaultPosition, DipSize(110, -1), wxTE_READONLY);
 	VideoPosition->SetToolTip(_("Current frame time and number"));
 
-	VideoSubsPos = new wxTextCtrl(this, -1, "", wxDefaultPosition, DipSize(110, -1), wxTE_READONLY);
+	VideoSubsPos = new wxTextCtrl(videoArea, -1, "", wxDefaultPosition, DipSize(110, -1), wxTE_READONLY);
 	VideoSubsPos->SetToolTip(_("Time of this frame relative to start and end of current subs"));
 
 	wxArrayString choices;
 	for (int i = 1; i <= 24; ++i)
 		choices.Add(fmt_wx("%g%%", i * 12.5));
-	auto zoomBox = new wxComboBox(this, -1, "75%", wxDefaultPosition, wxDefaultSize, choices, wxCB_DROPDOWN | wxTE_PROCESS_ENTER);
+	auto zoomBox = new wxComboBox(videoArea, -1, "75%", wxDefaultPosition, wxDefaultSize, choices, wxCB_DROPDOWN | wxTE_PROCESS_ENTER);
 
-	auto visualToolBar = toolbar::GetToolbar(this, "visual_tools", context, "Video", true);
-	auto visualSubToolBar = new wxToolBar(this, -1, wxDefaultPosition, wxDefaultSize, wxTB_VERTICAL | wxTB_BOTTOM | wxTB_NODIVIDER | wxTB_FLAT);
+	auto visualToolBar = toolbar::GetToolbar(toolsArea, "visual_tools", context, "Video", true);
+	auto visualSubToolBar = new wxToolBar(toolsArea, -1, wxDefaultPosition, wxDefaultSize, wxTB_VERTICAL | wxTB_BOTTOM | wxTB_NODIVIDER | wxTB_FLAT);
 
-	auto videoDisplay = new VideoDisplay(visualSubToolBar, isDetached, zoomBox, this, context);
+	auto videoDisplay = new VideoDisplay(visualSubToolBar, isDetached, zoomBox, videoArea, context);
 	videoDisplay->MoveBeforeInTabOrder(videoSlider);
 
 	auto toolbarSizer = new wxBoxSizer(wxVERTICAL);
 	toolbarSizer->Add(visualToolBar, wxSizerFlags(1));
 	toolbarSizer->Add(visualSubToolBar, wxSizerFlags());
-
-	// The visual tools sit to the right of the video, between it and the
-	// audio display in the main window.
-	auto topSizer = new wxBoxSizer(wxHORIZONTAL);
-	topSizer->Add(videoDisplay, isDetached, isDetached ? wxEXPAND : 0);
-	toolbar_item = topSizer->Add(toolbarSizer, 0, wxEXPAND);
+	toolsArea->SetSizer(toolbarSizer);
+	// Toolbars have a colour of their own in some themes: the block's instead
+	for (wxWindow *bar : {static_cast<wxWindow*>(mainToolbar), static_cast<wxWindow*>(visualToolBar), static_cast<wxWindow*>(visualSubToolBar)})
+		theme::UseSurface(bar);
 
 	auto videoBottomSizer = new wxBoxSizer(wxHORIZONTAL);
 	videoBottomSizer->Add(mainToolbar, wxSizerFlags(0).Center());
@@ -95,11 +101,17 @@ VideoBox::VideoBox(wxWindow *parent, bool isDetached, agi::Context *context)
 	videoBottomSizer->Add(zoomBox, wxSizerFlags(0).Center().Border(wxLEFT | wxRIGHT));
 
 	auto VideoSizer = new wxBoxSizer(wxVERTICAL);
-	VideoSizer->Add(topSizer, 1, wxEXPAND, 0);
-	VideoSizer->Add(new wxStaticLine(this), 0, wxEXPAND, 0);
+	VideoSizer->Add(videoDisplay, 1, isDetached ? wxEXPAND : 0, 0);
 	VideoSizer->Add(videoSlider, 0, wxEXPAND, 0);
 	VideoSizer->Add(videoBottomSizer, 0, wxEXPAND | wxBOTTOM, 5);
-	SetSizer(VideoSizer);
+	videoArea->SetSizer(VideoSizer);
+
+	// The visual tools sit to the right of the video, between it and the
+	// audio display in the main window.
+	auto blocks = new wxBoxSizer(wxHORIZONTAL);
+	blocks->Add(videoArea, isDetached, wxEXPAND);
+	toolbar_item = blocks->Add(toolsArea, 0, wxEXPAND | wxLEFT, theme::BlockGap(this));
+	SetSizer(blocks);
 
 	UpdateTimeBoxes();
 
@@ -145,7 +157,6 @@ void VideoBox::UpdateTimeBoxes() {
 void VideoBox::SetToolbarGap(int gap) {
 	// Same space on both sides of the visual tools: the caller passes the
 	// space between them and whatever is to their right.
-	toolbar_item->SetFlag(wxEXPAND | wxLEFT);
 	toolbar_item->SetBorder(gap);
 	Layout();
 }

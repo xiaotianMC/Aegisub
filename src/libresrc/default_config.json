@@ -156,14 +156,14 @@
 					"Lightness Scale" : 300.0
 				},
 				"UI" : {
-					"Light" : "rgb(64, 220, 152)",
-					"Dark" : "rgb(0, 0, 0)",
-					"Selection" : "rgb(18, 64, 44)"
+					"Light" : "rgb(150, 150, 150)",
+					"Dark" : "rgb(38, 38, 38)",
+					"Selection" : "rgb(28, 84, 58)"
 				},
 				"UI Focused" : {
-					"Light" : "rgb(120, 240, 186)",
-					"Dark" : "rgb(0, 0, 0)",
-					"Selection" : "rgb(18, 64, 44)"
+					"Light" : "rgb(196, 196, 196)",
+					"Dark" : "rgb(38, 38, 38)",
+					"Selection" : "rgb(28, 84, 58)"
 				}
 			},
 			"Green" : {

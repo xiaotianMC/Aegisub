@@ -57,6 +57,10 @@ class AudioWaveformRenderer final : public AudioRendererBitmapProvider {
 	/// Whether to draw horizontal lines at the levels of DbGrid()
 	bool draw_db_grid;
 
+	/// Smallest distance between two lines of the dB scale, set by the
+	/// display from the height of its values
+	int db_grid_gap = 16;
+
 	void OnSetProvider() override { audio_buffer.reset(); }
 	void OnSetMillisecondsPerPixel() override { audio_buffer.reset(); }
 
@@ -97,9 +101,10 @@ public:
 	/// half the height of 0 dB.
 	static std::vector<DbLevel> DbGrid(int height, float amplitude_scale, int min_gap);
 	/// Smallest distance between two lines of the dB scale
-	static int DbGridGap(int /* height */) { return 16; }
+	int DbGridGap() const { return db_grid_gap; }
+	void SetDbGridGap(int gap) { db_grid_gap = std::max(1, gap); }
 	/// Colour of the lines of the dB scale
-	static wxColour DbGridColour() { return wxColour(78, 78, 78); }
+	static wxColour DbGridColour() { return wxColour(24, 66, 40); }
 	/// Colour of the dB values drawn over the waveform
-	static wxColour DbLabelColour() { return wxColour(170, 170, 170); }
+	static wxColour DbLabelColour() { return wxColour(120, 170, 140); }
 };

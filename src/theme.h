@@ -13,6 +13,8 @@
 
 #include <wx/colour.h>
 
+class wxWindow;
+
 namespace theme {
 /// Values of "App/Theme".
 enum class Mode { System = 0, Light = 1, Dark = 2 };
@@ -56,4 +58,19 @@ struct Ui {
     wxColour list_selected;            ///< The selected row's background
 };
 Ui UiColours();
+
+/// Main window layout (docs/theme.md): content blocks (video, visual tools,
+/// audio, editor, grid) on a darker backdrop, told apart by colour alone,
+/// with no borders between them.
+/// The colour of the blocks: the toolkit's own panel colour, so native
+/// controls on them match.
+wxColour Surface();
+/// The colour between the blocks.
+wxColour Backdrop();
+/// Space between two blocks, in pixels for @p window's display.
+int BlockGap(wxWindow const *window);
+/// Give @p window the block or backdrop colour now and after every change
+/// of appearance, for as long as it exists.
+void UseSurface(wxWindow *window);
+void UseBackdrop(wxWindow *window);
 }

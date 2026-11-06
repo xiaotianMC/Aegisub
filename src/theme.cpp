@@ -10,9 +10,12 @@
 
 #include <cstring>
 #include <map>
+#include <memory>
 
 #include <wx/app.h>
+#include <wx/window.h>
 #include <wx/settings.h>
+#include <wx/toolbar.h>
 
 #ifdef WITH_GTK3_APPEARANCE
 #include <gtk/gtk.h>
@@ -186,6 +189,46 @@ void SystemColoursChanged() {
 agi::signal::UnscopedConnection AddChangeListener(std::function<void()> listener) {
     return changed.Connect(std::move(listener));
 }
+
+wxColour Surface() {
+#ifdef __WXGTK__
+    // GTK themes draw toolbars in a colour of their own that they keep
+    // whatever the program asks: take it for the whole block.
+    return wxToolBar::GetClassDefaultAttributes().colBg;
+#else
+    return wxSystemSettings::GetColour(wxSYS_COLOUR_BTNFACE);
+#endif
+}
+
+wxColour Backdrop() {
+    // Darker than the blocks in both appearances, like video editors do:
+    // a little in the light one, clearly in the dark one.
+    wxColour surface = Surface();
+    double keep = IsDark() ? 0.62 : 0.86;
+    auto channel = [&](unsigned char c) { return static_cast<unsigned char>(c * keep + 0.5); };
+    return wxColour(channel(surface.Red()), channel(surface.Green()), channel(surface.Blue()));
+}
+
+int BlockGap(wxWindow const *window) {
+    return window ? window->FromDIP(5) : 5;
+}
+
+namespace {
+void Use(wxWindow *window, wxColour (*colour)()) {
+    window->SetBackgroundColour(colour());
+    auto connection = std::make_shared<agi::signal::Connection>(AddChangeListener([window, colour] {
+        window->SetBackgroundColour(colour());
+        window->Refresh();
+    }));
+    window->Bind(wxEVT_DESTROY, [window, connection](wxWindowDestroyEvent &event) {
+        if (event.GetEventObject() == window) connection->Disconnect();
+        event.Skip();
+    });
+}
+}
+
+void UseSurface(wxWindow *window) { Use(window, Surface); }
+void UseBackdrop(wxWindow *window) { Use(window, Backdrop); }
 
 Ui UiColours() {
     if (IsDark()) return {{0x6f, 0xb0, 0xff}, {0x4a, 0x3f, 0x1c}, {0xf3, 0xe6, 0xb5},

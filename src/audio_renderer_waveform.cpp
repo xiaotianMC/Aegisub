@@ -119,7 +119,7 @@ void AudioWaveformRenderer::Render(wxBitmap &bmp, int start, AudioRenderingStyle
 	// The dB scale, behind the waveform
 	if (draw_db_grid) {
 		dc.SetPen(wxPen(DbGridColour()));
-		for (auto const& level : DbGrid(rect.height, amplitude_scale, DbGridGap(rect.height))) {
+		for (auto const& level : DbGrid(rect.height, amplitude_scale, db_grid_gap)) {
 			dc.DrawLine(0, midpoint - level.offset, rect.width, midpoint - level.offset);
 			dc.DrawLine(0, midpoint + level.offset, rect.width, midpoint + level.offset);
 		}

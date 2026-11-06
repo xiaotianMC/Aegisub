@@ -440,7 +440,10 @@ void VideoDisplay::FitClientSizeToVideo() {
 		SetMaxClientSize(newViewportSize / scale_factor);
 		SetMinClientSize(newViewportSize / scale_factor);
 
-		GetGrandParent()->Layout();
+		// Lay out every window that holds the video, up to the main
+		// panel: the video's block, the video box and the window around it
+		for (wxWindow *w = GetParent(); w && !w->IsTopLevel(); w = w->GetParent())
+			if (w->GetSizer()) w->Layout();
 	}
 
 	UpdateViewportSize(true, newViewportSize); // must be called after setting the client size
@@ -726,7 +729,10 @@ void VideoDisplay::SetTool(std::unique_ptr<VisualToolBase> new_tool) {
 		FitClientSizeToVideo();
 	else {
 		// FitClientSizeToVideo fits the window to the video, which we don't want to do
-		GetGrandParent()->Layout();
+		// Lay out every window that holds the video, up to the main
+		// panel: the video's block, the video box and the window around it
+		for (wxWindow *w = GetParent(); w && !w->IsTopLevel(); w = w->GetParent())
+			if (w->GetSizer()) w->Layout();
 		PositionVideo();
 	}
 }

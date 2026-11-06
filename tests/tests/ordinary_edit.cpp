@@ -847,17 +847,22 @@ TEST_F(ordinary_edit, visual_tools_sit_to_the_right_of_the_video) {
         auto video_box = new VideoBox(window, detached, c.get());
         VideoDisplay *display = nullptr;
         std::vector<wxToolBar*> bars;
-        for (auto child : video_box->GetChildren()) {
-            if (auto d = dynamic_cast<VideoDisplay*>(child)) display = d;
-            if (auto bar = dynamic_cast<wxToolBar*>(child); bar && bar->HasFlag(wxTB_VERTICAL)) bars.push_back(bar);
-        }
+        std::function<void(wxWindow*)> find = [&](wxWindow *w) {
+            for (auto child : w->GetChildren()) {
+                if (auto d = dynamic_cast<VideoDisplay*>(child)) display = d;
+                if (auto bar = dynamic_cast<wxToolBar*>(child); bar && bar->HasFlag(wxTB_VERTICAL)) bars.push_back(bar);
+                find(child);
+            }
+        };
+        find(video_box);
         ASSERT_NE(nullptr, display);
         ASSERT_EQ(2u, bars.size()) << "the visual tools and their sub-tools";
         display->SetMinSize(wxSize(320, 240));
         video_box->SetSize(0, 0, 600, 400);
         video_box->Layout();
+        auto x_in_box = [&](wxWindow *w) { int x = 0; for (; w && w != video_box; w = w->GetParent()) x += w->GetPosition().x; return x; };
         for (auto bar : bars)
-            EXPECT_GE(bar->GetPosition().x, display->GetRect().GetRight()) << "detached: " << detached;
+            EXPECT_GE(x_in_box(bar), x_in_box(display) + display->GetSize().x) << "detached: " << detached;
         video_box->Destroy();
     }
 }
@@ -985,6 +990,47 @@ TEST_F(audio_edit, studio_waveform_shades_only_selected_ranges_and_draws_a_db_sc
     MigrateAudioColourSchemes();
     EXPECT_EQ("Green", OPT_GET("Colour/Audio Display/Waveform")->GetString()) << "a later choice stays";
     EXPECT_EQ(3u, OPT_GET("Audio/Colour Schemes")->GetListString().size());
+
+    // The first Studio's green ruler and scrollbar turn grey; a colour the
+    // user picked stays.
+    OPT_SET("Colour/Schemes/Studio/UI/Light")->SetColor(agi::Color(64, 220, 152));
+    OPT_SET("Colour/Schemes/Studio/UI/Dark")->SetColor(agi::Color(0, 0, 0));
+    OPT_SET("Colour/Schemes/Studio/UI Focused/Light")->SetColor(agi::Color(1, 2, 3));
+    MigrateAudioColourSchemes();
+    EXPECT_EQ(agi::Color(150, 150, 150), OPT_GET("Colour/Schemes/Studio/UI/Light")->GetColor());
+    EXPECT_EQ(agi::Color(38, 38, 38), OPT_GET("Colour/Schemes/Studio/UI/Dark")->GetColor());
+    EXPECT_EQ(agi::Color(1, 2, 3), OPT_GET("Colour/Schemes/Studio/UI Focused/Light")->GetColor());
+    auto grey = OPT_GET("Colour/Schemes/Studio/UI/Light")->GetColor();
+    EXPECT_TRUE(grey.r == grey.g && grey.g == grey.b) << "the ruler's ticks and seconds are grey";
+}
+
+TEST_F(audio_edit, db_scale_values_never_overlap) {
+    // Any height, any vertical zoom, a large font (high display scale): the
+    // values sit on their lines, inside the display and apart.
+    OPT_SET("Audio/Spectrum")->SetBool(false);
+    OPT_SET("Audio/Display/Draw/dB Scale")->SetBool(true);
+    auto display=Display();
+    wxClientDC dc(display);
+    for (int point : {9, 16}) {
+        wxFont font = display->GetFont(); font.SetPointSize(point); display->SetFont(font);
+        dc.SetFont(font.Scaled(0.8f));
+        for (int height = 60; height <= 400; height += 7) {
+            for (float scale : {0.5f, 1.f, 1.7f, 4.f}) {
+                display->SetSize(0,0,900,height+40);
+                display->SetAmplitudeScale(scale);
+                auto labels = display->DbLabelRects(dc);
+                int top = display->GetClientSize().y; int bottom = 0;
+                for (size_t i = 0; i < labels.size(); ++i) {
+                    for (size_t j = i + 1; j < labels.size(); ++j)
+                        EXPECT_FALSE(labels[i].rect.Intersects(labels[j].rect)) << point << "pt, height " << height << ", scale " << scale << ": " << labels[i].text << " and " << labels[j].text;
+                    top = std::min(top, labels[i].rect.y); bottom = std::max(bottom, labels[i].rect.GetBottom());
+                }
+                if (!labels.empty()) EXPECT_LT(bottom, display->GetClientSize().y - 10) << "above the scrollbar";
+            }
+        }
+        // Lines are at least a value apart, so the lines and values agree.
+        EXPECT_GE(display->DbLabelGap(), dc.GetCharHeight());
+    }
 }
 
 TEST_F(audio_edit, dialogue_manual_drag_cancel_never_writes_or_adds_history) {
@@ -3856,32 +3902,63 @@ TEST_F(ordinary_edit, timecode_only_and_busy_subtitle_drops_do_not_offer_compari
     EXPECT_EQ((std::vector<std::string>{"keep"}), LiveTexts(*c));
     EXPECT_FALSE(hook.messages.empty());
 }
-TEST_F(audio_edit, visual_tools_are_centred_between_the_video_and_the_waveform) {
-    // The main window's arrangement: video, then the audio box 5 px further.
+TEST_F(audio_edit, main_window_blocks_sit_on_a_backdrop_without_borders) {
+    // The main window's arrangement: the video and visual tools blocks, then
+    // the audio block, the same gap between all of them.
+    BOOST_SCOPE_EXIT_ALL() { OPT_SET("App/Theme")->SetInt(1); };
+    OPT_SET("App/Theme")->SetInt(1);
+    theme::Init();
     auto root=new wxPanel(window);root->SetSize(0,0,1400,700);
+    theme::UseBackdrop(root);
+    const int gap=theme::BlockGap(root);
     auto video_box=new VideoBox(root,false,c.get());
     auto audio_box=c->audioBox=new AudioBox(root,c.get());
-    auto tools=new wxBoxSizer(wxVERTICAL);tools->Add(audio_box,0,wxEXPAND);tools->AddStretchSpacer(1);
-    auto top=new wxBoxSizer(wxHORIZONTAL);top->Add(video_box,0,wxEXPAND);top->Add(tools,1,wxEXPAND|wxLEFT|wxRIGHT|wxBOTTOM,5);
+    auto edit_box=new SubsEditBox(root,c.get());
+    auto grid=new BaseGrid(root,c.get());
+    auto tools=new wxBoxSizer(wxVERTICAL);tools->Add(audio_box,0,wxEXPAND);tools->Add(edit_box,1,wxEXPAND);
+    auto top=new wxBoxSizer(wxHORIZONTAL);top->Add(video_box,0,wxEXPAND);top->Add(tools,1,wxEXPAND|wxLEFT,gap);
     root->SetSizer(top);
-    video_box->SetToolbarGap(5+audio_box->DisplayInset());
+    video_box->SetToolbarGap(gap);
     VideoDisplay *display=nullptr;std::vector<wxToolBar*> bars;
-    for(auto child:video_box->GetChildren()){
+    std::function<void(wxWindow*)> find=[&](wxWindow*w){for(auto child:w->GetChildren()){
         if(auto d=dynamic_cast<VideoDisplay*>(child))display=d;
-        if(auto b=dynamic_cast<wxToolBar*>(child);b&&b->HasFlag(wxTB_VERTICAL))bars.push_back(b);
-    }
+        if(auto b=dynamic_cast<wxToolBar*>(child);b&&b->HasFlag(wxTB_VERTICAL))bars.push_back(b);find(child);}};
+    find(video_box);
     ASSERT_NE(nullptr,display);ASSERT_EQ(2u,bars.size());
     display->SetMinSize(wxSize(640,360));
     root->Layout();
     auto x_in_root=[&](wxWindow*w){int x=0;for(;w&&w!=root;w=w->GetParent())x+=w->GetPosition().x;return x;};
-    AudioDisplay* waveform=nullptr;
-    std::function<void(wxWindow*)> find=[&](wxWindow*w){for(auto ch:w->GetChildren()){if(auto d=dynamic_cast<AudioDisplay*>(ch))waveform=d;find(ch);}};
-    find(audio_box);ASSERT_NE(nullptr,waveform);
-    int video_right=x_in_root(display)+display->GetSize().x;
-    int bar_left=x_in_root(bars[0]),bar_right=bar_left+bars[0]->GetSize().x;
-    int wave_left=x_in_root(audio_box)+audio_box->DisplayInset();
-    EXPECT_GT(bar_left-video_right,0);
-    EXPECT_EQ(bar_left-video_right,wave_left-bar_right) << "video " << video_right << ", tools " << bar_left << ".." << bar_right << ", waveform " << wave_left;
+    wxWindow *video_block=display->GetParent(), *tools_block=bars[0]->GetParent();
+    ASSERT_NE(video_block,tools_block);
+    EXPECT_EQ(video_box,video_block->GetParent());EXPECT_EQ(video_box,tools_block->GetParent());
+    int video_right=x_in_root(video_block)+video_block->GetSize().x;
+    int tools_left=x_in_root(tools_block),tools_right=tools_left+tools_block->GetSize().x;
+    EXPECT_EQ(gap,tools_left-video_right) << "between the video and the tools";
+    EXPECT_EQ(gap,x_in_root(audio_box)-tools_right) << "between the tools and the audio";
+    EXPECT_EQ(video_box->GetSize().y,tools_block->GetSize().y) << "the tools block runs the full height";
+
+    for (int mode : {1, 2}) {
+        OPT_SET("App/Theme")->SetInt(mode);
+        // Blocks in the toolkit's panel colour, darker between them.
+        for (wxWindow *block : {video_block, tools_block, static_cast<wxWindow*>(edit_box)})
+            EXPECT_EQ(theme::Surface(), block->GetBackgroundColour()) << "mode " << mode;
+        for (wxWindow *backdrop : {static_cast<wxWindow*>(root), static_cast<wxWindow*>(video_box), static_cast<wxWindow*>(audio_box)})
+            EXPECT_EQ(theme::Backdrop(), backdrop->GetBackgroundColour()) << "mode " << mode;
+        auto lightness=[](wxColour c){return c.Red()+c.Green()+c.Blue();};
+        EXPECT_LT(lightness(theme::Backdrop()),lightness(theme::Surface()));
+    }
+
+    // No border on any block, nor on what fills them.
+    AudioDisplay *waveform=nullptr;
+    std::function<void(wxWindow*)> find_audio=[&](wxWindow*w){for(auto ch:w->GetChildren()){if(auto d=dynamic_cast<AudioDisplay*>(ch))waveform=d;find_audio(ch);}};
+    find_audio(audio_box);ASSERT_NE(nullptr,waveform);
+    for (wxWindow *w : {static_cast<wxWindow*>(edit_box), static_cast<wxWindow*>(grid), static_cast<wxWindow*>(waveform), waveform->GetParent(), static_cast<wxWindow*>(c->karaoke)})
+        EXPECT_EQ(wxBORDER_NONE, w->GetBorder()) << w->GetClassInfo()->GetClassName();
+    EXPECT_FALSE(audio_box->HasFlag(wxSW_3D)) << "no raised resize strip";
+    EXPECT_EQ(gap,audio_box->GetDefaultBorderSize()) << "the gap below the audio is its resize strip";
+    int stc=0;
+    std::function<void(wxWindow*)> editors=[&](wxWindow*w){for(auto ch:w->GetChildren()){if(dynamic_cast<SubsTextEditCtrl*>(ch)){++stc;EXPECT_EQ(wxBORDER_NONE,ch->GetBorder());}editors(ch);}};
+    editors(edit_box);EXPECT_EQ(1,stc);
 }
 
 TEST_F(audio_edit, scrollbar_thumb_edges_zoom_and_alt_wheel_zooms) {
