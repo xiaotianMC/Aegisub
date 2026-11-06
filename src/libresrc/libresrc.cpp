@@ -15,6 +15,9 @@
 #include "libresrc.h"
 
 #include <algorithm>
+#include <cctype>
+#include <cstdio>
+#include <cstring>
 #include <cmath>
 #include <map>
 #include <string>
@@ -99,19 +102,219 @@ bool libresrc_dark() { return dark_mode; }
 void libresrc_set_classic(bool classic) { classic_icons = classic; }
 bool libresrc_classic() { return classic_icons; }
 
-wxBitmapBundle libresrc_modern_bundle(const char *body, int height, int dir, bool flyout) {
-	// Toolbar text colours, a little softer than black or white
-	const std::string colour = dark_mode ? "#d0d0d0" : "#404040";
+namespace {
+// Pixel hinting for the monochrome icons (docs/icons.md): drawn on a 16 grid
+// with a 1.5 stroke, they would be soft at 16px, the 1.5 lines falling across
+// two columns of pixels. So each size gets a whole number of pixels for the
+// stroke and the drawing's coordinates moved by under a pixel to sit on the
+// pixel grid: line centres on pixel centres for odd widths, on pixel edges for
+// even ones.
+struct Hinter {
+	double scale; // pixels per unit
+	int width;    // stroke width in pixels
+
+	explicit Hinter(int px) : scale(px / 16.0), width(std::max(1, static_cast<int>(std::floor(scale * 1.25 + 0.5)))) { }
+
+	// A stroke's centre
+	double Line(double v) const {
+		double d = v * scale;
+		d = width % 2 ? std::floor(d + 1e-6) + 0.5 : std::floor(d + 0.5 + 1e-6);
+		return d / scale;
+	}
+	// A length, or the edge of a filled area
+	double Whole(double v) const { return std::round(v * scale) / scale; }
+	double StrokeUnits() const { return width / scale; }
+
+	static std::string Format(double v) {
+		char buf[32];
+		snprintf(buf, sizeof buf, "%.4f", v);
+		std::string s = buf;
+		s.erase(s.find_last_not_of('0') + 1);
+		if (s.back() == '.') s.pop_back();
+		return s == "-0" ? "0" : s;
+	}
+
+	std::string Path(std::string_view d) const {
+		std::vector<std::string> tokens;
+		for (size_t i = 0; i < d.size(); ) {
+			char ch = d[i];
+			if (isalpha(static_cast<unsigned char>(ch)) && ch != 'e') { tokens.emplace_back(1, ch); ++i; }
+			else if (ch == '-' || ch == '.' || isdigit(static_cast<unsigned char>(ch))) {
+				size_t j = i + 1;
+				bool dot = ch == '.';
+				while (j < d.size() && (isdigit(static_cast<unsigned char>(d[j])) || (d[j] == '.' && !dot) || d[j] == 'e' || (d[j] == '-' && d[j - 1] == 'e'))) {
+					if (d[j] == '.') dot = true;
+					++j;
+				}
+				tokens.emplace_back(d.substr(i, j - i));
+				i = j;
+			}
+			else ++i;
+		}
+		std::string out;
+		size_t i = 0;
+		char cmd = 0;
+		double moved_x = 0, moved_y = 0; // how far the last point moved
+		auto num = [&] { return i < tokens.size() ? std::stod(tokens[i++]) : 0.0; };
+		auto put = [&](double v) { if (!out.empty() && !isalpha(static_cast<unsigned char>(out.back()))) out += ' '; out += Format(v); };
+		while (i < tokens.size()) {
+			if (isalpha(static_cast<unsigned char>(tokens[i][0]))) { cmd = tokens[i++][0]; out += cmd; }
+			switch (cmd) {
+			case 'Z': case 'z': continue;
+			case 'M': case 'L': {
+				double x = num(), y = num(), nx = Line(x), ny = Line(y);
+				put(nx); put(ny);
+				moved_x = nx - x; moved_y = ny - y;
+				if (cmd == 'M') cmd = 'L';
+				break;
+			}
+			case 'H': put(Line(num())); break;
+			case 'V': put(Line(num())); break;
+			case 'm': case 'l':
+				put(Whole(num())); put(Whole(num()));
+				if (cmd == 'm') cmd = 'l';
+				break;
+			case 'A': case 'a': {
+				for (int k = 0; k < 5; ++k) put(num());
+				double x = num(), y = num();
+				if (cmd == 'A') { put(Line(x)); put(Line(y)); }
+				else { put(Whole(x)); put(Whole(y)); }
+				break;
+			}
+			case 'C': {
+				// Control points move with the end they belong to
+				double x1 = num(), y1 = num(), x2 = num(), y2 = num(), x = num(), y = num();
+				double nx = Line(x), ny = Line(y);
+				put(x1 + moved_x); put(y1 + moved_y); put(x2 + nx - x); put(y2 + ny - y); put(nx); put(ny);
+				moved_x = nx - x; moved_y = ny - y;
+				break;
+			}
+			case 'S': {
+				double x2 = num(), y2 = num(), x = num(), y = num(), nx = Line(x), ny = Line(y);
+				put(x2 + nx - x); put(y2 + ny - y); put(nx); put(ny);
+				moved_x = nx - x; moved_y = ny - y;
+				break;
+			}
+			default: // Not used by the icons: kept as drawn
+				put(num());
+			}
+		}
+		return out;
+	}
+
+	static bool Attr(std::string const& el, const char *name, std::string *value) {
+		std::string key = std::string(" ") + name + "='";
+		auto pos = el.find(key);
+		if (pos == std::string::npos) return false;
+		auto end = el.find('\'', pos + key.size());
+		if (value) *value = el.substr(pos + key.size(), end - pos - key.size());
+		return true;
+	}
+	static double Num(std::string const& el, const char *name) {
+		std::string v;
+		return Attr(el, name, &v) ? std::stod(v) : 0;
+	}
+	static void Set(std::string& el, const char *name, std::string const& v) {
+		std::string key = std::string(" ") + name + "='";
+		auto pos = el.find(key);
+		if (pos == std::string::npos) return;
+		pos += key.size();
+		el.replace(pos, el.find('\'', pos) - pos, v);
+	}
+
+	std::string Element(std::string el) const {
+		if (Attr(el, "stroke-width", nullptr)) return el; // Its own weight: as drawn
+		std::string stroke;
+		bool stroked = !(Attr(el, "stroke", &stroke) && stroke == "none");
+		if (el.starts_with("<path")) {
+			std::string d;
+			if (Attr(el, "d", &d)) Set(el, "d", Path(d));
+		}
+		else if (el.starts_with("<circle") || el.starts_with("<ellipse")) {
+			if (!stroked) return el;
+			bool circle = el.starts_with("<circle");
+			double rx = Num(el, circle ? "r" : "rx"), ry = Num(el, circle ? "r" : "ry");
+			// The outline's left and top edge on the grid
+			Set(el, "cx", Format(Line(Num(el, "cx") - rx) + rx));
+			Set(el, "cy", Format(Line(Num(el, "cy") - ry) + ry));
+		}
+		else if (el.starts_with("<rect")) {
+			double x = Num(el, "x"), y = Num(el, "y"), w = Num(el, "width"), h = Num(el, "height");
+			auto snap = [&](double v) { return stroked ? Line(v) : Whole(v); };
+			double x0 = snap(x), y0 = snap(y), x1 = snap(x + w), y1 = snap(y + h);
+			Set(el, "x", Format(x0)); Set(el, "y", Format(y0));
+			Set(el, "width", Format(x1 - x0)); Set(el, "height", Format(y1 - y0));
+		}
+		return el;
+	}
+
+	std::string Body(std::string_view body) const {
+		std::string out;
+		size_t pos = 0;
+		while (pos < body.size()) {
+			auto start = body.find('<', pos);
+			if (start == std::string_view::npos) { out += body.substr(pos); break; }
+			out += body.substr(pos, start - pos);
+			auto end = body.find('>', start);
+			std::string el(body.substr(start, end - start + 1));
+			for (auto tag : {"<path", "<circle", "<ellipse", "<rect"})
+				if (el.starts_with(tag) && isspace(static_cast<unsigned char>(el[strlen(tag)]))) { el = Element(el); break; }
+			out += el;
+			pos = end + 1;
+		}
+		return out;
+	}
+};
+
+std::string ModernSvg(std::string_view body, int px, int dir, bool flyout, bool dark) {
+	// Near the toolbar text colours: dark grey on light, light grey on dark
+	const std::string colour = dark ? "#d8d8d8" : "#2b2b2b";
+	Hinter hint(px);
 	std::string svg = "<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'>";
 	svg += dir == wxLayout_RightToLeft ? "<g transform='matrix(-1 0 0 1 16 0)'>" : "<g>";
-	svg += "<g fill='none' stroke='@' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'>";
-	svg += body;
+	svg += "<g fill='none' stroke='@' stroke-width='" + Hinter::Format(hint.StrokeUnits()) + "' stroke-linecap='round' stroke-linejoin='round'>";
+	svg += hint.Body(body);
 	svg += "</g>";
 	if (flyout) svg += "<path d='M15.5 12.5V15.5H12.5Z' fill='@'/>";
 	svg += "</g></svg>";
 	for (size_t pos; (pos = svg.find('@')) != std::string::npos; )
 		svg.replace(pos, 1, colour);
-	return wxBitmapBundle::FromSVG(svg.c_str(), wxSize(height, height));
+	return svg;
+}
+
+// Drawn for each size asked for, hinted for that size
+class ModernBundle final : public wxBitmapBundleImpl {
+	std::string body;
+	wxSize size;
+	int dir;
+	bool flyout, dark;
+	std::map<std::pair<int, int>, wxBitmap> bitmaps;
+
+public:
+	ModernBundle(std::string body, int height, int dir, bool flyout, bool dark)
+	: body(std::move(body)), size(height, height), dir(dir), flyout(flyout), dark(dark) { }
+
+	wxSize GetDefaultSize() const override { return size; }
+	wxSize GetPreferredBitmapSizeAtScale(double scale) const override {
+		return wxSize(std::lround(size.x * scale), std::lround(size.y * scale));
+	}
+	wxBitmap GetBitmap(wxSize const& want) override {
+		auto& bitmap = bitmaps[{want.x, want.y}];
+		if (!bitmap.IsOk()) {
+			auto svg = ModernSvg(body, std::min(want.x, want.y), dir, flyout, dark);
+			bitmap = wxBitmapBundle::FromSVG(svg.c_str(), want).GetBitmap(want);
+		}
+		return bitmap;
+	}
+};
+}
+
+std::string libresrc_modern_svg(const char *body, int px, int dir) {
+	return ModernSvg(body, px, dir, false, dark_mode);
+}
+
+wxBitmapBundle libresrc_modern_bundle(const char *body, int height, int dir, bool flyout) {
+	return wxBitmapBundle::FromImpl(new ModernBundle(body, height, dir, flyout, dark_mode));
 }
 
 bool libresrc_is_glyph(wxImage const& image) {

@@ -103,7 +103,6 @@
 #include <wx/panel.h>
 #include <wx/sizer.h>
 #include <wx/slider.h>
-#include <fstream>
 #include <filesystem>
 #include <boost/scope_exit.hpp>
 
@@ -718,7 +717,7 @@ TEST_F(ordinary_edit, dark_appearance_lightens_dark_icons_and_keeps_coloured_one
     EXPECT_GT(shape.GetAlpha()[24 * 48 + 24], 200);
 }
 
-TEST_F(ordinary_edit, toolbar_icons_are_monochrome_in_the_appearance_colour_unless_classic) {
+TEST_F(ordinary_edit, icons_are_monochrome_in_the_appearance_colour_unless_classic) {
     BOOST_SCOPE_EXIT_ALL() { OPT_SET("App/Theme")->SetInt(1); OPT_SET("App/Classic Icons")->SetBool(false); };
     OPT_SET("App/Theme")->SetInt(1);
     OPT_SET("App/Classic Icons")->SetBool(false);
@@ -729,7 +728,11 @@ TEST_F(ordinary_edit, toolbar_icons_are_monochrome_in_the_appearance_colour_unle
     for (auto name : {"visual_move_conv_move", "visual_move_conv_pos", "shape_rectangle", "shape_ellipse",
                       "shape_triangle", "shape_polygon", "visual_vector_clip_freehand_smooth"})
         EXPECT_NE(nullptr, libresrc_modern_icon(name)) << name;
-    EXPECT_EQ(nullptr, libresrc_modern_icon("eyedropper_tool")) << "others keep their bitmaps";
+    // And every other bitmap: dialogs, the edit box, menus
+    for (auto name : {"eyedropper_tool", "button_bold", "button_color_four", "arrow_sort", "kara_split_accept",
+                      "save_timecodes_menu", "use_dummy_video_menu", "website_button", "toggle_audio_link"})
+        EXPECT_NE(nullptr, libresrc_modern_icon(name)) << name;
+    EXPECT_EQ(nullptr, libresrc_modern_icon("wxicon")) << "the application's own icon stays";
     EXPECT_EQ(nullptr, libresrc_modern_icon("visual_rectang")) << "exact names only";
 
     // One colour: dark grey on light, light grey on dark, at any size.
@@ -743,7 +746,8 @@ TEST_F(ordinary_edit, toolbar_icons_are_monochrome_in_the_appearance_colour_unle
         return found;
     };
     for (auto name : {"subtitle/save", "audio/play/selection", "audio/opt/autocommit", "video/play",
-                      "video/tool/drag", "video/tool/vclip/line", "help/video", "app/options", "time/snap/scene"})
+                      "video/tool/drag", "video/tool/vclip/line", "help/video", "app/options", "time/snap/scene",
+                      "edit/style/bold", "edit/undo", "subtitle/find", "audio/close", "keyframe/save"})
         EXPECT_EQ(1u, colours(IconImage(cmd::get(name)->Icon(16), 16)).size()) << name;
     for (int size : {16, 24, 32}) {
         auto save = IconImage(cmd::get("subtitle/save")->Icon(size), size);
@@ -752,13 +756,32 @@ TEST_F(ordinary_edit, toolbar_icons_are_monochrome_in_the_appearance_colour_unle
         EXPECT_EQ(0, save.GetAlpha()[0]) << "transparent around the drawing";
         auto found = colours(save);
         ASSERT_EQ(1u, found.size()) << size;
-        EXPECT_EQ(std::make_tuple(0x40, 0x40, 0x40), *found.begin());
+        EXPECT_EQ(std::make_tuple(0x28, 0x28, 0x28), *found.begin());
     }
     OPT_SET("App/Theme")->SetInt(2);
     auto dark = colours(IconImage(cmd::get("subtitle/save")->Icon(24), 24));
     ASSERT_EQ(1u, dark.size());
-    EXPECT_EQ(std::make_tuple(0xd0, 0xd0, 0xd0), *dark.begin());
+    EXPECT_EQ(std::make_tuple(0xd8, 0xd8, 0xd8), *dark.begin());
     OPT_SET("App/Theme")->SetInt(1);
+
+    // Hinted to the pixel grid: a whole number of pixels for the stroke, so
+    // lines are solid pixels rather than two half-covered columns.
+    auto partial = [](wxImage const& image) {
+        int on = 0, soft = 0;
+        for (int i = 0; i < image.GetWidth() * image.GetHeight(); ++i) {
+            int a = image.GetAlpha()[i];
+            if (a > 30) ++on;
+            if (a > 30 && a < 225) ++soft;
+        }
+        return double(soft) / on;
+    };
+    for (int size : {16, 20, 24, 32})
+        EXPECT_LT(partial(IconImage(cmd::get("subtitle/save")->Icon(size), size)), size == 16 ? 0.25 : 0.12) << size;
+    auto body = libresrc_modern_icon("save_toolbutton");
+    EXPECT_NE(std::string::npos, libresrc_modern_svg(body, 16).find("stroke-width='1'"));
+    EXPECT_NE(std::string::npos, libresrc_modern_svg(body, 16).find("M2.5 2.5H11.5")) << "on pixel centres";
+    EXPECT_NE(std::string::npos, libresrc_modern_svg(body, 20).find("stroke-width='1.6'")) << "2 pixels";
+    EXPECT_NE(std::string::npos, libresrc_modern_svg(body, 32).find("stroke-width='1.5'")) << "3 pixels";
 
     // Right to left, the drawing is mirrored.
     auto next = IconImage(cmd::get("time/next")->Icon(32), 32);

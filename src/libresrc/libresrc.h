@@ -15,6 +15,7 @@
 #pragma once
 
 #include <cstdlib>
+#include <string>
 #include <string_view>
 
 struct LibresrcBlob {
@@ -62,8 +63,12 @@ bool libresrc_classic();
 // The monochrome icon's SVG body, or null if @p name has none
 const char *libresrc_modern_icon(std::string_view name);
 // A monochrome icon from @p body, in the colour for the current appearance;
-// @p flyout adds the corner mark of a tool with a choice of shapes.
+// @p flyout adds the corner mark of a tool with a choice of shapes. Each size
+// is drawn on its own, hinted to the pixel grid: a whole number of pixels for
+// the stroke, lines on pixel centres or edges.
 wxBitmapBundle libresrc_modern_bundle(const char *body, int height, int dir = 0, bool flyout = false);
+// The SVG drawn for @p px pixels (for tests)
+std::string libresrc_modern_svg(const char *body, int px, int dir = 0);
 
 class wxImage;
 // The adaptation itself. @p glyph: the icon is drawn mostly in dark colours,

@@ -8566,8 +8566,8 @@ msgstr "执行"
 msgid "Classic main toolbar (every button)"
 msgstr "经典主工具栏（显示全部按钮）"
 
-msgid "Classic coloured toolbar icons"
-msgstr "经典彩色工具栏图标"
+msgid "Classic coloured icons"
+msgstr "经典彩色图标"
 
 #: src/preferences.cpp
 msgid "Search settings (name or pinyin)"
