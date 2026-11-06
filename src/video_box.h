@@ -34,6 +34,7 @@
 
 #include <vector>
 #include <wx/panel.h>
+#include <wx/string.h>
 
 namespace agi { struct Context; }
 class wxSizerItem;
@@ -55,6 +56,8 @@ private:
 
 	/// Update VideoPosition, VideoSubsPos and the line's span on the slider
 	void UpdateTimeBoxes();
+	/// Seek to a typed frame number or time; false if @p text is neither
+	bool JumpTo(wxString text);
 
 	wxSizerItem *toolbar_item = nullptr;
 

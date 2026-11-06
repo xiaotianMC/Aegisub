@@ -36,8 +36,6 @@
             "video/jump/start",
             "video/jump/end"
         ],
-        "video/zoom/in",
-        "video/zoom/out",
         "",
         "time/snap/start_video",
         "time/snap/end_video",
@@ -102,8 +100,9 @@
     ],
     "video": [
         "video/play",
-        "video/play/line",
-        "video/stop",
+        "video/play/line"
+    ],
+    "video/options": [
         "video/opt/autoscroll"
     ],
     "visual_tools": [

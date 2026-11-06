@@ -56,6 +56,7 @@
 #include "video_box.h"
 #include "video_slider.h"
 #include "video_time_label.h"
+#include "video_zoom_control.h"
 #include "video_controller.h"
 #include "async_video_provider.h"
 #include "video_frame.h"
@@ -826,7 +827,7 @@ TEST_F(ordinary_edit, main_toolbar_groups_dialogs_in_dropdowns_and_has_a_classic
         return found;
     };
     auto grouped = buttons();
-    EXPECT_EQ(15u, grouped.size());
+    EXPECT_EQ(13u, grouped.size()) << "zoom in and out live on the zoom control below the video";
     int dropdowns = 0;
     wxToolBarToolBase const *jump = nullptr;
     size_t menu_entries = 0;
@@ -862,7 +863,7 @@ TEST_F(ordinary_edit, main_toolbar_groups_dialogs_in_dropdowns_and_has_a_classic
     EXPECT_EQ(27u, buttons().size());
     OPT_SET("App/Theme")->SetInt(1);
     OPT_SET("App/Classic Toolbar")->SetBool(false);
-    EXPECT_EQ(15u, buttons().size());
+    EXPECT_EQ(13u, buttons().size());
     bar->Destroy();
 }
 
@@ -985,26 +986,43 @@ TEST_F(ordinary_edit, video_slider_and_readouts_are_flat_and_hold_still) {
      LiveWriteForTest(*c).Commit("line",AssFile::COMMIT_DIAG_TIME);}
     auto video_box=new VideoBox(window,false,c.get());
     BOOST_SCOPE_EXIT_ALL(&) { video_box->Destroy(); c->project->CloseVideo(); c->project->CloseKeyframes(); };
-    VideoSlider *slider=nullptr;std::vector<VideoTimeLabel*> labels;wxComboBox *zoom=nullptr;int text_ctrls=0;
+    VideoSlider *slider=nullptr;std::vector<VideoTimeLabel*> labels;VideoZoomControl *zoom=nullptr;VideoDisplay *display=nullptr;
+    std::vector<wxToolBar*> rows;int shown_text_ctrls=0,combos=0;
     std::function<void(wxWindow*)> find=[&](wxWindow*w){for(auto ch:w->GetChildren()){
         if(auto s=dynamic_cast<VideoSlider*>(ch))slider=s;
         if(auto l=dynamic_cast<VideoTimeLabel*>(ch))labels.push_back(l);
-        if(auto z=dynamic_cast<wxComboBox*>(ch))zoom=z;
-        if(dynamic_cast<wxTextCtrl*>(ch)&&!dynamic_cast<wxComboBox*>(ch))++text_ctrls;
+        if(auto z=dynamic_cast<VideoZoomControl*>(ch))zoom=z;
+        if(auto d=dynamic_cast<VideoDisplay*>(ch))display=d;
+        if(auto b=dynamic_cast<wxToolBar*>(ch);b&&!b->HasFlag(wxTB_VERTICAL))rows.push_back(b);
+        if(dynamic_cast<wxComboBox*>(ch))++combos;
+        else if(dynamic_cast<wxTextCtrl*>(ch)&&ch->IsShown())++shown_text_ctrls;
         find(ch);}};
     find(video_box);
-    ASSERT_NE(nullptr,slider);ASSERT_EQ(2u,labels.size());ASSERT_NE(nullptr,zoom);
-    EXPECT_EQ(0,text_ctrls) << "the readouts are drawn, not text boxes";
+    ASSERT_NE(nullptr,slider);ASSERT_EQ(2u,labels.size());ASSERT_NE(nullptr,zoom);ASSERT_NE(nullptr,display);
+    EXPECT_EQ(0,shown_text_ctrls) << "the readouts are drawn, not text boxes";
+    EXPECT_EQ(0,combos) << "the zoom is a drawn control";
     auto position=labels[0],relative=labels[1];
 
+    // Play and play line, no stop: play pauses while playing.
+    ASSERT_EQ(2u,rows.size());
+    wxToolBar *play_bar=nullptr,*options_bar=nullptr;
+    for(auto bar:rows)(bar->GetToolsCount()==2?play_bar:options_bar)=bar;
+    ASSERT_NE(nullptr,play_bar);ASSERT_NE(nullptr,options_bar);
+    EXPECT_EQ(cmd::get("video/play")->StrDisplay(c.get()),play_bar->GetToolByPos(0)->GetLabel());
+    EXPECT_EQ(cmd::get("video/play/line")->StrDisplay(c.get()),play_bar->GetToolByPos(1)->GetLabel());
+    EXPECT_TRUE(cmd::get("video/play")->Type()&cmd::COMMAND_DYNAMIC_ICON);
+
     // Without video: dashes and no line span.
-    EXPECT_EQ(wxString::FromUTF8("—"),position->GetMain());
+    EXPECT_EQ(wxString(wxUniChar(0x2014)),position->GetMain());
     EXPECT_EQ(-1,slider->GetLineStart());
+    position->StartEditing();
+    EXPECT_FALSE(position->IsEditing()) << "nothing to type without a video";
 
     c->project->LoadVideo("?dummy:25:250:640:480:64:64:64:");
     ASSERT_NE(nullptr,c->project->VideoProvider());
     PumpFirstFrame(c.get(),window);
     c->project->LoadKeyframes(kf);
+    display->SetMinSize(wxSize(640,360));
     video_box->SetSize(0,0,900,600);video_box->Layout();
 
     // The active line's frames are marked on the slider.
@@ -1031,13 +1049,65 @@ TEST_F(ordinary_edit, video_slider_and_readouts_are_flat_and_hold_still) {
 
     // Offsets from the line's start and end, a true minus for negatives.
     c->videoController->JumpToFrame(c->videoController->FrameAtTime(3000,agi::vfr::START));
-    EXPECT_EQ(wxString::FromUTF8("+1000ms"),relative->GetMain());
-    EXPECT_EQ(wxString::FromUTF8("−1000ms"),relative->GetSecondary());
+    EXPECT_EQ("+1000ms",relative->GetMain());
+    EXPECT_EQ(wxString(wxUniChar(0x2212))+"1000ms",relative->GetSecondary());
 
-    // The zoom sits at the right edge of the video block, a gap inside it.
+    // Clicking the time turns it into a text box only while typing.
+    ASSERT_NE(nullptr,position->EditBox());
+    EXPECT_FALSE(position->IsEditing());
+    int height=position->GetSize().y;
+    position->StartEditing();
+    EXPECT_TRUE(position->IsEditing());
+    EXPECT_EQ(position->GetMain(),position->EditBox()->GetValue());
+    EXPECT_EQ(height,position->GetSize().y) << "the label is as tall as the box already";
+    position->EditBox()->ChangeValue("100");position->CommitEditing();
+    EXPECT_EQ(100,c->videoController->GetFrameN()) << "digits are a frame number";
+    EXPECT_FALSE(position->IsEditing());
+    position->StartEditing();position->EditBox()->ChangeValue("0:00:06.000");position->CommitEditing();
+    EXPECT_EQ(c->videoController->FrameAtTime(6000,agi::vfr::START),c->videoController->GetFrameN());
+    position->StartEditing();position->EditBox()->ChangeValue("4.5");position->CommitEditing();
+    EXPECT_EQ(c->videoController->FrameAtTime(4500,agi::vfr::START),c->videoController->GetFrameN()) << "seconds";
+    position->StartEditing();position->EditBox()->ChangeValue("99999");position->CommitEditing();
+    EXPECT_EQ(249,c->videoController->GetFrameN()) << "past the end: the last frame";
+    position->StartEditing();position->EditBox()->ChangeValue("abc");position->CommitEditing();
+    EXPECT_TRUE(position->IsEditing()) << "bad input keeps the box open";
+    EXPECT_EQ(249,c->videoController->GetFrameN());
+    position->CancelEditing();
+    EXPECT_FALSE(position->IsEditing());
+    EXPECT_EQ(249,c->videoController->GetFrameN());
+
+    // Zoom in whole percent: − and + step by 25%, presets are whole numbers.
+    display->SetWindowZoom(.75);
+    EXPECT_EQ("75%",zoom->ZoomText());
+    zoom->Press(VideoZoomControl::Part::In);
+    EXPECT_DOUBLE_EQ(1.,display->GetWindowZoom());
+    EXPECT_EQ("100%",zoom->ZoomText());
+    zoom->Press(VideoZoomControl::Part::Out);zoom->Press(VideoZoomControl::Part::Out);
+    EXPECT_DOUBLE_EQ(.5,display->GetWindowZoom());
+    EXPECT_DOUBLE_EQ(.25,VideoZoomControl::StepIn(.125));
+    EXPECT_DOUBLE_EQ(.75,VideoZoomControl::StepIn(.6));
+    EXPECT_DOUBLE_EQ(.5,VideoZoomControl::StepOut(.6));
+    EXPECT_DOUBLE_EQ(.25,VideoZoomControl::StepOut(.25));
+    for(int p:VideoZoomControl::Presets())EXPECT_EQ(0,p%25);
+    cmd::call("video/zoom/in",c.get());
+    EXPECT_DOUBLE_EQ(.75,display->GetWindowZoom()) << "the zoom commands step the same way";
+
+    // Readouts at the left, play buttons centred, the zoom at the right.
     wxWindow *block=zoom->GetParent();
-    EXPECT_EQ(block->GetClientSize().x-theme::BlockGap(video_box),zoom->GetPosition().x+zoom->GetSize().x);
-    EXPECT_LT(relative->GetPosition().x+relative->GetSize().x,zoom->GetPosition().x);
+    int gap=theme::BlockGap(video_box);
+    auto right=[](wxWindow*w){return w->GetPosition().x+w->GetSize().x;};
+    for(int video_w:{960,480}){
+        display->SetMinSize(wxSize(video_w,video_w*9/16));
+        video_box->SetSize(0,0,1400,800);video_box->Layout();
+        int block_w=block->GetClientSize().x;
+        EXPECT_EQ(gap,position->GetPosition().x);
+        EXPECT_EQ(block_w-gap,right(zoom));
+        EXPECT_LT(right(relative),play_bar->GetPosition().x) << video_w;
+        EXPECT_LT(right(play_bar),options_bar->GetPosition().x) << video_w;
+        int centre=play_bar->GetPosition().x+play_bar->GetSize().x/2;
+        if(video_w==960) EXPECT_NEAR(block_w/2,centre,1) << "centred on the video";
+        else EXPECT_NEAR((right(relative)+options_bar->GetPosition().x)/2,centre,gap) << "narrow: centred between the groups";
+    }
 }
 
 class audio_edit : public ordinary_edit {
@@ -1529,7 +1599,7 @@ protected:
          row.Text="{\\pos(100,100)\\bord3\\i1}中 文 {\\b1} tail";
          LiveWriteForTest(*c).Commit("visual fixture",AssFile::COMMIT_DIAG_FULL);}
         toolbar=new wxToolBar(window,wxID_ANY);
-        auto zoom=new wxComboBox(window,wxID_ANY);
+        auto zoom=new VideoZoomControl(window);
         display=new VideoDisplay(toolbar,false,zoom,window,c.get());
         display->SetSize(640,480);
         FrameData(); // finish renderer initialization with the main dispatch queue running

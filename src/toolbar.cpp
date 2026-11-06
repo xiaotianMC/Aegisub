@@ -66,6 +66,8 @@ namespace {
 		std::vector<cmd::Command *> commands;
 		/// Whether commands[i] is a button (otherwise only in a dropdown menu)
 		std::vector<bool> on_bar;
+		/// IsActive when a dynamic icon was last drawn, per command
+		std::vector<bool> icon_state;
 		/// Hotkey context
 		std::string ht_context;
 
@@ -196,6 +198,13 @@ namespace {
 					EnableTool(TOOL_ID_BASE + i, commands[i]->Validate(context));
 				if (commands[i]->Type() & cmd::COMMAND_TOGGLE || commands[i]->Type() & cmd::COMMAND_RADIO)
 					ToggleTool(TOOL_ID_BASE + i, commands[i]->IsActive(context));
+				if (commands[i]->Type() & cmd::COMMAND_DYNAMIC_ICON) {
+					bool state = commands[i]->IsActive(context);
+					if (state != icon_state[i]) {
+						icon_state[i] = state;
+						SetToolNormalBitmap(TOOL_ID_BASE + i, commands[i]->IconFor(context, icon_size, GetLayoutDirection()));
+					}
+				}
 			}
 		}
 
@@ -221,6 +230,7 @@ namespace {
 			ClearTools();
 			commands.clear();
 			on_bar.clear();
+			icon_state.clear();
 			Populate();
 		}
 
@@ -236,13 +246,14 @@ namespace {
 				wxITEM_NORMAL;
 
 			int id = TOOL_ID_BASE + commands.size();
-			AddTool(id, command->StrDisplay(context), command->Icon(icon_size, GetLayoutDirection()), command->GetTooltip(ht_context), kind);
+			AddTool(id, command->StrDisplay(context), command->IconFor(context, icon_size, GetLayoutDirection()), command->GetTooltip(ht_context), kind);
 			if (std::string_view(command->name()) == "video/tool/rectangle") {
 				shape_tool_id = id;
 				UpdateShapeButton();
 			}
 			commands.push_back(command);
 			on_bar.push_back(true);
+			icon_state.push_back(flags & cmd::COMMAND_DYNAMIC_ICON ? command->IsActive(context) : false);
 			bool dynamic = flags != cmd::COMMAND_NORMAL;
 
 			if (!more.empty()) {
@@ -257,6 +268,7 @@ namespace {
 					add(entry, TOOL_ID_BASE + commands.size());
 					commands.push_back(entry);
 					on_bar.push_back(false);
+					icon_state.push_back(false);
 				}
 				SetDropdownMenu(id, menu);
 			}

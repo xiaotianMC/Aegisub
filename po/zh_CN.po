@@ -7039,14 +7039,6 @@ msgid "Time of this frame relative to start and end of current subs"
 msgstr "该帧时间，相对于当前字幕的开始与结束时间"
 
 #: ../src/video_box.cpp
-msgid "Click to jump to a time or frame; right-click to copy"
-msgstr "单击可跳转到指定时间或帧；右键可复制"
-
-#: ../src/video_box.cpp
-msgid "Right-click to copy"
-msgstr "右键可复制"
-
-#: ../src/video_box.cpp
 msgid "Copy time"
 msgstr "复制时间"
 
@@ -7059,8 +7051,48 @@ msgid "Copy"
 msgstr "复制"
 
 #: ../src/video_box.cpp
-msgid "Video zoom"
-msgstr "视频缩放"
+msgid "Current frame time and number. K marks a keyframe."
+msgstr "当前帧的时间和帧号。K 表示关键帧。"
+
+#: ../src/video_box.cpp
+msgid "Click to type a time (0:01:23.456, or seconds such as 83.5) or a frame number, then press Enter; Esc cancels."
+msgstr "单击可输入时间（0:01:23.456，或秒数如 83.5）或帧号，按回车跳转；Esc 取消。"
+
+#: ../src/video_box.cpp
+msgid "Right-click to copy the time or the frame number."
+msgstr "右键可复制时间或帧号。"
+
+#: ../src/video_box.cpp
+msgid "First: this frame minus the line's start. Negative means the line has not started yet."
+msgstr "第一个数：当前帧时间减去当前行的开始时间。负数表示这一行还没开始。"
+
+#: ../src/video_box.cpp
+msgid "Second: this frame minus the line's end. Negative means the line has not ended yet."
+msgstr "第二个数：当前帧时间减去当前行的结束时间。负数表示这一行还没结束。"
+
+#: ../src/video_box.cpp
+msgid "Both negative: before the line. First positive, second negative: during the line. Both positive: after it."
+msgstr "两个都是负数：在这一行之前；第一个正、第二个负：在这一行之内；两个都是正数：已过了这一行。"
+
+#: ../src/video_box.cpp
+msgid "Useful for timing to the frame, e.g. +42ms on a scene change means the line starts 42ms too early."
+msgstr "可用于逐帧对时间轴，例如停在镜头切换处显示 +42ms，说明这一行早开始了 42 毫秒。"
+
+#: ../src/video_box.cpp
+msgid "Right-click to copy."
+msgstr "右键可复制。"
+
+#: ../src/video_zoom_control.cpp
+msgid "Video zoom: click for presets"
+msgstr "视频缩放：单击选择预设比例"
+
+#: ../src/command/video.cpp
+msgid "Pause"
+msgstr "暂停"
+
+#: ../src/command/video.cpp
+msgid "Play the video from this position, or pause it while playing"
+msgstr "从当前位置播放视频；正在播放时则暂停"
 
 #: ../src/video_slider.cpp
 #, c-format

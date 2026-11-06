@@ -111,6 +111,11 @@ DEFINE_EXCEPTION(CommandNotFound, CommandError);
 		/// @param height Icon size.
 		virtual wxBitmapBundle Icon([[maybe_unused]] int height = 16, wxLayoutDirection = wxLayout_LeftToRight) const { return wxBitmapBundle{}; }
 
+		/// Icon for the current state, for commands with COMMAND_DYNAMIC_ICON
+		/// (e.g. play showing a pause icon while playing). Toolbars ask again
+		/// whenever IsActive changes.
+		virtual wxBitmapBundle IconFor(const agi::Context *, int height = 16, wxLayoutDirection dir = wxLayout_LeftToRight) const { return Icon(height, dir); }
+
 		/// Command function
 		virtual void operator()(agi::Context *c)=0;
 

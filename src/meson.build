@@ -164,6 +164,7 @@ aegisub_src = files(
     'video_provider_yuv4mpeg.cpp',
     'video_slider.cpp',
     'video_time_label.cpp',
+    'video_zoom_control.cpp',
     'workspace_tabs.cpp',
     'visual_feature.cpp',
     'visual_tool.cpp',

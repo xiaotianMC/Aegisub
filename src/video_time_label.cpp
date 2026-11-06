@@ -12,6 +12,7 @@
 #include <wx/dcgraph.h>
 #include <wx/menu.h>
 #include <wx/settings.h>
+#include <wx/textctrl.h>
 
 VideoTimeLabel::VideoTimeLabel(wxWindow *parent, wxString sample, bool badge, bool dim)
 : wxWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE | wxFULL_REPAINT_ON_RESIZE)
@@ -42,9 +43,66 @@ void VideoTimeLabel::SetBadge(wxString const& text) {
 	Refresh(false);
 }
 
-void VideoTimeLabel::SetClickHandler(std::function<void()> handler) {
-	on_click = std::move(handler);
-	SetCursor(on_click ? wxCursor(wxCURSOR_HAND) : wxNullCursor);
+void VideoTimeLabel::EnableEditing(std::function<bool(wxString const&)> commit) {
+	on_commit = std::move(commit);
+	SetCursor(wxCursor(wxCURSOR_IBEAM));
+	// The text box exists from the start, hidden, so the label is already
+	// as tall as it and nothing moves when it shows
+	edit = new wxTextCtrl(this, -1, "", wxDefaultPosition, wxDefaultSize, wxTE_PROCESS_ENTER);
+	edit->Hide();
+	wxSize min = GetMinSize();
+	SetMinSize(wxSize(min.x, std::max(min.y, edit->GetBestSize().y)));
+	edit->Bind(wxEVT_TEXT_ENTER, [this](wxCommandEvent &) { CommitEditing(); });
+	edit->Bind(wxEVT_CHAR_HOOK, [this](wxKeyEvent &event) {
+		if (event.GetKeyCode() == WXK_ESCAPE) CancelEditing();
+		else event.Skip();
+	});
+	edit->Bind(wxEVT_KILL_FOCUS, [this](wxFocusEvent &event) {
+		event.Skip();
+		// After the focus change completes, not inside it
+		CallAfter([this] { CancelEditing(); });
+	});
+}
+
+void VideoTimeLabel::SetEditable(bool on) {
+	if (on == editable) return;
+	editable = on;
+	if (!on) CancelEditing();
+	if (on_commit) SetCursor(on ? wxCursor(wxCURSOR_IBEAM) : wxNullCursor);
+	Refresh(false);
+}
+
+bool VideoTimeLabel::IsEditing() const {
+	return edit && edit->IsShown();
+}
+
+void VideoTimeLabel::StartEditing() {
+	if (!edit || !editable || IsEditing()) return;
+	int left = divider ? std::max(1, FromDIP(1)) + FromDIP(2) : 0;
+	edit->SetSize(left, 0, GetClientSize().x - left, GetClientSize().y);
+	edit->ChangeValue(main);
+	edit->Show();
+	edit->SetFocus();
+	edit->SelectAll();
+}
+
+void VideoTimeLabel::CommitEditing() {
+	if (!IsEditing()) return;
+	if (on_commit && !on_commit(edit->GetValue())) {
+		wxBell();
+		edit->SelectAll();
+		return;
+	}
+	CancelEditing();
+}
+
+void VideoTimeLabel::CancelEditing() {
+	if (!IsEditing()) return;
+	bool had_focus = edit->HasFocus();
+	edit->Hide();
+	// Leave the keyboard with the video, not nowhere
+	if (had_focus && focus_after) focus_after->SetFocus();
+	Refresh(false);
 }
 
 void VideoTimeLabel::SetCopyItems(std::vector<CopyItem> items) {
@@ -148,23 +206,24 @@ void VideoTimeLabel::OnPaint(wxPaintEvent &) {
 	dc.DrawRectangle(wxPoint(0, 0), size);
 
 	// Divider on the left, setting the label off what is before it
-	dc.SetBrush(wxBrush(theme::Mix(surface, text, 0.2)));
-	int divider = size.y * 3 / 5;
-	dc.DrawRectangle(0, (size.y - divider) / 2, std::max(1, FromDIP(1)), divider);
+	if (divider) {
+		dc.SetBrush(wxBrush(theme::Mix(surface, text, 0.2)));
+		int height = size.y * 3 / 5;
+		dc.DrawRectangle(0, (size.y - height) / 2, std::max(1, FromDIP(1)), height);
+	}
 
 	dc.SetFont(GetFont());
 	int digit = DigitWidth(dc);
 	int y = (size.y - dc.GetCharHeight()) / 2;
 	int x = Gap();
-	bool clickable = on_click && hover;
-	dc.SetTextForeground(dim ? faint : clickable ? accent : text);
-	int main_end = DrawTabular(dc, main, x, y, digit);
-	if (clickable && !main.empty()) {
-		// Underlined like a link while the mouse is on it
-		dc.SetBrush(wxBrush(accent));
-		dc.DrawRectangle(x, y + dc.GetCharHeight(), main_end - x, std::max(1, FromDIP(1)));
+	if (on_commit && editable && hover) {
+		// A faint field under the mouse: click to type here
+		dc.SetBrush(wxBrush(theme::Mix(surface, text, theme::IsDark() ? 0.1 : 0.07)));
+		int left = divider ? FromDIP(3) : 0;
+		dc.DrawRoundedRectangle(left, FromDIP(2), size.x - left, size.y - 2 * FromDIP(2), FromDIP(4));
 	}
-	x = main_end;
+	dc.SetTextForeground(dim ? faint : text);
+	x = DrawTabular(dc, main, x, y, digit);
 	if (!secondary.empty()) {
 		dc.SetTextForeground(faint);
 		x = DrawTabular(dc, secondary, x + Gap(), y, digit);
@@ -183,14 +242,14 @@ void VideoTimeLabel::OnPaint(wxPaintEvent &) {
 
 void VideoTimeLabel::OnMouse(wxMouseEvent &event) {
 	if (event.Entering() || event.Moving()) {
-		if (!hover) { hover = true; if (on_click) Refresh(false); }
+		if (!hover) { hover = true; if (on_commit) Refresh(false); }
 	}
 	else if (event.Leaving()) {
 		hover = false;
-		if (on_click) Refresh(false);
+		if (on_commit) Refresh(false);
 	}
-	else if (event.LeftDown() && on_click)
-		on_click();
+	else if (event.LeftDown() && on_commit)
+		StartEditing();
 	event.Skip();
 }
 

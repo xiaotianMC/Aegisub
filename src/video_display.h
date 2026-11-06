@@ -48,7 +48,7 @@
 class VideoController;
 class VideoOutGL;
 class VisualToolBase;
-class wxComboBox;
+class VideoZoomControl;
 class wxTextCtrl;
 class wxToolBar;
 struct FrameReadyEvent;
@@ -103,6 +103,9 @@ class VideoDisplay final : public wxGLCanvas {
 	/// The zoom level of the video inside the viewport.
 	double contentZoomValue = 1;
 
+	/// Wheel movement towards the next window zoom step, for smooth scrolling
+	double zoom_wheel_rest = 0;
+
 	bool isZoomGestureActive = false;
 	double contentZoomAtGestureStart = 1;
 	Vector2D zoomGestureAnchorPoint = {0, 0};
@@ -129,7 +132,7 @@ class VideoDisplay final : public wxGLCanvas {
 	std::unique_ptr<wxGLContext> glContext;
 
 	/// The dropdown box for selecting window zoom levels
-	wxComboBox *zoomBox;
+	VideoZoomControl *zoomBox;
 
 	/// Whether the display can be freely resized by the user
 	bool freeSize;
@@ -169,10 +172,6 @@ class VideoDisplay final : public wxGLCanvas {
 	///
 	/// @param preserveContentSize Should content zoom be adjusted to maintain current content size?
 	void PositionVideo(bool preserveContentSize = false);
-	/// Set the window zoom level to that indicated by the dropdown
-	void SetWindowZoomFromBox(wxCommandEvent&);
-	/// Set the window zoom level to that indicated by the text
-	void SetWindowZoomFromBoxText(wxCommandEvent&);
 
 	/// @brief Key event handler
 	void OnKeyDown(wxKeyEvent &event);
@@ -220,7 +219,7 @@ public:
 	VideoDisplay(
 		wxToolBar *visualSubToolBar,
 		bool isDetached,
-		wxComboBox *zoomBox,
+		VideoZoomControl *zoomBox,
 		wxWindow* parent,
 		agi::Context *context);
 	~VideoDisplay();

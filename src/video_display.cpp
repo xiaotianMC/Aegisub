@@ -34,6 +34,7 @@
 ///
 
 #include "video_display.h"
+#include "video_zoom_control.h"
 
 #include "libaegisub/log.h"
 
@@ -100,7 +101,7 @@ enum {
 	NOTHING,
 };
 
-VideoDisplay::VideoDisplay(wxToolBar *toolbar, bool freeSize, wxComboBox *zoomBox, wxWindow *parent, agi::Context *c)
+VideoDisplay::VideoDisplay(wxToolBar *toolbar, bool freeSize, VideoZoomControl *zoomBox, wxWindow *parent, agi::Context *c)
 : wxGLCanvas(parent, buildGLAttributes())
 , autohideTools(OPT_GET("Tool/Visual/Autohide"))
 , con(c)
@@ -110,9 +111,8 @@ VideoDisplay::VideoDisplay(wxToolBar *toolbar, bool freeSize, wxComboBox *zoomBo
 , freeSize(freeSize)
 , scale_factor(GetContentScaleFactor())
 {
-	zoomBox->SetValue(fmt_wx("%g%%", windowZoomValue * 100.));
-	zoomBox->Bind(wxEVT_COMBOBOX, &VideoDisplay::SetWindowZoomFromBox, this);
-	zoomBox->Bind(wxEVT_TEXT_ENTER, &VideoDisplay::SetWindowZoomFromBoxText, this);
+	zoomBox->SetZoom(windowZoomValue);
+	zoomBox->SetHandler([this](double zoom) { SetWindowZoom(zoom); });
 
 	con->videoController->Bind(EVT_FRAME_READY, &VideoDisplay::UploadFrameData, this);
 	connections = agi::signal::make_vector({
@@ -374,7 +374,7 @@ void VideoDisplay::PositionVideo(bool preserveContentSize) {
 		// Update windowZoomValue
 		// We must use content_height before content zoom has been applied to it
 		windowZoomValue = double(content_height) / vidH;
-		zoomBox->ChangeValue(fmt_wx("%g%%", windowZoomValue * 100.));
+		zoomBox->SetZoom(windowZoomValue);
 		{ auto ui = con->subtitleAccess->UIState(); ui.video_zoom = windowZoomValue; con->subtitleAccess->UpdateUIState(ui); }
 	}
 
@@ -522,7 +522,17 @@ void VideoDisplay::OnMouseWheel(wxMouseEvent& event) {
 					dir = -1;
 					[[fallthrough]];
 				case SCALE_VIDEO:
-					SetWindowZoom(windowZoomValue + dir * .125 * (wheel / event.GetWheelDelta()));
+				{
+					// Whole steps of the zoom control, so the zoom stays a round percentage
+					// (touchpads send fractions of a step: they add up)
+					zoom_wheel_rest += double(dir * wheel) / event.GetWheelDelta();
+					int steps = static_cast<int>(zoom_wheel_rest);
+					zoom_wheel_rest -= steps;
+					double zoom = windowZoomValue;
+					for (; steps > 0; --steps) zoom = VideoZoomControl::StepIn(zoom);
+					for (; steps < 0; ++steps) zoom = VideoZoomControl::StepOut(zoom);
+					SetWindowZoom(zoom);
+				}
 					break;
 
 				case ZOOM_VIDEO_REV:
@@ -638,10 +648,7 @@ void VideoDisplay::OnKeyDown(wxKeyEvent &event) {
 void VideoDisplay::SetWindowZoom(double value) {
 	if (!std::isfinite(value) || value <= 0) return;
 	windowZoomValue = std::clamp(value, .125, 10.);
-	size_t selIndex = windowZoomValue / .125 - 1;
-	if (selIndex < zoomBox->GetCount())
-		zoomBox->SetSelection(selIndex);
-	zoomBox->ChangeValue(fmt_wx("%g%%", windowZoomValue * 100.));
+	zoomBox->SetZoom(windowZoomValue);
 	{ auto ui = con->subtitleAccess->UIState(); ui.video_zoom = windowZoomValue; con->subtitleAccess->UpdateUIState(ui); }
 	FitClientSizeToVideo();
 }
@@ -689,25 +696,6 @@ void VideoDisplay::ResetContentZoom() {
 	pan_y = 0;
 	contentZoomValue = 1;
 	PositionVideo();
-}
-
-void VideoDisplay::SetWindowZoomFromBox(wxCommandEvent &) {
-	int sel = zoomBox->GetSelection();
-	if (sel != wxNOT_FOUND) {
-		windowZoomValue = (sel + 1) * .125;
-		{ auto ui = con->subtitleAccess->UIState(); ui.video_zoom = windowZoomValue; con->subtitleAccess->UpdateUIState(ui); }
-		FitClientSizeToVideo();
-	}
-}
-
-void VideoDisplay::SetWindowZoomFromBoxText(wxCommandEvent &) {
-	wxString strValue = zoomBox->GetValue();
-	if (strValue.EndsWith("%"))
-		strValue.RemoveLast();
-
-	double value;
-	if (strValue.ToDouble(&value))
-		SetWindowZoom(value / 100.);
 }
 
 void VideoDisplay::SetTool(std::unique_ptr<VisualToolBase> new_tool) {

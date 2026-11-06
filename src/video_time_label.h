@@ -13,6 +13,8 @@
 
 #include <wx/window.h>
 
+class wxTextCtrl;
+
 class VideoTimeLabel final : public wxWindow {
 public:
 	/// A right-click menu item: its label and what it puts on the clipboard
@@ -31,8 +33,23 @@ public:
 
 	/// Badge text, e.g. "K" for a keyframe
 	void SetBadge(wxString const& text);
-	/// Left click: makes the label look and act like a link
-	void SetClickHandler(std::function<void()> handler);
+	/// Clicking turns the label into a text box holding the main part;
+	/// Enter passes the text to @p commit, which returns false to keep
+	/// editing (bad input). Esc or clicking elsewhere puts the label back.
+	void EnableEditing(std::function<bool(wxString const&)> commit);
+	void StartEditing();
+	/// Whether clicking edits now (e.g. not without a video)
+	void SetEditable(bool on);
+	bool IsEditing() const;
+	/// The text box while editing, for tests
+	wxTextCtrl *EditBox() const { return edit; }
+	/// Enter in the text box, for tests
+	void CommitEditing();
+	void CancelEditing();
+	/// Where the keyboard goes when editing ends
+	void SetFocusAfterEditing(wxWindow *window) { focus_after = window; }
+	/// The thin line on the left, off for the first item in a row
+	void SetDivider(bool on) { divider = on; Refresh(false); }
 	/// Right-click menu entries copying parts of the text
 	void SetCopyItems(std::vector<CopyItem> items);
 
@@ -40,7 +57,11 @@ private:
 	wxString main, secondary, badge_text = "K";
 	bool badge, dim, badge_on = false;
 	bool hover = false;
-	std::function<void()> on_click;
+	std::function<bool(wxString const&)> on_commit;
+	wxTextCtrl *edit = nullptr;
+	wxWindow *focus_after = nullptr;
+	bool divider = true;
+	bool editable = true;
 	std::vector<CopyItem> copy_items;
 	agi::signal::Connection theme_changed;
 
