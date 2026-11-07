@@ -85,8 +85,9 @@ bool Storable(Property property, StyleLook const& look);
 /// Give @p style @p look's value of @p property
 void Store(Property property, StyleLook const& look, AssStyle &style);
 
-/// Give the selected lines the style @p name. @return As Apply
-int SetLineStyle(agi::Context *c, std::string const& name);
+/// Give the selected lines the style @p name, amending @p amend_id if not
+/// -1. @return As Apply
+int SetLineStyle(agi::Context *c, std::string const& name, int amend_id = -1);
 /// Make the current line's style look as the line does at its start, and
 /// take out of the selected lines of that style the tags it now makes
 /// unneeded. @return As Apply

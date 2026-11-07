@@ -19,6 +19,7 @@
 #include <string>
 #include <vector>
 
+#include <wx/longlong.h>
 #include <wx/scrolwin.h>
 
 namespace agi { struct Context; }
@@ -46,6 +47,9 @@ public:
 
 	/// Act as clicking the button @p name does ("bold", "align_top"…)
 	void Press(std::string const& name);
+	/// Act as turning the wheel @p steps notches (up positive) over the
+	/// list field @p name ("style", "font", "weight") does
+	void Wheel(std::string const& name, int steps);
 	/// Act as dragging (@p final false) or typing a number into @p name does
 	void EnterNumber(std::string const& name, double value, bool final);
 	/// Open the box for typing into the number field @p name, as a click does
@@ -99,6 +103,8 @@ private:
 	agi::signal::Connection theme_changed;
 	bool update_pending = false;
 	int drag_commit = -1; ///< The undo step a drag amends
+	int wheel_commit = -1; ///< The undo step wheel turns close together amend
+	wxLongLong last_wheel = 0;
 	bool box_style = false; ///< The lines' styles draw a box: no outline
 
 	struct Section {

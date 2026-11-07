@@ -91,6 +91,8 @@ public:
 	/// initials); matching labels are highlighted and the first matching page
 	/// is shown if the current one has no match. Empty clears the search.
 	void Search(wxString const& query);
+	/// Put @p query in the search box and search for it
+	void ShowSearch(wxString const& query);
 	/// Pages with a match, in order.
 	std::vector<size_t> const& MatchingPages() const { return matching_pages; }
 	/// Highlighted controls on @p page.

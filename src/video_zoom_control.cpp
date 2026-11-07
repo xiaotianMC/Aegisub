@@ -4,6 +4,7 @@
 #include "video_zoom_control.h"
 
 #include "format.h"
+#include "flat_controls.h"
 #include "theme.h"
 
 #include <algorithm>
@@ -31,6 +32,9 @@ VideoZoomControl::VideoZoomControl(wxWindow *parent)
 	for (auto type : {wxEVT_LEFT_DOWN, wxEVT_LEFT_UP, wxEVT_LEFT_DCLICK, wxEVT_MOTION, wxEVT_ENTER_WINDOW, wxEVT_LEAVE_WINDOW})
 		Bind(type, &VideoZoomControl::OnMouse, this);
 	Bind(wxEVT_MOUSE_CAPTURE_LOST, [this](wxMouseCaptureLostEvent &) { pressed = Part::None; Refresh(false); });
+	Bind(wxEVT_MOUSEWHEEL, [this](wxMouseEvent &e) {
+		if (int steps = flat::WheelSteps(e, wheel_remainder)) Wheel(steps);
+	});
 	theme_changed = theme::AddChangeListener([this] { Refresh(false); });
 	UpdateToolTip();
 }
@@ -93,6 +97,13 @@ void VideoZoomControl::Press(Part part) {
 	else if (part == Part::In) Request(StepIn(zoom));
 }
 
+void VideoZoomControl::Wheel(int steps) {
+	double to = zoom;
+	for (int i = 0; i < std::abs(steps); ++i)
+		to = steps > 0 ? StepIn(to) : StepOut(to);
+	Request(to);
+}
+
 void VideoZoomControl::ShowPresets() {
 	wxMenu menu;
 	auto presets = Presets();
@@ -112,7 +123,7 @@ void VideoZoomControl::UpdateToolTip() {
 	switch (hover) {
 		case Part::Out: SetToolTip(_("Zoom video out")); break;
 		case Part::In: SetToolTip(_("Zoom video in")); break;
-		default: SetToolTip(_("Video zoom: click for presets")); break;
+		default: SetToolTip(_("Video zoom: click for presets, turn the wheel to zoom in or out")); break;
 	}
 }
 

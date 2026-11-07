@@ -36,11 +36,14 @@ public:
 	wxRect PartRect(Part part) const;
 	/// Act as a click on @p part would, except the preset menu
 	void Press(Part part);
+	/// Act as turning the wheel @p steps notches does: up zooms in, a step each
+	void Wheel(int steps);
 
 private:
 	double zoom = 1;
 	Part hover = Part::None;
 	Part pressed = Part::None;
+	int wheel_remainder = 0;
 	std::function<void(double)> on_zoom;
 	agi::signal::Connection theme_changed;
 

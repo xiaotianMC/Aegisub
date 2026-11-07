@@ -75,7 +75,8 @@ void ShowFontsCollectorDialog(agi::Context *c);
 void ShowJumpToDialog(agi::Context *c);
 void ShowKanjiTimerDialog(agi::Context *c);
 void ShowLogWindow(agi::Context *c);
-void ShowPreferences(wxWindow *parent);
+/// Show the preferences, searching for @p search when it is not empty
+void ShowPreferences(wxWindow *parent, wxString const& search = wxString());
 void ShowPropertiesDialog(agi::Context *c);
 void ShowSearchReplaceDialog(agi::Context *c, bool replace);
 void ShowSelectLinesDialog(agi::Context *c);

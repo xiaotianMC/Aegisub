@@ -933,6 +933,11 @@ void Preferences::IndexPages() {
 	}
 }
 
+void Preferences::ShowSearch(wxString const& query) {
+	search->ChangeValue(query);
+	Search(query);
+}
+
 void Preferences::Search(wxString const& query) {
 	auto wanted = WithoutSpaces(palette::NormaliseQuery(query.ToStdWstring()));
 	search_query = wanted;
@@ -1006,6 +1011,10 @@ wxString Preferences::SearchStatus() const {
 	return fmt_tl("%d matches on %d pages, Enter shows the next page", count, matching_pages.size());
 }
 
-void ShowPreferences(wxWindow *parent) {
-	while (Preferences(parent).ShowModal() < 0);
+void ShowPreferences(wxWindow *parent, wxString const& search) {
+	while (true) {
+		Preferences dialog(parent);
+		if (!search.empty()) dialog.ShowSearch(search);
+		if (dialog.ShowModal() >= 0) break;
+	}
 }

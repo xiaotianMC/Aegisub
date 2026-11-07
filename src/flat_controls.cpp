@@ -1,0 +1,392 @@
+// Copyright (c) 2026, Aegisub contributors
+// SPDX-License-Identifier: ISC
+
+#include "flat_controls.h"
+
+#include "theme.h"
+
+#include <algorithm>
+
+#include <wx/dcbuffer.h>
+#include <wx/dcgraph.h>
+#include <wx/menu.h>
+#include <wx/settings.h>
+#include <wx/time.h>
+
+namespace flat {
+Palette Colours(wxWindow const *window) {
+	Palette p;
+	p.surface = theme::Surface();
+	p.text = wxSystemSettings::GetColour(wxSYS_COLOUR_BTNTEXT);
+	if (!window->IsEnabled()) p.text = theme::Mix(p.surface, p.text, 0.4);
+	p.dim = theme::Mix(p.surface, p.text, 0.55);
+	p.field = theme::Mix(p.surface, p.text, theme::IsDark() ? 0.08 : 0.05);
+	p.line = theme::Mix(p.surface, p.text, 0.2);
+	p.accent = theme::UiColours().accent;
+	return p;
+}
+
+int WheelSteps(wxMouseEvent const& event, int &remainder) {
+	int delta = std::max(1, event.GetWheelDelta());
+	remainder += event.GetWheelRotation();
+	int steps = remainder / delta;
+	remainder -= steps * delta;
+	return steps;
+}
+
+namespace {
+wxLongLong last_scroll = 0;
+}
+
+void NoteScroll() {
+	last_scroll = wxGetLocalTimeMillis();
+}
+
+bool Scrolling() {
+	if (wxGetLocalTimeMillis() - last_scroll > 400) return false;
+	NoteScroll();
+	return true;
+}
+}
+
+namespace {
+void DrawChevron(wxDC &dc, wxColour const& colour, int x, int cy, int size, int thick) {
+	dc.SetPen(wxPen(colour, thick));
+	dc.DrawLine(x, cy - size / 4, x + size / 2, cy + size / 4);
+	dc.DrawLine(x + size / 2, cy + size / 4, x + size, cy - size / 4);
+}
+
+/// The rounded field every control here sits in
+void DrawField(wxDC &dc, wxWindow *window, flat::Palette const& p, bool focused, bool hover) {
+	dc.SetPen(*wxTRANSPARENT_PEN);
+	dc.SetBrush(wxBrush(p.surface));
+	dc.DrawRectangle(wxPoint(0, 0), window->GetClientSize());
+	wxColour fill = hover && window->IsEnabled() ? theme::Mix(p.field, p.text, 0.05) : p.field;
+	dc.SetBrush(wxBrush(fill));
+	dc.SetPen(wxPen(focused ? p.accent : p.line, std::max(1, window->FromDIP(1))));
+	dc.DrawRoundedRectangle(wxRect(wxPoint(0, 0), window->GetClientSize()), window->FromDIP(5));
+}
+
+constexpr int field_height = 28;
+}
+
+// FlatFrame
+
+FlatFrame::FlatFrame(wxWindow *parent, wxString label)
+: wxWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE | wxFULL_REPAINT_ON_RESIZE | wxTAB_TRAVERSAL)
+, label(std::move(label))
+{
+	SetBackgroundStyle(wxBG_STYLE_PAINT);
+	Bind(wxEVT_PAINT, &FlatFrame::OnPaint, this);
+	Bind(wxEVT_SIZE, [this](wxSizeEvent &e) { Arrange(); e.Skip(); });
+	Bind(wxEVT_LEFT_DOWN, &FlatFrame::OnLeftDown, this);
+	Bind(wxEVT_LEFT_DCLICK, &FlatFrame::OnLeftDown, this);
+	Bind(wxEVT_MOTION, &FlatFrame::OnMotion, this);
+	Bind(wxEVT_LEFT_UP, &FlatFrame::OnLeftUp, this);
+	Bind(wxEVT_MOUSEWHEEL, &FlatFrame::OnWheel, this);
+	Bind(wxEVT_MOUSE_CAPTURE_LOST, [this](wxMouseCaptureLostEvent &) {
+		bool was = scrubbing;
+		pressed = scrubbing = false;
+		if (was && on_scrub) on_scrub(scrub_steps, true);
+	});
+	theme_changed = theme::AddChangeListener([this] { ApplyColours(); Refresh(false); });
+}
+
+int FlatFrame::LabelWidth() const {
+	if (label.empty() || !label_shown) return 0;
+	return GetTextExtent(label).x + FromDIP(6);
+}
+
+wxRect FlatFrame::ChevronRect() const {
+	if (!on_chevron) return {};
+	int width = FromDIP(22);
+	return wxRect(GetClientSize().x - width, 0, width, GetClientSize().y);
+}
+
+void FlatFrame::SetContent(wxWindow *control, int width) {
+	content = control;
+	content_width = width;
+	content->Bind(wxEVT_SET_FOCUS, [this](wxFocusEvent &e) { Refresh(false); e.Skip(); });
+	content->Bind(wxEVT_KILL_FOCUS, [this](wxFocusEvent &e) { Refresh(false); e.Skip(); });
+	content->Bind(wxEVT_MOUSEWHEEL, &FlatFrame::OnWheel, this);
+	ApplyColours();
+	Arrange();
+}
+
+void FlatFrame::SetDimContent(bool dim) {
+	dim_content = dim;
+	ApplyColours();
+}
+
+void FlatFrame::ShowLabel(bool show) {
+	if (show == label_shown) return;
+	label_shown = show;
+	Arrange();
+	Refresh(false);
+}
+
+void FlatFrame::SetChevron(std::function<void()> open) {
+	on_chevron = std::move(open);
+	Arrange();
+}
+
+void FlatFrame::SetScrub(std::function<void(int, bool)> change) {
+	on_scrub = std::move(change);
+}
+
+void FlatFrame::SetWheel(std::function<void(int)> change) {
+	on_wheel = std::move(change);
+}
+
+void FlatFrame::ApplyColours() {
+	if (!content) return;
+	auto p = flat::Colours(this);
+	content->SetBackgroundColour(p.field);
+	content->SetForegroundColour(dim_content ? p.dim : p.text);
+	content->Refresh();
+}
+
+void FlatFrame::Arrange() {
+	if (!content) return;
+	int pad = FromDIP(8);
+	int left = pad + LabelWidth();
+	int right = on_chevron ? ChevronRect().x : GetClientSize().x - pad / 2;
+	int height = std::min(content->GetBestSize().y, GetClientSize().y - FromDIP(4));
+	content->SetSize(left, (GetClientSize().y - height) / 2, std::max(1, right - left), std::max(1, height));
+	int chevron = on_chevron ? FromDIP(22) : pad / 2;
+	SetMinSize(wxSize(left + FromDIP(content_width) + chevron,
+		std::max(FromDIP(field_height), content->GetBestSize().y + FromDIP(4))));
+}
+
+void FlatFrame::OnPaint(wxPaintEvent &) {
+	wxAutoBufferedPaintDC buffered(this);
+	wxGCDC dc(buffered);
+	auto p = flat::Colours(this);
+	bool focused = content && content->HasFocus();
+	DrawField(dc, this, p, focused, false);
+	dc.SetFont(GetFont());
+	if (!label.empty() && label_shown) {
+		dc.SetTextForeground(p.dim);
+		dc.DrawText(label, FromDIP(8), (GetClientSize().y - dc.GetCharHeight()) / 2);
+	}
+	if (on_chevron) {
+		int size = FromDIP(7);
+		wxRect r = ChevronRect();
+		DrawChevron(dc, p.dim, r.x + (r.width - size) / 2, r.y + r.height / 2 - FromDIP(1), size, std::max(1, FromDIP(3) / 2));
+	}
+}
+
+void FlatFrame::OnLeftDown(wxMouseEvent &event) {
+	if (!IsEnabled()) return;
+	if (on_chevron && ChevronRect().Contains(event.GetPosition())) {
+		CallAfter([this] { if (on_chevron) on_chevron(); });
+		return;
+	}
+	if (on_scrub && event.GetX() < FromDIP(8) + LabelWidth()) {
+		pressed = true;
+		scrubbing = false;
+		scrub_steps = 0;
+		press_x = event.GetX();
+		CaptureMouse();
+		return;
+	}
+	if (content) content->SetFocus();
+}
+
+void FlatFrame::OnMotion(wxMouseEvent &event) {
+	bool over_label = on_scrub && event.GetX() < FromDIP(8) + LabelWidth();
+	SetCursor(over_label || pressed ? wxCursor(wxCURSOR_SIZEWE) : on_chevron && ChevronRect().Contains(event.GetPosition()) ? wxCursor(wxCURSOR_HAND) : wxNullCursor);
+	if (!pressed || !HasCapture()) return;
+	int dx = event.GetX() - press_x;
+	if (!scrubbing && std::abs(dx) < FromDIP(3)) return;
+	scrubbing = true;
+	int steps = dx / FromDIP(6);
+	if (steps == scrub_steps) return;
+	scrub_steps = steps;
+	if (on_scrub) on_scrub(steps, false);
+}
+
+void FlatFrame::OnLeftUp(wxMouseEvent &) {
+	if (!pressed) return;
+	pressed = false;
+	if (HasCapture()) ReleaseMouse();
+	if (scrubbing) {
+		scrubbing = false;
+		if (on_scrub) on_scrub(scrub_steps, true);
+	}
+	else if (content)
+		content->SetFocus();
+}
+
+void FlatFrame::OnWheel(wxMouseEvent &event) {
+	if (!on_wheel || !IsEnabled() || flat::Scrolling()) {
+		event.Skip();
+		return;
+	}
+	if (int steps = flat::WheelSteps(event, wheel_remainder))
+		on_wheel(steps);
+}
+
+// FlatChoice
+
+FlatChoice::FlatChoice(wxWindow *parent, wxString const& tip)
+: wxWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE | wxFULL_REPAINT_ON_RESIZE | wxWANTS_CHARS)
+{
+	SetBackgroundStyle(wxBG_STYLE_PAINT);
+	SetToolTip(tip);
+	SetCursor(wxCursor(wxCURSOR_HAND));
+	Bind(wxEVT_PAINT, &FlatChoice::OnPaint, this);
+	Bind(wxEVT_KEY_DOWN, &FlatChoice::OnKey, this);
+	Bind(wxEVT_MOUSEWHEEL, &FlatChoice::OnWheel, this);
+	Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent &) {
+		if (!IsEnabled()) return;
+		SetFocus();
+		CallAfter([this] { ShowList(); });
+	});
+	Bind(wxEVT_ENTER_WINDOW, [this](wxMouseEvent &e) { hover = true; Refresh(false); e.Skip(); });
+	Bind(wxEVT_LEAVE_WINDOW, [this](wxMouseEvent &e) { hover = false; Refresh(false); e.Skip(); });
+	Bind(wxEVT_SET_FOCUS, [this](wxFocusEvent &e) { Refresh(false); e.Skip(); });
+	Bind(wxEVT_KILL_FOCUS, [this](wxFocusEvent &e) { Refresh(false); e.Skip(); });
+	theme_changed = theme::AddChangeListener([this] { Refresh(false); });
+	SetMinSize(wxSize(FromDIP(60), FromDIP(field_height)));
+}
+
+wxSize FlatChoice::DoGetBestClientSize() const {
+	int width = FromDIP(60);
+	for (auto const& item : items)
+		width = std::max(width, GetTextExtent(item).x);
+	return wxSize(std::min(width, FromDIP(140)) + FromDIP(8 + 22), FromDIP(field_height));
+}
+
+void FlatChoice::Set(std::vector<wxString> new_items) {
+	wxString current = GetStringSelection();
+	items = std::move(new_items);
+	SetStringSelection(current);
+	InvalidateBestSize();
+}
+
+void FlatChoice::SetStringSelection(wxString const& name) {
+	auto it = std::find(items.begin(), items.end(), name);
+	int index = it == items.end() ? -1 : static_cast<int>(it - items.begin());
+	if (index == selection) return;
+	selection = index;
+	Refresh(false);
+}
+
+wxString FlatChoice::GetStringSelection() const {
+	return selection >= 0 && selection < static_cast<int>(items.size()) ? items[selection] : wxString();
+}
+
+void FlatChoice::Choose(int index) {
+	if (index < 0 || index >= static_cast<int>(items.size()) || index == selection) return;
+	selection = index;
+	Refresh(false);
+	if (on_choose) on_choose(index);
+}
+
+void FlatChoice::Step(int delta) {
+	if (items.empty()) return;
+	int from = selection < 0 ? (delta > 0 ? -1 : static_cast<int>(items.size())) : selection;
+	Choose(std::clamp(from + delta, 0, static_cast<int>(items.size()) - 1));
+}
+
+void FlatChoice::ShowList() {
+	if (items.empty() || !IsEnabled()) return;
+	wxMenu menu;
+	for (size_t i = 0; i < items.size(); ++i)
+		menu.AppendCheckItem(wxID_HIGHEST + 1 + i, items[i])->Check(static_cast<int>(i) == selection);
+	int chosen = GetPopupMenuSelectionFromUser(menu, 0, GetSize().y);
+	if (chosen > wxID_HIGHEST) Choose(chosen - wxID_HIGHEST - 1);
+}
+
+void FlatChoice::OnPaint(wxPaintEvent &) {
+	wxAutoBufferedPaintDC buffered(this);
+	wxGCDC dc(buffered);
+	auto p = flat::Colours(this);
+	DrawField(dc, this, p, HasFocus(), hover);
+	dc.SetFont(GetFont());
+	wxSize size = GetClientSize();
+	int pad = FromDIP(8), chevron = FromDIP(7);
+	int right = size.x - pad - chevron - FromDIP(6);
+	wxString text = GetStringSelection();
+	if (dc.GetTextExtent(text).x > right - pad) {
+		while (!text.empty() && dc.GetTextExtent(text + wxS("…")).x > right - pad) text.RemoveLast();
+		text += wxS("…");
+	}
+	dc.SetTextForeground(p.text);
+	dc.DrawText(text, pad, (size.y - dc.GetCharHeight()) / 2);
+	DrawChevron(dc, p.dim, size.x - pad - chevron, size.y / 2 - FromDIP(1), chevron, std::max(1, FromDIP(3) / 2));
+}
+
+void FlatChoice::OnKey(wxKeyEvent &event) {
+	switch (event.GetKeyCode()) {
+		case WXK_UP: case WXK_NUMPAD_UP: Step(-1); break;
+		case WXK_DOWN: case WXK_NUMPAD_DOWN:
+			if (event.AltDown()) ShowList(); else Step(1);
+			break;
+		case WXK_HOME: Choose(0); break;
+		case WXK_END: Choose(static_cast<int>(items.size()) - 1); break;
+		case WXK_SPACE: case WXK_RETURN: case WXK_NUMPAD_ENTER: case WXK_F4: ShowList(); break;
+		case WXK_TAB:
+			Navigate(event.ShiftDown() ? wxNavigationKeyEvent::IsBackward : wxNavigationKeyEvent::IsForward);
+			break;
+		default: event.Skip();
+	}
+}
+
+void FlatChoice::OnWheel(wxMouseEvent &event) {
+	if (!IsEnabled() || flat::Scrolling()) {
+		event.Skip();
+		return;
+	}
+	// Up goes up the list
+	if (int steps = flat::WheelSteps(event, wheel_remainder))
+		Step(-steps);
+}
+
+// FlatBadge
+
+FlatBadge::FlatBadge(wxWindow *parent)
+: wxWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE)
+{
+	SetBackgroundStyle(wxBG_STYLE_PAINT);
+	SetCursor(wxCursor(wxCURSOR_HAND));
+	Bind(wxEVT_PAINT, &FlatBadge::OnPaint, this);
+	Bind(wxEVT_LEFT_UP, [this](wxMouseEvent &) { if (on_click) CallAfter([this] { if (on_click) on_click(); }); });
+	theme_changed = theme::AddChangeListener([this] { Refresh(false); });
+}
+
+void FlatBadge::SetText(wxString const& new_text, bool warn) {
+	if (text == new_text && warning == warn) return;
+	text = new_text;
+	warning = warn;
+	InvalidateBestSize();
+	Refresh(false);
+}
+
+wxSize FlatBadge::DoGetBestClientSize() const {
+	wxSize extent = GetTextExtent(text.empty() ? wxString("0") : text);
+	return wxSize(extent.x + FromDIP(12), extent.y + FromDIP(4));
+}
+
+void FlatBadge::OnPaint(wxPaintEvent &) {
+	wxAutoBufferedPaintDC buffered(this);
+	wxGCDC dc(buffered);
+	// On the text box's own background
+	wxColour back = GetParent()->GetBackgroundColour();
+	dc.SetPen(*wxTRANSPARENT_PEN);
+	dc.SetBrush(wxBrush(back));
+	dc.DrawRectangle(wxPoint(0, 0), GetClientSize());
+	auto p = flat::Colours(this);
+	wxColour text_colour = theme::Mix(back, p.text, 0.55);
+	if (warning) {
+		wxColour error = theme::Colour("Colour/Subtitle/Syntax/Background/Error");
+		dc.SetBrush(wxBrush(error));
+		dc.DrawRoundedRectangle(wxRect(wxPoint(0, 0), GetClientSize()), GetClientSize().y / 2.);
+		text_colour = theme::Mix(error, p.text, 0.9);
+	}
+	dc.SetFont(GetFont());
+	dc.SetTextForeground(text_colour);
+	wxSize extent = dc.GetTextExtent(text);
+	dc.DrawText(text, (GetClientSize().x - extent.x) / 2, (GetClientSize().y - extent.y) / 2);
+}

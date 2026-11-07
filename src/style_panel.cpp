@@ -10,6 +10,7 @@
 #include "dialog_rectangle.h"
 #include "dialog_style_editor.h"
 #include "dialogs.h"
+#include "flat_controls.h"
 #include "format.h"
 #include "options.h"
 #include "style_edit.h"
@@ -43,6 +44,7 @@
 #include <wx/settings.h>
 #include <wx/sizer.h>
 #include <wx/textctrl.h>
+#include <wx/time.h>
 #include <wx/utils.h>
 
 namespace {
@@ -148,10 +150,18 @@ public:
 		Bind(wxEVT_ENTER_WINDOW, [this](wxMouseEvent &e) { hover = true; Refresh(false); e.Skip(); });
 		Bind(wxEVT_LEAVE_WINDOW, [this](wxMouseEvent &e) { hover = false; Refresh(false); e.Skip(); });
 		theme_changed = theme::AddChangeListener([this] { Refresh(false); });
+		// The wheel scrolls the panel, unless the part takes it: a turn
+		// that has only brought a list under the pointer goes on scrolling
+		Bind(wxEVT_MOUSEWHEEL, [this](wxMouseEvent &e) {
+			if (!WantsWheel()) flat::NoteScroll();
+			e.Skip();
+		});
 	}
 
 	/// What the part shows, for tests
 	virtual wxString Shown() const = 0;
+	/// Whether the wheel changes the part rather than scrolling the panel
+	virtual bool WantsWheel() const { return false; }
 
 	bool AcceptsFocus() const override { return false; }
 	bool AcceptsFocusFromKeyboard() const override { return false; }
@@ -173,6 +183,8 @@ private:
 	std::function<void()> on_choose;
 	std::optional<Range> range;
 	std::function<void(double, bool)> on_number;
+	std::function<void(int)> on_wheel;
+	int wheel_remainder = 0;
 	double current = 0;
 	bool known = false;
 	bool inherited = false; ///< The value is the style's, not the line's
@@ -285,7 +297,18 @@ public:
 		Bind(wxEVT_MOTION, &Field::OnMotion, this);
 		Bind(wxEVT_LEFT_UP, &Field::OnLeftUp, this);
 		Bind(wxEVT_MOUSE_CAPTURE_LOST, &Field::OnCaptureLost, this);
+		Bind(wxEVT_MOUSEWHEEL, [this](wxMouseEvent &e) {
+			if (!WantsWheel() || flat::Scrolling()) { e.Skip(); return; }
+			if (int steps = flat::WheelSteps(e, wheel_remainder)) on_wheel(steps);
+		});
 	}
+
+	/// Turning the wheel over the field goes through its list: @p step gets
+	/// the notches, up positive
+	void SetWheel(std::function<void(int)> step) { on_wheel = std::move(step); }
+	bool WantsWheel() const override { return on_wheel && IsEnabled() && !IsEditing(); }
+	/// What turning the wheel does, for tests
+	void Wheel(int steps) { if (on_wheel) on_wheel(steps); }
 
 	/// Clicking opens a list, from @p choose
 	void SetChooser(std::function<void()> choose) {
@@ -820,6 +843,7 @@ StylePanel::StylePanel(wxWindow *parent, agi::Context *c)
 {
 	theme::UseSurface(this);
 	SetScrollRate(0, FromDIP(12));
+	Bind(wxEVT_MOUSEWHEEL, [](wxMouseEvent &e) { flat::NoteScroll(); e.Skip(); });
 	const int gap = FromDIP(6);
 	// The edit box's icons, as its buttons show them
 	auto command_icon = [](const char *name) -> Toggle::IconMaker {
@@ -909,34 +933,53 @@ StylePanel::StylePanel(wxWindow *parent, agi::Context *c)
 		"shadow_opacity", "", "%", _("Opacity of the shadow (\\4a)"));
 	row = new wxBoxSizer(wxHORIZONTAL);
 	row->Add(Add<Field>("shadow_distance", _("Distance"), "", false, _("How far the shadow falls from the text (\\xshad, \\yshad)")), 1, wxEXPAND);
-	row->Add(Add<Field>("shadow_angle", _("Angle"), wxS("°"), false, _("Which way the shadow falls: 90° is right, 180° down (\\xshad, \\yshad)")), 1, wxEXPAND | wxLEFT, gap);
+	row->Add(Add<Field>("shadow_angle", _("Angle"), wxS("°"), false, wxString::Format(_("Which way the shadow falls: 90%s is right, 180%s down (\\xshad, \\yshad)"), wxS("°"), wxS("°"))), 1, wxEXPAND | wxLEFT, gap);
 	look.body->Add(row, 0, wxEXPAND | wxTOP, gap / 2);
 	look.body->Add(Add<Field>("blur", _("Blur"), "", false, _("Softens the edges of the outline, or the letters without one (\\blur)")), 0, wxEXPAND | wxTOP, gap);
 
 	auto &transform = AddSection(outer, "transform", _("Transform"));
+	// Each group under a small title of its own
+	auto caption = [&](std::string const& name, wxString const& title) {
+		auto part = Add<Caption>(name);
+		part->SetText(title);
+		return part;
+	};
+	auto group = [&](std::string const& name, wxString const& title, bool first) {
+		transform.body->Add(caption(name, title), 0, wxEXPAND | (first ? 0 : wxTOP), first ? 0 : gap);
+	};
 	auto pair = [&](std::string const& a, wxString const& a_label, wxString const& a_unit, wxString const& a_tip,
-		std::string const& b, wxString const& b_label, wxString const& b_unit, wxString const& b_tip, bool first = false)
+		std::string const& b, wxString const& b_label, wxString const& b_unit, wxString const& b_tip)
 	{
 		auto line = new wxBoxSizer(wxHORIZONTAL);
 		line->Add(Add<Field>(a, a_label, a_unit, false, a_tip), 1, wxEXPAND);
 		line->Add(Add<Field>(b, b_label, b_unit, false, b_tip), 1, wxEXPAND | wxLEFT, gap);
-		transform.body->Add(line, 0, wxEXPAND | (first ? 0 : wxTOP), gap);
+		transform.body->Add(line, 0, wxEXPAND);
 	};
+	group("title_position", _("Position"), true);
 	pair("position_x", "X", "", _("Where the line is, across (\\pos). Lines that move (\\move) are left as they are"),
-		"position_y", "Y", "", _("Where the line is, down (\\pos). Lines that move (\\move) are left as they are"), true);
+		"position_y", "Y", "", _("Where the line is, down (\\pos). Lines that move (\\move) are left as they are"));
 	{
 		// The line's margins: 0 leaves it to the style, whose margin shows dim
+		group("title_margins", _("Margins"), false);
 		auto line = new wxBoxSizer(wxHORIZONTAL);
 		auto tip = _("%s of the line, in pixels. 0 uses the style's, shown dim. Lines placed by \\pos or \\move do not use their margins to be placed");
 		line->Add(Add<Field>("margin_left", wxGETTEXT_IN_CONTEXT("margin", "L"), "", false, wxString::Format(tip, _("Left margin"))), 1, wxEXPAND);
 		line->Add(Add<Field>("margin_right", wxGETTEXT_IN_CONTEXT("margin", "R"), "", false, wxString::Format(tip, _("Right margin"))), 1, wxEXPAND | wxLEFT, gap);
 		line->Add(Add<Field>("margin_vertical", wxGETTEXT_IN_CONTEXT("margin", "V"), "", false, wxString::Format(tip, _("Vertical margin"))), 1, wxEXPAND | wxLEFT, gap);
-		transform.body->Add(line, 0, wxEXPAND | wxTOP, gap);
+		transform.body->Add(line, 0, wxEXPAND);
 	}
-	pair("scale_x", _("Scale X"), "%", _("Stretches the letters across (\\fscx)"),
-		"scale_y", _("Scale Y"), "%", _("Stretches the letters up and down (\\fscy)"));
-	pair("rotation", _("Rotation"), wxS("°"), _("Turns the line, anticlockwise (\\frz)"),
-		"opacity", _("Opacity"), "%", _("Opacity of fill, outline and shadow together (\\alpha)"));
+	group("title_scale", _("Scale"), false);
+	pair("scale_x", "X", "%", _("Stretches the letters across (\\fscx)"),
+		"scale_y", "Y", "%", _("Stretches the letters up and down (\\fscy)"));
+	{
+		// Rotation and opacity side by side, each under its own title
+		auto titles = new wxBoxSizer(wxHORIZONTAL);
+		titles->Add(caption("title_rotation", _("Rotation")), 1, wxEXPAND);
+		titles->Add(caption("title_opacity", _("Opacity")), 1, wxEXPAND | wxLEFT, gap);
+		transform.body->Add(titles, 0, wxEXPAND | wxTOP, gap);
+		pair("rotation", "", wxS("°"), _("Turns the line, anticlockwise (\\frz)"),
+			"opacity", "", "%", _("Opacity of fill, outline and shadow together (\\alpha)"));
+	}
 
 	SetSizer(outer);
 	ShowSection("transform", false);
@@ -1060,6 +1103,55 @@ void StylePanel::BindEditing() {
 		popup->Open(field);
 	});
 	static_cast<Field*>(parts["weight"])->SetChooser([this] { ShowWeightMenu(); });
+
+	// The wheel goes through the lists: up to the style or font above, up
+	// to a heavier weight. Turns close together are one undo step.
+	auto wheel_amend = [this] {
+		bool close = wxGetLocalTimeMillis() - last_wheel < 1000;
+		last_wheel = wxGetLocalTimeMillis();
+		return close ? wheel_commit : -1;
+	};
+	auto step_in = [](std::vector<wxString> const& list, wxString const& current, int steps) -> std::optional<size_t> {
+		if (list.empty()) return std::nullopt;
+		auto it = std::find_if(list.begin(), list.end(), [&](wxString const& item) { return item.CmpNoCase(current) == 0; });
+		long from;
+		if (it != list.end()) from = it - list.begin();
+		// Not in the list ("—", a font not installed): from where it would be
+		else from = std::lower_bound(list.begin(), list.end(), current, [](wxString const& a, wxString const& b) { return a.CmpNoCase(b) < 0; }) - list.begin() - (steps > 0 ? 0 : 1);
+		long to = std::clamp<long>(from - steps, 0, static_cast<long>(list.size()) - 1);
+		if (it != list.end() && to == from) return std::nullopt;
+		return static_cast<size_t>(to);
+	};
+	static_cast<Field*>(parts["style"])->SetWheel([=, this](int steps) {
+		std::vector<wxString> names;
+		for (auto const& style : c->subtitleAccess->Read().Styles) names.push_back(to_wx(style.name));
+		// The file's order, as the list shows them
+		wxString current = parts["style"]->Shown();
+		auto it = std::find(names.begin(), names.end(), current);
+		long from = it == names.end() ? (steps > 0 ? static_cast<long>(names.size()) : -1) : it - names.begin();
+		long to = std::clamp<long>(from - steps, 0, static_cast<long>(names.size()) - 1);
+		if (names.empty() || to == from) return;
+		int amend = wheel_amend();
+		wheel_commit = style_edit::SetLineStyle(c, from_wx(names[to]), amend);
+		UpdateNow();
+	});
+	static_cast<Field*>(parts["font"])->SetWheel([=, this](int steps) {
+		auto const& fonts = InstalledFonts();
+		std::vector<wxString> list(fonts.begin(), fonts.end());
+		auto to = step_in(list, parts["font"]->Shown(), steps);
+		if (!to) return;
+		int amend = wheel_amend();
+		wheel_commit = style_edit::Apply(c, style_edit::Property::Font, [&](StyleLook &l) { l.font = from_wx(list[*to]); }, amend);
+		UpdateNow();
+	});
+	static_cast<Field*>(parts["weight"])->SetWheel([=, this](int steps) {
+		// Each line from its own weight, keeping its slant
+		int amend = wheel_amend();
+		wheel_commit = style_edit::Apply(c, style_edit::Property::Weight, [&](StyleLook &l) {
+			l.weight = std::clamp((l.weight + 50) / 100 * 100 + steps * 100, 100, 900);
+		}, amend);
+		UpdateNow();
+	});
 }
 
 void StylePanel::ShowWeightMenu() {
@@ -1277,6 +1369,11 @@ void StylePanel::Press(std::string const& name) {
 		toggle->on_click();
 	if (auto icon = dynamic_cast<IconButton*>(parts[name]); icon && icon->on_click && icon->IsEnabled())
 		icon->on_click();
+}
+
+void StylePanel::Wheel(std::string const& name, int steps) {
+	if (auto field = dynamic_cast<Field*>(parts[name]))
+		field->Wheel(steps);
 }
 
 void StylePanel::EnterNumber(std::string const& name, double value, bool final) {

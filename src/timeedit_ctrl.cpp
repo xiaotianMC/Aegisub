@@ -54,8 +54,8 @@ enum {
 	Time_Edit_Paste
 };
 
-TimeEdit::TimeEdit(wxWindow* parent, wxWindowID id, agi::Context *c, const std::string& value, const wxSize& size, bool asEnd)
-: wxTextCtrl(parent, id, to_wx(value), wxDefaultPosition, size, wxTE_CENTRE | wxTE_PROCESS_ENTER)
+TimeEdit::TimeEdit(wxWindow* parent, wxWindowID id, agi::Context *c, const std::string& value, const wxSize& size, bool asEnd, long border)
+: wxTextCtrl(parent, id, to_wx(value), wxDefaultPosition, size, wxTE_CENTRE | wxTE_PROCESS_ENTER | border)
 , c(c)
 , isEnd(asEnd)
 , insert(!OPT_GET("Subtitle/Time Edit/Insert Mode")->GetBool())

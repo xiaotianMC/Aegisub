@@ -36,10 +36,12 @@
 #include <boost/container/map.hpp>
 #include <boost/flyweight/flyweight_fwd.hpp>
 #include <list>
+#include <map>
 #include <vector>
 
 #include <wx/combobox.h>
 #include <wx/panel.h>
+#include <wx/arrstr.h>
 #include <wx/timer.h>
 
 #include <libaegisub/signal.h>
@@ -55,13 +57,15 @@ class wxButton;
 class wxCheckBox;
 class TimeUnitToggle;
 class wxSizer;
-class wxSpinCtrl;
+class wxStaticText;
+class FlatBadge;
+class FlatChoice;
+class FlatFrame;
 class wxStyledTextCtrl;
 class wxStyledTextEvent;
 class wxTextCtrl;
 struct AssDialogueBase;
 
-template<class Base> class Placeholder;
 
 /// @brief Main subtitle edit box
 ///
@@ -83,10 +87,6 @@ private:
 	/// Currently active dialogue line
 	int active_id = 0;
     AssDialogue const* CurrentLine() const;
-	AssStyle const* active_style = nullptr;
-
-	/// Are the buttons currently split into two lines?
-	bool button_bar_split = true;
 	/// Are the controls currently enabled?
 	bool controls_enabled = true;
 
@@ -96,22 +96,34 @@ private:
 
 	// Box controls
 	wxCheckBox *comment_box;
-	wxComboBox *style_box;
-	wxButton *style_edit_button;
-	Placeholder<wxComboBox> *actor_box;
+	FlatChoice *style_box;
+	wxTextCtrl *actor_box;
+	FlatFrame *actor_frame;
 	TimeEdit *start_time;
 	TimeEdit *end_time;
 	TimeEdit *duration;
-	wxSpinCtrl *layer;
-	Placeholder<wxComboBox> *effect_box;
+	wxTextCtrl *layer;
+	FlatFrame *layer_frame;
+	wxTextCtrl *effect_box;
+	FlatFrame *effect_frame;
 	TimeUnitToggle *time_unit;
-	wxTextCtrl *char_count;
+	FlatBadge *char_count;
 	wxCheckBox *split_box;
+	wxStaticText *original_caption;
+
+	/// The actors and effects in the file, to choose from
+	wxArrayString actor_values, effect_values;
+	/// The selected lines' layers when a drag of the layer label began
+	std::map<int, int> layer_base;
+	bool scrubbing_layer = false;
+	/// When the wheel or a key last stepped the style or layer: steps close
+	/// together are one undo step
+	wxLongLong last_step = 0;
 
 	wxSizer *fields_sizer; ///< The two rows of fields, above or below the text
 	wxSizer *top_sizer;
-	wxSizer *middle_right_sizer;
 	wxSizer *middle_left_sizer;
+	wxSizer *original_sizer;
 	wxSizer *bottom_sizer;
 
 	void SetControlsState(bool state);
@@ -141,9 +153,10 @@ private:
 	boost::container::map<int, std::pair<agi::Time, agi::Time>> initial_times;
 
 	// Constructor helpers
-	TimeEdit *MakeTimeCtrl(wxString const& tooltip, TimeField field);
+	TimeEdit *MakeTimeCtrl(wxString const& label, wxString const& tooltip, TimeField field);
+	/// A text field in a flat frame whose chevron lists @p values
+	wxTextCtrl *MakeTextField(FlatFrame *&frame, wxString const& hint, wxString const& tooltip, int width, wxArrayString &values);
 	wxButton *MakeBottomButton(const char *cmd_name);
-	wxComboBox *MakeComboBox(wxString const& initial_text, int style, void (SubsEditBox::*handler)(wxCommandEvent&), wxString const& tooltip);
 
 	void OnChange(wxStyledTextEvent &event);
 	void OnKeyDown(wxKeyEvent &event);
@@ -157,16 +170,26 @@ private:
 	void ArrangeRows();
 	agi::signal::Connection rows_option;
 	void UpdateStyleBox();
-	void OnStyleChange(wxCommandEvent &event);
+	void OnStyleChange();
 	void OnActorChange(wxCommandEvent &event);
-	void OnLayerEnter(wxCommandEvent &event);
 	void OnCommentChange(wxCommandEvent &);
 	void OnEffectChange(wxCommandEvent &);
-	void OnSize(wxSizeEvent &event);
+
+	/// Show the selected lines' layer, or "—" when they differ
+	void UpdateLayerField();
+	/// Give the selected lines the typed layer
+	void CommitLayerText();
+	/// Move each selected line @p delta layers from its own (or from where
+	/// it was when a drag began)
+	void ShiftLayers(int delta, bool amend);
+	void StepLayer(int delta);
+	void ScrubLayer(int steps, bool final);
+	/// Keep the character count in the text box's corner
+	void PlaceCharacterCount();
+	/// Leave out the labels of the times when the row is too narrow for them
+	void FitTimeLabels();
 	void OnSplit(wxCommandEvent&);
 	void DoOnSplit(bool show_original);
-
-	void SetPlaceholderCtrl(wxControl *ctrl, wxString const& value);
 
 	/// @brief Set a field in each selected line to a specified value
 	/// @param set   Callable which updates a passed line
@@ -195,7 +218,7 @@ private:
 	void UpdateFields(int type, bool repopulate_lists);
 
 	/// Regenerate a dropdown list with the unique values of a dialogue field
-	void PopulateList(wxComboBox *combo, boost::flyweight<std::string> AssDialogue::*field);
+	void PopulateList(wxTextCtrl *ctrl, wxArrayString &values, boost::flyweight<std::string> AssDialogue::*field);
 
 	/// @brief Enable or disable frame timing mode
 	void UpdateFrameTiming(agi::vfr::Framerate const& fps);

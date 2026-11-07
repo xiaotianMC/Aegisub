@@ -355,7 +355,7 @@ std::vector<int> SelectedIds(agi::Context const* c) {
 }
 }
 
-int SetLineStyle(agi::Context *c, std::string const& name) {
+int SetLineStyle(agi::Context *c, std::string const& name, int amend_id) {
 	auto scope = c->subtitleAccess->TryWrite();
 	if (!scope || !c->subtitleAccess->Read().GetStyle(name)) return -1;
 	SubtitleRowEdit staged(c);
@@ -365,11 +365,11 @@ int SetLineStyle(agi::Context *c, std::string const& name) {
 			row->Style = name;
 			changed = true;
 		}
-	if (!changed) return -1;
+	if (!changed) return amend_id;
 	auto const& sel = c->selectionController->ReadSelectedSet();
 	auto edit = c->subtitleAccess->Edit(scope->Lease());
 	edit.UpdateRows(staged.Values());
-	return edit.Commit(_("set style"), AssFile::COMMIT_DIAG_META, -1, sel.size() == 1 ? (*sel.begin())->Id : 0);
+	return edit.Commit(_("set style"), AssFile::COMMIT_DIAG_META, amend_id, sel.size() == 1 ? (*sel.begin())->Id : 0);
 }
 
 int UpdateStyleFromLine(agi::Context *c) {

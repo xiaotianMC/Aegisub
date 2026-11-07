@@ -1312,11 +1312,11 @@ msgstr "撤销 %s"
 
 #: ../src/command/edit.cpp:1210 ../src/command/edit.cpp:1211
 msgid "Revert"
-msgstr "还原"
+msgstr "还原为原文"
 
 #: ../src/command/edit.cpp:1212
 msgid "Revert the active line to its initial state (shown in the upper editor)"
-msgstr "恢复编辑框的内容到它原来的状态 (编辑框上方显示的内容)"
+msgstr "把当前行恢复为原文（编辑框上方显示的内容）"
 
 #: ../src/command/edit.cpp:1217
 msgid "revert line"
@@ -6851,7 +6851,7 @@ msgstr "按帧数显示时轴"
 
 #: ../src/subs_edit_box.cpp:189
 msgid "Show Original"
-msgstr "显示原始字幕"
+msgstr "对照原文"
 
 #: ../src/subs_edit_box.cpp:190
 msgid ""
@@ -7083,8 +7083,8 @@ msgid "Right-click to copy."
 msgstr "右键可复制。"
 
 #: ../src/video_zoom_control.cpp
-msgid "Video zoom: click for presets"
-msgstr "视频缩放：单击选择预设比例"
+msgid "Video zoom: click for presets, turn the wheel to zoom in or out"
+msgstr "视频缩放：单击选择预设比例，滚动滚轮放大或缩小"
 
 #: ../src/command/video.cpp
 msgid "Pause"
@@ -8802,8 +8802,9 @@ msgid "Weight and slant (\\b, \\i)"
 msgstr "字重和倾斜（\\b、\\i）"
 
 #: src/style_panel.cpp
-msgid "Which way the shadow falls: 90° is right, 180° down (\\xshad, \\yshad)"
-msgstr "阴影的方向：90° 向右，180° 向下（\\xshad、\\yshad）"
+#, c-format
+msgid "Which way the shadow falls: 90%s is right, 180%s down (\\xshad, \\yshad)"
+msgstr "阴影的方向：90%s 向右，180%s 向下（\\xshad、\\yshad）"
 
 #: src/command/app.cpp
 msgid "Show Style Panel"
@@ -9116,3 +9117,86 @@ msgstr "以 h:mm:ss.cs 或帧号显示和输入行的时间（帧号需要视频
 #: ../src/preferences.cpp:296
 msgid "Line fields below the text, next to the grid"
 msgstr "行属性放在文本框下方，靠近字幕列表"
+
+#: ../src/subs_edit_box.cpp
+msgid "Style for this line. The wheel and the arrow keys go through the styles; the style panel at the right edits it"
+msgstr "此行的样式。滚动滚轮或按上下键可逐个切换样式；右侧的样式面板可以编辑它"
+
+#: ../src/subs_edit_box.cpp
+msgid ""
+"Show above the text what this line said before you changed it: its text when you moved to it, read-only, to compare or translate against. It follows when you move to another line.\n"
+"\n"
+"Four buttons come with it: back to the original, clear the line, clear the text but keep the tags, and put the original in at the cursor."
+msgstr ""
+"在文本框上方显示此行改动前的内容（切到这一行时的文字），只读，方便对照着修改或翻译。换到别的行时跟着换。\n"
+"\n"
+"同时显示四个按钮：还原为原文、清除、清除文本（保留标签）、在光标处插入原文。"
+
+#: ../src/subs_edit_box.cpp
+msgctxt "edit box"
+msgid "Start"
+msgstr "开始"
+
+#: ../src/subs_edit_box.cpp
+msgctxt "edit box"
+msgid "End"
+msgstr "结束"
+
+#: ../src/subs_edit_box.cpp
+msgctxt "edit box"
+msgid "Duration"
+msgstr "时长"
+
+#: ../src/subs_edit_box.cpp
+msgctxt "edit box"
+msgid "Layer"
+msgstr "层"
+
+#: ../src/subs_edit_box.cpp
+msgid "Line duration: changing it moves the end time"
+msgstr "此行的时长：修改它会移动结束时间"
+
+#: ../src/subs_edit_box.cpp
+#, c-format
+msgid ""
+"Layer: lines on a higher layer are drawn over lower ones. Only lines on the same layer shown at the same time move out of each other's way; on different layers they can overlap, as a box under text does.\n"
+"\n"
+"Type a number, or drag the label, turn the wheel or press the arrow keys to move every selected line up or down from its own layer. %s: the selected lines are on different layers."
+msgstr ""
+"层：层数大的行画在上面。只有同一层、同时出现的行会互相避让（自动上下错开）；不同层的行可以重叠，常用于给文字垫底框或做特效。\n"
+"\n"
+"可以直接输入数字，也可以拖动“层”字、滚动滚轮或按上下键，让每个选中的行在各自原来的层上加减，保留彼此的层次。显示 %s 表示选中的行不在同一层。"
+
+#: ../src/subs_edit_box.cpp
+msgid "Original: the line as it was when you moved to it"
+msgstr "原文 · 切到此行时的内容"
+
+#: ../src/subs_edit_box.cpp
+msgid "not counting tags in {}, spaces or punctuation"
+msgstr "不计 {} 中的标签、空格和标点"
+
+#: ../src/subs_edit_box.cpp
+msgid "not counting tags in {} or spaces"
+msgstr "不计 {} 中的标签和空格"
+
+#: ../src/subs_edit_box.cpp
+msgid "not counting tags in {} or punctuation"
+msgstr "不计 {} 中的标签和标点"
+
+#: ../src/subs_edit_box.cpp
+msgid "not counting tags in {}"
+msgstr "不计 {} 中的标签"
+
+#: ../src/subs_edit_box.cpp
+#, c-format
+msgid "Characters in the longest line: the text split at \\N, %s."
+msgstr "最长一行的字数：按 \\N 分行，取字最多的一行，%s。"
+
+#: ../src/subs_edit_box.cpp
+#, c-format
+msgid "Red over %zu, the most a line should have so that it can be read and fits on the screen."
+msgstr "超过 %zu 时变红，这是一行字幕为了读得过来、放得下而应有的上限。"
+
+#: ../src/subs_edit_box.cpp
+msgid "Click to change the limit and what is counted (Preferences, Character Counter)."
+msgstr "单击可修改上限和计数方式（首选项 → 字数统计器）。"

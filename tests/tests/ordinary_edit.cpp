@@ -16,6 +16,7 @@
 #include "subs_edit_ctrl.h"
 #include "timeedit_ctrl.h"
 #include "time_unit_toggle.h"
+#include "flat_controls.h"
 #include "base_grid.h"
 #include "options.h"
 #include "command/command.h"
@@ -204,15 +205,20 @@ TEST_F(ordinary_edit, real_metadata_and_millisecond_time_events_share_multiline_
         LiveWriteForTest(*c).Commit("insert fixture", AssFile::COMMIT_DIAG_ADDREM);
         c->selectionController->SetSelectedIDs({(LiveRead(*c).Events.front()).Id,other->Id});
     }
-    TimeEdit *start=nullptr; wxSpinCtrl *layer=nullptr; wxComboBox *actor=nullptr;
-    for (auto child:box->GetChildren()) {
+    TimeEdit *start=nullptr; wxTextCtrl *layer=nullptr; wxTextCtrl *actor=nullptr;
+    for (auto child:descendants(box)) {
         if (auto t=dynamic_cast<TimeEdit*>(child); t && t->GetToolTipText()=="Start time") start=t;
-        if (auto s=dynamic_cast<wxSpinCtrl*>(child)) layer=s;
-        if (auto a=dynamic_cast<wxComboBox*>(child); a && a->GetToolTipText().StartsWith("Actor name")) actor=a;
+        else if (auto l=dynamic_cast<wxTextCtrl*>(child); l && l->GetToolTipText().StartsWith("Layer:")) layer=l;
+        else if (auto a=dynamic_cast<wxTextCtrl*>(child); a && a->GetToolTipText().StartsWith("Actor name")) actor=a;
     }
     ASSERT_NE(nullptr,start); ASSERT_NE(nullptr,layer); ASSERT_NE(nullptr,actor);
     auto send=[&](wxWindow* child, int value, wxString text={}) {
-        if (auto combo=dynamic_cast<wxComboBox*>(child)) combo->ChangeValue(text);
+        if (child==layer) {
+            layer->ChangeValue(wxString::Format("%d",value));
+            wxCommandEvent event(wxEVT_TEXT_ENTER,layer->GetId()); event.SetEventObject(layer); layer->GetEventHandler()->ProcessEvent(event);
+            return;
+        }
+        if (child==actor) actor->ChangeValue(text);
         wxCommandEvent event(wxEVT_TEXT,child->GetId()); event.SetInt(value); event.SetString(text);
         event.SetEventObject(child); box->GetEventHandler()->ProcessEvent(event);
     };
@@ -1138,6 +1144,12 @@ TEST_F(ordinary_edit, video_slider_and_readouts_are_flat_and_hold_still) {
     for(int p:VideoZoomControl::Presets())EXPECT_EQ(0,p%25);
     cmd::call("video/zoom/in",c.get());
     EXPECT_DOUBLE_EQ(.75,display->GetWindowZoom()) << "the zoom commands step the same way";
+    // The wheel steps the same way too, up zooming in
+    wxMouseEvent wheel(wxEVT_MOUSEWHEEL); wheel.m_wheelRotation=120; wheel.m_wheelDelta=120; wheel.SetEventObject(zoom);
+    zoom->GetEventHandler()->ProcessEvent(wheel);
+    EXPECT_DOUBLE_EQ(.875,display->GetWindowZoom());
+    zoom->Wheel(-2); EXPECT_DOUBLE_EQ(.625,display->GetWindowZoom());
+    zoom->Wheel(1);
 
     // Readouts at the left, play buttons centred, the zoom at the right.
     wxWindow *block=zoom->GetParent();
@@ -1483,22 +1495,53 @@ TEST_F(ordinary_edit, style_panel_moves_scales_turns_and_fades_lines) {
 
 TEST_F(ordinary_edit, edit_box_has_line_fields_below_the_text_and_a_time_unit_switch) {
     BOOST_SCOPE_EXIT_ALL(&) { OPT_SET("Subtitle/Edit Box/Fields Below Text")->SetBool(true); c->project->CloseTimecodes(); c->subsGrid=nullptr; };
-    int bitmap_buttons=0; bool margins=false; TimeUnitToggle *unit=nullptr; TimeEdit *end=nullptr;
-    for (auto child:box->GetChildren()) {
+    int bitmap_buttons=0; bool margins=false, edit_button=false; TimeUnitToggle *unit=nullptr; TimeEdit *end=nullptr;
+    wxWindow *comment=nullptr,*actor=nullptr,*effect=nullptr,*original=nullptr; FlatChoice *style=nullptr; FlatFrame *layer=nullptr;
+    for (auto child:descendants(box)) {
         if (dynamic_cast<wxBitmapButton*>(child)) ++bitmap_buttons;
         if (child->GetToolTipText().Contains("Margin")) margins=true;
+        if (auto b=dynamic_cast<wxButton*>(child); b && b->GetLabel()=="Edit") edit_button=true;
         if (auto t=dynamic_cast<TimeUnitToggle*>(child)) unit=t;
         if (auto t=dynamic_cast<TimeEdit*>(child); t && t->GetToolTipText()=="End time") end=t;
+        if (auto s=dynamic_cast<FlatChoice*>(child)) style=s;
+        if (auto f=dynamic_cast<FlatFrame*>(child); f && f->GetLabel()=="Layer") layer=f;
+        if (auto b=dynamic_cast<wxCheckBox*>(child)) (b->GetLabel()=="Show Original" ? original : comment)=b;
+        if (auto f=dynamic_cast<FlatFrame*>(child); f && f->GetToolTipText().StartsWith("Actor")) actor=f;
+        if (auto f=dynamic_cast<FlatFrame*>(child); f && f->GetToolTipText().StartsWith("Effect")) effect=f;
     }
     EXPECT_EQ(0,bitmap_buttons) << "text and colours are in the style panel, Enter goes to the next line";
     EXPECT_FALSE(margins) << "the margins are in the style panel";
-    ASSERT_NE(nullptr,unit); ASSERT_NE(nullptr,end);
+    EXPECT_FALSE(edit_button) << "the style panel opens the style editor";
+    ASSERT_NE(nullptr,unit); ASSERT_NE(nullptr,end); ASSERT_NE(nullptr,style); ASSERT_NE(nullptr,layer);
+    ASSERT_NE(nullptr,comment); ASSERT_NE(nullptr,actor); ASSERT_NE(nullptr,effect); ASSERT_NE(nullptr,original);
+    auto end_frame=end->GetParent();
+
+    // Where things are: what the line is in the first row, the original at
+    // its end; when and on which layer in the second, the layer at its end
+    box->SetSize(0,0,900,300); box->Layout();
+    auto at=[&](wxWindow *w) { wxPoint p; for(;w&&w!=box;w=w->GetParent()) p+=w->GetPosition(); return p; };
+    auto centre_y=[&](wxWindow *w) { return at(w).y+w->GetSize().y/2; };
+    for (wxWindow *w:{static_cast<wxWindow*>(style),actor,effect,original}) EXPECT_NEAR(centre_y(comment),centre_y(w),2);
+    EXPECT_LT(at(comment).x,at(style).x); EXPECT_LT(at(style).x,at(actor).x); EXPECT_LT(at(actor).x,at(effect).x); EXPECT_LT(at(effect).x,at(original).x);
+    for (wxWindow *w:{static_cast<wxWindow*>(unit),static_cast<wxWindow*>(layer)}) EXPECT_NEAR(centre_y(end_frame),centre_y(w),2);
+    EXPECT_LT(at(end_frame).x,at(unit).x); EXPECT_LT(at(unit).x,at(layer).x);
+    EXPECT_LT(centre_y(comment),centre_y(end_frame)) << "the times are next to the grid";
+    EXPECT_LE(at(effect).x+effect->GetSize().x,at(original).x) << "the effect is narrower than the actor";
+    EXPECT_LT(effect->GetSize().x,actor->GetSize().x);
+
+    // The times are labelled when there is room, and only then
+    auto end_label=static_cast<FlatFrame*>(end_frame);
+    EXPECT_TRUE(end_label->IsLabelShown());
+    box->SetSize(0,0,480,300); box->Layout();
+    EXPECT_FALSE(end_label->IsLabelShown()) << "the arrow and the tooltips still say which is which";
+    EXPECT_LE(at(layer).x+layer->GetSize().x,box->GetClientSize().x) << "the layer is not cut off";
+    box->SetSize(0,0,900,300); box->Layout();
+    EXPECT_TRUE(end_label->IsLabelShown());
 
     // The fields sit below the text, next to the grid; the option puts them back above
-    box->SetSize(0,0,900,300); box->Layout();
-    EXPECT_GT(end->GetPosition().y,editor->GetPosition().y);
+    EXPECT_GT(at(end).y,at(editor).y);
     OPT_SET("Subtitle/Edit Box/Fields Below Text")->SetBool(false);
-    EXPECT_LT(end->GetPosition().y,editor->GetPosition().y);
+    EXPECT_LT(at(end).y,at(editor).y);
 
     // Frames need timecodes
     c->subsGrid=new BaseGrid(window,c.get());
@@ -1521,6 +1564,118 @@ TEST_F(ordinary_edit, edit_box_has_line_fields_below_the_text_and_a_time_unit_sw
     editor->GetEventHandler()->ProcessEvent(enter);
     ASSERT_EQ(2u,LiveRead(*c).Events.size());
     EXPECT_EQ(std::next(LiveRead(*c).Events.begin())->Id,c->selectionController->ActiveID());
+}
+
+TEST_F(ordinary_edit, edit_box_style_layer_and_character_count) {
+    BOOST_SCOPE_EXIT_ALL() { OPT_SET("Subtitle/Character Limit")->SetInt(40); };
+    int second;
+    {auto write=c->subtitleAccess->TryWrite();auto &file=LiveWriteForTest(*c);
+     for (auto name:{"Alpha","Beta"}) {auto style=new AssStyle();style->name=name;file.Styles.push_back(*style);}
+     auto other=new AssDialogue();other->Layer=4;second=other->Id;file.Events.push_back(*other);
+     file.Commit("fixture",AssFile::COMMIT_NEW);}
+    int first=LiveRead(*c).Events.front().Id;
+    c->selectionController->SetSelectionAndActiveIDs({first},first);
+    FlatChoice *style=nullptr; FlatFrame *layer_frame=nullptr; FlatBadge *count=nullptr; wxCheckBox *original=nullptr; wxStaticText *caption=nullptr;
+    for (auto child:descendants(box)) {
+        if (auto s=dynamic_cast<FlatChoice*>(child)) style=s;
+        if (auto f=dynamic_cast<FlatFrame*>(child); f && f->GetLabel()=="Layer") layer_frame=f;
+        if (auto b=dynamic_cast<FlatBadge*>(child)) count=b;
+        if (auto b=dynamic_cast<wxCheckBox*>(child); b && b->GetLabel()=="Show Original") original=b;
+        if (auto t=dynamic_cast<wxStaticText*>(child); t && t->GetLabel().StartsWith("Original")) caption=t;
+    }
+    ASSERT_NE(nullptr,style); ASSERT_NE(nullptr,layer_frame); ASSERT_NE(nullptr,count); ASSERT_NE(nullptr,original); ASSERT_NE(nullptr,caption);
+    auto layer=static_cast<wxTextCtrl*>(layer_frame->GetContent());
+    auto row=[&](int n) { return &*std::next(LiveRead(*c).Events.begin(),n); };
+
+    // The style list: the file's styles, the wheel goes down them, turns close together are one undo step
+    EXPECT_EQ((std::vector<wxString>{"Default","Alpha","Beta"}),style->GetItems());
+    EXPECT_EQ("Default",style->GetStringSelection());
+    wxMouseEvent wheel(wxEVT_MOUSEWHEEL); wheel.m_wheelRotation=-120; wheel.m_wheelDelta=120; wheel.SetEventObject(style);
+    style->GetEventHandler()->ProcessEvent(wheel);
+    EXPECT_EQ("Alpha",row(0)->Style.get());
+    style->Step(1); EXPECT_EQ("Beta",row(0)->Style.get()); EXPECT_EQ("Beta",style->GetStringSelection());
+    style->Step(1); EXPECT_EQ("Beta",row(0)->Style.get()) << "stays at the end";
+    c->subsController->Undo(); EXPECT_EQ("Default",row(0)->Style.get()) << "one undo step";
+    wxKeyEvent up(wxEVT_KEY_DOWN); up.m_keyCode=WXK_DOWN; up.SetEventObject(style); style->GetEventHandler()->ProcessEvent(up);
+    EXPECT_EQ("Alpha",row(0)->Style.get());
+
+    // The layer: typed, or moved from each line's own by a drag of the label, the wheel or the keys
+    EXPECT_EQ("0",layer->GetValue());
+    c->selectionController->SetSelectionAndActiveIDs({first,second},first);
+    EXPECT_EQ(wxS("—"),layer->GetValue()) << "the lines are on different layers";
+    layer_frame->Scrub(1,false); layer_frame->Scrub(2,true);
+    EXPECT_EQ(2,row(0)->Layer); EXPECT_EQ(6,row(1)->Layer) << "each from its own";
+    c->subsController->Undo(); EXPECT_EQ(0,row(0)->Layer); EXPECT_EQ(4,row(1)->Layer) << "a drag is one undo step";
+    layer_frame->Scrub(-3,true); EXPECT_EQ(0,row(0)->Layer); EXPECT_EQ(1,row(1)->Layer) << "not below 0";
+    layer_frame->Wheel(1); EXPECT_EQ(1,row(0)->Layer); EXPECT_EQ(2,row(1)->Layer);
+    wxKeyEvent key(wxEVT_CHAR_HOOK); key.m_keyCode=WXK_DOWN; key.SetEventObject(layer); layer->GetEventHandler()->ProcessEvent(key);
+    EXPECT_EQ(0,row(0)->Layer); EXPECT_EQ(1,row(1)->Layer);
+    layer->ChangeValue("5");
+    wxCommandEvent typed(wxEVT_TEXT_ENTER,layer->GetId()); typed.SetEventObject(layer); layer->GetEventHandler()->ProcessEvent(typed);
+    EXPECT_EQ(5,row(0)->Layer); EXPECT_EQ(5,row(1)->Layer); EXPECT_EQ("5",layer->GetValue());
+    layer->ChangeValue("x"); layer->GetEventHandler()->ProcessEvent(typed);
+    EXPECT_EQ(5,row(0)->Layer); EXPECT_EQ("5",layer->GetValue()) << "not a number: back to the layer";
+    c->selectionController->SetSelectionAndActiveIDs({first},first);
+
+    // The character count in the text box's corner: used of the limit, red over it
+    Input("Hello");
+    EXPECT_EQ("5 / 40",count->GetText()); EXPECT_FALSE(count->IsWarning());
+    EXPECT_TRUE(count->GetToolTipText().Contains("40"));
+    Input(std::string(41,'a')+"\\Nshort");
+    EXPECT_EQ("41 / 40",count->GetText()); EXPECT_TRUE(count->IsWarning()) << "the longest line counts";
+    OPT_SET("Subtitle/Character Limit")->SetInt(0);
+    Input("{\\b1}abc");
+    EXPECT_EQ("3",count->GetText()) << "no limit; tags are not counted";
+    EXPECT_GT(count->GetPosition().x,editor->GetClientSize().x/2); EXPECT_GT(count->GetPosition().y,0);
+
+    // The original text, under a caption saying what it is
+    EXPECT_FALSE(caption->IsShown());
+    original->SetValue(true);
+    wxCommandEvent check(wxEVT_CHECKBOX,original->GetId()); check.SetInt(1); check.SetEventObject(original);
+    original->GetEventHandler()->ProcessEvent(check);
+    EXPECT_TRUE(caption->IsShown());
+    original->SetValue(false); check.SetInt(0); original->GetEventHandler()->ProcessEvent(check);
+    OPT_SET("Subtitle/Show Original")->SetBool(false);
+}
+
+TEST_F(ordinary_edit, style_panel_wheel_goes_through_lists_and_transform_has_titles) {
+    {auto write=c->subtitleAccess->TryWrite();auto &file=LiveWriteForTest(*c);
+     for (auto name:{"Alpha","Beta"}) {auto style=new AssStyle();style->name=name;file.Styles.push_back(*style);}
+     file.Events.front().Text="Hello";
+     file.Commit("fixture",AssFile::COMMIT_NEW);}
+    auto row=[&] { return &LiveRead(*c).Events.front(); };
+    int first=row()->Id;
+    c->selectionController->SetSelectionAndActiveIDs({first},first);
+    c->textSelectionController->SetSelection(0,0);
+    auto panel=new StylePanel(window,c.get());
+    auto shown=[&] { panel->UpdateNow(); return panel->Shown(); };
+
+    // Styles in the file's order: down the list, then back up; one undo step
+    panel->Wheel("style",-1); EXPECT_EQ("Alpha",row()->Style.get()); EXPECT_EQ("Alpha",shown()["style"]);
+    panel->Wheel("style",-1); EXPECT_EQ("Beta",row()->Style.get());
+    panel->Wheel("style",-5); EXPECT_EQ("Beta",row()->Style.get()) << "stays at the end";
+    panel->Wheel("style",1); EXPECT_EQ("Alpha",row()->Style.get());
+    c->subsController->Undo(); EXPECT_EQ("Default",row()->Style.get()) << "turns close together are one undo step";
+
+    // Weight: heavier going up, each line keeping its slant
+    panel->UpdateNow(); panel->Wheel("weight",1); EXPECT_EQ("{\\b500}Hello",std::string(row()->Text.get()));
+    panel->UpdateNow(); panel->Wheel("weight",2); EXPECT_EQ("{\\b1}Hello",std::string(row()->Text.get()));
+    panel->UpdateNow(); panel->Wheel("weight",-3); EXPECT_EQ("Hello",std::string(row()->Text.get()));
+
+    // Fonts: the installed ones, in order
+    wxString before=shown()["font"];
+    panel->Wheel("font",-1);
+    wxString after=shown()["font"];
+    EXPECT_NE(before,after);
+    EXPECT_EQ("{\\fn"+after+"}Hello",wxString::FromUTF8(row()->Text.get().c_str()));
+    panel->UpdateNow(); panel->Wheel("font",-1); EXPECT_NE(after,shown()["font"]);
+    panel->UpdateNow(); panel->Wheel("font",1); EXPECT_EQ(after,shown()["font"]) << "and back up";
+
+    // Transform: a title over each group
+    auto s=shown();
+    EXPECT_EQ("Position",s["title_position"]); EXPECT_EQ("Margins",s["title_margins"]); EXPECT_EQ("Scale",s["title_scale"]);
+    EXPECT_EQ("Rotation",s["title_rotation"]); EXPECT_EQ("Opacity",s["title_opacity"]);
+    panel->Destroy();
 }
 
 TEST_F(ordinary_edit, style_panel_sets_karaoke_colour_and_margins) {
