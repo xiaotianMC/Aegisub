@@ -150,8 +150,10 @@ wxString UndoName(Property property) {
 		case Property::Strikeout: return _("toggle strikeout");
 		case Property::Spacing: return _("set letter spacing");
 		case Property::Alignment: return _("set alignment");
-		case Property::FillColour: case Property::OutlineColour: case Property::ShadowColour: return _("set color");
-		case Property::FillAlpha: case Property::OutlineAlpha: case Property::ShadowAlpha: return _("set opacity");
+		case Property::FillColour: case Property::OutlineColour: case Property::ShadowColour:
+		case Property::SecondaryColour: return _("set color");
+		case Property::FillAlpha: case Property::OutlineAlpha: case Property::ShadowAlpha:
+		case Property::SecondaryAlpha: return _("set opacity");
 		case Property::Border: return _("set outline width");
 		case Property::Shadow: return _("set shadow");
 		case Property::Blur: return _("set blur");
@@ -171,6 +173,7 @@ std::vector<std::string> const& TagNames(Property property) {
 		{"\\4c"}, {"\\4a"}, {"\\shad", "\\xshad", "\\yshad"}, {"\\blur"},
 		{"\\fscx"}, {"\\fscy"}, {"\\frz", "\\fr"},
 		{"\\pos"}, {"\\alpha", "\\1a", "\\3a", "\\4a"},
+		{"\\2c"}, {"\\2a"},
 	};
 	return names[static_cast<int>(property)];
 }
@@ -192,6 +195,8 @@ std::string TagFor(Property property, StyleLook const& look) {
 		case Property::Alignment: return "\\an" + std::to_string(look.alignment);
 		case Property::FillColour: return "\\c" + look.primary.GetAssOverrideFormatted();
 		case Property::FillAlpha: return "\\1a" + Alpha(look.primary.a);
+		case Property::SecondaryColour: return "\\2c" + look.secondary.GetAssOverrideFormatted();
+		case Property::SecondaryAlpha: return "\\2a" + Alpha(look.secondary.a);
 		case Property::OutlineColour: return "\\3c" + look.outline.GetAssOverrideFormatted();
 		case Property::OutlineAlpha: return "\\3a" + Alpha(look.outline.a);
 		case Property::Border: return "\\bord" + Number(look.border);
@@ -278,7 +283,7 @@ std::vector<Property> const& StyleProperties() {
 		Property::Font, Property::Size, Property::Weight, Property::Italic, Property::Underline, Property::Strikeout,
 		Property::Spacing, Property::Alignment, Property::FillColour, Property::FillAlpha, Property::OutlineColour,
 		Property::OutlineAlpha, Property::Border, Property::ShadowColour, Property::ShadowAlpha, Property::Shadow,
-		Property::ScaleX, Property::ScaleY, Property::Rotation,
+		Property::ScaleX, Property::ScaleY, Property::Rotation, Property::SecondaryColour, Property::SecondaryAlpha,
 	};
 	return properties;
 }
@@ -305,6 +310,8 @@ void Store(Property property, StyleLook const& look, AssStyle &style) {
 		case Property::Alignment: style.alignment = look.alignment; break;
 		case Property::FillColour: rgb(style.primary, look.primary); break;
 		case Property::FillAlpha: style.primary.a = look.primary.a; break;
+		case Property::SecondaryColour: rgb(style.secondary, look.secondary); break;
+		case Property::SecondaryAlpha: style.secondary.a = look.secondary.a; break;
 		case Property::OutlineColour: rgb(style.outline, look.outline); break;
 		case Property::OutlineAlpha: style.outline.a = look.outline.a; break;
 		case Property::Border: style.outline_w = look.border; break;
@@ -440,6 +447,26 @@ int NewStyleFromLine(agi::Context *c, std::string const& name) {
 			DropRepeated(*line, find);
 		}
 	return edit.Commit(_("new style from line"), AssFile::COMMIT_STYLES | AssFile::COMMIT_DIAG_FULL);
+}
+
+int SetMargin(agi::Context *c, int index, int value, int amend_id) {
+	if (index < 0 || index > 2) return amend_id;
+	auto scope = c->subtitleAccess->TryWrite();
+	if (!scope) return -1;
+	SubtitleRowEdit staged(c);
+	value = std::clamp(value, 0, 9999);
+	bool changed = false;
+	for (auto row : staged.rows)
+		if (row->Margin[index] != value) {
+			row->Margin[index] = value;
+			changed = true;
+		}
+	if (!changed) return amend_id;
+	wxString name = index == 0 ? _("left margin change") : index == 1 ? _("right margin change") : _("vertical margin change");
+	auto edit = c->subtitleAccess->Edit(scope->Lease());
+	edit.UpdateRows(staged.Values());
+	return edit.Commit(name, AssFile::COMMIT_DIAG_META, amend_id,
+		staged.rows.size() == 1 ? staged.rows.front()->Id : 0);
 }
 
 namespace {

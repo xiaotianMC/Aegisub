@@ -39,7 +39,9 @@ public:
 	void UpdateNow();
 
 	/// What each part shows, by name ("style", "font", "size", "fill"…),
-	/// and "scope" for what the panel describes; for tests
+	/// and "scope" for what the panel describes; "<name> disabled" for a
+	/// part that can't be used, and " (style)" after a margin left to the
+	/// style; for tests
 	std::map<std::string, wxString> Shown() const;
 
 	/// Act as clicking the button @p name does ("bold", "align_top"…)

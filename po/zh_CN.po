@@ -9068,3 +9068,51 @@ msgstr "图形的高度：直接缩放图形的各个点，不需要 \\fscy"
 #: src/command/app.cpp
 msgid "Windows switches its own controls (text boxes, lists, scroll bars) between light and dark only when Aegisub starts. Restart Aegisub now to use the new theme everywhere?"
 msgstr "Windows 只在 Aegisub 启动时决定自带控件（输入框、列表、滚动条等）用浅色还是深色。现在重启 Aegisub，让新主题在所有地方生效吗？"
+
+#: ../src/style_panel.cpp:902
+msgid "Karaoke"
+msgstr "卡拉OK"
+
+#: ../src/style_panel.cpp:902
+msgid "Colour of karaoke text before it is sung (\\2c, \\2a): click the colour to change it, the box to hide that text"
+msgstr "卡拉OK文字唱到之前的颜色（\\2c、\\2a）：点颜色修改，点方框隐藏这部分文字"
+
+#: ../src/style_panel.cpp:903
+msgid "Opacity of karaoke text before it is sung (\\2a)"
+msgstr "卡拉OK文字唱到之前的不透明度（\\2a）"
+
+#: ../src/style_panel.cpp:930
+#, c-format
+msgid "%s of the line, in pixels. 0 uses the style's, shown dim. Lines placed by \\pos or \\move do not use their margins to be placed"
+msgstr "此行的%s，以像素计。0 表示使用样式的边距，以暗色显示。用 \\pos 或 \\move 定位的行不按边距放置"
+
+#: ../src/style_panel.cpp:930
+msgctxt "margin"
+msgid "L"
+msgstr "左"
+
+#: ../src/style_panel.cpp:931
+msgctxt "margin"
+msgid "R"
+msgstr "右"
+
+#: ../src/style_panel.cpp:932
+msgctxt "margin"
+msgid "V"
+msgstr "垂直"
+
+#: ../src/time_unit_toggle.cpp:25
+msgid "Time"
+msgstr "时间"
+
+#: ../src/time_unit_toggle.cpp:25
+msgid "Frame"
+msgstr "帧"
+
+#: ../src/time_unit_toggle.cpp:27
+msgid "Show and type the times of lines as h:mm:ss.cs, or as frame numbers (needs a video or timecodes)"
+msgstr "以 h:mm:ss.cs 或帧号显示和输入行的时间（帧号需要视频或时间码）"
+
+#: ../src/preferences.cpp:296
+msgid "Line fields below the text, next to the grid"
+msgstr "行属性放在文本框下方，靠近字幕列表"

@@ -293,6 +293,7 @@ void Interface(wxTreebook *book, Preferences *parent) {
 	p->OptionAdd(edit_box, _("Enable ASS autocompletion"), "Subtitle/Edit Box/Auto Completion");
 	p->OptionAdd(edit_box, _("Overwrite in time boxes"), "Subtitle/Time Edit/Insert Mode");
 	p->OptionAdd(edit_box, _("Shift+Enter adds \\n"), "Subtitle/Edit Box/Soft Line Break");
+	p->OptionAdd(edit_box, _("Line fields below the text, next to the grid"), "Subtitle/Edit Box/Fields Below Text");
 	p->OptionAdd(edit_box, _("Enable syntax highlighting"), "Subtitle/Highlight/Syntax");
 	p->OptionBrowse(edit_box, _("Dictionaries path"), "Path/Dictionary");
 	p->OptionFont(edit_box, "Subtitle/Edit Box/");

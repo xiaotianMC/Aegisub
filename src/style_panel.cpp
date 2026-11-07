@@ -175,6 +175,7 @@ private:
 	std::function<void(double, bool)> on_number;
 	double current = 0;
 	bool known = false;
+	bool inherited = false; ///< The value is the style's, not the line's
 	wxTextCtrl *edit = nullptr;
 	bool pressed = false, dragging = false;
 	int press_x = 0;
@@ -214,7 +215,8 @@ private:
 		int unit_width = shown_unit.empty() ? 0 : dc.GetTextExtent(shown_unit).x + unit_gap;
 		wxString text = Ellipsize(dc, value, std::max(0, right - x - unit_width));
 		// Numbers that can be dragged are in the accent colour
-		dc.SetTextForeground(range && IsEnabled() && value != mixed ? p.accent : p.text);
+		// a value taken from the style is dim
+		dc.SetTextForeground(inherited ? p.dim : range && IsEnabled() && value != mixed ? p.accent : p.text);
 		dc.DrawText(text, x, y);
 		if (!shown_unit.empty()) {
 			dc.SetTextForeground(p.dim);
@@ -308,6 +310,12 @@ public:
 		SetValue(is_known ? Number(number) : mixed);
 	}
 	double GetNumber() const { return current; }
+	/// Show the number dim: the line leaves it to its style
+	void SetInherited(bool on) {
+		if (on == inherited) return;
+		inherited = on;
+		Refresh(false);
+	}
 
 	void StartEditing() {
 		if (!range || IsEditing() || !IsEnabled()) return;
@@ -367,7 +375,8 @@ public:
 		if (on_number) on_number(current, final);
 	}
 
-	wxString Shown() const override { return value; }
+	/// The value, with " (style)" when it is the style's
+	wxString Shown() const override { return inherited ? value + " (style)" : value; }
 };
 
 /// A square button that is on, off or on for only some of the lines
@@ -890,6 +899,8 @@ StylePanel::StylePanel(wxWindow *parent, agi::Context *c)
 	};
 	colour_row("fill", _("Fill"), _("Colour of the letters (\\1c): click the colour to change it, the box to hide the letters"),
 		"fill_opacity", "", "%", _("Opacity of the letters (\\1a)"), true);
+	colour_row("secondary", _("Karaoke"), _("Colour of karaoke text before it is sung (\\2c, \\2a): click the colour to change it, the box to hide that text"),
+		"secondary_opacity", "", "%", _("Opacity of karaoke text before it is sung (\\2a)"));
 	colour_row("outline", _("Outline"), _("Colour of the outline (\\3c, \\3a): click the colour to change it, the box to remove the outline"),
 		"outline_width", "", "", _("Width of the outline, in pixels (\\bord)"));
 	colour_row("background", _("Background"),
@@ -913,6 +924,15 @@ StylePanel::StylePanel(wxWindow *parent, agi::Context *c)
 	};
 	pair("position_x", "X", "", _("Where the line is, across (\\pos). Lines that move (\\move) are left as they are"),
 		"position_y", "Y", "", _("Where the line is, down (\\pos). Lines that move (\\move) are left as they are"), true);
+	{
+		// The line's margins: 0 leaves it to the style, whose margin shows dim
+		auto line = new wxBoxSizer(wxHORIZONTAL);
+		auto tip = _("%s of the line, in pixels. 0 uses the style's, shown dim. Lines placed by \\pos or \\move do not use their margins to be placed");
+		line->Add(Add<Field>("margin_left", wxGETTEXT_IN_CONTEXT("margin", "L"), "", false, wxString::Format(tip, _("Left margin"))), 1, wxEXPAND);
+		line->Add(Add<Field>("margin_right", wxGETTEXT_IN_CONTEXT("margin", "R"), "", false, wxString::Format(tip, _("Right margin"))), 1, wxEXPAND | wxLEFT, gap);
+		line->Add(Add<Field>("margin_vertical", wxGETTEXT_IN_CONTEXT("margin", "V"), "", false, wxString::Format(tip, _("Vertical margin"))), 1, wxEXPAND | wxLEFT, gap);
+		transform.body->Add(line, 0, wxEXPAND | wxTOP, gap);
+	}
 	pair("scale_x", _("Scale X"), "%", _("Stretches the letters across (\\fscx)"),
 		"scale_y", _("Scale Y"), "%", _("Stretches the letters up and down (\\fscy)"));
 	pair("rotation", _("Rotation"), wxS("°"), _("Turns the line, anticlockwise (\\frz)"),
@@ -983,6 +1003,14 @@ void StylePanel::BindEditing() {
 	number("spacing", Property::Spacing, {-100, 100, 0.1}, [](StyleLook &l, double v) { l.spacing = v; });
 
 	number("fill_opacity", Property::FillAlpha, {0, 100, 1}, [](StyleLook &l, double v) { l.primary.a = AlphaFor(v); });
+	number("secondary_opacity", Property::SecondaryAlpha, {0, 100, 1}, [](StyleLook &l, double v) { l.secondary.a = AlphaFor(v); });
+	for (int i = 0; i < 3; ++i) {
+		static const char *names[] = {"margin_left", "margin_right", "margin_vertical"};
+		static_cast<Field*>(parts[names[i]])->SetNumberHandler({0, 9999, 1}, [this, i](double v, bool final) {
+			drag_commit = style_edit::SetMargin(c, i, static_cast<int>(std::lround(v)), drag_commit);
+			if (final) drag_commit = -1;
+		});
+	}
 	number("shadow_opacity", Property::ShadowAlpha, {0, 100, 1}, [](StyleLook &l, double v) { l.shadow.a = AlphaFor(v); });
 	number("outline_width", Property::Border, {0, 100, 0.1}, [](StyleLook &l, double v) { l.border = v; });
 	number("blur", Property::Blur, {0, 100, 0.1}, [](StyleLook &l, double v) { l.blur = v; });
@@ -1013,7 +1041,7 @@ void StylePanel::BindEditing() {
 	shape_number("shape_height", false);
 
 	auto colour = [this](std::string const& name) { return static_cast<ColourRow*>(parts[name]); };
-	for (auto name : {"fill", "outline", "background", "shadow"}) {
+	for (auto name : {"fill", "secondary", "outline", "background", "shadow"}) {
 		colour(name)->on_check = [this, name, colour] { Check(name, colour(name)->GetState() != State::On); };
 		colour(name)->on_pick = [this, name] { PickColour(name); };
 	}
@@ -1068,6 +1096,7 @@ ColourProperties PropertiesOf(std::string const& row) {
 	using style_edit::Property;
 	if (row == "fill") return {Property::FillColour, Property::FillAlpha, &StyleLook::primary};
 	if (row == "shadow") return {Property::ShadowColour, Property::ShadowAlpha, &StyleLook::shadow};
+	if (row == "secondary") return {Property::SecondaryColour, Property::SecondaryAlpha, &StyleLook::secondary};
 	// The background box is drawn in the outline colour
 	return {Property::OutlineColour, Property::OutlineAlpha, &StyleLook::outline};
 }
@@ -1088,6 +1117,11 @@ void StylePanel::Check(std::string const& row, bool on) {
 	if (row == "fill") {
 		style_edit::ApplyWithStyle(c, Property::FillAlpha, [&](StyleLook &l, StyleLook const& style) {
 			if (on) visible(l, style); else l.primary.a = 255;
+		});
+	}
+	else if (row == "secondary") {
+		style_edit::ApplyWithStyle(c, Property::SecondaryAlpha, [&](StyleLook &l, StyleLook const& style) {
+			if (on) visible(l, style); else l.secondary.a = 255;
 		});
 	}
 	else if (row == "outline") {
@@ -1354,6 +1388,36 @@ void StylePanel::UpdateNow() {
 	}
 	Display(looks, scope);
 
+	// Margins: the lines', or their styles' where they leave it at 0
+	std::vector<AssDialogue const*> lines(selected.begin(), selected.end());
+	if (lines.empty() && active) lines.push_back(active);
+	bool all_placed = !lines.empty();
+	for (int i = 0; i < 3; ++i) {
+		static const char *names[] = {"margin_left", "margin_right", "margin_vertical"};
+		auto field = static_cast<Field*>(parts[names[i]]);
+		std::optional<int> value;
+		bool same = !lines.empty(), inherited = !lines.empty();
+		for (auto line : lines) {
+			int margin = line->Margin[i];
+			if (margin == 0) {
+				if (auto style = find(line->Style.get())) margin = style->Margin[i];
+			}
+			else
+				inherited = false;
+			if (value && *value != margin) same = false;
+			value = margin;
+		}
+		field->SetNumber(value.value_or(0), same);
+		field->SetInherited(same && inherited);
+	}
+	for (auto line : lines) {
+		StyleLook look = LookAt(*line, 0, find);
+		if (!look.has_position) all_placed = false;
+	}
+	// Placed by \pos or \move: the margins do not move them
+	for (auto name : {"margin_left", "margin_right", "margin_vertical"})
+		parts[name]->Enable(!lines.empty() && !all_placed);
+
 	// The shape's size, when the line is one and it alone is selected
 	auto size = selected.size() <= 1 ? ShapeSize(c) : std::nullopt;
 	SetSectionVisible("shape", size.has_value());
@@ -1427,6 +1491,8 @@ void StylePanel::Display(std::vector<StyleLook> const& looks, wxString const& sc
 	colour_row("background", box, [](StyleLook const& l) { return l.outline; });
 	colour_row("shadow", [](StyleLook const& l) { return (l.shadow_x != 0 || l.shadow_y != 0) && l.shadow.a != 255; }, [](StyleLook const& l) { return l.shadow; });
 	number_field("fill_opacity", [](StyleLook const& l) { return Opacity(l.primary); });
+	colour_row("secondary", [](StyleLook const& l) { return l.secondary.a != 255; }, [](StyleLook const& l) { return l.secondary; });
+	number_field("secondary_opacity", [](StyleLook const& l) { return Opacity(l.secondary); });
 	number_field("outline_width", [](StyleLook const& l) { return l.border; });
 	number_field("shadow_opacity", [](StyleLook const& l) { return Opacity(l.shadow); });
 
@@ -1452,8 +1518,10 @@ void StylePanel::Display(std::vector<StyleLook> const& looks, wxString const& sc
 
 std::map<std::string, wxString> StylePanel::Shown() const {
 	std::map<std::string, wxString> shown;
-	for (auto const& [name, part] : parts)
+	for (auto const& [name, part] : parts) {
 		shown[name] = part->Shown();
+		if (!part->IsThisEnabled()) shown[name + " disabled"] = "yes";
+	}
 	return shown;
 }
 

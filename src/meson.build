@@ -148,6 +148,7 @@ aegisub_src = files(
     'theme.cpp',
     'text_selection_controller.cpp',
     'thesaurus.cpp',
+    'time_unit_toggle.cpp',
     'timeedit_ctrl.cpp',
     'toggle_bitmap.cpp',
     'toolbar.cpp',

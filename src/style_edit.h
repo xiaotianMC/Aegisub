@@ -26,6 +26,7 @@ enum class Property {
 	ScaleX, ScaleY, Rotation,
 	Position,  ///< \pos; lines placed by \move are left alone
 	Opacity,   ///< \alpha: fill, outline and shadow together
+	SecondaryColour, SecondaryAlpha, ///< Karaoke text before it is sung
 };
 
 /// The tags that set @p property, e.g. \bord, \xbord and \ybord
@@ -97,6 +98,10 @@ int ResetToStyle(agi::Context *c);
 /// does at its start, given to the selected lines. @return As Apply; -1
 /// also when a style of that name exists
 int NewStyleFromLine(agi::Context *c, std::string const& name);
+
+/// Set margin @p index (0 left, 1 right, 2 vertical) of the selected lines
+/// to @p value; 0 leaves it to the style. @return As Apply
+int SetMargin(agi::Context *c, int index, int value, int amend_id = -1);
 
 /// Give the selected lines a box behind the text (@p on), or take it
 /// away. Only a style has one (border style 3), so each line gets a copy

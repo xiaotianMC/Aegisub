@@ -53,7 +53,7 @@ class SubsTextEditCtrl;
 class TimeEdit;
 class wxButton;
 class wxCheckBox;
-class wxRadioButton;
+class TimeUnitToggle;
 class wxSizer;
 class wxSpinCtrl;
 class wxStyledTextCtrl;
@@ -103,13 +103,12 @@ private:
 	TimeEdit *end_time;
 	TimeEdit *duration;
 	wxSpinCtrl *layer;
-	std::array<wxTextCtrl *, 3> margin;
 	Placeholder<wxComboBox> *effect_box;
-	wxRadioButton *by_time;
-	wxRadioButton *by_frame;
+	TimeUnitToggle *time_unit;
 	wxTextCtrl *char_count;
 	wxCheckBox *split_box;
 
+	wxSizer *fields_sizer; ///< The two rows of fields, above or below the text
 	wxSizer *top_sizer;
 	wxSizer *middle_right_sizer;
 	wxSizer *middle_left_sizer;
@@ -142,12 +141,10 @@ private:
 	boost::container::map<int, std::pair<agi::Time, agi::Time>> initial_times;
 
 	// Constructor helpers
-	wxTextCtrl *MakeMarginCtrl(wxString const& tooltip, int margin, wxString const& commit_msg);
 	TimeEdit *MakeTimeCtrl(wxString const& tooltip, TimeField field);
 	void MakeButton(const char *cmd_name);
 	wxButton *MakeBottomButton(const char *cmd_name);
 	wxComboBox *MakeComboBox(wxString const& initial_text, int style, void (SubsEditBox::*handler)(wxCommandEvent&), wxString const& tooltip);
-	wxRadioButton *MakeRadio(wxString const& text, bool start, wxString const& tooltip);
 
 	void OnChange(wxStyledTextEvent &event);
 	void OnKeyDown(wxKeyEvent &event);
@@ -156,7 +153,10 @@ private:
 	void OnSelectedSetChanged();
 	void OnLineInitialTextChanged(std::string const& new_text);
 
-	void OnFrameTimeRadio(wxCommandEvent &event);
+	void OnTimeUnitChange(bool by_frame);
+	/// Put the fields above or below the text, as the option says
+	void ArrangeRows();
+	agi::signal::Connection rows_option;
 	void UpdateStyleBox();
 	void OnStyleChange(wxCommandEvent &event);
 	void OnActorChange(wxCommandEvent &event);

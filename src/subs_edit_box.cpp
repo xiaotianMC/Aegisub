@@ -52,6 +52,7 @@
 #include "selection_controller.h"
 #include "subs_edit_ctrl.h"
 #include "text_selection_controller.h"
+#include "time_unit_toggle.h"
 #include "timeedit_ctrl.h"
 #include "utils.h"
 #include "validators.h"
@@ -67,7 +68,6 @@
 #include <wx/button.h>
 #include <wx/checkbox.h>
 #include <wx/fontenum.h>
-#include <wx/radiobut.h>
 #include <wx/settings.h>
 #include <wx/sizer.h>
 #include <wx/spinctrl.h>
@@ -78,12 +78,6 @@
 #endif
 
 namespace {
-
-/// Work around wxGTK's fondness for generating events from ChangeValue
-void change_value(wxTextCtrl *ctrl, wxString const& value) {
-	if (value != ctrl->GetValue())
-		ctrl->ChangeValue(value);
-}
 
 wxString new_value([[maybe_unused]] wxComboBox *ctrl, [[maybe_unused]] wxCommandEvent &evt) {
 #ifdef __WXGTK__
@@ -172,7 +166,9 @@ SubsEditBox::SubsEditBox(wxWindow *parent, agi::Context *context)
 	char_count->SetToolTip(_("Number of characters in the longest line of this subtitle."));
 	top_sizer->Add(char_count, 0, wxALIGN_CENTER, 0);
 
-	// Middle controls
+	// Middle controls: the line's layer and times. Margins are in the style
+	// panel's Transform section, colours and B/I/U/S in its other sections
+	// (docs/style-panel.md); their commands are kept for hotkeys and menus.
 	middle_left_sizer = new wxBoxSizer(wxHORIZONTAL);
 
 	layer = new wxSpinCtrl(this,-1,"",wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS | wxTE_PROCESS_ENTER,0,999,0);
@@ -186,41 +182,31 @@ SubsEditBox::SubsEditBox(wxWindow *parent, agi::Context *context)
 	duration   = MakeTimeCtrl(_("Line duration"), TIME_DURATION);
 	middle_left_sizer->AddSpacer(5);
 
-	margin[0] = MakeMarginCtrl(_("Left Margin (0 = default from style)"), 0, _("left margin change"));
-	margin[1] = MakeMarginCtrl(_("Right Margin (0 = default from style)"), 1, _("right margin change"));
-	margin[2] = MakeMarginCtrl(_("Vertical Margin (0 = default from style)"), 2, _("vertical margin change"));
+	// Time or frames, next to the times it is about
+	time_unit = new TimeUnitToggle(this);
+	time_unit->on_change = [this](bool by_frame) { OnTimeUnitChange(by_frame); };
+	middle_left_sizer->Add(time_unit, wxSizerFlags().Center());
 	middle_left_sizer->AddSpacer(5);
 
-	// Middle-bottom controls
+	// Then the button committing the line, and showing the original text
 	middle_right_sizer = new wxBoxSizer(wxHORIZONTAL);
-	MakeButton("edit/style/bold");
-	MakeButton("edit/style/italic");
-	MakeButton("edit/style/underline");
-	MakeButton("edit/style/strikeout");
-	MakeButton("edit/font");
-	middle_right_sizer->AddSpacer(5);
-	MakeButton("edit/color/primary");
-	MakeButton("edit/color/secondary");
-	MakeButton("edit/color/outline");
-	MakeButton("edit/color/shadow");
-	middle_right_sizer->AddSpacer(5);
 	MakeButton("grid/line/next/create");
 	middle_right_sizer->AddSpacer(10);
-
-	by_time = MakeRadio(_("T&ime"), true, _("Time by h:mm:ss.cs"));
-	by_frame = MakeRadio(_("F&rame"), false, _("Time by frame number"));
-	by_frame->Enable(false);
 
 	split_box = new wxCheckBox(this,-1,_("Show Original"));
 	split_box->SetToolTip(_("Show the contents of the subtitle line when it was first selected above the edit box. This is sometimes useful when editing subtitles or translating subtitles into another language."));
 	split_box->Bind(wxEVT_CHECKBOX, &SubsEditBox::OnSplit, this);
 	middle_right_sizer->Add(split_box, wxSizerFlags().Center().Left());
 
-	// Main sizer
+	// Main sizer: the fields, then the text, or the text first so that the
+	// fields sit next to the grid's columns of the same names
+	fields_sizer = new wxBoxSizer(wxVERTICAL);
+	fields_sizer->Add(top_sizer,0,wxEXPAND | wxALL,3);
+	fields_sizer->Add(middle_left_sizer,0,wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM,3);
+	// On a line of its own until OnSize finds room beside the times
+	fields_sizer->Add(middle_right_sizer,0,wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM,3);
 	wxSizer *main_sizer = new wxBoxSizer(wxVERTICAL);
-	main_sizer->Add(top_sizer,0,wxEXPAND | wxALL,3);
-	main_sizer->Add(middle_left_sizer,0,wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM,3);
-	main_sizer->Add(middle_right_sizer,0,wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM,3);
+	main_sizer->Add(fields_sizer,0,wxEXPAND);
 
 	// Text editor
 	edit_ctrl = new SubsTextEditCtrl(this, FromDIP(wxSize(300,50)), wxBORDER_NONE, c);
@@ -240,7 +226,10 @@ SubsEditBox::SubsEditBox(wxWindow *parent, agi::Context *context)
 	main_sizer->Add(bottom_sizer);
 	main_sizer->Hide(bottom_sizer);
 
-	SetSizerAndFit(main_sizer);
+	SetSizer(main_sizer);
+	ArrangeRows();
+	Fit();
+	rows_option = OPT_SUB("Subtitle/Edit Box/Fields Below Text", [this] { ArrangeRows(); });
 
 	edit_ctrl->Bind(wxEVT_STC_MODIFIED, &SubsEditBox::OnChange, this);
 	edit_ctrl->SetModEventMask(wxSTC_MOD_INSERTTEXT | wxSTC_MOD_DELETETEXT | wxSTC_STARTACTION);
@@ -279,22 +268,6 @@ SubsEditBox::~SubsEditBox() {
 	c->textSelectionController->SetControl(nullptr);
 }
 
-wxTextCtrl *SubsEditBox::MakeMarginCtrl(wxString const& tooltip, int margin, wxString const& commit_msg) {
-	wxTextCtrl *ctrl = new wxTextCtrl(this, -1, "", wxDefaultPosition, wxDefaultSize, wxTE_CENTRE | wxTE_PROCESS_ENTER, IntValidator(0, true));
-	ctrl->SetInitialSize(ctrl->GetSizeFromText(wxS("0000")));
-	ctrl->SetMaxLength(5);
-	ctrl->SetToolTip(tooltip);
-	middle_left_sizer->Add(ctrl, wxSizerFlags().Center());
-
-	Bind(wxEVT_TEXT, [=, this](wxCommandEvent&) {
-		int value = agi::util::mid(-9999, atoi(ctrl->GetValue().utf8_str()), 99999);
-		SetSelectedRows([&](AssDialogue *d) { d->Margin[margin] = value; },
-			commit_msg, AssFile::COMMIT_DIAG_META);
-	}, ctrl->GetId());
-
-	return ctrl;
-}
-
 TimeEdit *SubsEditBox::MakeTimeCtrl(wxString const& tooltip, TimeField field) {
 	TimeEdit *ctrl = new TimeEdit(this, -1, c, "", wxDefaultSize, field == TIME_END);
 	ctrl->SetInitialSize(ctrl->GetSizeFromText(wxS(" 0:00:00.000 ")));
@@ -330,15 +303,6 @@ wxComboBox *SubsEditBox::MakeComboBox(wxString const& initial_text, int style, v
 	ctrl->SetToolTip(tooltip);
 	top_sizer->Add(ctrl, wxSizerFlags(2).Center().Border(wxRIGHT));
 	Bind(wxEVT_COMBOBOX, handler, this, ctrl->GetId());
-	return ctrl;
-}
-
-wxRadioButton *SubsEditBox::MakeRadio(wxString const& text, bool start, wxString const& tooltip) {
-	wxRadioButton *ctrl = new wxRadioButton(this, -1, text, wxDefaultPosition, wxDefaultSize, start ? wxRB_GROUP : 0);
-	ctrl->SetValue(start);
-	ctrl->SetToolTip(tooltip);
-	Bind(wxEVT_RADIOBUTTON, &SubsEditBox::OnFrameTimeRadio, this, ctrl->GetId());
-	middle_right_sizer->Add(ctrl, wxSizerFlags().Expand().Border(wxRIGHT));
 	return ctrl;
 }
 
@@ -393,8 +357,6 @@ void SubsEditBox::UpdateFields(int type, bool repopulate_lists) {
 
 	if (type & AssFile::COMMIT_DIAG_META) {
 		layer->SetValue(line->Layer);
-		for (size_t i = 0; i < margin.size(); ++i)
-			change_value(margin[i], std::to_wstring(line->Margin[i]));
 		comment_box->SetValue(line->Comment);
 		UpdateStyleBox();
 		active_style = line ? c->subtitleAccess->Read().GetStyle(line->Style) : nullptr;
@@ -457,12 +419,8 @@ void SubsEditBox::OnLineInitialTextChanged(std::string const& new_text) {
 }
 
 void SubsEditBox::UpdateFrameTiming(agi::vfr::Framerate const& fps) {
-	if (fps.IsLoaded()) {
-		by_frame->Enable(true);
-	}
-	else {
-		by_frame->Enable(false);
-		by_time->SetValue(true);
+	time_unit->AllowFrames(fps.IsLoaded());
+	if (!fps.IsLoaded()) {
 		start_time->SetByFrame(false);
 		end_time->SetByFrame(false);
 		duration->SetByFrame(false);
@@ -552,7 +510,7 @@ void SubsEditBox::CommitTimes(TimeField field) {
 				break;
 
 			case TIME_DURATION:
-				if (by_frame->GetValue()) {
+				if (time_unit->ByFrame()) {
 					auto const& fps = c->project->Timecodes();
 					d->End = fps.TimeAtFrame(fps.FrameAtTime(d->Start, agi::vfr::START) + duration->GetFrame() - 1, agi::vfr::END);
 				}
@@ -595,7 +553,7 @@ void SubsEditBox::SetDurationField() {
 	// With VFR, the frame count calculated from the duration in time can be
 	// completely wrong (since the duration is calculated as if it were a start
 	// time), so we need to explicitly set it with the correct units.
-	if (by_frame->GetValue())
+	if (time_unit->ByFrame())
 		duration->SetFrame(end_time->GetFrame() - start_time->GetFrame() + 1);
 	else
 		duration->SetTime(end_time->GetTime() - start_time->GetTime());
@@ -608,7 +566,7 @@ void SubsEditBox::OnSize(wxSizeEvent &evt) {
 
 	if (button_bar_split) {
 		if (availableWidth > midMin + botMin) {
-			GetSizer()->Detach(middle_right_sizer);
+			fields_sizer->Detach(middle_right_sizer);
 			middle_left_sizer->Add(middle_right_sizer,0,wxALIGN_CENTER_VERTICAL);
 			button_bar_split = false;
 		}
@@ -616,7 +574,7 @@ void SubsEditBox::OnSize(wxSizeEvent &evt) {
 	else {
 		if (availableWidth < midMin) {
 			middle_left_sizer->Detach(middle_right_sizer);
-			GetSizer()->Insert(2,middle_right_sizer,0,wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM,3);
+			fields_sizer->Insert(2,middle_right_sizer,0,wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM,3);
 			button_bar_split = true;
 		}
 	}
@@ -624,10 +582,23 @@ void SubsEditBox::OnSize(wxSizeEvent &evt) {
 	evt.Skip();
 }
 
-void SubsEditBox::OnFrameTimeRadio(wxCommandEvent &event) {
-	event.Skip();
+void SubsEditBox::ArrangeRows() {
+	auto sizer = GetSizer();
+	bool below = OPT_GET("Subtitle/Edit Box/Fields Below Text")->GetBool();
+	sizer->Detach(fields_sizer);
+	if (below)
+		sizer->Add(fields_sizer, 0, wxEXPAND);
+	else
+		sizer->Insert(0, fields_sizer, 0, wxEXPAND);
+	// Tab goes through them as they are shown: the text, then the fields
+	if (below)
+		edit_ctrl->MoveBeforeInTabOrder(comment_box);
+	else
+		edit_ctrl->MoveAfterInTabOrder(split_box);
+	Layout();
+}
 
-	bool byFrame = by_frame->GetValue();
+void SubsEditBox::OnTimeUnitChange(bool byFrame) {
 	start_time->SetByFrame(byFrame);
 	end_time->SetByFrame(byFrame);
 	duration->SetByFrame(byFrame);

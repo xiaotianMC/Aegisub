@@ -24,6 +24,7 @@ struct StyleLook {
 	int alignment = 2;        ///< \an, 1–9 as on a numeric keypad
 	/// Colours with their alpha: 0 opaque, 255 invisible
 	agi::Color primary, outline, shadow;
+	agi::Color secondary;     ///< Karaoke text before it is sung (\2c, \2a)
 	double border = 0;        ///< \bord: the larger of \xbord and \ybord
 	double shadow_x = 0, shadow_y = 0;
 	double blur = 0;          ///< \blur

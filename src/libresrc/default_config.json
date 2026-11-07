@@ -443,6 +443,7 @@
 		},
 		"Edit Box" : {
 			"Auto Completion" : true,
+			"Fields Below Text" : true,
 			"Soft Line Break": false,
 			"Font Face" : "",
 			"Font Size" : 10

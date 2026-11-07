@@ -15,6 +15,7 @@
 #include "subs_edit_box.h"
 #include "subs_edit_ctrl.h"
 #include "timeedit_ctrl.h"
+#include "time_unit_toggle.h"
 #include "base_grid.h"
 #include "options.h"
 #include "command/command.h"
@@ -707,15 +708,8 @@ TEST_F(ordinary_edit, dark_appearance_lightens_dark_icons_and_keeps_coloured_one
     EXPECT_GT(marked.GetData()[(8 + 3) * 3], 200) << "the black edge is lightened";
     EXPECT_EQ(0, marked.GetData()[(4 * 8 + 4) * 3]) << "the dot inside is kept";
 
-    // Edit box buttons and the shape tool icon follow at once.
-    wxBitmapButton *bold_button = nullptr;
-    for (auto child : box->GetChildren())
-        if (auto button = dynamic_cast<wxBitmapButton*>(child); button && !bold_button) bold_button = button;
-    ASSERT_NE(nullptr, bold_button);
-    EXPECT_GT(MeanLightness(bold_button->GetBitmap().ConvertToImage()), 0.6);
+    // The shape tool icon follows at once.
     OPT_SET("App/Theme")->SetInt(1);
-    EXPECT_LT(MeanLightness(bold_button->GetBitmap().ConvertToImage()), 0.3);
-
     auto shape = DrawingShapeIcon(DrawingShape::Triangle, 24).GetBitmap(wxSize(48, 48)).ConvertToImage();
     ASSERT_TRUE(shape.HasAlpha());
     EXPECT_EQ(48, shape.GetWidth());
@@ -1481,6 +1475,87 @@ TEST_F(ordinary_edit, style_panel_moves_scales_turns_and_fades_lines) {
     panel->Press("style_update");
     EXPECT_EQ(150,LiveRead(*c).GetStyle("Look")->scalex); EXPECT_EQ(-10,LiveRead(*c).GetStyle("Look")->angle);
     EXPECT_EQ("{\\pos(5,200)}Hello",text(0));
+    panel->Destroy();
+}
+
+TEST_F(ordinary_edit, edit_box_has_line_fields_below_the_text_and_a_time_unit_switch) {
+    BOOST_SCOPE_EXIT_ALL(&) { OPT_SET("Subtitle/Edit Box/Fields Below Text")->SetBool(true); c->project->CloseTimecodes(); c->subsGrid=nullptr; };
+    int bitmap_buttons=0; bool margins=false; TimeUnitToggle *unit=nullptr; TimeEdit *end=nullptr;
+    for (auto child:box->GetChildren()) {
+        if (dynamic_cast<wxBitmapButton*>(child)) ++bitmap_buttons;
+        if (child->GetToolTipText().Contains("Margin")) margins=true;
+        if (auto t=dynamic_cast<TimeUnitToggle*>(child)) unit=t;
+        if (auto t=dynamic_cast<TimeEdit*>(child); t && t->GetToolTipText()=="End time") end=t;
+    }
+    EXPECT_EQ(1,bitmap_buttons) << "only the button committing the line: text and colours are in the style panel";
+    EXPECT_FALSE(margins) << "the margins are in the style panel";
+    ASSERT_NE(nullptr,unit); ASSERT_NE(nullptr,end);
+
+    // The fields sit below the text, next to the grid; the option puts them back above
+    box->SetSize(0,0,900,300); box->Layout();
+    EXPECT_GT(end->GetPosition().y,editor->GetPosition().y);
+    OPT_SET("Subtitle/Edit Box/Fields Below Text")->SetBool(false);
+    EXPECT_LT(end->GetPosition().y,editor->GetPosition().y);
+
+    // Frames need timecodes
+    c->subsGrid=new BaseGrid(window,c.get());
+    EXPECT_FALSE(unit->FramesAllowed());
+    unit->Choose(1); EXPECT_FALSE(unit->ByFrame());
+    {std::ofstream timecodes("timecodes.txt"); timecodes << "# timecode format v1\nAssume 25\n";}
+    c->project->LoadTimecodes("timecodes.txt");
+    ASSERT_TRUE(unit->FramesAllowed());
+    wxString time=end->GetValue();
+    unit->Choose(1); EXPECT_TRUE(unit->ByFrame());
+    EXPECT_EQ("124",end->GetValue()) << "the last frame shown before 5 s at 25 fps";
+    unit->Choose(0); EXPECT_EQ(time,end->GetValue());
+    unit->Choose(1); c->project->CloseTimecodes();
+    EXPECT_FALSE(unit->FramesAllowed()); EXPECT_FALSE(unit->ByFrame()); EXPECT_EQ(time,end->GetValue());
+}
+
+TEST_F(ordinary_edit, style_panel_sets_karaoke_colour_and_margins) {
+    int placed;
+    {auto write=c->subtitleAccess->TryWrite();auto &file=LiveWriteForTest(*c);
+     auto style=new AssStyle();style->name="Look";style->Margin={{10,20,30}};style->secondary=agi::Color(0,0,255);file.Styles.push_back(*style);
+     auto &row=file.Events.front();row.Style="Look";row.Text="Hello";
+     auto other=new AssDialogue();other->Style="Look";other->Text="{\\pos(1,2)}placed";placed=other->Id;file.Events.push_back(*other);
+     file.Commit("fixture",AssFile::COMMIT_NEW);}
+    auto text=[&](int n) { return std::string(std::next(LiveRead(*c).Events.begin(),n)->Text.get()); };
+    auto margin=[&](int n, int i) { return std::next(LiveRead(*c).Events.begin(),n)->Margin[i]; };
+    int first=LiveRead(*c).Events.front().Id;
+    c->selectionController->SetSelectionAndActiveIDs({first},first);
+    c->textSelectionController->SetSelection(0,0);
+    auto panel=new StylePanel(window,c.get());
+    auto shown=[&] { panel->UpdateNow(); return panel->Shown(); };
+
+    // Karaoke colour: \2c and \2a, hidden like the fill
+    EXPECT_EQ("on #0000FF",shown()["secondary"]); EXPECT_EQ("100",shown()["secondary_opacity"]);
+    panel->Check("secondary",false); EXPECT_EQ("{\\2a&HFF&}Hello",text(0)); EXPECT_EQ("off #0000FF",shown()["secondary"]);
+    panel->Check("secondary",true); EXPECT_EQ("Hello",text(0));
+    panel->ChooseColour("secondary",agi::Color(0,255,0)); EXPECT_EQ("{\\2c&H00FF00&}Hello",text(0));
+    panel->UpdateNow(); panel->EnterNumber("secondary_opacity",50,true);
+    EXPECT_EQ("{\\2c&H00FF00&\\2a&H80&}Hello",text(0)); EXPECT_EQ("50",shown()["secondary_opacity"]);
+
+    // Margins: 0 shows the style's, dim
+    auto s=shown();
+    EXPECT_EQ("10 (style)",s["margin_left"]); EXPECT_EQ("20 (style)",s["margin_right"]); EXPECT_EQ("30 (style)",s["margin_vertical"]);
+    EXPECT_EQ(0u,s.count("margin_left disabled"));
+    panel->EnterNumber("margin_left",5,true); EXPECT_EQ(5,margin(0,0)); EXPECT_EQ("5",shown()["margin_left"]);
+    EXPECT_EQ(_("left margin change"),c->subsController->GetUndoDescription());
+    // A drag is one undo step
+    panel->EnterNumber("margin_vertical",31,false); panel->EnterNumber("margin_vertical",40,false); panel->EnterNumber("margin_vertical",42,true);
+    EXPECT_EQ(42,margin(0,2));
+    c->subsController->Undo(); EXPECT_EQ(0,margin(0,2)); EXPECT_EQ(5,margin(0,0));
+    panel->EnterNumber("margin_left",0,true); EXPECT_EQ("10 (style)",shown()["margin_left"]);
+    panel->EnterNumber("margin_right",-4,true); EXPECT_EQ(0,margin(0,1)) << "not below 0";
+
+    // Lines differ; a line placed by \pos doesn't use them
+    panel->EnterNumber("margin_left",7,true);
+    c->selectionController->SetSelectionAndActiveIDs({first,placed},first);
+    EXPECT_EQ(wxS("—"),shown()["margin_left"]); EXPECT_EQ("30 (style)",shown()["margin_vertical"]);
+    EXPECT_EQ(0u,shown().count("margin_left disabled")) << "one of them uses them";
+    c->selectionController->SetSelectionAndActiveIDs({placed},placed);
+    EXPECT_EQ("yes",shown()["margin_left disabled"]);
+    EXPECT_EQ("{\\pos(1,2)}placed",text(1));
     panel->Destroy();
 }
 

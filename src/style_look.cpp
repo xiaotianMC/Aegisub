@@ -20,6 +20,7 @@ StyleLook LookOf(AssStyle const& style) {
 	look.spacing = style.spacing;
 	look.alignment = style.alignment;
 	look.primary = style.primary;
+	look.secondary = style.secondary;
 	look.outline = style.outline;
 	look.shadow = style.shadow;
 	look.border = style.outline_w;
@@ -87,13 +88,16 @@ struct Applier {
 		else if (name == "\\s") look.strikeout = Value(tag, line_style.strikeout);
 		else if (name == "\\fsp") look.spacing = Value(tag, line_style.spacing);
 		else if (name == "\\c" || name == "\\1c") Colour(tag, look.primary, line_style.primary);
+		else if (name == "\\2c") Colour(tag, look.secondary, line_style.secondary);
 		else if (name == "\\3c") Colour(tag, look.outline, line_style.outline);
 		else if (name == "\\4c") Colour(tag, look.shadow, line_style.shadow);
 		else if (name == "\\1a") Alpha(tag, look.primary, line_style.primary);
+		else if (name == "\\2a") Alpha(tag, look.secondary, line_style.secondary);
 		else if (name == "\\3a") Alpha(tag, look.outline, line_style.outline);
 		else if (name == "\\4a") Alpha(tag, look.shadow, line_style.shadow);
 		else if (name == "\\alpha") {
 			Alpha(tag, look.primary, line_style.primary);
+			Alpha(tag, look.secondary, line_style.secondary);
 			Alpha(tag, look.outline, line_style.outline);
 			Alpha(tag, look.shadow, line_style.shadow);
 		}
