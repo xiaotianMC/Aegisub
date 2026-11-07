@@ -28,7 +28,8 @@ Colours Current() {
 	c.background = theme::Surface();
 	wxColour ink = wxSystemSettings::GetColour(wxSYS_COLOUR_BTNTEXT);
 	c.track = theme::Mix(c.background, ink, dark ? 0.2 : 0.16);
-	c.accent = dark ? wxColour(64, 220, 152) : wxColour(22, 163, 104);
+	// The theme's accent, as the video seek bar's played part
+	c.accent = theme::UiColours().accent;
 	c.text = theme::Mix(c.background, ink, 0.7);
 	c.handle = dark ? wxColour(225, 225, 225) : *wxWHITE;
 	c.neutral = theme::Mix(c.background, ink, 0.45);

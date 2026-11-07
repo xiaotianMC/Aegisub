@@ -13,6 +13,7 @@
 #include <wx/menu.h>
 #include <wx/panel.h>
 #include <wx/settings.h>
+#include <wx/textctrl.h>
 #include <wx/textentry.h>
 #include <wx/time.h>
 #include <wx/utils.h>
@@ -616,4 +617,137 @@ void FlatCheck::OnPaint(wxPaintEvent &) {
 	wxString shown = wxStripMenuCodes(label);
 	wxSize extent = dc.GetTextExtent(shown);
 	dc.DrawText(shown, box + FromDIP(6), (size.y - extent.y) / 2);
+}
+
+// FlatSuggest
+
+namespace {
+const int max_suggestions = 8;
+}
+
+FlatSuggest::FlatSuggest(wxTextCtrl *field, wxWindow *anchor, std::function<std::vector<wxString>()> values)
+: wxPopupWindow(anchor, wxBORDER_NONE)
+, field(field)
+, anchor(anchor)
+, values(std::move(values))
+{
+	SetBackgroundStyle(wxBG_STYLE_PAINT);
+	Bind(wxEVT_PAINT, &FlatSuggest::OnPaint, this);
+	Bind(wxEVT_MOTION, [this](wxMouseEvent &event) {
+		int row = (event.GetY() - FromDIP(4)) / RowHeight();
+		int now = row >= 0 && row < static_cast<int>(shown.size()) ? row : -1;
+		if (now != hover) { hover = now; Refresh(false); }
+	});
+	Bind(wxEVT_LEAVE_WINDOW, [this](wxMouseEvent &) { hover = -1; Refresh(false); });
+	Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent &event) {
+		int row = (event.GetY() - FromDIP(4)) / RowHeight();
+		if (row >= 0 && row < static_cast<int>(shown.size())) Take(row);
+	});
+	field->Bind(wxEVT_TEXT, [this](wxCommandEvent &event) {
+		event.Skip();
+		// Only what the user types: not values set by the program
+		if (!filling && this->field->HasFocus()) Suggest();
+	});
+	field->Bind(wxEVT_KILL_FOCUS, [this](wxFocusEvent &event) {
+		event.Skip();
+		CallAfter([this] { Close(); });
+	});
+	theme_changed = theme::AddChangeListener([this] { Refresh(false); });
+}
+
+int FlatSuggest::RowHeight() const {
+	return GetCharHeight() + FromDIP(8);
+}
+
+void FlatSuggest::Suggest() {
+	wxString typed = field->GetValue();
+	shown.clear();
+	if (!typed.empty()) {
+		wxString lower = typed.Lower();
+		for (auto const& value : values()) {
+			if (value.length() > typed.length() && value.Lower().StartsWith(lower))
+				shown.push_back(value);
+			if (static_cast<int>(shown.size()) == max_suggestions) break;
+		}
+	}
+	if (shown.empty()) { Close(); return; }
+	selected = 0;
+	hover = -1;
+	SetFont(anchor->GetFont());
+	int pad = FromDIP(4);
+	wxSize size(anchor->GetSize().x, static_cast<int>(shown.size()) * RowHeight() + 2 * pad);
+	SetSize(size);
+	Position(anchor->ClientToScreen(wxPoint(0, 0)), wxSize(0, anchor->GetSize().y + FromDIP(2)));
+	if (!IsShown()) Show();
+	Refresh(false);
+}
+
+bool FlatSuggest::HandleKey(wxKeyEvent &event) {
+	if (!IsShown() || shown.empty()) return false;
+	int count = static_cast<int>(shown.size());
+	switch (event.GetKeyCode()) {
+		case WXK_DOWN: case WXK_NUMPAD_DOWN:
+			selected = (selected + 1) % count; Refresh(false); return true;
+		case WXK_UP: case WXK_NUMPAD_UP:
+			selected = (selected + count - 1) % count; Refresh(false); return true;
+		case WXK_RETURN: case WXK_NUMPAD_ENTER: case WXK_TAB:
+			if (selected < 0) return false;
+			Take(selected);
+			return event.GetKeyCode() != WXK_TAB; // Tab goes on to the next field
+		case WXK_ESCAPE:
+			Close(); return true;
+		default:
+			return false;
+	}
+}
+
+void FlatSuggest::Take(int index) {
+	if (index < 0 || index >= static_cast<int>(shown.size())) return;
+	wxString value = shown[index];
+	Close();
+	filling = true;
+	field->SetValue(value);
+	field->SetInsertionPointEnd();
+	filling = false;
+}
+
+void FlatSuggest::Close() {
+	shown.clear();
+	selected = hover = -1;
+	if (IsShown()) Hide();
+}
+
+void FlatSuggest::OnPaint(wxPaintEvent &) {
+	wxAutoBufferedPaintDC buffered(this);
+	wxGCDC dc(buffered);
+	auto p = flat::Colours(this);
+	wxSize size = GetClientSize();
+	int pad = FromDIP(4), radius = FromDIP(4);
+	// A raised surface: a little lighter than the block in the dark
+	// appearance, white in the light one, with a fine edge
+	wxColour back = theme::IsDark() ? theme::Mix(p.surface, p.text, 0.06) : *wxWHITE;
+	dc.SetPen(*wxTRANSPARENT_PEN);
+	dc.SetBrush(wxBrush(p.surface));
+	dc.DrawRectangle(wxPoint(0, 0), size);
+	dc.SetBrush(wxBrush(back));
+	dc.SetPen(wxPen(p.line, std::max(1, FromDIP(1))));
+	dc.DrawRoundedRectangle(wxRect(wxPoint(0, 0), size), radius);
+
+	dc.SetFont(GetFont());
+	wxString typed = field->GetValue();
+	for (int i = 0; i < static_cast<int>(shown.size()); ++i) {
+		wxRect row(pad, pad + i * RowHeight(), size.x - 2 * pad, RowHeight());
+		if (i == selected || i == hover) {
+			dc.SetPen(*wxTRANSPARENT_PEN);
+			dc.SetBrush(wxBrush(theme::Mix(back, p.accent, i == selected ? 0.22 : 0.1)));
+			dc.DrawRoundedRectangle(row, FromDIP(3));
+		}
+		// What was typed in the text colour, the rest it would add dim
+		int x = row.x + FromDIP(8), y = row.y + (row.height - dc.GetCharHeight()) / 2;
+		wxString head = shown[i].Left(typed.length()), tail = shown[i].Mid(typed.length());
+		dc.SetTextForeground(p.text);
+		dc.DrawText(head, x, y);
+		dc.SetTextForeground(theme::Mix(back, p.text, 0.7));
+		dc.DrawText(tail, x + dc.GetTextExtent(head).x, y);
+	}
 }

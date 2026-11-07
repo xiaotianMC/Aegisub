@@ -4889,9 +4889,9 @@ TEST_F(ordinary_edit, compare_tab_locks_the_editor_until_the_comparison_ends) {
     EXPECT_EQ(1, frame_keys);
 
     // The editor tab says it is locked, and leads back.
-    auto edit = Named<wxToggleButton>(tabs, "workspace-tab-edit"); ASSERT_NE(nullptr, edit);
-    wxCommandEvent toggle(wxEVT_TOGGLEBUTTON, edit->GetId()); toggle.SetEventObject(edit);
-    edit->GetEventHandler()->ProcessEvent(toggle);
+    auto edit = Named<WorkspaceTab>(tabs, "workspace-tab-edit"); ASSERT_NE(nullptr, edit);
+    edit->Click();
+    EXPECT_GT(Named(tabs, "workspace-strip")->GetPosition().y, tabs->Book()->GetPosition().y) << "the strip is below the page";
     EXPECT_FALSE(tabs->ComparisonInFront());
     EXPECT_TRUE(Named(tabs, "workspace-banner")->IsShown());
     EXPECT_NE(wxNOT_FOUND, Label(tabs, "workspace-banner-text").Find("compare-tab.ass"));
@@ -4901,7 +4901,7 @@ TEST_F(ordinary_edit, compare_tab_locks_the_editor_until_the_comparison_ends) {
     EXPECT_TRUE(tabs->ComparisonInFront());
 
     // Ending it from the tab strip confirms the decision it discards.
-    Press(tabs, "workspace-tab-close");
+    Named<WorkspaceTab>(tabs, "workspace-tab-close")->Click();
     ASSERT_EQ(1u, hook.messages.size());
     EXPECT_NE(wxNOT_FOUND, hook.messages[0].Find("discard 1 decisions")) << hook.messages[0];
     EXPECT_EQ(nullptr, tabs->Comparison());
@@ -4976,6 +4976,31 @@ TEST_F(ordinary_edit, dark_appearance_uses_dark_defaults_only_for_unchanged_colo
     EXPECT_EQ(wxColour(0xff, 0xf4, 0xce), Named(tabs, "workspace-banner")->GetBackgroundColour());
     tabs->CloseComparison(false);
     OPT_SET("App/Theme")->SetInt(restore);
+}
+
+TEST_F(ordinary_edit, drawn_suggestions_offer_values_starting_with_the_typed_text) {
+    auto frame=new wxPanel(window);
+    auto field=new wxTextCtrl(frame,-1,"");
+    std::vector<wxString> values{wxString::FromUTF8("待"),wxString::FromUTF8("待校"),wxString::FromUTF8("待定"),"Alice","alex"};
+    auto suggest=new FlatSuggest(field,frame,[&]{ return values; });
+    auto key=[&](int code){ wxKeyEvent e(wxEVT_CHAR_HOOK); e.m_keyCode=code; return suggest->HandleKey(e); };
+    field->ChangeValue(wxString::FromUTF8("待")); suggest->Suggest();
+    // Longer values only: the one already typed is not offered
+    EXPECT_EQ((std::vector<wxString>{wxString::FromUTF8("待校"),wxString::FromUTF8("待定")}),suggest->Shown());
+    EXPECT_EQ(0,suggest->Selected());
+    EXPECT_TRUE(key(WXK_DOWN)); EXPECT_EQ(1,suggest->Selected());
+    EXPECT_TRUE(key(WXK_DOWN)); EXPECT_EQ(0,suggest->Selected());   // round to the first
+    EXPECT_TRUE(key(WXK_UP)); EXPECT_EQ(1,suggest->Selected());
+    EXPECT_TRUE(key(WXK_RETURN));
+    EXPECT_EQ(wxString::FromUTF8("待定"),field->GetValue());
+    EXPECT_TRUE(suggest->Shown().empty());
+    EXPECT_FALSE(key(WXK_RETURN)) << "closed: Enter goes on to the field";
+    // Any case; Escape closes
+    field->ChangeValue("al"); suggest->Suggest();
+    EXPECT_EQ((std::vector<wxString>{"Alice","alex"}),suggest->Shown());
+    EXPECT_TRUE(key(WXK_ESCAPE)); EXPECT_TRUE(suggest->Shown().empty());
+    field->ChangeValue("zz"); suggest->Suggest(); EXPECT_TRUE(suggest->Shown().empty());
+    frame->Destroy();
 }
 
 TEST_F(ordinary_edit, grid_colours_saved_at_a_former_default_follow_the_appearance_again) {

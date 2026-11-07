@@ -938,7 +938,10 @@ StylePanel::StylePanel(wxWindow *parent, agi::Context *c)
 	// colour swatch, past the check box
 	row->PrependSpacer(FromDIP(14) + FromDIP(8));
 	look.body->Add(row, 0, wxEXPAND | wxTOP, gap / 2);
-	look.body->Add(Add<Field>("blur", _("Blur"), "", false, _("Softens the edges of the outline, or the letters without one (\\blur)")), 0, wxEXPAND | wxTOP, gap);
+	row = new wxBoxSizer(wxHORIZONTAL);
+	row->AddSpacer(FromDIP(14) + FromDIP(8));
+	row->Add(Add<Field>("blur", _("Blur"), "", false, _("Softens the edges of the outline, or the letters without one (\\blur)")), 1, wxEXPAND);
+	look.body->Add(row, 0, wxEXPAND | wxTOP, gap / 2);
 
 	auto &transform = AddSection(outer, "transform", _("Transform"));
 	// Each group under a small title of its own

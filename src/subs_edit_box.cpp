@@ -280,13 +280,18 @@ wxTextCtrl *SubsEditBox::MakeTextField(FlatFrame *&frame, wxString const& hint, 
 	auto ctrl = new wxTextCtrl(frame, -1, "", wxDefaultPosition, wxDefaultSize, wxTE_PROCESS_ENTER | wxBORDER_NONE);
 	ctrl->SetHint(hint);
 	ctrl->SetToolTip(tooltip);
+	frame->SetToolTip(tooltip);
+	frame->SetContent(ctrl, width);
+	// Typing offers the values the file already has
+	auto suggest = new FlatSuggest(ctrl, frame, [&values] {
+		return std::vector<wxString>(values.begin(), values.end());
+	});
 	// Enter is done with it, rather than going to the next line
-	ctrl->Bind(wxEVT_CHAR_HOOK, [](wxKeyEvent &e) {
+	ctrl->Bind(wxEVT_CHAR_HOOK, [suggest](wxKeyEvent &e) {
+		if (suggest->HandleKey(e)) return;
 		if (e.GetKeyCode() == WXK_RETURN || e.GetKeyCode() == WXK_NUMPAD_ENTER) flat::LeaveField();
 		else e.Skip();
 	});
-	frame->SetToolTip(tooltip);
-	frame->SetContent(ctrl, width);
 	// The values the file already has, to choose from
 	frame->SetChevron([this, ctrl, frame, &values] {
 		if (values.empty()) return;
@@ -387,8 +392,6 @@ void SubsEditBox::PopulateList(wxTextCtrl *ctrl, wxArrayString &values, boost::f
 	list.Sort();
 	if (list == values) return;
 	values = list;
-	// Typing offers them too
-	ctrl->AutoComplete(values);
 }
 
 void SubsEditBox::OnActiveLineChanged() {

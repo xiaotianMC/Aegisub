@@ -10,9 +10,11 @@
 #include <functional>
 #include <vector>
 
+#include <wx/popupwin.h>
 #include <wx/window.h>
 
 class wxMouseEvent;
+class wxTextCtrl;
 
 namespace flat {
 struct Palette {
@@ -197,4 +199,36 @@ public:
 	bool AcceptsFocus() const override { return false; }
 	bool AcceptsFocusFromKeyboard() const override { return IsEnabled(); }
 	bool Enable(bool enable = true) override;
+};
+
+/// Values to choose from under a text field as it is typed in, in place of
+/// the system's autocompletion: those starting with what was typed, drawn
+/// as the flat controls are. Up and Down go through them, Enter, Tab or a
+/// click takes one, Escape closes them. The field keeps the keyboard.
+class FlatSuggest final : public wxPopupWindow {
+	wxTextCtrl *field;
+	wxWindow *anchor;
+	std::function<std::vector<wxString>()> values;
+	std::vector<wxString> shown;
+	int selected = -1, hover = -1;
+	bool filling = false;
+	agi::signal::Connection theme_changed;
+
+	int RowHeight() const;
+	void OnPaint(wxPaintEvent &);
+
+public:
+	/// Under @p anchor (the field's frame), as wide as it
+	FlatSuggest(wxTextCtrl *field, wxWindow *anchor, std::function<std::vector<wxString>()> values);
+
+	/// Show the values matching the field's text, or close if none does
+	void Suggest();
+	/// A key typed in the field: true if the list used it
+	bool HandleKey(wxKeyEvent &event);
+	/// Put value @p index of those shown in the field, and close
+	void Take(int index);
+	void Close();
+
+	std::vector<wxString> const& Shown() const { return shown; }
+	int Selected() const { return selected; }
 };

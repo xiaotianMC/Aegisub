@@ -13,11 +13,37 @@
 
 #include <string_view>
 
+#include <functional>
+
 class wxButton;
 class wxSimplebook;
 class wxStaticText;
-class wxToggleButton;
 namespace agi { struct Context; }
+
+/// A tab in the strip at the bottom left of the work area, drawn as VS Code
+/// draws its panel tabs: the one in front in the text colour over an accent
+/// underline, the other dim. As a close button it shows a cross.
+class WorkspaceTab final : public wxWindow {
+    wxString label;
+    bool close = false, selected = false, hover = false;
+    agi::signal::Connection theme_changed;
+
+    void OnPaint(wxPaintEvent &);
+public:
+    WorkspaceTab(wxWindow *parent, wxString const& label, bool close = false);
+
+    std::function<void()> on_click;
+    /// As a click does
+    void Click() { if (on_click) on_click(); }
+
+    void SetLabel(wxString const& new_label) override;
+    wxString GetLabel() const override { return label; }
+    void SetSelected(bool on);
+    bool IsSelected() const { return selected; }
+
+    wxSize DoGetBestClientSize() const override;
+    bool AcceptsFocus() const override { return false; }
+};
 
 /// A tab holding a comparison. It owns the comparison session.
 class ComparisonPage : public wxPanel {
@@ -33,8 +59,7 @@ public:
 class WorkspaceTabs final : public wxPanel {
     agi::Context *c;
     wxPanel *strip;
-    wxToggleButton *edit_tab, *compare_tab;
-    wxButton *close_tab;
+    WorkspaceTab *edit_tab, *compare_tab, *close_tab;
     wxStaticText *notice;
     wxPanel *banner;
     wxStaticText *banner_text;
