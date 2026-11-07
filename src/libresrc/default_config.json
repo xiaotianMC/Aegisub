@@ -268,21 +268,21 @@
 			}
 		},
 		"Subtitle Grid" : {
-			"Active Border" : "rgb(255, 91, 239)",
+			"Active Border" : "rgb(26, 99, 196)",
 			"Background" : {
 				"Background" : "rgb(255,255,255)",
-				"Comment" : "rgb(216, 222, 245)",
-				"Inframe" : "rgb(255, 253, 234)",
-				"Selected Comment" : "rgb(211, 238, 238)",
-				"Selection" : "rgb(206, 255, 231)"
+				"Comment" : "rgb(245, 246, 248)",
+				"Inframe" : "rgb(255, 248, 225)",
+				"Selected Comment" : "rgb(222, 229, 240)",
+				"Selection" : "rgb(229, 238, 252)"
 			},
-			"Collision" : "rgb(255,0,0)",
-			"CPS Error" : "rgb(255,0,0)",
-			"Header" : "rgb(165, 207, 231)",
-			"Left Column" : "rgb(196, 236, 201)",
-			"Lines" : "rgb(190,190,190)",
-			"Selection" : "rgb(0,0,0)",
-			"Standard" : "rgb(0,0,0)"
+			"Collision" : "rgb(214, 48, 49)",
+			"CPS Error" : "rgb(224, 64, 64)",
+			"Header" : "rgb(247, 248, 250)",
+			"Left Column" : "rgb(250, 251, 252)",
+			"Lines" : "rgb(234, 236, 240)",
+			"Selection" : "rgb(31, 35, 40)",
+			"Standard" : "rgb(31, 35, 40)"
 		},
 		"Subtitle" : {
 			"Background" : "rgb(255, 255, 255)",

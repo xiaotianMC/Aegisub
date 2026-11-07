@@ -206,9 +206,10 @@ void BaseGrid::UpdateStyle() {
 	wxClientDC dc(this);
 	dc.SetFont(font);
 
-	// Set line height: the text and 2 pixels above and below it, growing
+	// Set line height: the text and 4 pixels above and below it, growing
 	// with the display scale.
-	GridColumn::row_padding = std::max(0, (FromDIP(4) - 4) / 2);
+	GridColumn::row_padding = 2 + std::max(0, (FromDIP(4) - 4) / 2);
+	GridColumn::cell_padding = FromDIP(8);
 	lineHeight = dc.GetCharHeight() + 4 + 2 * GridColumn::row_padding;
 
 	// Set row brushes
@@ -324,77 +325,82 @@ void BaseGrid::OnPaint(wxPaintEvent &) {
 
 	if (!any) return;
 
+	wxAutoBufferedPaintDC dc(this);
+	Draw(dc, paint_columns);
+}
+
+void BaseGrid::Draw(wxDC &dc, std::vector<char> const& paint_columns) {
 	int w = 0;
 	int h = 0;
 	GetClientSize(&w,&h);
 	w -= scrollBar->GetSize().GetWidth();
 
-	wxAutoBufferedPaintDC dc(this);
 	dc.SetFont(font);
 
 	dc.SetBackground(row_colors.Default);
 	dc.Clear();
 
-	// Draw labels
-	dc.SetPen(*wxTRANSPARENT_PEN);
-	dc.SetBrush(row_colors.LeftCol);
-	dc.DrawRectangle(0, lineHeight, columns[0]->Width(), h-lineHeight);
+	const int grid_x = columns[0]->Width();
+
 
 	// Row colors
 	wxColour text_standard(theme::Colour("Colour/Subtitle Grid/Standard"));
 	wxColour text_selection(theme::Colour("Colour/Subtitle Grid/Selection"));
 	wxColour text_collision(theme::Colour("Colour/Subtitle Grid/Collision"));
-	wxColour accent = theme::UiColours().accent;
+	wxColour active_colour(theme::Colour("Colour/Subtitle Grid/Active Border"));
 	bool alternate_rows = OPT_GET("Subtitle/Grid/Alternate Rows")->GetBool();
-
-	// First grid row
 	wxPen grid_pen(theme::Colour("Colour/Subtitle Grid/Lines"));
-	dc.SetPen(grid_pen);
-	dc.DrawLine(0, 0, w, 0);
-	dc.SetPen(*wxTRANSPARENT_PEN);
 
 	auto paint_text = [&](wxString const& str, int x, int y, int col) {
-		int left = x + 4;
-		if (columns[col]->Centered()) {
-			wxSize ext = dc.GetTextExtent(str);
-			left += (columns[col]->Width() - 6 - ext.GetWidth()) / 2;
-		}
-
-		dc.DrawText(str, left, y + 2 + GridColumn::row_padding);
+		dc.DrawText(str, columns[col]->TextLeft(x, dc.GetTextExtent(str).GetWidth()), y + 2 + GridColumn::row_padding);
 	};
 
-	// Paint header
+	// Paint header: quieter text than the rows, short dividers between the
+	// columns and one line under it.
 	{
-		dc.SetTextForeground(text_standard);
+		dc.SetTextForeground(Mix(text_standard, row_colors.Header.GetColour(), 0.62));
+		dc.SetPen(*wxTRANSPARENT_PEN);
 		dc.SetBrush(row_colors.Header);
 		dc.DrawRectangle(0, 0, w, lineHeight);
 
+		int inset = lineHeight / 4;
 		int x = 0;
 		for (size_t i : agi::util::range(columns.size())) {
 			if (paint_columns[i])
 				paint_text(columns[i]->Header(), x, 0, i);
 			x += columns[i]->Width();
+			if (columns[i]->Width() && x < w && i + 1 < columns.size()) {
+				dc.SetPen(grid_pen);
+				dc.DrawLine(x, inset, x, lineHeight - inset);
+				dc.SetPen(*wxTRANSPARENT_PEN);
+			}
 		}
 
 		dc.SetPen(grid_pen);
-		dc.DrawLine(0, lineHeight, w, lineHeight);
+		dc.DrawLine(0, lineHeight - 1, w, lineHeight - 1);
 	}
 
 	// Paint the rows
 	const int drawPerScreen = h/lineHeight + 1;
 	const int nDraw = mid(0, drawPerScreen, GetRows() - yPos);
-	const int grid_x = columns[0]->Width();
 
 	const auto active_line = context->selectionController->ReadActiveLine();
 	auto const& mutable_selection = context->selectionController->ReadSelectedSet();
     std::set<AssDialogue const*> selection(mutable_selection.begin(), mutable_selection.end());
 	visible_rows.clear();
+	const int bar = FromDIP(3);
+
+	// The line number column, as far down as there are rows
+	dc.SetPen(*wxTRANSPARENT_PEN);
+	dc.SetBrush(row_colors.LeftCol);
+	dc.DrawRectangle(0, lineHeight, grid_x, nDraw * lineHeight);
 
 	for (int i : agi::util::range(nDraw)) {
 		wxBrush color = row_colors.Default;
 		AssDialogue const* curDiag = index_line_map[i + yPos];
 
 		bool inSel = !!selection.count(curDiag);
+		bool active = curDiag == active_line;
 		if (inSel && curDiag->Comment)
 			color = row_colors.SelectedComment;
 		else if (inSel)
@@ -409,62 +415,67 @@ void BaseGrid::OnPaint(wxPaintEvent &) {
 		}
 		if (color == row_colors.Default && (i + yPos) % 2 == 1 && alternate_rows)
 			color = row_colors.Alternate;
-		dc.SetBrush(color);
+		// The active line a shade deeper than the rest of the selection
+		if (active && inSel)
+			color = wxBrush(Mix(active_colour, color.GetColour(), theme::IsDark() ? 0.12 : 0.08));
 
-		// Draw row background color
+		int y = (i + 1) * lineHeight;
+
+		// Row background: across the whole row, number column included,
+		// when it is not the plain one.
 		if (color != row_colors.Default) {
 			dc.SetPen(*wxTRANSPARENT_PEN);
-			dc.DrawRectangle(grid_x, (i + 1) * lineHeight + 1, w, lineHeight);
+			dc.SetBrush(color);
+			dc.DrawRectangle(inSel || active ? 0 : grid_x, y, w, lineHeight - 1);
 		}
+		dc.SetBrush(color);
 
+		wxColour text;
 		if (active_line != curDiag && curDiag->CollidesWith(active_line))
-			dc.SetTextForeground(text_collision);
+			text = text_collision;
 		else if (inSel)
-			dc.SetTextForeground(text_selection);
+			text = text_selection;
 		else if (curDiag->Comment)
-			dc.SetTextForeground(Mix(text_standard, color.GetColour(), 0.55));
+			text = Mix(text_standard, color.GetColour(), 0.5);
 		else
-			dc.SetTextForeground(text_standard);
+			text = text_standard;
 
-		// Draw text
+		// Draw text; line numbers are quieter except on selected rows.
 		int x = 0;
-		int y = (i + 1) * lineHeight;
 		for (size_t j : agi::util::range(columns.size())) {
-			if (paint_columns[j])
+			if (paint_columns[j]) {
+				dc.SetTextForeground(j == 0 && !inSel && !active ? Mix(text, row_colors.LeftCol.GetColour(), 0.5) : text);
+				dc.SetBrush(color);
 				columns[j]->Paint(dc, x, y + GridColumn::row_padding, curDiag, context);
+			}
 			x += columns[j]->Width();
 		}
 
-		// Selected rows: a bar in the accent colour at the left edge.
-		if (inSel) {
-			dc.SetBrush(wxBrush(accent));
-			dc.DrawRectangle(0, y + 1, FromDIP(3), lineHeight - 1);
+		// The active line: a bar in its colour at the left edge.
+		if (active) {
+			dc.SetPen(*wxTRANSPARENT_PEN);
+			dc.SetBrush(wxBrush(active_colour));
+			dc.DrawRectangle(0, y, bar, lineHeight - 1);
 		}
 
-		// Draw grid
+		// Row divider
 		dc.SetPen(grid_pen);
-		dc.DrawLine(0, y + lineHeight, w , y + lineHeight);
+		dc.DrawLine(0, y + lineHeight - 1, w, y + lineHeight - 1);
 		dc.SetPen(*wxTRANSPARENT_PEN);
 	}
 
-	// Draw grid columns
+	// Column dividers down the rows: fainter than the row dividers, except
+	// the number column's edge.
 	{
-		int maxH = (nDraw + 1) * lineHeight;
+		int bottom = (nDraw + 1) * lineHeight;
+		wxPen faint_pen(Mix(grid_pen.GetColour(), row_colors.Default.GetColour(), 0.55));
 		int x = 0;
-		dc.SetPen(grid_pen);
-		for (auto const& column : columns) {
-			x += column->Width();
-			if (x < w)
-				dc.DrawLine(x, 0, x, maxH);
+		for (size_t i : agi::util::range(columns.size())) {
+			x += columns[i]->Width();
+			if (!columns[i]->Width() || x >= w || i + 1 == columns.size()) continue;
+			dc.SetPen(i == 0 ? grid_pen : faint_pen);
+			dc.DrawLine(x - 1, lineHeight, x - 1, bottom);
 		}
-		dc.DrawLine(0, 0, 0, maxH);
-		dc.DrawLine(w, 0, w, maxH);
-	}
-
-	if (active_line && active_line->Row >= yPos && active_line->Row < yPos + nDraw) {
-		dc.SetPen(wxPen(theme::Colour("Colour/Subtitle Grid/Active Border")));
-		dc.SetBrush(*wxTRANSPARENT_BRUSH);
-		dc.DrawRectangle(0, (active_line->Row - yPos + 1) * lineHeight, w, lineHeight + 1);
 	}
 }
 

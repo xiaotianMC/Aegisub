@@ -85,15 +85,13 @@ void GridColumn::UpdateWidth(const agi::Context *c, WidthHelper &helper) {
 	}
 
 	width = Width(c, helper);
-	if (width) // 10 is an arbitrary amount of padding
-		width = 10 + std::max(width, helper(Header()));
+	if (width)
+		width = 2 * cell_padding + std::max(width, helper(Header()));
 }
 
 void GridColumn::Paint(wxDC &dc, int x, int y, const AssDialogue *d, const agi::Context *c) const {
 	wxString str = Value(d, c);
-	if (Centered())
-		x += (width - 6 - dc.GetTextExtent(str).GetWidth()) / 2;
-	dc.DrawText(str, x + 4, y + 2);
+	dc.DrawText(str, TextLeft(x, dc.GetTextExtent(str).GetWidth()), y + 2);
 }
 
 namespace {
@@ -103,6 +101,15 @@ namespace {
 #define COLUMN_DESCRIPTION(value) \
 	private: const wxString description = value; \
 	public: wxString const& Description() const override { return description; }
+
+/// A rounded tag behind the text of the cell at @p x, in the current brush,
+/// inset from the cell so neighbouring tags stay apart.
+void DrawPill(wxDC &dc, int x, int y, int width) {
+	int inset_x = std::max(2, GridColumn::cell_padding / 2);
+	int height = dc.GetCharHeight() + 2;
+	int radius = std::max(2, height / 3);
+	dc.DrawRoundedRectangle(x + inset_x, y + 1, width - 2 * inset_x, height, radius);
+}
 
 struct GridColumnLineNumber final : GridColumn {
 	COLUMN_HEADER(_("#"))
@@ -124,7 +131,7 @@ struct GridColumnLineNumber final : GridColumn {
 			return;
 		}
 		// Draw a slashed eye at the grid's font size, without a font-glyph dependency.
-		int eye_width = std::min(width - 6, std::max(10, dc.GetCharHeight()));
+		int eye_width = std::min(width - cell_padding, std::max(10, dc.GetCharHeight()));
 		int eye_height = std::max(6, eye_width / 2);
 		int cx = x + width / 2;
 		int cy = y + 2 + dc.GetCharHeight() / 2;
@@ -165,7 +172,7 @@ struct GridColumnLayer final : GridColumn {
 			{254, 202, 202}, {165, 243, 252}, {254, 240, 138}, {251, 207, 232}};
 		wxDCPenChanger pen(dc, *wxTRANSPARENT_PEN);
 		wxDCBrushChanger brush(dc, wxBrush(colors[SubtitleBindingColorIndex(group)]));
-		dc.DrawRectangle(x + 1, y + 1 - row_padding, width - 1, dc.GetCharHeight() + 3 + 2 * row_padding);
+		DrawPill(dc, x, y, width);
 		auto foreground = dc.GetTextForeground();
 		dc.SetTextForeground(*wxBLACK);
 		GridColumn::Paint(dc, x, y, d, c);
@@ -374,12 +381,11 @@ public:
 			double alpha = std::min((double)(cps - cps_min + 1) / (cps_max - cps_min + 1), 1.0);
 			dc.SetBrush(wxBrush(blend(theme::Colour("Colour/Subtitle Grid/CPS Error"), dc.GetBrush().GetColour(), alpha)));
 			dc.SetPen(*wxTRANSPARENT_PEN);
-			dc.DrawRectangle(x, y + 1 - row_padding, width, ext.GetHeight() + 3 + 2 * row_padding);
-			dc.SetTextForeground(blend(*wxBLACK, tc, alpha));
+			DrawPill(dc, x, y, width);
+			dc.SetTextForeground(blend(*wxWHITE, tc, alpha));
 		}
 
-		x += (width + 2 - ext.GetWidth()) / 2;
-		dc.DrawText(str, x, y + 2);
+		dc.DrawText(str, TextLeft(x, ext.GetWidth()), y + 2);
 		dc.SetTextForeground(tc);
 	}
 };

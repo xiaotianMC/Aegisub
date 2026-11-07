@@ -78,6 +78,12 @@ public:
 	/// usual 2 pixels: rows grow with the display scale. Paint gets the y of
 	/// the text area; fills of the whole row extend by this much.
 	static inline int row_padding = 0;
+	/// Space at either side of a cell's text.
+	static inline int cell_padding = 8;
+	/// x of @p text_width wide text in the cell at @p x.
+	int TextLeft(int x, int text_width) const {
+		return Centered() ? x + (width - text_width) / 2 : x + cell_padding;
+	}
 
 	virtual void UpdateWidth(const agi::Context *c, WidthHelper &helper);
 	virtual void SetByFrame(bool /* by_frame */) { }

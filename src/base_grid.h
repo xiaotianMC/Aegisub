@@ -110,6 +110,9 @@ private:
 	void OnCharHook(wxKeyEvent &event);
 	void OnMouseEvent(wxMouseEvent &event);
 	void OnPaint(wxPaintEvent &event);
+	/// Paint the grid on @p dc; only the text of the columns flagged in
+	/// @p paint_columns.
+	void Draw(wxDC &dc, std::vector<char> const& paint_columns);
 	void OnScroll(wxScrollEvent &event);
 	void OnShowColMenu(wxCommandEvent &event);
 	void OnSize(wxSizeEvent &event);
@@ -141,6 +144,8 @@ public:
 
 	void SetByFrame(bool state);
 	void ScrollTo(int y);
+	/// Height of a row (and of the header) in pixels
+	int LineHeight() const { return lineHeight; }
 
 	DECLARE_EVENT_TABLE()
 };

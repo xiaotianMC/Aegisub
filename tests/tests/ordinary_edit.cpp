@@ -232,11 +232,8 @@ TEST_F(ordinary_edit, real_metadata_and_millisecond_time_events_share_multiline_
 TEST_F(ordinary_edit, grid_number_cell_direct_event_is_gated) {
     auto grid=new BaseGrid(window,c.get()); c->subsGrid=grid;
     { auto write=c->subtitleAccess->TryWrite(); LiveWriteForTest(*c).Commit("",AssFile::COMMIT_NEW); }
-    wxFont font=*wxNORMAL_FONT; font.SetPointSize(OPT_GET("Subtitle/Grid/Font Size")->GetInt());
-    auto face=FontFace("Subtitle/Grid"); if(!face.empty())font.SetFaceName(face);
-    wxClientDC dc(grid); dc.SetFont(font);
     auto click=[&] {
-        wxMouseEvent event(wxEVT_LEFT_DOWN); event.SetPosition({1,dc.GetCharHeight()+6});
+        wxMouseEvent event(wxEVT_LEFT_DOWN); event.SetPosition({1,grid->LineHeight()+2});
         event.SetEventObject(grid); grid->GetEventHandler()->ProcessEvent(event);
     };
     click(); EXPECT_TRUE(LiveRead(*c).Events.front().Comment);
@@ -3197,9 +3194,7 @@ protected:
             LiveWriteForTest(*c).Commit("selection UI fixture",AssFile::COMMIT_DIAG_ADDREM|AssFile::COMMIT_DIAG_FULL);
         }
         c->selectionController->SetSelectionAndActiveIDs({ids[0]},ids[0],false);
-        wxFont font=*wxNORMAL_FONT;font.SetPointSize(OPT_GET("Subtitle/Grid/Font Size")->GetInt());
-        auto face=FontFace("Subtitle/Grid");if(!face.empty())font.SetFaceName(face);
-        wxClientDC dc(grid);dc.SetFont(font);height=dc.GetCharHeight()+4;
+        height=grid->LineHeight();
     }
     void TearDown() override {
         if(grid->HasCapture())grid->ReleaseMouse();
