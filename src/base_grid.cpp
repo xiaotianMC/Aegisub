@@ -477,6 +477,23 @@ void BaseGrid::Draw(wxDC &dc, std::vector<char> const& paint_columns) {
 			dc.DrawLine(x - 1, lineHeight, x - 1, bottom);
 		}
 	}
+
+	// Selected rows: an outline in the active line's colour round each run
+	// of them, over the dividers
+	{
+		dc.SetPen(wxPen(active_colour, std::max(1, FromDIP(1))));
+		dc.SetBrush(*wxTRANSPARENT_BRUSH);
+		auto selected = [&](int row) { return !!selection.count(index_line_map[row + yPos]); };
+		for (int i = 0; i < nDraw; ++i) {
+			if (!selected(i)) continue;
+			int last = i;
+			while (last + 1 < nDraw && selected(last + 1)) ++last;
+			int top = (i + 1) * lineHeight - 1;
+			int bottom = (last + 2) * lineHeight - 1;
+			dc.DrawRectangle(0, top, w, bottom - top + 1);
+			i = last;
+		}
+	}
 }
 
 void BaseGrid::OnSize(wxSizeEvent &) {

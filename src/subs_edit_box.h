@@ -59,6 +59,7 @@ class TimeUnitToggle;
 class wxSizer;
 class wxStaticText;
 class FlatBadge;
+class FlatCheck;
 class FlatChoice;
 class FlatFrame;
 class wxStyledTextCtrl;
@@ -95,7 +96,7 @@ private:
 	agi::signal::Connection file_changed_slot;
 
 	// Box controls
-	wxCheckBox *comment_box;
+	FlatCheck *comment_box;
 	FlatChoice *style_box;
 	wxTextCtrl *actor_box;
 	FlatFrame *actor_frame;
@@ -108,7 +109,7 @@ private:
 	FlatFrame *effect_frame;
 	TimeUnitToggle *time_unit;
 	FlatBadge *char_count;
-	wxCheckBox *split_box;
+	FlatCheck *split_box;
 	wxStaticText *original_caption;
 
 	/// The actors and effects in the file, to choose from

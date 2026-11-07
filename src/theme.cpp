@@ -11,6 +11,7 @@
 #include <cstring>
 #include <map>
 #include <memory>
+#include <vector>
 
 #include <wx/app.h>
 #include <wx/dcgraph.h>
@@ -136,7 +137,39 @@ void Notify() {
 }
 }
 
+static void ResetFormerDefaults() {
+    // The config file keeps every option, defaults included: a grid colour
+    // saved while it had an earlier default would otherwise count as the
+    // user's own after the default changed, and keep its light value in the
+    // dark appearance. Values equal to a former default go back to default.
+    static const std::pair<const char *, std::vector<agi::Color>> former[] = {
+        {"Colour/Subtitle Grid/Active Border", {{255, 91, 239}}},
+        {"Colour/Subtitle Grid/Background/Comment", {{216, 222, 245}, {245, 246, 248}}},
+        {"Colour/Subtitle Grid/Background/Inframe", {{255, 253, 234}, {255, 248, 225}}},
+        {"Colour/Subtitle Grid/Background/Selected Comment", {{211, 238, 238}, {222, 229, 240}}},
+        {"Colour/Subtitle Grid/Background/Selection", {{206, 255, 231}, {229, 238, 252}}},
+        {"Colour/Subtitle Grid/Collision", {{255, 0, 0}}},
+        {"Colour/Subtitle Grid/CPS Error", {{255, 0, 0}}},
+        {"Colour/Subtitle Grid/Header", {{165, 207, 231}, {247, 248, 250}}},
+        {"Colour/Subtitle Grid/Left Column", {{196, 236, 201}, {250, 251, 252}}},
+        {"Colour/Subtitle Grid/Lines", {{190, 190, 190}, {234, 236, 240}}},
+        {"Colour/Subtitle Grid/Selection", {{0, 0, 0}}},
+        {"Colour/Subtitle Grid/Standard", {{0, 0, 0}}},
+    };
+    for (auto const& [name, values] : former) {
+        auto opt = OPT_SET(name);
+        if (opt->IsDefault()) continue;
+        auto current = opt->GetColor();
+        for (auto const& value : values)
+            if (current.r == value.r && current.g == value.g && current.b == value.b && current.a == value.a) {
+                opt->Reset();
+                break;
+            }
+    }
+}
+
 void Init() {
+    ResetFormerDefaults();
     [[maybe_unused]] auto mode = CurrentMode();
     startup_mode = mode;
 #if defined(__WXMSW__) && wxCHECK_VERSION(3, 3, 0)

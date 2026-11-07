@@ -5,6 +5,8 @@
 // background, their values below them, and the link and reset buttons.
 #pragma once
 
+#include <libaegisub/signal.h>
+
 #include <functional>
 
 #include <wx/window.h>
@@ -47,6 +49,7 @@ public:
 
 private:
 	Callbacks callbacks;
+	agi::signal::Connection theme_changed;
 	int zoom = neutral_position;
 	int volume = neutral_position;
 	bool linked = false;

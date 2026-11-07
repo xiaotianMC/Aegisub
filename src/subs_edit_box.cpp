@@ -113,12 +113,8 @@ SubsEditBox::SubsEditBox(wxWindow *parent, agi::Context *context)
 	const int gap = FromDIP(6);
 	top_sizer = new wxBoxSizer(wxHORIZONTAL);
 
-	comment_box = new wxCheckBox(this,-1,_("&Comment"));
+	comment_box = new FlatCheck(this, _("&Comment"));
 	comment_box->SetToolTip(_("Comment this line out. Commented lines don't show up on screen."));
-#ifdef __WXGTK__
-	// Only supported in wxgtk
-	comment_box->SetCanFocus(false);
-#endif
 	top_sizer->Add(comment_box, wxSizerFlags().Center().Border(wxRIGHT, gap));
 
 	// Its tooltip is the style's name, which may be cut short
@@ -134,7 +130,7 @@ SubsEditBox::SubsEditBox(wxWindow *parent, agi::Context *context)
 	Bind(wxEVT_TEXT, &SubsEditBox::OnEffectChange, this, effect_box->GetId());
 	top_sizer->Add(effect_frame, wxSizerFlags(2).Center().Border(wxRIGHT, gap));
 
-	split_box = new wxCheckBox(this,-1,_("Show Original"));
+	split_box = new FlatCheck(this, _("Show Original"));
 	split_box->SetToolTip(_("Show above the text what this line said before you changed it: its text when you moved to it, read-only, to compare or translate against. It follows when you move to another line.\n\nFour buttons come with it: back to the original, clear the line, clear the text but keep the tags, and put the original in at the cursor."));
 	split_box->Bind(wxEVT_CHECKBOX, &SubsEditBox::OnSplit, this);
 	top_sizer->Add(split_box, wxSizerFlags().Center());
@@ -427,6 +423,15 @@ void SubsEditBox::UpdateFrameTiming(agi::vfr::Framerate const& fps) {
 
 void SubsEditBox::OnKeyDown(wxKeyEvent &event) {
 	if (osx::ime::process_key_event(edit_ctrl, event)) return;
+	// Alt and a check box's mnemonic, as the native check box had
+	if (event.GetModifiers() == wxMOD_ALT) {
+		for (auto box : {comment_box, split_box}) {
+			if (box->IsShownOnScreen() && box->IsEnabled() && box->Mnemonic() && event.GetKeyCode() == box->Mnemonic()) {
+				box->Toggle();
+				return;
+			}
+		}
+	}
 	if (edit_ctrl->HasFocus() && edit_ctrl->HandleCompletionKey(event)) return;
 	hotkey::check("Subtitle Edit Box", c, event);
 }

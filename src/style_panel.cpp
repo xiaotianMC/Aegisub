@@ -500,25 +500,9 @@ class StylePanel::ColourRow final : public StylePanel::Part {
 
 		// Check box
 		int box = FromDIP(14);
-		wxRect check(0, cy - box / 2, box, box);
-		if (checked == Toggle::State::Off) {
-			dc.SetBrush(wxBrush(p.field));
-			dc.SetPen(wxPen(theme::Mix(p.surface, p.text, 0.45), thick));
-			dc.DrawRoundedRectangle(check, FromDIP(3));
-		}
-		else {
-			dc.SetBrush(wxBrush(p.accent));
-			dc.SetPen(*wxTRANSPARENT_PEN);
-			dc.DrawRoundedRectangle(check, FromDIP(3));
-			wxColour mark = theme::IsDark() ? wxColour(20, 20, 20) : *wxWHITE;
-			dc.SetPen(wxPen(mark, std::max(1, FromDIP(2))));
-			if (checked == Toggle::State::Mixed)
-				dc.DrawLine(check.x + FromDIP(4), cy, check.GetRight() - FromDIP(3), cy);
-			else {
-				dc.DrawLine(check.x + FromDIP(3), cy, check.x + FromDIP(6), cy + FromDIP(3));
-				dc.DrawLine(check.x + FromDIP(6), cy + FromDIP(3), check.GetRight() - FromDIP(3), cy - FromDIP(3));
-			}
-		}
+		flat::DrawCheck(dc, this, wxRect(0, cy - box / 2, box, box),
+			checked == Toggle::State::Off ? 0 : checked == Toggle::State::Mixed ? 2 : 1,
+			flat::Palette{p.surface, p.text, p.dim, p.field, p.line, p.accent});
 
 		// Colour: over a checkerboard, so that its transparency shows
 		wxRect swatch = SwatchRect();
@@ -950,6 +934,9 @@ StylePanel::StylePanel(wxWindow *parent, agi::Context *c)
 	row = new wxBoxSizer(wxHORIZONTAL);
 	row->Add(Add<Field>("shadow_distance", _("Distance"), "", false, _("How far the shadow falls from the text (\\xshad, \\yshad)")), 1, wxEXPAND);
 	row->Add(Add<Field>("shadow_angle", _("Angle"), wxS("°"), false, wxString::Format(_("Which way the shadow falls: 90%s is right, 180%s down (\\xshad, \\yshad)"), wxS("°"), wxS("°"))), 1, wxEXPAND | wxLEFT, gap);
+	// Under the shadow's colour, as its own settings: in as far as the
+	// colour swatch, past the check box
+	row->PrependSpacer(FromDIP(14) + FromDIP(8));
 	look.body->Add(row, 0, wxEXPAND | wxTOP, gap / 2);
 	look.body->Add(Add<Field>("blur", _("Blur"), "", false, _("Softens the edges of the outline, or the letters without one (\\blur)")), 0, wxEXPAND | wxTOP, gap);
 

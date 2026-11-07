@@ -3,6 +3,7 @@
 #include "audio_levels.h"
 
 #include "format.h"
+#include "theme.h"
 
 #include <libaegisub/format.h>
 
@@ -12,17 +13,28 @@
 #include <wx/bmpbndl.h>
 #include <wx/dcbuffer.h>
 #include <wx/intl.h>
+#include <wx/settings.h>
 
 namespace {
-// Drawn on the waveform's dark background in both appearances, like the
-// waveform itself
-const wxColour background(16, 16, 16);
-const wxColour track_colour(62, 62, 62);
-const wxColour accent(64, 220, 152);
-const wxColour text_colour(170, 170, 170);
-const wxColour handle_colour(225, 225, 225);
-const wxColour neutral_mark(120, 120, 120);
-const wxColour button_active(44, 66, 56);
+// On the audio block's colour, as the toolbar below the waveform is
+// (docs/theme.md): the other colours follow from it and the text colour.
+struct Colours {
+	wxColour background, track, accent, text, handle, neutral, button_active;
+};
+
+Colours Current() {
+	Colours c;
+	bool dark = theme::IsDark();
+	c.background = theme::Surface();
+	wxColour ink = wxSystemSettings::GetColour(wxSYS_COLOUR_BTNTEXT);
+	c.track = theme::Mix(c.background, ink, dark ? 0.2 : 0.16);
+	c.accent = dark ? wxColour(64, 220, 152) : wxColour(22, 163, 104);
+	c.text = theme::Mix(c.background, ink, 0.7);
+	c.handle = dark ? wxColour(225, 225, 225) : *wxWHITE;
+	c.neutral = theme::Mix(c.background, ink, 0.45);
+	c.button_active = theme::Mix(c.background, c.accent, dark ? 0.25 : 0.2);
+	return c;
+}
 
 wxBitmapBundle Icon(const char *body, wxColour colour, int size) {
 	auto svg = agi::format(
@@ -49,6 +61,7 @@ AudioLevels::AudioLevels(wxWindow *parent, Callbacks callbacks)
 		Bind(type, &AudioLevels::OnMouse, this);
 	Bind(wxEVT_MOUSEWHEEL, &AudioLevels::OnWheel, this);
 	Bind(wxEVT_MOUSE_CAPTURE_LOST, [this](wxMouseCaptureLostEvent &) { dragging = Part::None; Refresh(false); });
+	theme_changed = theme::AddChangeListener([this] { Refresh(false); });
 }
 
 void AudioLevels::SetZoom(int position) {
@@ -251,6 +264,10 @@ void AudioLevels::UpdateToolTip() {
 void AudioLevels::OnPaint(wxPaintEvent &) {
 	wxAutoBufferedPaintDC dc(this);
 	wxSize size = GetClientSize();
+	const Colours colours = Current();
+	wxColour const& background = colours.background, &track_colour = colours.track, &accent = colours.accent;
+	wxColour const& text_colour = colours.text, &handle_colour = colours.handle, &neutral_mark = colours.neutral;
+	wxColour const& button_active = colours.button_active;
 	dc.SetPen(*wxTRANSPARENT_PEN);
 	dc.SetBrush(wxBrush(background));
 	dc.DrawRectangle(wxPoint(0, 0), size);
@@ -275,7 +292,9 @@ void AudioLevels::OnPaint(wxPaintEvent &) {
 		// The handle, highlighted under the mouse and while dragged
 		bool active = hover == track || dragging == track;
 		dc.SetBrush(wxBrush(active ? accent : handle_colour));
+		if (!active && !theme::IsDark()) dc.SetPen(wxPen(neutral_mark, std::max(1, FromDIP(1))));
 		dc.DrawCircle(handle, FromDIP(active ? 6 : 5));
+		dc.SetPen(*wxTRANSPARENT_PEN);
 
 		wxRect column = TrackColumn(track);
 		wxSize extent = dc.GetTextExtent(text);

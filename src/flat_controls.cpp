@@ -30,6 +30,29 @@ Palette Colours(wxWindow const *window) {
 	return p;
 }
 
+void DrawCheck(wxDC &dc, wxWindow const *window, wxRect const& check, int state, Palette const& p) {
+	int thick = std::max(1, window->FromDIP(1));
+	int cy = check.y + check.height / 2;
+	if (state == 0) {
+		dc.SetBrush(wxBrush(p.field));
+		dc.SetPen(wxPen(theme::Mix(p.surface, p.text, 0.45), thick));
+		dc.DrawRoundedRectangle(check, window->FromDIP(3));
+		return;
+	}
+	dc.SetBrush(wxBrush(p.accent));
+	dc.SetPen(*wxTRANSPARENT_PEN);
+	dc.DrawRoundedRectangle(check, window->FromDIP(3));
+	wxColour mark = theme::IsDark() ? wxColour(20, 20, 20) : *wxWHITE;
+	dc.SetPen(wxPen(mark, std::max(1, window->FromDIP(2))));
+	auto d = [window](int v) { return window->FromDIP(v); };
+	if (state == 2)
+		dc.DrawLine(check.x + d(4), cy, check.GetRight() - d(3), cy);
+	else {
+		dc.DrawLine(check.x + d(3), cy, check.x + d(6), cy + d(3));
+		dc.DrawLine(check.x + d(6), cy + d(3), check.GetRight() - d(3), cy - d(3));
+	}
+}
+
 int WheelSteps(wxMouseEvent const& event, int &remainder) {
 	int delta = std::max(1, event.GetWheelDelta());
 	remainder += event.GetWheelRotation();
@@ -515,4 +538,82 @@ void FlatBadge::OnPaint(wxPaintEvent &) {
 	dc.SetTextForeground(text_colour);
 	wxSize extent = dc.GetTextExtent(text);
 	dc.DrawText(text, (GetClientSize().x - extent.x) / 2, (GetClientSize().y - extent.y) / 2);
+}
+
+// FlatCheck
+
+FlatCheck::FlatCheck(wxWindow *parent, wxString const& label)
+: wxWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE | wxWANTS_CHARS)
+, label(label)
+{
+	SetBackgroundStyle(wxBG_STYLE_PAINT);
+	SetCursor(wxCursor(wxCURSOR_HAND));
+	Bind(wxEVT_PAINT, &FlatCheck::OnPaint, this);
+	// Not skipped: the text keeps the keyboard and its selection
+	auto click = [this](wxMouseEvent &) { if (IsEnabled()) Toggle(); };
+	Bind(wxEVT_LEFT_DOWN, click);
+	Bind(wxEVT_LEFT_DCLICK, click);
+	Bind(wxEVT_KEY_DOWN, [this](wxKeyEvent &event) {
+		if (event.GetKeyCode() == WXK_SPACE && !event.HasAnyModifiers()) Toggle();
+		else event.Skip();
+	});
+	Bind(wxEVT_SET_FOCUS, [this](wxFocusEvent &event) { Refresh(false); event.Skip(); });
+	Bind(wxEVT_KILL_FOCUS, [this](wxFocusEvent &event) { Refresh(false); event.Skip(); });
+	theme_changed = theme::AddChangeListener([this] { Refresh(false); });
+}
+
+void FlatCheck::SetValue(bool checked) {
+	if (value == checked) return;
+	value = checked;
+	Refresh(false);
+}
+
+void FlatCheck::Toggle() {
+	SetValue(!value);
+	wxCommandEvent event(wxEVT_CHECKBOX, GetId());
+	event.SetEventObject(this);
+	event.SetInt(value);
+	ProcessWindowEvent(event);
+}
+
+int FlatCheck::Mnemonic() const {
+	auto pos = label.find('&');
+	if (pos == wxString::npos || pos + 1 >= label.size()) return 0;
+	return wxToupper(label[pos + 1]);
+}
+
+bool FlatCheck::Enable(bool enable) {
+	bool changed = wxWindow::Enable(enable);
+	if (changed) Refresh(false);
+	return changed;
+}
+
+wxSize FlatCheck::DoGetBestClientSize() const {
+	wxSize extent = GetTextExtent(wxStripMenuCodes(label));
+	return wxSize(FromDIP(14) + FromDIP(6) + extent.x + FromDIP(2), std::max(FromDIP(18), extent.y + FromDIP(4)));
+}
+
+void FlatCheck::OnPaint(wxPaintEvent &) {
+	wxAutoBufferedPaintDC buffered(this);
+	wxGCDC dc(buffered);
+	wxSize size = GetClientSize();
+	auto p = flat::Colours(this);
+	dc.SetPen(*wxTRANSPARENT_PEN);
+	dc.SetBrush(wxBrush(GetParent()->GetBackgroundColour()));
+	dc.DrawRectangle(wxPoint(0, 0), size);
+
+	int box = FromDIP(14);
+	wxRect check(0, (size.y - box) / 2, box, box);
+	flat::DrawCheck(dc, this, check, value ? 1 : 0, p);
+	if (HasFocus()) {
+		dc.SetBrush(*wxTRANSPARENT_BRUSH);
+		dc.SetPen(wxPen(p.accent, std::max(1, FromDIP(1))));
+		dc.DrawRoundedRectangle(check.Inflate(FromDIP(2)), FromDIP(4));
+	}
+
+	dc.SetFont(GetFont());
+	dc.SetTextForeground(p.text);
+	wxString shown = wxStripMenuCodes(label);
+	wxSize extent = dc.GetTextExtent(shown);
+	dc.DrawText(shown, box + FromDIP(6), (size.y - extent.y) / 2);
 }

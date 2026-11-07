@@ -31,6 +31,10 @@ void NoteScroll();
 /// come under the pointer. Records the turn as scrolling if so.
 bool Scrolling();
 
+/// A check box as the style panel draws it: a rounded square, filled with
+/// the accent colour and a tick when on (@p state 1), a dash when mixed (2)
+void DrawCheck(wxDC &dc, wxWindow const *window, wxRect const& box, int state, Palette const& p);
+
 /// Where the keyboard goes when a field is left: the subtitle text
 void SetHome(wxWindow *home);
 /// A field being typed in that Enter or a click anywhere else leaves
@@ -163,4 +167,34 @@ public:
 
 	bool AcceptsFocus() const override { return false; }
 	bool AcceptsFocusFromKeyboard() const override { return false; }
+};
+
+/// A drawn check box with its label, as in the style panel. Sends
+/// wxEVT_CHECKBOX as wxCheckBox does; Space toggles it when it has the
+/// keyboard, and Alt with the label's mnemonic (&) anywhere in its window.
+class FlatCheck final : public wxWindow {
+	wxString label;
+	bool value = false;
+	agi::signal::Connection theme_changed;
+
+	void OnPaint(wxPaintEvent &);
+
+public:
+	FlatCheck(wxWindow *parent, wxString const& label);
+
+	bool GetValue() const { return value; }
+	bool IsChecked() const { return value; }
+	/// Without sending an event
+	void SetValue(bool checked);
+	/// Toggle as a click does, sending wxEVT_CHECKBOX
+	void Toggle();
+	/// The label as given, with its mnemonic marker
+	wxString GetLabel() const override { return label; }
+	/// The mnemonic's key, upper case, or 0
+	int Mnemonic() const;
+
+	wxSize DoGetBestClientSize() const override;
+	bool AcceptsFocus() const override { return false; }
+	bool AcceptsFocusFromKeyboard() const override { return IsEnabled(); }
+	bool Enable(bool enable = true) override;
 };

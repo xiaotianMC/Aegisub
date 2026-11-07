@@ -1502,7 +1502,7 @@ TEST_F(ordinary_edit, edit_box_has_line_fields_below_the_text_and_a_time_unit_sw
         if (auto t=dynamic_cast<TimeEdit*>(child); t && t->GetToolTipText()=="End time") end=t;
         if (auto s=dynamic_cast<FlatChoice*>(child)) style=s;
         if (auto f=dynamic_cast<FlatFrame*>(child); f && f->GetLabel()=="Layer") layer=f;
-        if (auto b=dynamic_cast<wxCheckBox*>(child)) (b->GetLabel()=="Show Original" ? original : comment)=b;
+        if (auto b=dynamic_cast<FlatCheck*>(child)) (b->GetLabel()=="Show Original" ? original : comment)=b;
         if (auto f=dynamic_cast<FlatFrame*>(child); f && f->GetToolTipText().StartsWith("Actor")) actor=f;
         if (auto f=dynamic_cast<FlatFrame*>(child); f && f->GetToolTipText().StartsWith("Effect")) effect=f;
     }
@@ -1575,12 +1575,12 @@ TEST_F(ordinary_edit, edit_box_style_layer_and_character_count) {
      file.Commit("fixture",AssFile::COMMIT_NEW);}
     int first=LiveRead(*c).Events.front().Id;
     c->selectionController->SetSelectionAndActiveIDs({first},first);
-    FlatChoice *style=nullptr; FlatFrame *layer_frame=nullptr; FlatBadge *count=nullptr; wxCheckBox *original=nullptr; wxStaticText *caption=nullptr;
+    FlatChoice *style=nullptr; FlatFrame *layer_frame=nullptr; FlatBadge *count=nullptr; FlatCheck *original=nullptr; wxStaticText *caption=nullptr;
     for (auto child:descendants(box)) {
         if (auto s=dynamic_cast<FlatChoice*>(child)) style=s;
         if (auto f=dynamic_cast<FlatFrame*>(child); f && f->GetLabel()=="Layer") layer_frame=f;
         if (auto b=dynamic_cast<FlatBadge*>(child)) count=b;
-        if (auto b=dynamic_cast<wxCheckBox*>(child); b && b->GetLabel()=="Show Original") original=b;
+        if (auto b=dynamic_cast<FlatCheck*>(child); b && b->GetLabel()=="Show Original") original=b;
         if (auto t=dynamic_cast<wxStaticText*>(child); t && t->GetLabel().StartsWith("Original")) caption=t;
     }
     ASSERT_NE(nullptr,style); ASSERT_NE(nullptr,layer_frame); ASSERT_NE(nullptr,count); ASSERT_NE(nullptr,original); ASSERT_NE(nullptr,caption);
@@ -4976,6 +4976,16 @@ TEST_F(ordinary_edit, dark_appearance_uses_dark_defaults_only_for_unchanged_colo
     EXPECT_EQ(wxColour(0xff, 0xf4, 0xce), Named(tabs, "workspace-banner")->GetBackgroundColour());
     tabs->CloseComparison(false);
     OPT_SET("App/Theme")->SetInt(restore);
+}
+
+TEST_F(ordinary_edit, grid_colours_saved_at_a_former_default_follow_the_appearance_again) {
+    std::string const header = "Colour/Subtitle Grid/Header";
+    OPT_SET(header)->SetColor(agi::Color(165, 207, 231));        // the original light default, as saved in a config file
+    OPT_SET("Colour/Subtitle Grid/Lines")->SetColor(agi::Color(1, 2, 3)); // the user's own
+    theme::Init();
+    EXPECT_TRUE(OPT_GET(header)->IsDefault());
+    EXPECT_EQ(agi::Color(1, 2, 3), OPT_GET("Colour/Subtitle Grid/Lines")->GetColor());
+    OPT_SET("Colour/Subtitle Grid/Lines")->Reset();
 }
 
 TEST_F(ordinary_edit, dropped_subtitles_compare_with_a_saved_document_without_replacing_it) {
