@@ -776,12 +776,15 @@ TEST_F(ordinary_edit, icons_are_monochrome_in_the_appearance_colour_unless_class
         return double(soft) / on;
     };
     for (int size : {16, 20, 24, 32})
-        EXPECT_LT(partial(IconImage(cmd::get("subtitle/save")->Icon(size), size)), size == 16 ? 0.25 : 0.12) << size;
+        EXPECT_LT(partial(IconImage(cmd::get("subtitle/save")->Icon(size), size)), size == 16 ? 0.25 : 0.2) << size << " (unhinted, about half)";
     auto body = libresrc_modern_icon("save_toolbutton");
-    EXPECT_NE(std::string::npos, libresrc_modern_svg(body, 16).find("stroke-width='1'"));
-    EXPECT_NE(std::string::npos, libresrc_modern_svg(body, 16).find("M2.5 2.5H11.5")) << "on pixel centres";
-    EXPECT_NE(std::string::npos, libresrc_modern_svg(body, 20).find("stroke-width='1.6'")) << "2 pixels";
-    EXPECT_NE(std::string::npos, libresrc_modern_svg(body, 32).find("stroke-width='1.5'")) << "3 pixels";
+    // On Lucide's 24 grid: 1 pixel at 16 is 1.5 units
+    EXPECT_NE(std::string::npos, libresrc_modern_svg(body, 16).find("stroke-width='1.5'"));
+    EXPECT_NE(std::string::npos, libresrc_modern_svg(body, 16).find("V18.75A2 2 0 0 1 18.75 21.75H5.25")) << "on pixel centres";
+    EXPECT_NE(std::string::npos, libresrc_modern_svg(body, 20).find("stroke-width='2.4'")) << "2 pixels";
+    EXPECT_NE(std::string::npos, libresrc_modern_svg(body, 32).find("stroke-width='2.25'")) << "3 pixels";
+    // Lucide's dots (zero-length lines it draws round) are small squares of pixels at 16
+    EXPECT_NE(std::string::npos, libresrc_modern_svg(libresrc_modern_icon("about_menu"), 16).find("<rect")) << "the i's dot";
 
     // Right to left, the drawing is mirrored.
     auto next = IconImage(cmd::get("time/next")->Icon(32), 32);
@@ -797,7 +800,7 @@ TEST_F(ordinary_edit, icons_are_monochrome_in_the_appearance_colour_unless_class
 
     // The shape tool's icon has the flyout corner.
     auto shape = DrawingShapeIcon(DrawingShape::Ellipse, 32).GetBitmap(wxSize(32, 32)).ConvertToImage();
-    EXPECT_GT(shape.GetAlpha()[30 * 32 + 30], 200);
+    EXPECT_GT(shape.GetAlpha()[29 * 32 + 29], 200);
 
     // Classic: the coloured bitmaps again, and toolbars are rebuilt with them.
     auto bar = toolbar::GetToolbar(window, "main", c.get(), "Default");

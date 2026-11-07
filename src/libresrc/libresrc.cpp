@@ -103,25 +103,31 @@ void libresrc_set_classic(bool classic) { classic_icons = classic; }
 bool libresrc_classic() { return classic_icons; }
 
 namespace {
-// Pixel hinting for the monochrome icons (docs/icons.md): drawn on a 16 grid
-// with a 1.5 stroke, they would be soft at 16px, the 1.5 lines falling across
-// two columns of pixels. So each size gets a whole number of pixels for the
-// stroke and the drawing's coordinates moved by under a pixel to sit on the
-// pixel grid: line centres on pixel centres for odd widths, on pixel edges for
-// even ones.
+// Pixel hinting for the monochrome icons (docs/icons.md). They are drawn on a
+// 24 grid with a stroke of 2; scaled as they are, a line would fall across
+// two columns of half-covered pixels at most sizes, soft and grey. So each
+// size gets a whole number of pixels for the stroke and the drawing's points
+// moved by under a pixel onto the pixel grid: line centres on pixel centres
+// for odd widths, on pixel edges for even ones. tools/icons/generate.py does
+// the same for its previews.
 struct Hinter {
 	double scale; // pixels per unit
-	int width;    // stroke width in pixels
+	int width;    // the stroke, in pixels
+	int cur;      // the element's own stroke, in pixels
 
-	explicit Hinter(int px) : scale(px / 16.0), width(std::max(1, static_cast<int>(std::floor(scale * 1.25 + 0.5)))) { }
+	explicit Hinter(int px)
+	: scale(px / 24.0)
+	, width(std::max(1, static_cast<int>(std::floor(px / 16.0 * 1.25 + 0.5))))
+	, cur(width)
+	{ }
 
 	// A stroke's centre
 	double Line(double v) const {
 		double d = v * scale;
-		d = width % 2 ? std::floor(d + 1e-6) + 0.5 : std::floor(d + 0.5 + 1e-6);
+		d = cur % 2 ? std::floor(d + 1e-6) + 0.5 : std::floor(d + 0.5 + 1e-6);
 		return d / scale;
 	}
-	// A length, or the edge of a filled area
+	// The edge of a filled area
 	double Whole(double v) const { return std::round(v * scale) / scale; }
 	double StrokeUnits() const { return width / scale; }
 
@@ -134,68 +140,88 @@ struct Hinter {
 		return s == "-0" ? "0" : s;
 	}
 
+	// Absolute commands only (the table is written so)
 	std::string Path(std::string_view d) const {
 		std::vector<std::string> tokens;
 		for (size_t i = 0; i < d.size(); ) {
 			char ch = d[i];
-			if (isalpha(static_cast<unsigned char>(ch)) && ch != 'e') { tokens.emplace_back(1, ch); ++i; }
-			else if (ch == '-' || ch == '.' || isdigit(static_cast<unsigned char>(ch))) {
+			if (isalpha(static_cast<unsigned char>(ch)) && ch != 'e' && ch != 'E') { tokens.emplace_back(1, ch); ++i; }
+			else if (ch == '-' || ch == '+' || ch == '.' || isdigit(static_cast<unsigned char>(ch))) {
 				size_t j = i + 1;
 				bool dot = ch == '.';
-				while (j < d.size() && (isdigit(static_cast<unsigned char>(d[j])) || (d[j] == '.' && !dot) || d[j] == 'e' || (d[j] == '-' && d[j - 1] == 'e'))) {
-					if (d[j] == '.') dot = true;
-					++j;
+				while (j < d.size()) {
+					char c = d[j];
+					if (isdigit(static_cast<unsigned char>(c))) ++j;
+					else if (c == '.' && !dot) { dot = true; ++j; }
+					else if ((c == 'e' || c == 'E') && j + 1 < d.size()) j += (d[j + 1] == '-' || d[j + 1] == '+') ? 2 : 1;
+					else break;
 				}
 				tokens.emplace_back(d.substr(i, j - i));
 				i = j;
 			}
 			else ++i;
 		}
+
 		std::string out;
 		size_t i = 0;
 		char cmd = 0;
+		bool any = false;
 		double moved_x = 0, moved_y = 0; // how far the last point moved
+		double x = 0, y = 0;             // the last point as drawn
 		auto num = [&] { return i < tokens.size() ? std::stod(tokens[i++]) : 0.0; };
-		auto put = [&](double v) { if (!out.empty() && !isalpha(static_cast<unsigned char>(out.back()))) out += ' '; out += Format(v); };
+		auto put = [&](double v) {
+			if (!out.empty() && !isalpha(static_cast<unsigned char>(out.back())) && v >= 0) out += ' ';
+			out += Format(v);
+		};
+		// A point very close to the last one (a tiny tick) moves with it, so
+		// it neither vanishes nor grows; others go on the grid.
+		auto snap = [&](double px, double py) {
+			std::pair<double, double> r;
+			if (any && std::abs(px - x) < 0.75 && std::abs(py - y) < 0.75)
+				r = {px + moved_x, py + moved_y};
+			else {
+				r = {Line(px), Line(py)};
+				moved_x = r.first - px;
+				moved_y = r.second - py;
+			}
+			x = px; y = py; any = true;
+			return r;
+		};
 		while (i < tokens.size()) {
 			if (isalpha(static_cast<unsigned char>(tokens[i][0]))) { cmd = tokens[i++][0]; out += cmd; }
 			switch (cmd) {
-			case 'Z': case 'z': continue;
-			case 'M': case 'L': {
-				double x = num(), y = num(), nx = Line(x), ny = Line(y);
+			case 'Z': continue;
+			case 'M': case 'L': case 'T': {
+				double px = num(), py = num();
+				auto [nx, ny] = snap(px, py);
 				put(nx); put(ny);
-				moved_x = nx - x; moved_y = ny - y;
 				if (cmd == 'M') cmd = 'L';
 				break;
 			}
-			case 'H': put(Line(num())); break;
-			case 'V': put(Line(num())); break;
-			case 'm': case 'l':
-				put(Whole(num())); put(Whole(num()));
-				if (cmd == 'm') cmd = 'l';
-				break;
-			case 'A': case 'a': {
+			case 'H': put(snap(num(), y).first); break;
+			case 'V': put(snap(x, num()).second); break;
+			case 'A': {
 				for (int k = 0; k < 5; ++k) put(num());
-				double x = num(), y = num();
-				if (cmd == 'A') { put(Line(x)); put(Line(y)); }
-				else { put(Whole(x)); put(Whole(y)); }
+				double px = num(), py = num();
+				auto [nx, ny] = snap(px, py);
+				put(nx); put(ny);
 				break;
 			}
 			case 'C': {
 				// Control points move with the end they belong to
-				double x1 = num(), y1 = num(), x2 = num(), y2 = num(), x = num(), y = num();
-				double nx = Line(x), ny = Line(y);
-				put(x1 + moved_x); put(y1 + moved_y); put(x2 + nx - x); put(y2 + ny - y); put(nx); put(ny);
-				moved_x = nx - x; moved_y = ny - y;
+				double x1 = num(), y1 = num(), x2 = num(), y2 = num(), px = num(), py = num();
+				double before_x = moved_x, before_y = moved_y;
+				auto [nx, ny] = snap(px, py);
+				put(x1 + before_x); put(y1 + before_y); put(x2 + moved_x); put(y2 + moved_y); put(nx); put(ny);
 				break;
 			}
-			case 'S': {
-				double x2 = num(), y2 = num(), x = num(), y = num(), nx = Line(x), ny = Line(y);
-				put(x2 + nx - x); put(y2 + ny - y); put(nx); put(ny);
-				moved_x = nx - x; moved_y = ny - y;
+			case 'S': case 'Q': {
+				double x2 = num(), y2 = num(), px = num(), py = num();
+				auto [nx, ny] = snap(px, py);
+				put(x2 + moved_x); put(y2 + moved_y); put(nx); put(ny);
 				break;
 			}
-			default: // Not used by the icons: kept as drawn
+			default: // Not in the table: kept as drawn
 				put(num());
 			}
 		}
@@ -222,16 +248,37 @@ struct Hinter {
 		el.replace(pos, el.find('\'', pos) - pos, v);
 	}
 
-	std::string Element(std::string el) const {
-		if (Attr(el, "stroke-width", nullptr)) return el; // Its own weight: as drawn
+	std::string Element(std::string el) {
+		cur = width;
+		std::string own;
+		if (Attr(el, "stroke-width", &own)) {
+			// Its own weight, in whole pixels too: a pixel more or less than the stroke
+			double px = std::stod(own) * scale;
+			int rounded = static_cast<int>(std::floor(px + 0.5));
+			cur = px < width ? std::max(1, rounded) : px > width * 1.2 ? std::max(width + 1, rounded) : width;
+			Set(el, "stroke-width", Format(cur / scale));
+		}
 		std::string stroke;
 		bool stroked = !(Attr(el, "stroke", &stroke) && stroke == "none");
 		if (el.starts_with("<path")) {
 			std::string d;
 			if (Attr(el, "d", &d)) Set(el, "d", Path(d));
 		}
+		else if (el.starts_with("<circle") && !stroked) {
+			// A dot: a whole number of pixels across, at least the stroke,
+			// centred on a pixel centre or edge to match
+			int dia = std::max(width, static_cast<int>(std::lround(2 * Num(el, "r") * scale)));
+			auto centre = [&](double v) {
+				double d = v * scale;
+				return (dia % 2 ? std::floor(d + 1e-6) + 0.5 : std::floor(d + 0.5 + 1e-6)) / scale;
+			};
+			double cx = centre(Num(el, "cx")), cy = centre(Num(el, "cy")), r = dia / 2.0 / scale;
+			if (dia <= 2) // Too small to antialias as a circle: a square of pixels
+				return "<rect x='" + Format(cx - r) + "' y='" + Format(cy - r) + "' width='" + Format(2 * r) +
+					"' height='" + Format(2 * r) + "' fill='@' stroke='none'/>";
+			Set(el, "cx", Format(cx)); Set(el, "cy", Format(cy)); Set(el, "r", Format(r));
+		}
 		else if (el.starts_with("<circle") || el.starts_with("<ellipse")) {
-			if (!stroked) return el;
 			bool circle = el.starts_with("<circle");
 			double rx = Num(el, circle ? "r" : "rx"), ry = Num(el, circle ? "r" : "ry");
 			// The outline's left and top edge on the grid
@@ -248,7 +295,7 @@ struct Hinter {
 		return el;
 	}
 
-	std::string Body(std::string_view body) const {
+	std::string Body(std::string_view body) {
 		std::string out;
 		size_t pos = 0;
 		while (pos < body.size()) {
@@ -270,12 +317,12 @@ std::string ModernSvg(std::string_view body, int px, int dir, bool flyout, bool 
 	// Near the toolbar text colours: dark grey on light, light grey on dark
 	const std::string colour = dark ? "#d8d8d8" : "#2b2b2b";
 	Hinter hint(px);
-	std::string svg = "<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'>";
-	svg += dir == wxLayout_RightToLeft ? "<g transform='matrix(-1 0 0 1 16 0)'>" : "<g>";
+	std::string svg = "<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'>";
+	svg += dir == wxLayout_RightToLeft ? "<g transform='matrix(-1 0 0 1 24 0)'>" : "<g>";
 	svg += "<g fill='none' stroke='@' stroke-width='" + Hinter::Format(hint.StrokeUnits()) + "' stroke-linecap='round' stroke-linejoin='round'>";
 	svg += hint.Body(body);
 	svg += "</g>";
-	if (flyout) svg += "<path d='M15.5 12.5V15.5H12.5Z' fill='@'/>";
+	if (flyout) svg += "<path d='M23 19V23H19Z' fill='@'/>";
 	svg += "</g></svg>";
 	for (size_t pos; (pos = svg.find('@')) != std::string::npos; )
 		svg.replace(pos, 1, colour);
