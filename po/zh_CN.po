@@ -8844,3 +8844,71 @@ msgstr "字重 %d，斜体"
 msgid "%d selected line"
 msgid_plural "%d selected lines"
 msgstr[0] "所选的 %d 行"
+
+#: src/style_edit.cpp
+msgid "set font size"
+msgstr "设置字号"
+
+#: src/style_edit.cpp
+msgid "set font weight"
+msgstr "设置字重"
+
+#: src/style_edit.cpp
+msgid "set letter spacing"
+msgstr "设置字间距"
+
+#: src/style_edit.cpp
+msgid "set alignment"
+msgstr "设置对齐"
+
+#: src/style_edit.cpp
+msgid "set opacity"
+msgstr "设置不透明度"
+
+#: src/style_edit.cpp
+msgid "set outline width"
+msgstr "设置描边宽度"
+
+#: src/style_edit.cpp
+msgid "set shadow"
+msgstr "设置阴影"
+
+#: src/style_edit.cpp
+msgid "set blur"
+msgstr "设置模糊"
+
+#: src/style_edit.cpp
+msgid "style panel"
+msgstr "样式面板"
+
+#: src/style_panel.cpp
+msgid "Search fonts"
+msgstr "搜索字体"
+
+#: src/style_panel.cpp
+msgid "Thin (100)"
+msgstr "极细（100）"
+
+#: src/style_panel.cpp
+msgid "Extra Light (200)"
+msgstr "特细（200）"
+
+#: src/style_panel.cpp
+msgid "Light (300)"
+msgstr "细体（300）"
+
+#: src/style_panel.cpp
+msgid "Medium (500)"
+msgstr "中等（500）"
+
+#: src/style_panel.cpp
+msgid "Semibold (600)"
+msgstr "半粗（600）"
+
+#: src/style_panel.cpp
+msgid "Extra Bold (800)"
+msgstr "特粗（800）"
+
+#: src/style_panel.cpp
+msgid "Black (900)"
+msgstr "极粗（900）"

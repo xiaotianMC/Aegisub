@@ -8,6 +8,7 @@
 #include "ass_style.h"
 #include "compat.h"
 #include "format.h"
+#include "style_edit.h"
 #include "include/aegisub/context.h"
 #include "selection_controller.h"
 #include "style_look.h"
@@ -23,9 +24,17 @@
 
 #include <wx/dcbuffer.h>
 #include <wx/dcgraph.h>
+#include <wx/fontenum.h>
+#include <wx/listbox.h>
+#include <wx/menu.h>
+#include <wx/panel.h>
+#include <wx/popupwin.h>
 #include <wx/intl.h>
+#include <wx/app.h>
 #include <wx/settings.h>
 #include <wx/sizer.h>
+#include <wx/textctrl.h>
+#include <wx/utils.h>
 
 namespace {
 struct Palette {
@@ -119,16 +128,40 @@ public:
 };
 
 /// A value in a rounded field: an optional dim label before it, a unit
-/// after it and a chevron when it is chosen from a list
+/// after it and a chevron when it is chosen from a list. A number can be
+/// dragged sideways, or clicked and typed in.
 class StylePanel::Field final : public StylePanel::Part {
+public:
+	struct Range {
+		double min, max;
+		double step; ///< Change per two DIP dragged; a tenth with Shift
+	};
+
+private:
 	wxString label, value, unit;
 	bool chevron;
+	std::function<void()> on_choose;
+	std::optional<Range> range;
+	std::function<void(double, bool)> on_number;
+	double current = 0;
+	bool known = false;
+	wxTextCtrl *edit = nullptr;
+	bool pressed = false, dragging = false;
+	int press_x = 0;
+	double press_value = 0;
+
+	int TextLeft(wxDC &dc) const {
+		int x = FromDIP(8);
+		if (!label.empty()) x += dc.GetTextExtent(label).x + FromDIP(6);
+		return x;
+	}
 
 	void Draw(wxDC &dc, Palette const& p) override {
 		wxSize size = GetClientSize();
 		int radius = FromDIP(5);
-		dc.SetBrush(wxBrush(hover ? theme::Mix(p.field, p.text, 0.05) : p.field));
-		dc.SetPen(wxPen(p.line, std::max(1, FromDIP(1))));
+		bool active = (hover || pressed) && IsEnabled() && (on_choose || range);
+		dc.SetBrush(wxBrush(active ? theme::Mix(p.field, p.text, 0.05) : p.field));
+		dc.SetPen(wxPen(IsEditing() ? p.accent : p.line, std::max(1, FromDIP(1))));
 		dc.DrawRoundedRectangle(wxRect(wxPoint(0, 0), size), radius);
 
 		int pad = FromDIP(8);
@@ -138,19 +171,20 @@ class StylePanel::Field final : public StylePanel::Part {
 			DrawChevron(dc, p.dim, right - chevron_size, size.y / 2 - FromDIP(1), chevron_size, true, std::max(1, FromDIP(3) / 2));
 			right -= chevron_size + FromDIP(6);
 		}
-		int x = pad;
 		int y = (size.y - dc.GetCharHeight()) / 2;
 		if (!label.empty()) {
 			dc.SetTextForeground(p.dim);
-			dc.DrawText(label, x, y);
-			x += dc.GetTextExtent(label).x + FromDIP(6);
+			dc.DrawText(label, pad, y);
 		}
+		if (IsEditing()) return;
+		int x = TextLeft(dc);
 		wxString shown_unit = value == mixed ? wxString() : unit;
 		// A degree sign sits against its number
 		int unit_gap = shown_unit == wxS("°") ? 0 : FromDIP(3);
 		int unit_width = shown_unit.empty() ? 0 : dc.GetTextExtent(shown_unit).x + unit_gap;
 		wxString text = Ellipsize(dc, value, std::max(0, right - x - unit_width));
-		dc.SetTextForeground(p.text);
+		// Numbers that can be dragged are in the accent colour
+		dc.SetTextForeground(range && IsEnabled() && value != mixed ? p.accent : p.text);
 		dc.DrawText(text, x, y);
 		if (!shown_unit.empty()) {
 			dc.SetTextForeground(p.dim);
@@ -158,14 +192,151 @@ class StylePanel::Field final : public StylePanel::Part {
 		}
 	}
 
+	double Clamp(double v) const { return std::clamp(v, range->min, range->max); }
+
+	void OnLeftDown(wxMouseEvent &event) {
+		// Not skipped: the click must not move the focus (it would end typing)
+		if (!IsEnabled() || IsEditing()) return;
+		if (on_choose) {
+			CallAfter([this] { if (on_choose) on_choose(); });
+			return;
+		}
+		if (!range) return;
+		pressed = true;
+		dragging = false;
+		press_x = event.GetX();
+		press_value = current;
+		CaptureMouse();
+		Refresh(false);
+	}
+
+	void OnMotion(wxMouseEvent &event) {
+		if (!pressed || !HasCapture()) return;
+		int dx = event.GetX() - press_x;
+		if (!dragging && std::abs(dx) < FromDIP(3)) return;
+		dragging = true;
+		double step = range->step * (event.ShiftDown() ? 0.1 : 1);
+		double v = Clamp(press_value + std::round(dx / static_cast<double>(FromDIP(2))) * step);
+		v = std::round(v / step) * step;
+		if (v == current && known) return;
+		SetNumber(v, true);
+		if (on_number) on_number(v, false);
+	}
+
+	void OnLeftUp(wxMouseEvent &) {
+		if (!pressed) return;
+		pressed = false;
+		if (HasCapture()) ReleaseMouse();
+		Refresh(false);
+		if (dragging) {
+			dragging = false;
+			if (on_number) on_number(current, true);
+		}
+		else
+			CallAfter([this] { StartEditing(); });
+	}
+
+	void OnCaptureLost(wxMouseCaptureLostEvent &) {
+		bool was_dragging = dragging;
+		pressed = dragging = false;
+		Refresh(false);
+		if (was_dragging && on_number) on_number(current, true);
+	}
+
 public:
 	Field(wxWindow *parent, wxString label, wxString unit, bool chevron, wxString const& tip)
 	: Part(parent, wxSize(48, 28)), label(std::move(label)), unit(std::move(unit)), chevron(chevron)
 	{
 		SetToolTip(tip);
+		Bind(wxEVT_LEFT_DOWN, &Field::OnLeftDown, this);
+		Bind(wxEVT_LEFT_DCLICK, &Field::OnLeftDown, this);
+		Bind(wxEVT_MOTION, &Field::OnMotion, this);
+		Bind(wxEVT_LEFT_UP, &Field::OnLeftUp, this);
+		Bind(wxEVT_MOUSE_CAPTURE_LOST, &Field::OnCaptureLost, this);
+	}
+
+	/// Clicking opens a list, from @p choose
+	void SetChooser(std::function<void()> choose) {
+		on_choose = std::move(choose);
+		SetCursor(wxCursor(wxCURSOR_HAND));
+	}
+
+	/// A number in @p number_range: @p handler gets each value while it is
+	/// dragged (false), and the last when the drag ends or a typed value
+	/// is entered (true)
+	void SetNumberHandler(Range number_range, std::function<void(double, bool)> handler) {
+		range = number_range;
+		on_number = std::move(handler);
+		SetCursor(wxCursor(wxCURSOR_SIZEWE));
 	}
 
 	void SetValue(wxString const& new_value) { Set(value, new_value); }
+	/// Show a number, or "—" when @p is_known is false
+	void SetNumber(double number, bool is_known) {
+		current = number;
+		known = is_known;
+		SetValue(is_known ? Number(number) : mixed);
+	}
+	double GetNumber() const { return current; }
+
+	void StartEditing() {
+		if (!range || IsEditing() || !IsEnabled()) return;
+		if (!edit) {
+			edit = new wxTextCtrl(this, -1, "", wxDefaultPosition, wxDefaultSize, wxTE_PROCESS_ENTER | wxBORDER_NONE);
+			edit->Bind(wxEVT_TEXT_ENTER, [this](wxCommandEvent &) { CommitEditing(); });
+			edit->Bind(wxEVT_KILL_FOCUS, [this](wxFocusEvent &e) { e.Skip(); CallAfter([this] { if (IsEditing()) CommitEditing(); }); });
+			edit->Bind(wxEVT_CHAR_HOOK, [this](wxKeyEvent &e) {
+				if (e.GetKeyCode() == WXK_ESCAPE) CancelEditing();
+				else e.Skip();
+			});
+		}
+		wxClientDC dc(this);
+		dc.SetFont(GetFont());
+		int left = TextLeft(dc) - FromDIP(2);
+		int height = std::min(GetClientSize().y - FromDIP(4), edit->GetBestSize().y);
+		edit->SetSize(left, (GetClientSize().y - height) / 2, GetClientSize().x - left - FromDIP(6), height);
+		edit->SetBackgroundColour(Colours(this).field);
+		edit->SetForegroundColour(Colours(this).text);
+		edit->ChangeValue(known ? Number(current) : wxString());
+		edit->Show();
+		edit->SetFocus();
+		edit->SelectAll();
+		Refresh(false);
+	}
+	bool IsEditing() const { return edit && edit->IsShown(); }
+	wxTextCtrl *EditBox() const { return edit; }
+
+	/// Enter the typed number; something else beeps and keeps the box open
+	void CommitEditing() {
+		if (!IsEditing()) return;
+		double v;
+		wxString text = edit->GetValue();
+		text.Trim(true).Trim(false);
+		text.Replace(",", ".");
+		if (!text.ToCDouble(&v)) {
+			if (edit->HasFocus()) { wxBell(); return; }
+			CancelEditing();
+			return;
+		}
+		v = Clamp(v);
+		edit->Hide();
+		SetNumber(v, true);
+		Refresh(false);
+		if (on_number) on_number(v, true);
+	}
+
+	void CancelEditing() {
+		if (!IsEditing()) return;
+		edit->Hide();
+		Refresh(false);
+	}
+
+	/// What dragging or typing @p v does, for tests
+	void Enter(double v, bool final) {
+		SetNumber(Clamp(v), true);
+		if (on_number) on_number(current, final);
+	}
+
 	wxString Shown() const override { return value; }
 };
 
@@ -252,7 +423,16 @@ public:
 	: Part(parent, wxSize(28, 28)), glyph(glyph)
 	{
 		SetToolTip(tip);
+		SetCursor(wxCursor(wxCURSOR_HAND));
+		auto click = [this](wxMouseEvent &) {
+			// Not skipped: the editor keeps the focus and its selection
+			if (IsEnabled() && on_click) CallAfter([this] { if (on_click) on_click(); });
+		};
+		Bind(wxEVT_LEFT_DOWN, click);
+		Bind(wxEVT_LEFT_DCLICK, click);
 	}
+
+	std::function<void()> on_click;
 
 	void SetState(State new_state) {
 		if (state == new_state) return;
@@ -413,6 +593,104 @@ public:
 	wxString Shown() const override { return expanded ? "expanded" : "collapsed"; }
 };
 
+namespace {
+/// Installed fonts, without the vertical "@" variants of Windows
+wxArrayString const& InstalledFonts() {
+	static wxArrayString fonts;
+	if (fonts.empty()) {
+		for (auto const& face : wxFontEnumerator::GetFacenames())
+			if (!face.StartsWith("@")) fonts.Add(face);
+		fonts.Sort([](wxString const& a, wxString const& b) { return a.CmpNoCase(b); });
+	}
+	return fonts;
+}
+
+/// The font list below the font field: type to narrow it down, Enter or a
+/// click to choose; Enter on a name that is not in the list uses it as typed
+class FontPopup final : public wxPopupTransientWindow {
+	wxTextCtrl *search;
+	wxListBox *list;
+	wxString current;
+	std::function<void(wxString const&)> on_pick;
+
+	void Filter() {
+		wxString query = search->GetValue().Lower();
+		query.Trim(true).Trim(false);
+		wxArrayString shown;
+		for (auto const& font : InstalledFonts())
+			if (query.empty() || font.Lower().Contains(query)) shown.Add(font);
+		list->Freeze();
+		list->Set(shown);
+		int selected = query.empty() ? list->FindString(current) : 0;
+		if (selected == wxNOT_FOUND && !shown.empty()) selected = 0;
+		if (selected != wxNOT_FOUND && !shown.empty()) {
+			list->SetSelection(selected);
+			list->EnsureVisible(selected);
+		}
+		list->Thaw();
+	}
+
+	void Pick(wxString font) {
+		font.Trim(true).Trim(false);
+		if (font.empty()) return;
+		auto pick = on_pick;
+		Dismiss();
+		pick(font);
+	}
+
+	void PickSelected() {
+		int typed_match = list->FindString(search->GetValue().Trim(true).Trim(false));
+		if (list->GetSelection() != wxNOT_FOUND && (typed_match != wxNOT_FOUND || list->GetCount() > 0))
+			Pick(typed_match != wxNOT_FOUND ? list->GetString(typed_match) : list->GetStringSelection());
+		else
+			Pick(search->GetValue());
+	}
+
+	void OnDismiss() override {
+		wxTheApp->ScheduleForDestruction(this);
+	}
+
+public:
+	FontPopup(wxWindow *parent, wxString current, std::function<void(wxString const&)> pick)
+	: wxPopupTransientWindow(parent, wxBORDER_SIMPLE)
+	, current(std::move(current))
+	, on_pick(std::move(pick))
+	{
+		auto panel = new wxPanel(this);
+		search = new wxTextCtrl(panel, -1, "", wxDefaultPosition, wxDefaultSize, wxTE_PROCESS_ENTER);
+		search->SetHint(_("Search fonts"));
+		list = new wxListBox(panel, -1, wxDefaultPosition, wxSize(-1, FromDIP(280)));
+		auto sizer = new wxBoxSizer(wxVERTICAL);
+		sizer->Add(search, 0, wxEXPAND | wxALL, FromDIP(4));
+		sizer->Add(list, 1, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(4));
+		panel->SetSizer(sizer);
+		Filter();
+
+		search->Bind(wxEVT_TEXT, [this](wxCommandEvent &) { Filter(); });
+		search->Bind(wxEVT_TEXT_ENTER, [this](wxCommandEvent &) { PickSelected(); });
+		search->Bind(wxEVT_CHAR_HOOK, [this](wxKeyEvent &e) {
+			int n = list->GetSelection(), count = list->GetCount();
+			switch (e.GetKeyCode()) {
+				case WXK_DOWN: if (count) { n = std::min(count - 1, n + 1); list->SetSelection(n); list->EnsureVisible(n); } break;
+				case WXK_UP: if (count) { n = std::max(0, n - 1); list->SetSelection(n); list->EnsureVisible(n); } break;
+				case WXK_ESCAPE: Dismiss(); break;
+				default: e.Skip();
+			}
+		});
+		list->Bind(wxEVT_LISTBOX, [this](wxCommandEvent &e) { Pick(e.GetString()); });
+	}
+
+	void Open(wxWindow *field) {
+		wxSize size(std::max(field->GetSize().x, FromDIP(220)), -1);
+		GetChildren().front()->SetInitialSize(wxSize(size.x, -1));
+		GetChildren().front()->Fit();
+		SetClientSize(GetChildren().front()->GetSize());
+		Position(field->ClientToScreen(wxPoint(0, 0)), wxSize(0, field->GetSize().y));
+		Popup(search);
+	}
+};
+}
+
 template<class T, class... Args>
 T *StylePanel::Add(std::string const& name, Args&&... args) {
 	auto part = new T(this, std::forward<Args>(args)...);
@@ -484,6 +762,7 @@ StylePanel::StylePanel(wxWindow *parent, agi::Context *c)
 
 	SetSizer(outer);
 	FitInside();
+	BindEditing();
 	SetMinSize(wxSize(FromDIP(min_width), -1));
 
 	connections.push_back(c->subtitleAccess->Read().AddCommitListener("style_panel.AddCommitListener",
@@ -499,6 +778,112 @@ StylePanel::StylePanel(wxWindow *parent, agi::Context *c)
 	theme_changed = theme::AddChangeListener([this] { Refresh(); });
 
 	UpdateNow();
+}
+
+void StylePanel::BindEditing() {
+	using style_edit::Property;
+	using State = Toggle::State;
+	auto toggle = [this](std::string const& name) { return static_cast<Toggle*>(parts[name]); };
+	auto apply = [this](Property property, std::function<void(StyleLook&)> change) {
+		style_edit::Apply(c, property, change);
+	};
+
+	toggle("bold")->on_click = [=, this] {
+		bool on = toggle("bold")->GetState() == State::On;
+		apply(Property::Weight, [on](StyleLook &l) { l.weight = on ? 400 : 700; });
+	};
+	auto flag = [=](std::string const& name, Property property, bool StyleLook::*member) {
+		toggle(name)->on_click = [=] {
+			bool on = toggle(name)->GetState() == State::On;
+			apply(property, [=](StyleLook &l) { l.*member = !on; });
+		};
+	};
+	flag("italic", Property::Italic, &StyleLook::italic);
+	flag("underline", Property::Underline, &StyleLook::underline);
+	flag("strikeout", Property::Strikeout, &StyleLook::strikeout);
+
+	// Each line keeps the other direction of its alignment
+	auto column = [=](std::string const& name, int col) {
+		toggle(name)->on_click = [=] { apply(Property::Alignment, [col](StyleLook &l) { l.alignment = (l.alignment - 1) / 3 * 3 + col + 1; }); };
+	};
+	auto row = [=](std::string const& name, int r) {
+		toggle(name)->on_click = [=] { apply(Property::Alignment, [r](StyleLook &l) { l.alignment = r * 3 + (l.alignment - 1) % 3 + 1; }); };
+	};
+	column("align_left", 0); column("align_centre", 1); column("align_right", 2);
+	row("align_bottom", 0); row("align_middle", 1); row("align_top", 2);
+
+	auto number = [this](std::string const& name, Property property, Field::Range range, std::function<void(StyleLook&, double)> set) {
+		static_cast<Field*>(parts[name])->SetNumberHandler(range, [this, property, set](double v, bool final) {
+			// One undo step for a whole drag
+			drag_commit = style_edit::Apply(c, property, [&](StyleLook &l) { set(l, v); }, drag_commit);
+			if (final) drag_commit = -1;
+		});
+	};
+	number("size", Property::Size, {1, 1000, 1}, [](StyleLook &l, double v) { l.size = v; });
+	number("spacing", Property::Spacing, {-100, 100, 0.1}, [](StyleLook &l, double v) { l.spacing = v; });
+
+	static_cast<Field*>(parts["font"])->SetChooser([this] {
+		auto field = parts["font"];
+		auto popup = new FontPopup(this, field->Shown() == mixed ? wxString() : field->Shown(),
+			[this](wxString const& font) { ChooseFont(font); });
+		popup->Open(field);
+	});
+	static_cast<Field*>(parts["weight"])->SetChooser([this] { ShowWeightMenu(); });
+}
+
+void StylePanel::ShowWeightMenu() {
+	struct Choice { int weight; bool italic; wxString name; };
+	std::vector<Choice> choices = {
+		{400, false, _("Regular")}, {400, true, _("Italic")}, {700, false, _("Bold")}, {700, true, _("Bold Italic")},
+		{100, false, _("Thin (100)")}, {200, false, _("Extra Light (200)")}, {300, false, _("Light (300)")},
+		{500, false, _("Medium (500)")}, {600, false, _("Semibold (600)")}, {800, false, _("Extra Bold (800)")},
+		{900, false, _("Black (900)")},
+	};
+	wxMenu menu;
+	wxString shown = parts["weight"]->Shown();
+	for (size_t i = 0; i < choices.size(); ++i) {
+		if (i == 4) menu.AppendSeparator();
+		auto item = menu.AppendCheckItem(wxID_HIGHEST + 1 + i, choices[i].name);
+		item->Check(i < 4 && choices[i].name == shown);
+	}
+	auto field = parts["weight"];
+	int chosen = field->GetPopupMenuSelectionFromUser(menu, 0, field->GetSize().y);
+	if (chosen <= wxID_HIGHEST) return;
+	size_t index = chosen - wxID_HIGHEST - 1;
+	if (index >= choices.size()) return;
+	// The extra weights keep each line's slant
+	if (index < 4) ChooseWeight(choices[index].weight, choices[index].italic);
+	else style_edit::Apply(c, style_edit::Property::Weight, [&](StyleLook &l) { l.weight = choices[index].weight; });
+}
+
+void StylePanel::ChooseFont(wxString const& font) {
+	style_edit::Apply(c, style_edit::Property::Font, [&](StyleLook &l) { l.font = from_wx(font); });
+}
+
+void StylePanel::ChooseWeight(int weight, bool italic) {
+	// One undo step for both
+	int id = style_edit::Apply(c, style_edit::Property::Weight, [&](StyleLook &l) { l.weight = weight; });
+	style_edit::Apply(c, style_edit::Property::Italic, [&](StyleLook &l) { l.italic = italic; }, id);
+}
+
+void StylePanel::Press(std::string const& name) {
+	if (auto toggle = dynamic_cast<Toggle*>(parts[name]); toggle && toggle->on_click)
+		toggle->on_click();
+}
+
+void StylePanel::EnterNumber(std::string const& name, double value, bool final) {
+	if (auto field = dynamic_cast<Field*>(parts[name]))
+		field->Enter(value, final);
+}
+
+void StylePanel::StartEditing(std::string const& name) {
+	if (auto field = dynamic_cast<Field*>(parts[name]))
+		field->StartEditing();
+}
+
+wxTextCtrl *StylePanel::EditBox(std::string const& name) {
+	auto field = dynamic_cast<Field*>(parts[name]);
+	return field ? field->EditBox() : nullptr;
 }
 
 StylePanel::~StylePanel() = default;
@@ -580,7 +965,6 @@ void StylePanel::Display(std::vector<StyleLook> const& looks, wxString const& sc
 	auto toggle = [&](std::string const& name, auto has) {
 		static_cast<Toggle*>(parts[name])->SetState(state(has));
 	};
-	auto number = [](double value) { return Number(value); };
 
 	static_cast<Caption*>(parts["scope"])->SetText(scope);
 	field("style", [](StyleLook const& l) { return l.style; }, [](std::string const& s) { return to_wx(s); });
@@ -590,8 +974,12 @@ void StylePanel::Display(std::vector<StyleLook> const& looks, wxString const& sc
 		if (w.first == 700) return w.second ? _("Bold Italic") : _("Bold");
 		return w.second ? fmt_tl("Weight %d, italic", w.first) : fmt_tl("Weight %d", w.first);
 	});
-	field("size", [](StyleLook const& l) { return l.size; }, number);
-	field("spacing", [](StyleLook const& l) { return l.spacing; }, number);
+	// Numbers: from the first line even when they differ, to drag from
+	auto number_field = [&](std::string const& name, auto get) {
+		static_cast<Field*>(parts[name])->SetNumber(looks.empty() ? 0 : get(looks.front()), same(get));
+	};
+	number_field("size", [](StyleLook const& l) { return l.size; });
+	number_field("spacing", [](StyleLook const& l) { return l.spacing; });
 
 	auto column = [](StyleLook const& l) { return (l.alignment - 1) % 3; };
 	auto row = [](StyleLook const& l) { return (l.alignment - 1) / 3; }; // 0 bottom, 2 top
@@ -627,13 +1015,13 @@ void StylePanel::Display(std::vector<StyleLook> const& looks, wxString const& sc
 		same([](StyleLook const& l) { return l.shadow.a; }) ? opacity(looks.front().shadow) : looks.empty() ? wxString() : mixed);
 
 	// Distance and angle as in a design program: 0° is up, clockwise
-	field("shadow_distance", [](StyleLook const& l) { return std::hypot(l.shadow_x, l.shadow_y); }, number);
-	field("shadow_angle", [](StyleLook const& l) {
+	number_field("shadow_distance", [](StyleLook const& l) { return std::hypot(l.shadow_x, l.shadow_y); });
+	number_field("shadow_angle", [](StyleLook const& l) {
 		if (l.shadow_x == 0 && l.shadow_y == 0) return 0.;
 		double degrees = std::atan2(l.shadow_x, -l.shadow_y) * 180 / 3.14159265358979323846;
 		return std::round(degrees < 0 ? degrees + 360 : degrees);
-	}, number);
-	field("blur", [](StyleLook const& l) { return l.blur; }, number);
+	});
+	number_field("blur", [](StyleLook const& l) { return l.blur; });
 }
 
 std::map<std::string, wxString> StylePanel::Shown() const {

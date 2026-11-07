@@ -8,8 +8,7 @@
 
 #include <algorithm>
 
-namespace {
-StyleLook FromStyle(AssStyle const& style) {
+StyleLook LookOf(AssStyle const& style) {
 	StyleLook look;
 	look.style = style.name;
 	look.font = style.font;
@@ -32,11 +31,12 @@ StyleLook FromStyle(AssStyle const& style) {
 	return look;
 }
 
+namespace {
 /// \r: back to a style, keeping what is not the text's look
 void Reset(StyleLook &look, AssStyle const& style) {
 	std::string name = look.style;
 	int alignment = look.alignment;
-	look = FromStyle(style);
+	look = LookOf(style);
 	look.style = std::move(name);
 	look.alignment = alignment;
 }
@@ -116,7 +116,7 @@ StyleLook LookAt(AssDialogue const& line, int plain_pos, StyleLookup const& find
 	AssStyle const* style = find_style(line.Style.get());
 	if (!style) style = &fallback;
 
-	StyleLook look = FromStyle(*style);
+	StyleLook look = LookOf(*style);
 	look.style = line.Style.get();
 	Applier applier{look, *style, find_style, look.border, look.border};
 

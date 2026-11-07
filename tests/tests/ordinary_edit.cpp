@@ -57,6 +57,7 @@
 #include "video_slider.h"
 #include "video_time_label.h"
 #include "video_zoom_control.h"
+#include "style_edit.h"
 #include "style_look.h"
 #include "style_panel.h"
 #include "video_controller.h"
@@ -1147,6 +1148,143 @@ TEST_F(ordinary_edit, style_look_applies_the_tags_before_a_point_of_the_line) {
     line.Style="Base"; line.Text="{\\t(\\fs99\\b1)}x";
     EXPECT_EQ(40,at(0).size); EXPECT_EQ(400,at(0).weight);
     EXPECT_EQ(0,PlainPosition("{\\b1}abc",5)); EXPECT_EQ(2,PlainPosition("{\\b1}abc",7)); EXPECT_EQ(3,PlainPosition("a{b",3));
+}
+
+TEST_F(ordinary_edit, style_panel_changes_the_text_through_its_controls) {
+    {auto write=c->subtitleAccess->TryWrite();auto &file=LiveWriteForTest(*c);
+     auto style=new AssStyle();style->name="Look";style->fontsize=40;style->alignment=2;file.Styles.push_back(*style);
+     auto &row=file.Events.front();row.Style="Look";row.Text="{\\b1}Hello world";
+     file.Commit("fixture",AssFile::COMMIT_NEW);}
+    auto line=[&] { return std::string(LiveRead(*c).Events.front().Text.get()); };
+    auto id=LiveRead(*c).Events.front().Id;
+    c->selectionController->SetSelectionAndActiveIDs({id},id);
+    c->textSelectionController->SetSelection(0,0);
+    auto panel=new StylePanel(window,c.get());
+    auto shown=[&] { panel->UpdateNow(); return panel->Shown(); };
+
+    // Buttons
+    panel->UpdateNow(); panel->Press("bold");
+    EXPECT_EQ("Hello world",line()) << "not bold is the style's own";
+    panel->UpdateNow(); panel->Press("italic");
+    EXPECT_EQ("{\\i1}Hello world",line());
+    panel->UpdateNow(); panel->Press("align_top");
+    EXPECT_EQ("{\\i1\\an8}Hello world",line());
+    panel->UpdateNow(); panel->Press("align_right");
+    EXPECT_EQ("{\\i1\\an9}Hello world",line());
+    EXPECT_EQ("on",shown()["align_right"]);
+
+    // Dragging a number: one undo step
+    panel->EnterNumber("size",41,false); panel->EnterNumber("size",45,false); panel->EnterNumber("size",52,true);
+    EXPECT_EQ("{\\i1\\an9\\fs52}Hello world",line());
+    EXPECT_EQ("52",shown()["size"]);
+    c->subsController->Undo();
+    EXPECT_EQ("{\\i1\\an9}Hello world",line());
+    panel->EnterNumber("size",5000,true);
+    EXPECT_EQ("{\\i1\\an9\\fs1000}Hello world",line()) << "kept in range";
+    c->subsController->Undo();
+
+    // Typing a number
+    panel->UpdateNow();
+    panel->StartEditing("spacing");
+    auto box=panel->EditBox("spacing");
+    ASSERT_NE(nullptr,box); EXPECT_TRUE(box->IsShown()); EXPECT_EQ("0",box->GetValue());
+    box->ChangeValue("1,5");
+    wxCommandEvent enter(wxEVT_TEXT_ENTER,box->GetId()); enter.SetEventObject(box); box->GetEventHandler()->ProcessEvent(enter);
+    EXPECT_FALSE(box->IsShown());
+    EXPECT_EQ("{\\i1\\an9\\fsp1.5}Hello world",line());
+    panel->StartEditing("spacing"); box->ChangeValue("abc");
+    box->GetEventHandler()->ProcessEvent(enter);
+    EXPECT_TRUE(box->IsShown()) << "not a number: stays open";
+    wxKeyEvent escape(wxEVT_CHAR_HOOK); escape.m_keyCode=WXK_ESCAPE; escape.SetEventObject(box); box->GetEventHandler()->ProcessEvent(escape);
+    EXPECT_FALSE(box->IsShown());
+    EXPECT_EQ("{\\i1\\an9\\fsp1.5}Hello world",line());
+
+    // Font and weight
+    panel->ChooseFont("Test Font");
+    EXPECT_EQ("{\\i1\\an9\\fsp1.5\\fnTest Font}Hello world",line());
+    panel->ChooseWeight(700,false);
+    EXPECT_EQ("{\\an9\\fsp1.5\\fnTest Font\\b1}Hello world",line());
+    c->subsController->Undo();
+    EXPECT_EQ("{\\i1\\an9\\fsp1.5\\fnTest Font}Hello world",line()) << "weight and slant are one step";
+
+    // Selected text
+    std::string text=line(); int w=static_cast<int>(text.find("world"));
+    c->textSelectionController->SetSelection(w,w+5);
+    EXPECT_EQ("The selected text",shown()["scope"]);
+    panel->Press("underline");
+    EXPECT_EQ("{\\i1\\an9\\fsp1.5\\fnTest Font}Hello {\\u1}world",line());
+    EXPECT_EQ("on",shown()["underline"]) << "the selection follows the text";
+    panel->EnterNumber("size",60,false); panel->EnterNumber("size",70,true);
+    EXPECT_EQ("{\\i1\\an9\\fsp1.5\\fnTest Font}Hello {\\u1\\fs70}world",line());
+    text=line(); int h=static_cast<int>(text.find("Hello"));
+    c->textSelectionController->SetSelection(h,h+5);
+    panel->UpdateNow(); panel->Press("strikeout");
+    EXPECT_EQ("{\\i1\\an9\\fsp1.5\\fnTest Font\\s1}Hello{\\s0} {\\u1\\fs70}world",line());
+    panel->Destroy();
+}
+
+TEST_F(ordinary_edit, style_edit_writes_one_property_for_lines_or_selected_text) {
+    using namespace style_edit;
+    auto fs=TagNames(Property::Size), b=TagNames(Property::Weight), i=TagNames(Property::Italic);
+    // Whole lines: one tag at the start, the others gone, \t and comments kept
+    EXPECT_EQ("{\\b1\\fs50}ab",SetForLine("{\\b1\\fs20}a{\\fs30}b",fs,"\\fs50"));
+    EXPECT_EQ("{\\b1}abc",SetForLine("abc",b,"\\b1"));
+    EXPECT_EQ("abc",SetForLine("{\\fs20}abc",fs,""));
+    EXPECT_EQ("{\\t(\\fs80)\\fs50}x",SetForLine("{\\t(\\fs80)\\fs20}x",fs,"\\fs50"));
+    EXPECT_EQ("{\\fs50}{note}abc",SetForLine("{note}abc",fs,"\\fs50"));
+    EXPECT_EQ("{\\fscx120\\fsp2\\fs50}x",SetForLine("{\\fscx120\\fs+2\\fsp2}x",fs,"\\fs50")) << "\\fsp and \\fscx are other tags";
+    EXPECT_EQ("{\\pos(1,2)\\an7}x",SetForLine("{\\pos(1,2)\\a5}x{\\an3}",TagNames(Property::Alignment),"\\an7"));
+    // Selected text: the tag in front, the old value after
+    auto r=SetForRange("hello world",0,5,b,"\\b1","\\b0");
+    EXPECT_EQ("{\\b1}hello{\\b0} world",r.text); EXPECT_EQ(5,r.start); EXPECT_EQ(10,r.end);
+    r=SetForRange("hello world",6,11,b,"\\b1","\\b0");
+    EXPECT_EQ("hello {\\b1}world",r.text) << "nothing follows"; EXPECT_EQ(11,r.start); EXPECT_EQ(16,r.end);
+    std::string t="a{\\b1}bc{\\b0}d";
+    r=SetForRange(t,6,8,i,"\\i1","\\i0");
+    EXPECT_EQ("a{\\b1\\i1}bc{\\b0\\i0}d",r.text); EXPECT_EQ("bc",r.text.substr(r.start,r.end-r.start));
+    t="ab{\\fs10}cd{\\fs20}ef";
+    r=SetForRange(t,0,static_cast<int>(t.find("e")),fs,"\\fs50","\\fs10");
+    EXPECT_EQ("{\\fs50}abcd{\\fs20}ef",r.text) << "inside goes, the tag at the end already restores";
+    r=SetForRange("{\\fs30}abc",7,8,fs,"\\fs50","\\fs30");
+    EXPECT_EQ("{\\fs50}a{\\fs30}bc",r.text) << "the first character: into the block before it";
+    EXPECT_EQ("a",r.text.substr(r.start,r.end-r.start));
+
+    // Through the editing gate, with undo
+    auto line=[&] { return std::string(LiveRead(*c).Events.front().Text.get()); };
+    {auto write=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).Events.front().Text="{\\fs20}Hello world";LiveWriteForTest(*c).Commit("fixture",AssFile::COMMIT_DIAG_TEXT);}
+    double style_size=LiveRead(*c).GetStyle("Default")->fontsize;
+    c->textSelectionController->SetSelection(0,0);
+    int id=Apply(c.get(),Property::Size,[](StyleLook &l){ l.size=50; });
+    EXPECT_NE(-1,id); EXPECT_EQ("{\\fs50}Hello world",line());
+    // Dragging: every step amends the same undo step
+    id=Apply(c.get(),Property::Size,[](StyleLook &l){ l.size=60; },id);
+    id=Apply(c.get(),Property::Size,[&](StyleLook &l){ l.size=style_size; },id);
+    EXPECT_EQ("Hello world",line()) << "the style's own size needs no tag";
+    c->subsController->Undo();
+    EXPECT_EQ("{\\fs20}Hello world",line());
+    // Selected text, then the selection still covers it
+    std::string text=line(); int w=static_cast<int>(text.find("world"));
+    c->textSelectionController->SetSelection(w,w+5);
+    Apply(c.get(),Property::Italic,[](StyleLook &l){ l.italic=true; });
+    EXPECT_EQ("{\\fs20}Hello {\\i1}world",line());
+    text=line();
+    EXPECT_EQ("world",text.substr(c->textSelectionController->GetSelectionStart(),c->textSelectionController->GetSelectionEnd()-c->textSelectionController->GetSelectionStart()));
+    // Alignment is for the whole line even then
+    Apply(c.get(),Property::Alignment,[](StyleLook &l){ l.alignment=8; });
+    EXPECT_EQ("{\\fs20\\an8}Hello {\\i1}world",line());
+    c->textSelectionController->SetSelection(0,0);
+    // Several lines, each from its own value
+    int second;
+    {auto write=c->subtitleAccess->TryWrite();auto row=new AssDialogue();row->Text="{\\an1}two";second=row->Id;LiveWriteForTest(*c).Events.push_back(*row);LiveWriteForTest(*c).Commit("fixture",AssFile::COMMIT_DIAG_ADDREM);}
+    int first=LiveRead(*c).Events.front().Id;
+    c->selectionController->SetSelectionAndActiveIDs({first,second},first);
+    Apply(c.get(),Property::Alignment,[](StyleLook &l){ l.alignment=(l.alignment-1)/3*3+3; });
+    EXPECT_EQ("{\\fs20\\an9}Hello {\\i1}world",line());
+    EXPECT_EQ("{\\an3}two",std::string(LiveRead(*c).Events.back().Text.get()));
+    // Nothing changes: no undo step
+    EXPECT_EQ(-1,Apply(c.get(),Property::Alignment,[](StyleLook &l){ l.alignment=(l.alignment-1)/3*3+3; }));
+    c->subsController->Undo();
+    EXPECT_EQ("{\\an1}two",std::string(LiveRead(*c).Events.back().Text.get())) << "undo goes to before the last real change";
 }
 
 TEST_F(ordinary_edit, style_panel_shows_the_selected_text_lines_and_where_they_differ) {

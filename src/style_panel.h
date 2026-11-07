@@ -20,6 +20,7 @@
 namespace agi { struct Context; }
 struct StyleLook;
 class wxSizer;
+class wxTextCtrl;
 
 class StylePanel final : public wxScrolledWindow {
 protected:
@@ -36,6 +37,18 @@ public:
 	/// What each part shows, by name ("style", "font", "size", "fill"…),
 	/// and "scope" for what the panel describes; for tests
 	std::map<std::string, wxString> Shown() const;
+
+	/// Act as clicking the button @p name does ("bold", "align_top"…)
+	void Press(std::string const& name);
+	/// Act as dragging (@p final false) or typing a number into @p name does
+	void EnterNumber(std::string const& name, double value, bool final);
+	/// Open the box for typing into the number field @p name, as a click does
+	void StartEditing(std::string const& name);
+	wxTextCtrl *EditBox(std::string const& name);
+	/// Use @p font, as choosing it from the font list does
+	void ChooseFont(wxString const& font);
+	/// Use @p weight and slant, as the weight menu does
+	void ChooseWeight(int weight, bool italic);
 
 	/// Collapse or expand a section: "style", "text" or "appearance"
 	void ShowSection(std::string const& name, bool show);
@@ -58,6 +71,7 @@ private:
 	std::vector<agi::signal::Connection> connections;
 	agi::signal::Connection theme_changed;
 	bool update_pending = false;
+	int drag_commit = -1; ///< The undo step a drag amends
 
 	struct Section {
 		Header *header;
@@ -66,6 +80,8 @@ private:
 	std::map<std::string, Section> sections;
 	std::map<std::string, Part*> parts;
 
+	void BindEditing();
+	void ShowWeightMenu();
 	void ScheduleUpdate();
 	void Display(std::vector<StyleLook> const& looks, wxString const& scope);
 	Section &AddSection(wxSizer *sizer, std::string const& name, wxString const& title);

@@ -37,6 +37,9 @@ struct StyleLook {
 /// Finds a style by name, for \r and the line's own style; may return null
 using StyleLookup = std::function<AssStyle const*(std::string const&)>;
 
+/// How text in @p style looks without override tags
+StyleLook LookOf(AssStyle const& style);
+
 /// How the line's text looks at its plain character @p plain_pos (tags
 /// not counted): the tags before that character apply, including any
 /// directly in front of it. 0 is the start of the text, after any tags
