@@ -271,16 +271,16 @@
 			"Active Border" : "rgb(26, 99, 196)",
 			"Background" : {
 				"Background" : "rgb(255,255,255)",
-				"Comment" : "rgb(245, 246, 248)",
-				"Inframe" : "rgb(255, 248, 225)",
-				"Selected Comment" : "rgb(222, 229, 240)",
-				"Selection" : "rgb(229, 238, 252)"
+				"Comment" : "rgb(238, 240, 243)",
+				"Inframe" : "rgb(255, 242, 204)",
+				"Selected Comment" : "rgb(207, 218, 235)",
+				"Selection" : "rgb(212, 227, 250)"
 			},
 			"Collision" : "rgb(214, 48, 49)",
 			"CPS Error" : "rgb(224, 64, 64)",
-			"Header" : "rgb(247, 248, 250)",
-			"Left Column" : "rgb(250, 251, 252)",
-			"Lines" : "rgb(234, 236, 240)",
+			"Header" : "rgb(236, 239, 243)",
+			"Left Column" : "rgb(243, 245, 248)",
+			"Lines" : "rgb(216, 220, 226)",
 			"Selection" : "rgb(31, 35, 40)",
 			"Standard" : "rgb(31, 35, 40)"
 		},

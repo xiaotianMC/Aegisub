@@ -220,7 +220,7 @@ void BaseGrid::UpdateStyle() {
 	row_colors.Visible.SetColour(theme::Colour("Colour/Subtitle Grid/Background/Inframe"));
 	row_colors.SelectedComment.SetColour(theme::Colour("Colour/Subtitle Grid/Background/Selected Comment"));
 	row_colors.LeftCol.SetColour(theme::Colour("Colour/Subtitle Grid/Left Column"));
-	row_colors.Alternate.SetColour(Mix(theme::Colour("Colour/Subtitle Grid/Standard"), row_colors.Default.GetColour(), theme::IsDark() ? 0.045 : 0.035));
+	row_colors.Alternate.SetColour(Mix(theme::Colour("Colour/Subtitle Grid/Standard"), row_colors.Default.GetColour(), theme::IsDark() ? 0.05 : 0.04));
 
 	if (width_helper)
 		width_helper->ClearCache();
@@ -358,7 +358,7 @@ void BaseGrid::Draw(wxDC &dc, std::vector<char> const& paint_columns) {
 	// Paint header: quieter text than the rows, short dividers between the
 	// columns and one line under it.
 	{
-		dc.SetTextForeground(Mix(text_standard, row_colors.Header.GetColour(), 0.62));
+		dc.SetTextForeground(Mix(text_standard, row_colors.Header.GetColour(), 0.78));
 		dc.SetPen(*wxTRANSPARENT_PEN);
 		dc.SetBrush(row_colors.Header);
 		dc.DrawRectangle(0, 0, w, lineHeight);
@@ -417,7 +417,7 @@ void BaseGrid::Draw(wxDC &dc, std::vector<char> const& paint_columns) {
 			color = row_colors.Alternate;
 		// The active line a shade deeper than the rest of the selection
 		if (active && inSel)
-			color = wxBrush(Mix(active_colour, color.GetColour(), theme::IsDark() ? 0.12 : 0.08));
+			color = wxBrush(Mix(active_colour, color.GetColour(), theme::IsDark() ? 0.16 : 0.12));
 
 		int y = (i + 1) * lineHeight;
 
@@ -436,7 +436,7 @@ void BaseGrid::Draw(wxDC &dc, std::vector<char> const& paint_columns) {
 		else if (inSel)
 			text = text_selection;
 		else if (curDiag->Comment)
-			text = Mix(text_standard, color.GetColour(), 0.5);
+			text = Mix(text_standard, color.GetColour(), 0.6);
 		else
 			text = text_standard;
 
@@ -444,7 +444,7 @@ void BaseGrid::Draw(wxDC &dc, std::vector<char> const& paint_columns) {
 		int x = 0;
 		for (size_t j : agi::util::range(columns.size())) {
 			if (paint_columns[j]) {
-				dc.SetTextForeground(j == 0 && !inSel && !active ? Mix(text, row_colors.LeftCol.GetColour(), 0.5) : text);
+				dc.SetTextForeground(j == 0 && !inSel && !active ? Mix(text, row_colors.LeftCol.GetColour(), 0.68) : text);
 				dc.SetBrush(color);
 				columns[j]->Paint(dc, x, y + GridColumn::row_padding, curDiag, context);
 			}
@@ -468,7 +468,7 @@ void BaseGrid::Draw(wxDC &dc, std::vector<char> const& paint_columns) {
 	// the number column's edge.
 	{
 		int bottom = (nDraw + 1) * lineHeight;
-		wxPen faint_pen(Mix(grid_pen.GetColour(), row_colors.Default.GetColour(), 0.55));
+		wxPen faint_pen(Mix(grid_pen.GetColour(), row_colors.Default.GetColour(), 0.8));
 		int x = 0;
 		for (size_t i : agi::util::range(columns.size())) {
 			x += columns[i]->Width();
