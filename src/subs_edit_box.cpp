@@ -64,7 +64,6 @@
 #include <functional>
 #include <unordered_set>
 
-#include <wx/bmpbuttn.h>
 #include <wx/button.h>
 #include <wx/checkbox.h>
 #include <wx/fontenum.h>
@@ -188,10 +187,9 @@ SubsEditBox::SubsEditBox(wxWindow *parent, agi::Context *context)
 	middle_left_sizer->Add(time_unit, wxSizerFlags().Center());
 	middle_left_sizer->AddSpacer(5);
 
-	// Then the button committing the line, and showing the original text
+	// Then showing the original text. Enter goes to the next line, making
+	// one after the last (grid/line/next/create); it has no button.
 	middle_right_sizer = new wxBoxSizer(wxHORIZONTAL);
-	MakeButton("grid/line/next/create");
-	middle_right_sizer->AddSpacer(10);
 
 	split_box = new wxCheckBox(this,-1,_("Show Original"));
 	split_box->SetToolTip(_("Show the contents of the subtitle line when it was first selected above the edit box. This is sometimes useful when editing subtitles or translating subtitles into another language."));
@@ -276,16 +274,6 @@ TimeEdit *SubsEditBox::MakeTimeCtrl(wxString const& tooltip, TimeField field) {
 	ctrl->Bind(wxEVT_CHAR_HOOK, time_edit_char_hook);
 	middle_left_sizer->Add(ctrl, wxSizerFlags().Center());
 	return ctrl;
-}
-
-void SubsEditBox::MakeButton(const char *cmd_name) {
-	cmd::Command *command = cmd::get(cmd_name);
-	wxBitmapButton *btn = new wxBitmapButton(this, -1, command->Icon());
-	tool_tip_bindings.emplace_back(btn, command->StrHelp(), "Subtitle Edit Box", cmd_name);
-	connections.push_back(theme::AddChangeListener([btn, command] { btn->SetBitmap(command->Icon()); }));
-
-	middle_right_sizer->Add(btn, wxSizerFlags().Expand());
-	btn->Bind(wxEVT_BUTTON, std::bind(&SubsEditBox::CallCommand, this, cmd_name));
 }
 
 wxButton *SubsEditBox::MakeBottomButton(const char *cmd_name) {

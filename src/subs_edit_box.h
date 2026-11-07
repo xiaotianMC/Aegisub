@@ -142,7 +142,6 @@ private:
 
 	// Constructor helpers
 	TimeEdit *MakeTimeCtrl(wxString const& tooltip, TimeField field);
-	void MakeButton(const char *cmd_name);
 	wxButton *MakeBottomButton(const char *cmd_name);
 	wxComboBox *MakeComboBox(wxString const& initial_text, int style, void (SubsEditBox::*handler)(wxCommandEvent&), wxString const& tooltip);
 

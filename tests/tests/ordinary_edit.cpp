@@ -1487,7 +1487,7 @@ TEST_F(ordinary_edit, edit_box_has_line_fields_below_the_text_and_a_time_unit_sw
         if (auto t=dynamic_cast<TimeUnitToggle*>(child)) unit=t;
         if (auto t=dynamic_cast<TimeEdit*>(child); t && t->GetToolTipText()=="End time") end=t;
     }
-    EXPECT_EQ(1,bitmap_buttons) << "only the button committing the line: text and colours are in the style panel";
+    EXPECT_EQ(0,bitmap_buttons) << "text and colours are in the style panel, Enter goes to the next line";
     EXPECT_FALSE(margins) << "the margins are in the style panel";
     ASSERT_NE(nullptr,unit); ASSERT_NE(nullptr,end);
 
@@ -1510,6 +1510,14 @@ TEST_F(ordinary_edit, edit_box_has_line_fields_below_the_text_and_a_time_unit_sw
     unit->Choose(0); EXPECT_EQ(time,end->GetValue());
     unit->Choose(1); c->project->CloseTimecodes();
     EXPECT_FALSE(unit->FramesAllowed()); EXPECT_FALSE(unit->ByFrame()); EXPECT_EQ(time,end->GetValue());
+
+    // Enter on the last line makes a new one after it and goes there
+    ASSERT_EQ(1u,LiveRead(*c).Events.size());
+    editor->SetFocus();
+    wxKeyEvent enter(wxEVT_CHAR_HOOK); enter.m_keyCode=WXK_RETURN; enter.SetEventObject(editor);
+    editor->GetEventHandler()->ProcessEvent(enter);
+    ASSERT_EQ(2u,LiveRead(*c).Events.size());
+    EXPECT_EQ(std::next(LiveRead(*c).Events.begin())->Id,c->selectionController->ActiveID());
 }
 
 TEST_F(ordinary_edit, style_panel_sets_karaoke_colour_and_margins) {
