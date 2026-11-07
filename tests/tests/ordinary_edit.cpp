@@ -1291,6 +1291,68 @@ TEST_F(ordinary_edit, style_panel_changes_fill_outline_shadow_and_background) {
     panel->Destroy();
 }
 
+TEST_F(ordinary_edit, style_panel_sets_updates_resets_and_makes_styles) {
+    int second;
+    {auto write=c->subtitleAccess->TryWrite();auto &file=LiveWriteForTest(*c);
+     auto style=new AssStyle();style->name="Look";style->fontsize=40;style->alignment=2;style->bold=false;file.Styles.push_back(*style);
+     style=new AssStyle();style->name="Other";style->fontsize=20;file.Styles.push_back(*style);
+     auto &row=file.Events.front();row.Style="Look";row.Text="{\\fs60\\b1\\an8\\blur2\\pos(10,20)}Big {\\fs30}small";
+     auto other=new AssDialogue();other->Style="Look";other->Text="{\\fs60}two";second=other->Id;file.Events.push_back(*other);
+     file.Commit("fixture",AssFile::COMMIT_NEW);}
+    auto text=[&](int n) { return std::string(std::next(LiveRead(*c).Events.begin(),n)->Text.get()); };
+    auto style=[&](std::string const& name) { return LiveRead(*c).GetStyle(name); };
+    int first=LiveRead(*c).Events.front().Id;
+    c->selectionController->SetSelectionAndActiveIDs({first},first);
+    c->textSelectionController->SetSelection(0,0);
+    auto panel=new StylePanel(window,c.get());
+    auto shown=[&] { panel->UpdateNow(); return panel->Shown(); };
+    EXPECT_EQ("enabled",shown()["style_update"]);
+
+    // Choosing a style
+    panel->ChooseStyle("Other");
+    EXPECT_EQ("Other",std::string(LiveRead(*c).Events.front().Style.get()));
+    EXPECT_EQ("Other",shown()["style"]);
+    c->subsController->Undo();
+
+    // Update the style from the line: what a style can hold moves into it
+    panel->Press("style_update");
+    ASSERT_NE(nullptr,style("Look"));
+    EXPECT_EQ(60,style("Look")->fontsize); EXPECT_TRUE(style("Look")->bold); EXPECT_EQ(8,style("Look")->alignment);
+    EXPECT_EQ("{\\blur2\\pos(10,20)}Big {\\fs30}small",text(0)) << "blur stays: a style has none; tags inside the line stay";
+    EXPECT_EQ("{\\fs60}two",text(1)) << "lines not selected keep their tags";
+    EXPECT_EQ("60",shown()["size"]);
+    c->subsController->Undo();
+    EXPECT_EQ(40,style("Look")->fontsize);
+    EXPECT_EQ("{\\fs60\\b1\\an8\\blur2\\pos(10,20)}Big {\\fs30}small",text(0));
+
+    // Reset to the style: the panel's tags go, others stay
+    c->selectionController->SetSelectionAndActiveIDs({first,second},first);
+    panel->Press("style_reset");
+    EXPECT_EQ("{\\pos(10,20)}Big small",text(0));
+    EXPECT_EQ("two",text(1));
+    c->subsController->Undo();
+
+    // A new style from the current line, for the selected lines
+    EXPECT_TRUE(panel->NewStyle("Big"));
+    ASSERT_NE(nullptr,style("Big"));
+    EXPECT_EQ(60,style("Big")->fontsize); EXPECT_TRUE(style("Big")->bold); EXPECT_EQ(8,style("Big")->alignment);
+    EXPECT_EQ(40,style("Look")->fontsize) << "the old style stays";
+    EXPECT_EQ("Big",std::string(LiveRead(*c).Events.front().Style.get()));
+    EXPECT_EQ("Big",std::string(LiveRead(*c).Events.back().Style.get()));
+    EXPECT_EQ("{\\blur2\\pos(10,20)}Big {\\fs30}small",text(0));
+    EXPECT_EQ("two",text(1)) << "its \\fs60 is now the style's";
+    EXPECT_FALSE(panel->NewStyle("big")) << "names are unique without regard to case";
+    c->subsController->Undo();
+    EXPECT_EQ(nullptr,style("Big"));
+    EXPECT_EQ("Look",std::string(LiveRead(*c).Events.front().Style.get()));
+
+    // Nothing to do: no undo step
+    c->selectionController->SetSelectionAndActiveIDs({},0);
+    EXPECT_EQ("disabled",shown()["style_update"]);
+    EXPECT_EQ(-1,style_edit::ResetToStyle(c.get()));
+    panel->Destroy();
+}
+
 TEST_F(ordinary_edit, style_edit_writes_one_property_for_lines_or_selected_text) {
     using namespace style_edit;
     auto fs=TagNames(Property::Size), b=TagNames(Property::Weight), i=TagNames(Property::Italic);

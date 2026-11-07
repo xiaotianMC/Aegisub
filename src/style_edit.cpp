@@ -12,6 +12,7 @@
 #include "style_look.h"
 #include "subtitle_project_access.h"
 #include "subtitle_row_edit.h"
+#include "subtitle_value_edit.h"
 #include "text_selection_controller.h"
 
 #include <libaegisub/format.h>
@@ -154,6 +155,8 @@ wxString UndoName(Property property) {
 		case Property::Border: return _("set outline width");
 		case Property::Shadow: return _("set shadow");
 		case Property::Blur: return _("set blur");
+		case Property::ScaleX: case Property::ScaleY: return _("set scale");
+		case Property::Rotation: return _("set rotation");
 	}
 	return _("style panel");
 }
@@ -164,6 +167,7 @@ std::vector<std::string> const& TagNames(Property property) {
 		{"\\fn"}, {"\\fs", "\\fs+", "\\fs-"}, {"\\b"}, {"\\i"}, {"\\u"}, {"\\s"}, {"\\fsp"}, {"\\an", "\\a"},
 		{"\\c", "\\1c"}, {"\\1a"}, {"\\3c"}, {"\\3a"}, {"\\bord", "\\xbord", "\\ybord"},
 		{"\\4c"}, {"\\4a"}, {"\\shad", "\\xshad", "\\yshad"}, {"\\blur"},
+		{"\\fscx"}, {"\\fscy"}, {"\\frz", "\\fr"},
 	};
 	return names[static_cast<int>(property)];
 }
@@ -194,6 +198,9 @@ std::string TagFor(Property property, StyleLook const& look) {
 			if (look.shadow_x == look.shadow_y) return "\\shad" + Number(look.shadow_x);
 			return "\\xshad" + Number(look.shadow_x) + "\\yshad" + Number(look.shadow_y);
 		case Property::Blur: return "\\blur" + Number(look.blur);
+		case Property::ScaleX: return "\\fscx" + Number(look.scale_x);
+		case Property::ScaleY: return "\\fscy" + Number(look.scale_y);
+		case Property::Rotation: return "\\frz" + Number(look.angle);
 	}
 	return {};
 }
@@ -272,6 +279,174 @@ int SetBorderStyle(agi::Context *c, int border_style, int amend_id) {
 	for (auto const& name : names)
 		edit.SetStyleField(name, &AssStyle::borderstyle, border_style);
 	return edit.Commit(border_style == 3 ? _("add background") : _("remove background"), AssFile::COMMIT_STYLES, amend_id);
+}
+
+std::vector<Property> const& StyleProperties() {
+	static const std::vector<Property> properties = {
+		Property::Font, Property::Size, Property::Weight, Property::Italic, Property::Underline, Property::Strikeout,
+		Property::Spacing, Property::Alignment, Property::FillColour, Property::FillAlpha, Property::OutlineColour,
+		Property::OutlineAlpha, Property::Border, Property::ShadowColour, Property::ShadowAlpha, Property::Shadow,
+		Property::ScaleX, Property::ScaleY, Property::Rotation,
+	};
+	return properties;
+}
+
+bool Storable(Property property, StyleLook const& look) {
+	switch (property) {
+		case Property::Weight: return look.weight == 400 || look.weight == 700;
+		case Property::Shadow: return look.shadow_x == look.shadow_y && look.shadow_x >= 0;
+		case Property::Blur: return false;
+		default: return true;
+	}
+}
+
+void Store(Property property, StyleLook const& look, AssStyle &style) {
+	auto rgb = [](agi::Color &to, agi::Color const& from) { to.r = from.r; to.g = from.g; to.b = from.b; };
+	switch (property) {
+		case Property::Font: style.font = look.font; break;
+		case Property::Size: style.fontsize = look.size; break;
+		case Property::Weight: style.bold = look.weight >= 700; break;
+		case Property::Italic: style.italic = look.italic; break;
+		case Property::Underline: style.underline = look.underline; break;
+		case Property::Strikeout: style.strikeout = look.strikeout; break;
+		case Property::Spacing: style.spacing = look.spacing; break;
+		case Property::Alignment: style.alignment = look.alignment; break;
+		case Property::FillColour: rgb(style.primary, look.primary); break;
+		case Property::FillAlpha: style.primary.a = look.primary.a; break;
+		case Property::OutlineColour: rgb(style.outline, look.outline); break;
+		case Property::OutlineAlpha: style.outline.a = look.outline.a; break;
+		case Property::Border: style.outline_w = look.border; break;
+		case Property::ShadowColour: rgb(style.shadow, look.shadow); break;
+		case Property::ShadowAlpha: style.shadow.a = look.shadow.a; break;
+		case Property::Shadow: style.shadow_w = look.shadow_x; break;
+		case Property::ScaleX: style.scalex = look.scale_x; break;
+		case Property::ScaleY: style.scaley = look.scale_y; break;
+		case Property::Rotation: style.angle = look.angle; break;
+		case Property::Blur: break;
+	}
+}
+
+namespace {
+/// @p row without the tags at its start that only repeat its style
+void DropRepeated(AssDialogue &row, StyleLookup const& find) {
+	AssStyle fallback;
+	AssStyle const* style = find(row.Style.get());
+	StyleLook look = LookAt(row, 0, find);
+	StyleLook style_look = LookOf(style ? *style : fallback);
+	std::string text = row.Text;
+	for (auto property : StyleProperties()) {
+		if (TagFor(property, look) != TagFor(property, style_look)) continue;
+		// Alignment counts from anywhere in the line; the rest from its start
+		bool everywhere = LineWide(property);
+		text = StripBlocks(text, TagNames(property), [&](Block const& b) { return everywhere || b.plain == 0; });
+	}
+	row.Text = text;
+}
+
+AssDialogue *Find(AssFile &file, int id) {
+	for (auto &row : file.Events)
+		if (row.Id == id) return &row;
+	return nullptr;
+}
+
+std::vector<int> SelectedIds(agi::Context const* c) {
+	std::vector<int> ids;
+	for (auto line : c->selectionController->ReadSelectedSet()) ids.push_back(line->Id);
+	return ids;
+}
+}
+
+int SetLineStyle(agi::Context *c, std::string const& name) {
+	auto scope = c->subtitleAccess->TryWrite();
+	if (!scope || !c->subtitleAccess->Read().GetStyle(name)) return -1;
+	SubtitleRowEdit staged(c);
+	bool changed = false;
+	for (auto row : staged.rows)
+		if (row->Style.get() != name) {
+			row->Style = name;
+			changed = true;
+		}
+	if (!changed) return -1;
+	auto const& sel = c->selectionController->ReadSelectedSet();
+	auto edit = c->subtitleAccess->Edit(scope->Lease());
+	edit.UpdateRows(staged.Values());
+	return edit.Commit(_("set style"), AssFile::COMMIT_DIAG_META, -1, sel.size() == 1 ? (*sel.begin())->Id : 0);
+}
+
+int UpdateStyleFromLine(agi::Context *c) {
+	auto scope = c->subtitleAccess->TryWrite();
+	auto active = c->selectionController->ReadActiveLine();
+	if (!scope || !active) return -1;
+	SubtitleValueEdit edit(c);
+	StyleLookup find = [&](std::string const& name) -> AssStyle const* { return edit.file.GetStyle(name); };
+	AssDialogue *row = Find(edit.file, active->Id);
+	AssStyle *style = row ? edit.file.GetStyle(row->Style.get()) : nullptr;
+	if (!style) return -1;
+
+	StyleLook look = LookAt(*row, 0, find);
+	std::string before = style->GetEntryData();
+	for (auto property : StyleProperties())
+		if (Storable(property, look)) Store(property, look, *style);
+	style->UpdateData();
+
+	bool rows_changed = false;
+	for (int id : SelectedIds(c)) {
+		AssDialogue *line = Find(edit.file, id);
+		if (!line || line->Style.get() != style->name) continue;
+		std::string text = line->Text;
+		DropRepeated(*line, find);
+		rows_changed |= line->Text.get() != text;
+	}
+	if (style->GetEntryData() == before && !rows_changed) return -1;
+	return edit.Commit(_("update style from line"), AssFile::COMMIT_STYLES | AssFile::COMMIT_DIAG_TEXT);
+}
+
+int ResetToStyle(agi::Context *c) {
+	auto scope = c->subtitleAccess->TryWrite();
+	if (!scope) return -1;
+	SubtitleRowEdit staged(c);
+	bool changed = false;
+	for (auto row : staged.rows) {
+		std::string text = row->Text;
+		for (auto property : StyleProperties())
+			text = StripBlocks(text, TagNames(property), [](Block const&) { return true; });
+		text = StripBlocks(text, TagNames(Property::Blur), [](Block const&) { return true; });
+		if (text == row->Text.get()) continue;
+		row->Text = text;
+		changed = true;
+	}
+	if (!changed) return -1;
+	auto const& sel = c->selectionController->ReadSelectedSet();
+	auto edit = c->subtitleAccess->Edit(scope->Lease());
+	edit.UpdateRows(staged.Values());
+	int id = edit.Commit(_("reset to style"), AssFile::COMMIT_DIAG_TEXT, -1, sel.size() == 1 ? (*sel.begin())->Id : 0);
+	c->textSelectionController->SetSelection(0, 0);
+	return id;
+}
+
+int NewStyleFromLine(agi::Context *c, std::string const& name) {
+	auto scope = c->subtitleAccess->TryWrite();
+	auto active = c->selectionController->ReadActiveLine();
+	if (!scope || !active || name.empty() || c->subtitleAccess->Read().GetStyle(name)) return -1;
+	SubtitleValueEdit edit(c);
+	StyleLookup find = [&](std::string const& n) -> AssStyle const* { return edit.file.GetStyle(n); };
+	AssDialogue *row = Find(edit.file, active->Id);
+	if (!row) return -1;
+	AssStyle const* source = edit.file.GetStyle(row->Style.get());
+	auto style = source ? new AssStyle(*source) : new AssStyle;
+	StyleLook look = LookAt(*row, 0, find);
+	for (auto property : StyleProperties())
+		if (Storable(property, look)) Store(property, look, *style);
+	style->name = name;
+	style->UpdateData();
+	edit.file.Styles.push_back(*style);
+
+	for (int id : SelectedIds(c))
+		if (AssDialogue *line = Find(edit.file, id)) {
+			line->Style = name;
+			DropRepeated(*line, find);
+		}
+	return edit.Commit(_("new style from line"), AssFile::COMMIT_STYLES | AssFile::COMMIT_DIAG_FULL);
 }
 
 Staged Stage(agi::Context const* c, Property property, std::function<void(StyleLook&, StyleLook const&)> const& change) {

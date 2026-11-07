@@ -7,6 +7,7 @@
 #include "ass_file.h"
 #include "ass_style.h"
 #include "compat.h"
+#include "dialog_style_editor.h"
 #include "dialogs.h"
 #include "format.h"
 #include "style_edit.h"
@@ -29,6 +30,8 @@
 #include <wx/fontenum.h>
 #include <wx/listbox.h>
 #include <wx/menu.h>
+#include <wx/msgdlg.h>
+#include <wx/textdlg.h>
 #include <wx/panel.h>
 #include <wx/popupwin.h>
 #include <wx/intl.h>
@@ -585,6 +588,68 @@ public:
 	}
 };
 
+/// A small button with a drawn symbol: the style row's actions
+class StylePanel::IconButton final : public StylePanel::Part {
+public:
+	enum class Glyph { Up, Down, Plus, More };
+
+private:
+	Glyph glyph;
+	bool pressed = false;
+
+	void Draw(wxDC &dc, Palette const& p) override {
+		wxSize size = GetClientSize();
+		if (hover && IsEnabled()) {
+			dc.SetBrush(wxBrush(pressed ? theme::Mix(p.field, p.text, 0.1) : p.field));
+			dc.SetPen(wxPen(p.line, std::max(1, FromDIP(1))));
+			dc.DrawRoundedRectangle(wxRect(wxPoint(0, 0), size), FromDIP(5));
+		}
+		wxPoint centre(size.x / 2, size.y / 2);
+		int arm = FromDIP(5), thick = std::max(1, FromDIP(3) / 2);
+		dc.SetPen(wxPen(p.text, thick));
+		dc.SetBrush(wxBrush(p.text));
+		switch (glyph) {
+			case Glyph::Up:
+			case Glyph::Down: {
+				int dir = glyph == Glyph::Up ? -1 : 1;
+				dc.DrawLine(centre.x, centre.y - dir * arm, centre.x, centre.y + dir * arm);
+				dc.DrawLine(centre.x - arm * 3 / 4, centre.y + dir * arm / 4, centre.x, centre.y + dir * arm);
+				dc.DrawLine(centre.x + arm * 3 / 4, centre.y + dir * arm / 4, centre.x, centre.y + dir * arm);
+				break;
+			}
+			case Glyph::Plus:
+				dc.SetPen(*wxTRANSPARENT_PEN);
+				dc.DrawRectangle(centre.x - arm, centre.y - thick / 2, 2 * arm, thick);
+				dc.DrawRectangle(centre.x - thick / 2, centre.y - arm, thick, 2 * arm);
+				break;
+			case Glyph::More: {
+				dc.SetPen(*wxTRANSPARENT_PEN);
+				int r = std::max(1, FromDIP(3) / 2);
+				for (int i = -1; i <= 1; ++i)
+					dc.DrawCircle(centre.x + i * FromDIP(5), centre.y, r);
+				break;
+			}
+		}
+	}
+
+public:
+	std::function<void()> on_click;
+
+	IconButton(wxWindow *parent, Glyph glyph, wxString const& tip)
+	: Part(parent, wxSize(28, 28)), glyph(glyph)
+	{
+		SetToolTip(tip);
+		Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent &) {
+			if (!IsEnabled()) return;
+			pressed = true;
+			Refresh(false);
+			if (on_click) CallAfter([this] { pressed = false; Refresh(false); if (on_click) on_click(); });
+		});
+	}
+
+	wxString Shown() const override { return IsEnabled() ? "enabled" : "disabled"; }
+};
+
 /// Dim text: what the panel describes
 class StylePanel::Caption final : public StylePanel::Part {
 	wxString text;
@@ -763,7 +828,17 @@ StylePanel::StylePanel(wxWindow *parent, agi::Context *c)
 	auto outer = new wxBoxSizer(wxVERTICAL);
 
 	auto &style = AddSection(outer, "style", _("Style"));
-	style.body->Add(Add<Field>("style", "", "", true, _("The line's style: what the text looks like without override tags")), 0, wxEXPAND);
+	auto style_row = new wxBoxSizer(wxHORIZONTAL);
+	style_row->Add(Add<Field>("style", "", "", true, _("The line's style: what the text looks like without override tags")), 1, wxEXPAND);
+	style_row->Add(Add<IconButton>("style_update", IconButton::Glyph::Up,
+		_("Update the style from the current line: the style takes on how the line looks, and the line's tags it makes unneeded go")), 0, wxLEFT, gap / 3);
+	style_row->Add(Add<IconButton>("style_reset", IconButton::Glyph::Down,
+		_("Reset to the style: remove the tags the panel sets from the selected lines")), 0, wxLEFT, gap / 3);
+	style_row->Add(Add<IconButton>("style_new", IconButton::Glyph::Plus,
+		_("New style that looks as the current line does, for the selected lines")), 0, wxLEFT, gap / 3);
+	style_row->Add(Add<IconButton>("style_edit", IconButton::Glyph::More,
+		_("Edit the style in the style editor, with every setting")), 0, wxLEFT, gap / 3);
+	style.body->Add(style_row, 0, wxEXPAND);
 	style.body->Add(Add<Caption>("scope"), 0, wxEXPAND | wxTOP, gap / 2);
 
 	auto &text = AddSection(outer, "text", _("Text"));
@@ -901,6 +976,13 @@ void StylePanel::BindEditing() {
 		colour(name)->on_check = [this, name, colour] { Check(name, colour(name)->GetState() != State::On); };
 		colour(name)->on_pick = [this, name] { PickColour(name); };
 	}
+
+	auto button = [this](std::string const& name) { return static_cast<IconButton*>(parts[name]); };
+	button("style_update")->on_click = [this] { style_edit::UpdateStyleFromLine(c); };
+	button("style_reset")->on_click = [this] { style_edit::ResetToStyle(c); };
+	button("style_new")->on_click = [this] { AskNewStyle(); };
+	button("style_edit")->on_click = [this] { OpenStyleEditor(); };
+	static_cast<Field*>(parts["style"])->SetChooser([this] { ShowStyleMenu(); });
 
 	static_cast<Field*>(parts["font"])->SetChooser([this] {
 		auto field = parts["font"];
@@ -1050,6 +1132,61 @@ void StylePanel::PickColour(std::string const& row) {
 	}
 }
 
+void StylePanel::ShowStyleMenu() {
+	wxMenu menu;
+	std::vector<std::string> names;
+	wxString shown = parts["style"]->Shown();
+	for (auto const& style : c->subtitleAccess->Read().Styles) {
+		auto item = menu.AppendCheckItem(wxID_HIGHEST + 1 + names.size(), to_wx(style.name));
+		item->Check(to_wx(style.name) == shown);
+		names.push_back(style.name);
+	}
+	if (names.empty()) return;
+	auto field = parts["style"];
+	int chosen = field->GetPopupMenuSelectionFromUser(menu, 0, field->GetSize().y);
+	size_t index = chosen - wxID_HIGHEST - 1;
+	if (chosen > wxID_HIGHEST && index < names.size())
+		ChooseStyle(names[index]);
+}
+
+void StylePanel::ChooseStyle(std::string const& name) {
+	style_edit::SetLineStyle(c, name);
+}
+
+void StylePanel::AskNewStyle() {
+	auto active = c->selectionController->ReadActiveLine();
+	if (!active) return;
+	auto const& file = c->subtitleAccess->Read();
+	// A free name after the line's style: "Default 2", "Default 3"…
+	std::string base = active->Style.get();
+	std::string suggestion;
+	for (int n = 2; suggestion.empty() || file.GetStyle(suggestion); ++n)
+		suggestion = base + " " + std::to_string(n);
+	wxString name = to_wx(suggestion);
+	while (true) {
+		wxTextEntryDialog dialog(c->parent, _("Name of the new style:"), _("New Style"), name);
+		if (dialog.ShowModal() != wxID_OK) return;
+		name = dialog.GetValue().Trim(true).Trim(false);
+		if (name.empty()) continue;
+		if (!c->subtitleAccess->Read().GetStyle(from_wx(name))) break;
+		wxMessageBox(_("There is already a style with this name. Please choose another name."), _("Style name conflict"), wxOK | wxICON_ERROR | wxCENTER, c->parent);
+	}
+	NewStyle(name);
+}
+
+bool StylePanel::NewStyle(wxString const& name) {
+	return style_edit::NewStyleFromLine(c, from_wx(name)) != -1;
+}
+
+void StylePanel::OpenStyleEditor() {
+	auto active = c->selectionController->ReadActiveLine();
+	if (!active) return;
+	auto style = c->subtitleAccess->Read().GetStyle(active->Style.get());
+	if (!style) return;
+	wxArrayString fonts = InstalledFonts();
+	DialogStyleEditor(c->parent, style, c, nullptr, "", fonts).ShowModal();
+}
+
 void StylePanel::ChooseFont(wxString const& font) {
 	style_edit::Apply(c, style_edit::Property::Font, [&](StyleLook &l) { l.font = from_wx(font); });
 }
@@ -1063,6 +1200,8 @@ void StylePanel::ChooseWeight(int weight, bool italic) {
 void StylePanel::Press(std::string const& name) {
 	if (auto toggle = dynamic_cast<Toggle*>(parts[name]); toggle && toggle->on_click)
 		toggle->on_click();
+	if (auto icon = dynamic_cast<IconButton*>(parts[name]); icon && icon->on_click && icon->IsEnabled())
+		icon->on_click();
 }
 
 void StylePanel::EnterNumber(std::string const& name, double value, bool final) {
@@ -1161,6 +1300,10 @@ void StylePanel::Display(std::vector<StyleLook> const& looks, wxString const& sc
 	};
 
 	static_cast<Caption*>(parts["scope"])->SetText(scope);
+	bool line = c->selectionController->ReadActiveLine() != nullptr;
+	for (auto name : {"style_update", "style_new", "style_edit"})
+		parts[name]->Enable(line && looks.size() >= 1);
+	parts["style_reset"]->Enable(!looks.empty());
 	field("style", [](StyleLook const& l) { return l.style; }, [](std::string const& s) { return to_wx(s); });
 	field("font", [](StyleLook const& l) { return l.font; }, [](std::string const& s) { return to_wx(s); });
 	field("weight", [](StyleLook const& l) { return std::make_pair(l.weight, l.italic); }, [](std::pair<int, bool> w) -> wxString {

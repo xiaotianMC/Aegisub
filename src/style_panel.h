@@ -59,6 +59,10 @@ public:
 	void ChooseColour(std::string const& row, agi::Color colour);
 	/// Open the colour picker for a colour row, as clicking its colour does
 	void PickColour(std::string const& row);
+	/// Give the selected lines a style, as the style list does
+	void ChooseStyle(std::string const& name);
+	/// Make a style from the current line, as + does once it has a name
+	bool NewStyle(wxString const& name);
 
 	/// Collapse or expand a section: "style", "text" or "appearance"
 	void ShowSection(std::string const& name, bool show);
@@ -75,6 +79,7 @@ public:
 	class ColourRow;
 	class Caption;
 	class Header;
+	class IconButton;
 
 private:
 	agi::Context *c;
@@ -93,6 +98,9 @@ private:
 
 	void BindEditing();
 	void ShowWeightMenu();
+	void ShowStyleMenu();
+	void AskNewStyle();
+	void OpenStyleEditor();
 	/// Writes one property's change: through Apply, or the picker's interaction
 	using Writer = std::function<void(style_edit::Property, std::function<void(StyleLook&)>)>;
 	void SetColour(std::string const& row, agi::Color colour, bool rgb, bool alpha, Writer const& write);

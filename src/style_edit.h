@@ -23,6 +23,7 @@ enum class Property {
 	Font, Size, Weight, Italic, Underline, Strikeout, Spacing, Alignment,
 	FillColour, FillAlpha, OutlineColour, OutlineAlpha, Border,
 	ShadowColour, ShadowAlpha, Shadow, Blur,
+	ScaleX, ScaleY, Rotation,
 };
 
 /// The tags that set @p property, e.g. \bord, \xbord and \ybord
@@ -72,6 +73,28 @@ struct Staged {
 Staged Stage(agi::Context const* c, Property property, std::function<void(StyleLook&, StyleLook const&)> const& change);
 /// Move the editor's selection as @p staged says, after writing it
 void Select(agi::Context *c, Staged const& staged);
+
+/// The properties a style holds
+std::vector<Property> const& StyleProperties();
+/// Whether a style can hold @p look's value of @p property: not a weight
+/// other than normal and bold, nor different horizontal and vertical shadows
+bool Storable(Property property, StyleLook const& look);
+/// Give @p style @p look's value of @p property
+void Store(Property property, StyleLook const& look, AssStyle &style);
+
+/// Give the selected lines the style @p name. @return As Apply
+int SetLineStyle(agi::Context *c, std::string const& name);
+/// Make the current line's style look as the line does at its start, and
+/// take out of the selected lines of that style the tags it now makes
+/// unneeded. @return As Apply
+int UpdateStyleFromLine(agi::Context *c);
+/// Take out of the selected lines every tag the panel sets, so that they
+/// look as their style does. @return As Apply
+int ResetToStyle(agi::Context *c);
+/// A copy of the current line's style named @p name that looks as the line
+/// does at its start, given to the selected lines. @return As Apply; -1
+/// also when a style of that name exists
+int NewStyleFromLine(agi::Context *c, std::string const& name);
 
 /// Set the border style of the selected lines' styles: 3 draws an opaque
 /// box behind the text, 1 an outline. @return As Apply

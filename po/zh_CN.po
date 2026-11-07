@@ -8936,3 +8936,51 @@ msgstr "添加背景"
 #: src/style_edit.cpp
 msgid "remove background"
 msgstr "去掉背景"
+
+#: src/style_panel.cpp
+msgid "Edit the style in the style editor, with every setting"
+msgstr "在样式编辑器中编辑样式，可以修改全部设置"
+
+#: src/style_panel.cpp
+msgid "Name of the new style:"
+msgstr "新样式的名称："
+
+#: src/style_panel.cpp
+msgid "New Style"
+msgstr "新建样式"
+
+#: src/style_edit.cpp
+msgid "new style from line"
+msgstr "用当前行新建样式"
+
+#: src/style_panel.cpp
+msgid "New style that looks as the current line does, for the selected lines"
+msgstr "按当前行的外观新建样式，并应用到所选的行"
+
+#: src/style_edit.cpp
+msgid "reset to style"
+msgstr "恢复为样式"
+
+#: src/style_panel.cpp
+msgid "Reset to the style: remove the tags the panel sets from the selected lines"
+msgstr "恢复为样式：从所选的行中删除面板能设置的标签"
+
+#: src/style_edit.cpp
+msgid "set rotation"
+msgstr "设置旋转"
+
+#: src/style_edit.cpp
+msgid "set scale"
+msgstr "设置缩放"
+
+#: src/style_edit.cpp
+msgid "set style"
+msgstr "设置样式"
+
+#: src/style_edit.cpp
+msgid "update style from line"
+msgstr "用当前行更新样式"
+
+#: src/style_panel.cpp
+msgid "Update the style from the current line: the style takes on how the line looks, and the line's tags it makes unneeded go"
+msgstr "用当前行更新样式：样式改成这一行的外观，行里因此多余的标签会被删除"
