@@ -98,7 +98,10 @@ int ResetToStyle(agi::Context *c);
 /// also when a style of that name exists
 int NewStyleFromLine(agi::Context *c, std::string const& name);
 
-/// Set the border style of the selected lines' styles: 3 draws an opaque
-/// box behind the text, 1 an outline. @return As Apply
-int SetBorderStyle(agi::Context *c, int border_style, int amend_id = -1);
+/// Give the selected lines a box behind the text (@p on), or take it
+/// away. Only a style has one (border style 3), so each line gets a copy
+/// of its style that differs only in that — "Name Box", or back to "Name"
+/// — reusing one that exists; the style and its other lines stay as they
+/// are. @return As Apply
+int SetBackground(agi::Context *c, bool on);
 }

@@ -7,26 +7,21 @@
 #include "subtitle_project_access.h"
 #include "ass_override.h"
 #include "ass_style.h"
-#include "colour_button.h"
 #include "include/aegisub/context.h"
 #include "shape_drawing.h"
 #include "selection_controller.h"
 #include "subtitle_dialog_edit.h"
-#include "async_video_provider.h"
-#include "project.h"
-#include <boost/scope_exit.hpp>
+#include "subtitle_row_edit.h"
+#include "frame_main.h"
+#include "style_panel.h"
 
 #include <libaegisub/format.h>
 #include "utils.h"
 
 #include <algorithm>
-#include <array>
+#include <cmath>
 #include <utility>
-#include <wx/dialog.h>
-#include <wx/msgdlg.h>
-#include <wx/sizer.h>
-#include <wx/spinctrl.h>
-#include <wx/stattext.h>
+#include <wx/intl.h>
 
 namespace {
 struct Drawing {
@@ -116,146 +111,55 @@ bool CanEditDrawing(const agi::Context *c) {
 }
 
 void EditDrawing(agi::Context *c) {
-    auto model_observer_lifetime = std::make_shared<int>(0); // Outlives the draft and both connections.
-    SubtitleDialogEdit edit(c);edit.ResetActive();
-    if(edit.Rows().empty())return;
-    const AssDialogue original(edit.Rows().front());
-    auto parsed = ReadDrawing(c, &original);
-    if (!parsed) return;
+    if (!CanEditDrawing(c) || !c->frame) return;
+    if (auto panel = c->frame->GetStylePanel()) panel->EditShape();
+}
+
+std::optional<std::pair<double, double>> ShapeSize(const agi::Context *c) {
+    auto active = c->selectionController->ReadActiveLine();
+    if (!active) return std::nullopt;
+    auto rect = ReadDrawing(c, active);
+    if (!rect) return std::nullopt;
+    return std::make_pair(rect->width, rect->height);
+}
+
+int ResizeShape(agi::Context *c, std::optional<double> width, std::optional<double> height, int amend_id) {
+    auto scope = c->subtitleAccess->TryWrite();
+    if (!scope) return -1;
+    SubtitleRowEdit staged(c);
+    AssDialogue *row = nullptr;
+    for (auto r : staged.rows)
+        if (r->Id == staged.active) row = r;
+    if (!row) return amend_id;
+    auto parsed = ReadDrawing(c, row);
+    if (!parsed) return amend_id;
     auto& rect = *parsed;
-    bool previewing=false;
-    auto restore=[&]() noexcept {
-        try {
-            if(previewing && edit.Alive())if(auto provider=c->project->VideoProvider())provider->LoadSubtitles(&c->subtitleAccess->Read());
-        } catch (...) { /* Cleanup must still release the edit task on allocation failure. */ }
-        previewing=false;
-    };
-    BOOST_SCOPE_EXIT_ALL(&edit,&restore){edit.End();restore();};
-    agi::signal::Connection file_changed=c->subtitleAccess->Read().AddCommitListener("dialog_rectangle.AddCommitListener", [&](SubtitleModelRebindTicket ticket){edit.Invalidate();if (ticket.Current()) ticket.Acknowledge(ticket.Revision());}, std::weak_ptr<void const>(model_observer_lifetime));
-    agi::signal::Connection selection_changed=c->selectionController->AddActiveLineListener("dialog_rectangle.AddActiveLineListener", [&](SubtitleModelRebindTicket ticket){edit.Invalidate();if (ticket.Current()) ticket.Acknowledge(ticket.Revision());}, std::weak_ptr<void const>(model_observer_lifetime));
-    wxDialog dialog(c->parent, -1, _("Edit Shape"));
-    auto layout = new wxBoxSizer(wxVERTICAL);
-    auto fields = new wxFlexGridSizer(2, dialog.FromDIP(8), dialog.FromDIP(12));
-    fields->AddGrowableCol(1);
-    auto number = [&](wxString const& label, double value, double min, double max, int digits) {
-        fields->Add(new wxStaticText(&dialog, -1, label), 0, wxALIGN_CENTER_VERTICAL);
-        auto control = new wxSpinCtrlDouble(&dialog, -1, "", wxDefaultPosition,
-            dialog.FromDIP(wxSize(170, -1)), wxSP_ARROW_KEYS, min, max, value, 1);
-        control->SetDigits(digits);
-        fields->Add(control, 1, wxEXPAND);
-        return control;
-    };
-    auto width = number(_("Shape width"), rect.width, std::max(0.001, rect.width * 0.001 / rect.scale_x),
-        std::min(1000000.0, rect.width * 1000000 / rect.scale_x), 3);
-    auto height = number(_("Shape height"), rect.height, std::max(0.001, rect.height * 0.001 / rect.scale_y),
-        std::min(1000000.0, rect.height * 1000000 / rect.scale_y), 3);
-    auto x = number(_("Position X"), rect.x, -1000000, 1000000, 3);
-    auto y = number(_("Position Y"), rect.y, -1000000, 1000000, 3);
-    fields->Add(new wxStaticText(&dialog, -1, _("Fill color")), 0, wxALIGN_CENTER_VERTICAL);
-    auto color = new ColourButton(&dialog, dialog.FromDIP(wxSize(100, 20)), false, rect.color);
-    fields->Add(color, 1, wxEXPAND);
-    auto transparency = number(_("Transparency (%)"), rect.color.a * 100.0 / 255, 0, 100, 1);
-    layout->Add(fields, 0, wxALL | wxEXPAND, dialog.FromDIP(12));
-    auto hint = new wxStaticText(&dialog, -1,
-        _("Size uses the drawing control-point bounds before rotation. Position is the alignment anchor. Transparency: 0% opaque, 100% invisible."));
-    hint->Wrap(fields->GetMinSize().GetWidth());
-    layout->Add(hint, 0, wxLEFT | wxRIGHT | wxBOTTOM, dialog.FromDIP(12));
-    layout->Add(dialog.CreateStdDialogButtonSizer(wxOK | wxCANCEL), 0,
-        wxALL | wxALIGN_RIGHT, dialog.FromDIP(12));
-    dialog.SetSizerAndFit(layout);
-    dialog.CentreOnParent();
-    const std::array controls{width, height, x, y, transparency};
-    auto preview_text=original.Text;
-    auto update = [&](bool show_error) {
-      try {
-        if(!edit.Begin()){if(show_error)wxMessageBox(_("The subtitle or its dependencies changed. Reopen the shape editor."),_("Edit Shape"),wxOK|wxICON_WARNING,&dialog);return false;}
-        std::array<double, 5> values;
-        for (size_t i = 0; i < controls.size(); ++i) {
-            auto ctrl = controls[i];
-            if (!ctrl->GetTextValue().ToDouble(&values[i]) || !std::isfinite(values[i])
-                || values[i] < ctrl->GetMin() || values[i] > ctrl->GetMax()) {
-                if (show_error) {
-                    wxMessageBox(_("Enter a number within the allowed range."), _("Edit Shape"), wxOK | wxICON_WARNING, &dialog);
-                    ctrl->SetFocus();
-                }
-                return false;
-            }
-        }
+    auto valid = [](std::optional<double> v) { return v && std::isfinite(*v) && *v >= 0.001 && *v <= 1000000; };
+    bool resize_x = valid(width) && std::abs(*width - rect.width) >= 0.00051;
+    bool resize_y = valid(height) && std::abs(*height - rect.height) >= 0.00051;
+    if (!resize_x && !resize_y) return amend_id;
 
-        // Rebuild from the original so returning a field to its initial value
-        // also removes its preview tag without accumulating rounding errors.
-        auto edited = ReadDrawing(c, &original);
-        auto& rect = *edited;
-        auto new_color = color->GetColor();
-        new_color.a = std::lround(values[4] * 255 / 100);
-        bool resize_x = std::abs(values[0] - rect.width) >= 0.00051;
-        bool resize_y = std::abs(values[1] - rect.height) >= 0.00051;
-        bool position = std::abs(values[2] - rect.x) >= 0.00051 || std::abs(values[3] - rect.y) >= 0.00051;
-        bool fill = new_color.r != rect.color.r || new_color.g != rect.color.g || new_color.b != rect.color.b;
-        bool alpha = new_color.a != rect.color.a;
-        AssDialogue result(static_cast<AssDialogueBase const&>(original));
-        if (resize_x || resize_y || position || fill || alpha) {
-            // Change the drawing coordinates themselves instead of adding
-            // \\fscx/\\fscy. Any existing scale tags on both axes are baked
-            // into the path, so the visible size stays exact and the code no
-            // longer needs scale tags.
-            if (resize_x || resize_y) {
-                double base_x = 100, base_y = 100;
-                for(auto const& style:c->subtitleAccess->Read().Styles)if(boost::iequals(style.name,original.Style.get())) {
-                    base_x=style.scalex;base_y=style.scaley;break;
-                }
-                double scale_x = (resize_x ? values[0] : rect.width) * rect.scale_x / (rect.width * base_x);
-                double scale_y = (resize_y ? values[1] : rect.height) * rect.scale_y / (rect.height * base_y);
-                auto path = ScaleDrawingPath(rect.drawing->text, scale_x, scale_y);
-                if (path.empty()) {
-                    if (show_error)
-                        wxMessageBox(_("The drawing path could not be resized."), _("Edit Shape"), wxOK | wxICON_WARNING, &dialog);
-                    return false;
-                }
-                rect.drawing->text = std::move(path);
-            }
-
-            // Preserve unrelated override tags, comments, timing, style and layer.
-            for (auto const& block : rect.blocks) {
-                if (block.get() == rect.drawing) break;
-                if (block->GetType() != AssBlockType::OVERRIDE) continue;
-                auto over = static_cast<AssDialogueBlockOverride*>(block.get());
-                std::erase_if(over->Tags, [&](auto const& tag) {
-                    return (position && tag.Name == "\\pos")
-                        || ((resize_x || resize_y) && (tag.Name == "\\fscx" || tag.Name == "\\fscy"))
-                        || (fill && (tag.Name == "\\c" || tag.Name == "\\1c"))
-                        || (alpha && tag.Name == "\\1a");
-                });
-            }
-            if (position) rect.prefix->AddTag("\\pos(" + float_to_string(values[2]) + ","
-                + float_to_string(values[3]) + ")");
-            if (fill) rect.prefix->AddTag("\\1c" + new_color.GetAssOverrideFormatted());
-            if (alpha) rect.prefix->AddTag(agi::format("\\1a&H%02X&", (int)new_color.a));
-            result.UpdateText(rect.blocks);
-        }
-        preview_text=result.Text;
-        if(auto provider=c->project->VideoProvider()) {
-            provider->PreviewSubtitles({AssDialogueBase(result)});previewing=true;
-        }
-        return true;
-      } catch (...) {edit.Invalidate();restore();throw;}
-    };
-    for (auto ctrl : controls) {
-        ctrl->Bind(wxEVT_TEXT, [&](wxCommandEvent&) { update(false); });
-        ctrl->Bind(wxEVT_SPINCTRLDOUBLE, [&](wxSpinDoubleEvent&) { update(false); });
+    // Scale the drawing's points rather than add \fscx/\fscy: scale tags
+    // are baked into the path, so the size is exact and they can go
+    double base_x = 100, base_y = 100;
+    if (auto style = c->subtitleAccess->Read().GetStyle(row->Style.get())) {
+        base_x = style->scalex;
+        base_y = style->scaley;
     }
-    color->Bind(EVT_COLOR, [&](ValueEvent<agi::Color>&) { update(false); });
-    dialog.Bind(wxEVT_BUTTON, [&](wxCommandEvent&) {
-        if (update(true)) dialog.EndModal(wxID_OK);
-    }, wxID_OK);
-    if (dialog.ShowModal() != wxID_OK) return;
-    if(!edit.Current())return;
-    // Reuse the independent, validated preview result.
-    auto candidate = AssDialogueBase(original);
-    candidate.Text = preview_text;
-    if(candidate.Text!=original.Text) {
-        file_changed.Block();
-        BOOST_SCOPE_EXIT_ALL(&file_changed){file_changed.Unblock();};
-        edit.Commit({candidate},_("edit shape"),AssFile::COMMIT_DIAG_TEXT);
+    double scale_x = (resize_x ? *width : rect.width) * rect.scale_x / (rect.width * base_x);
+    double scale_y = (resize_y ? *height : rect.height) * rect.scale_y / (rect.height * base_y);
+    auto path = ScaleDrawingPath(rect.drawing->text, scale_x, scale_y);
+    if (path.empty()) return amend_id;
+    rect.drawing->text = std::move(path);
+    for (auto const& block : rect.blocks) {
+        if (block.get() == rect.drawing) break;
+        if (block->GetType() != AssBlockType::OVERRIDE) continue;
+        std::erase_if(static_cast<AssDialogueBlockOverride*>(block.get())->Tags, [](auto const& tag) {
+            return tag.Name == "\\fscx" || tag.Name == "\\fscy";
+        });
     }
+    row->UpdateText(rect.blocks);
+    auto edit = c->subtitleAccess->Edit(scope->Lease());
+    edit.UpdateRows(staged.Values());
+    return edit.Commit(_("edit shape"), AssFile::COMMIT_DIAG_TEXT, amend_id, staged.rows.size() == 1 ? row->Id : 0);
 }

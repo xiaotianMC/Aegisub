@@ -10,9 +10,12 @@
 
 #include <functional>
 #include <string>
+#include <utility>
 
 #include <wx/colour.h>
 
+class wxFont;
+class wxString;
 class wxWindow;
 
 namespace theme {
@@ -31,6 +34,10 @@ bool IsDark();
 /// wxWidgets 3.3, decided once at startup. Elsewhere the toolkit's theme
 /// draws borders and the like, and this is false.
 bool NativeDark();
+
+/// Whether the appearance was changed since startup in a way only a
+/// restart fully shows: Windows sets its controls light or dark at startup.
+bool RestartNeeded();
 
 /// @p border (a wxBORDER_* style), or a flat border when NativeDark():
 /// Windows draws sunken and raised borders light even in its dark mode.
@@ -77,4 +84,9 @@ void UseBackdrop(wxWindow *window);
 /// @p from moved @p share (0–1) of the way towards @p to, for the shades
 /// custom-drawn controls derive from the block and text colours.
 wxColour Mix(wxColour const& from, wxColour const& to, double share);
+
+/// The rows of @p text drawn at y = 0 in @p font that hold ink, as
+/// [top, bottom). Glyph boxes leave room for descenders and accents, so
+/// text centred by its box sits off centre; centring the ink does not.
+std::pair<int, int> TextInk(wxFont const& font, wxString const& text);
 }

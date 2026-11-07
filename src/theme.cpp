@@ -13,6 +13,9 @@
 #include <memory>
 
 #include <wx/app.h>
+#include <wx/dcgraph.h>
+#include <wx/dcmemory.h>
+#include <wx/image.h>
 #include <wx/window.h>
 #include <wx/settings.h>
 #include <wx/toolbar.h>
@@ -28,6 +31,7 @@ agi::signal::Connection mode_listener;
 agi::signal::Connection icons_listener;
 bool last_dark = false;
 bool native_dark = false;
+Mode startup_mode = Mode::System;
 
 // Dark defaults of the interface colour options. Colours drawn over video or
 // on the audio display (already dark) are not listed: they do not follow the
@@ -134,6 +138,7 @@ void Notify() {
 
 void Init() {
     [[maybe_unused]] auto mode = CurrentMode();
+    startup_mode = mode;
 #if defined(__WXMSW__) && wxCHECK_VERSION(3, 3, 0)
     // Windows themes its own controls only from startup.
     if (mode != Mode::Light && wxTheApp)
@@ -163,6 +168,15 @@ bool IsDark() {
     return false;
 #else
     return wxSystemSettings::GetAppearance().IsDark();
+#endif
+}
+
+bool RestartNeeded() {
+#if defined(__WXMSW__) && wxCHECK_VERSION(3, 3, 0)
+    // Changed since startup, and Windows still draws the other way
+    return CurrentMode() != startup_mode && IsDark() != native_dark;
+#else
+    return false;
 #endif
 }
 
@@ -249,5 +263,45 @@ Ui UiColours() {
                           {0x25, 0x26, 0x29}, {0xd8, 0xda, 0xde}, {0x8b, 0x90, 0x99}, {0x2b, 0x3f, 0x5c}};
     return {{0x1a, 0x63, 0xc4}, {0xff, 0xf4, 0xce}, {0x5c, 0x44, 0x00},
             {0xff, 0xff, 0xff}, {0x1f, 0x23, 0x28}, {0x6a, 0x73, 0x7d}, {0xdc, 0xe8, 0xfa}};
+}
+
+std::pair<int, int> TextInk(wxFont const& font, wxString const& text) {
+    static std::map<wxString, std::pair<int, int>> cache;
+    wxString key = font.GetNativeFontInfoDesc() + "\n" + text;
+    auto found = cache.find(key);
+    if (found != cache.end()) return found->second;
+
+    const int pad = 2;
+    wxSize extent;
+    {
+        wxBitmap one(1, 1);
+        wxMemoryDC memory(one);
+        wxGCDC dc(memory);
+        dc.SetFont(font);
+        extent = dc.GetTextExtent(text);
+    }
+    std::pair<int, int> rows{0, std::max(1, extent.y)};
+    wxBitmap bitmap(extent.x + 2 * pad, extent.y + 2 * pad, 24);
+    {
+        wxMemoryDC memory(bitmap);
+        memory.SetBackground(*wxWHITE_BRUSH);
+        memory.Clear();
+        wxGCDC dc(memory);
+        dc.SetFont(font);
+        dc.SetTextForeground(*wxBLACK);
+        dc.DrawText(text, pad, pad);
+    }
+    wxImage image = bitmap.ConvertToImage();
+    int top = -1, bottom = -1;
+    for (int y = 0; y < image.GetHeight(); ++y)
+        for (int x = 0; x < image.GetWidth(); ++x)
+            if (image.GetRed(x, y) < 128) {
+                if (top < 0) top = y;
+                bottom = y + 1;
+                break;
+            }
+    if (top >= 0) rows = {top - pad, bottom - pad};
+    cache[key] = rows;
+    return rows;
 }
 }

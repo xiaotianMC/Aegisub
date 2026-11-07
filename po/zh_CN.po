@@ -7673,8 +7673,8 @@ msgstr "位置 X"
 msgid "Position Y"
 msgstr "位置 Y"
 
-msgid "Adjust the shape's width, height, position, fill color and transparency"
-msgstr "调整图形的宽度、高度、位置、填充颜色和透明度"
+msgid "Show the shape in the style panel: its size, and its position, fill and opacity in the sections below"
+msgstr "在样式面板中显示该图形：上面是尺寸，位置、填充和不透明度在下面各区"
 
 msgid "Size uses the drawing control-point bounds before rotation. Position is the alignment anchor. Transparency: 0% opaque, 100% invisible."
 msgstr "宽高按旋转前的绘图控制点边界计算，位置为对齐锚点。透明度：0% 不透明，100% 完全透明。"
@@ -8918,8 +8918,8 @@ msgid "Width of the outline, in pixels (\\bord)"
 msgstr "描边宽度，单位为像素（\\bord）"
 
 #: src/style_panel.cpp
-msgid "A box behind the text in the outline colour. Only a style can have one: the box turns it on or off for the styles of the selected lines"
-msgstr "文字后面的底框，颜色为描边颜色。只有样式能设置：勾选框会为所选各行的样式打开或关闭底框"
+msgid "A box behind the text in the outline colour. Only a style can have one, so ticking it gives the selected lines a copy of their style with the box (\"Default Box\"); the style itself and its other lines stay as they are"
+msgstr "文字后面的底框，颜色为描边颜色。只有样式能设置底框，所以勾选时会给所选各行换上一份带底框的样式副本（如“Default Box”）；原样式和用它的其他行保持不变"
 
 #: src/style_panel.cpp
 msgid "Colour of the shadow (\\4c): click the colour to change it, the box to remove the shadow"
@@ -9040,3 +9040,31 @@ msgstr "行的纵向位置（\\pos）。用 \\move 移动的行保持不变"
 #: src/style_edit.cpp
 msgid "set position"
 msgstr "设置位置"
+
+#: src/style_panel.cpp
+msgid "Hide the style panel"
+msgstr "收起样式面板"
+
+#: src/style_panel.cpp
+msgid "Shape"
+msgstr "图形"
+
+#: src/style_panel.cpp
+msgid "W"
+msgstr "宽"
+
+#: src/style_panel.cpp
+msgid "H"
+msgstr "高"
+
+#: src/style_panel.cpp
+msgid "Width of the shape: its points are scaled, so no \\fscx is needed"
+msgstr "图形的宽度：直接缩放图形的各个点，不需要 \\fscx"
+
+#: src/style_panel.cpp
+msgid "Height of the shape: its points are scaled, so no \\fscy is needed"
+msgstr "图形的高度：直接缩放图形的各个点，不需要 \\fscy"
+
+#: src/command/app.cpp
+msgid "Windows switches its own controls (text boxes, lists, scroll bars) between light and dark only when Aegisub starts. Restart Aegisub now to use the new theme everywhere?"
+msgstr "Windows 只在 Aegisub 启动时决定自带控件（输入框、列表、滚动条等）用浅色还是深色。现在重启 Aegisub，让新主题在所有地方生效吗？"

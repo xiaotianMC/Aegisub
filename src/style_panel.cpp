@@ -7,6 +7,7 @@
 #include "ass_file.h"
 #include "ass_style.h"
 #include "compat.h"
+#include "dialog_rectangle.h"
 #include "dialog_style_editor.h"
 #include "dialogs.h"
 #include "format.h"
@@ -19,6 +20,8 @@
 #include "subtitle_project_access.h"
 #include "text_selection_controller.h"
 #include "theme.h"
+#include "command/command.h"
+#include "libresrc/libresrc.h"
 
 #include <algorithm>
 #include <cmath>
@@ -370,63 +373,28 @@ public:
 /// A square button that is on, off or on for only some of the lines
 class StylePanel::Toggle final : public StylePanel::Part {
 public:
-	enum class Glyph { Bold, Italic, Underline, Strikeout, Left, Centre, Right, Top, Middle, Bottom };
 	enum class State { Off, On, Mixed };
+	/// The icon, made again when the appearance changes
+	using IconMaker = std::function<wxBitmapBundle()>;
 
 private:
-	Glyph glyph;
+	IconMaker make_icon;
+	wxBitmapBundle icon;
+	int icon_made_for = -1; ///< The appearance it was made for
 	State state = State::Off;
 
-	void DrawLetter(wxDC &dc, wxColour const& colour) {
-		wxFont font = GetFont();
-		font.SetPointSize(font.GetPointSize() + 1);
-		wxString letter;
-		switch (glyph) {
-			case Glyph::Bold: font.MakeBold(); letter = "B"; break;
-			case Glyph::Italic: font.MakeItalic(); letter = "I"; break;
-			case Glyph::Underline: letter = "U"; break;
-			default: letter = "S"; break;
+	void DrawIcon(wxDC &dc) {
+		int appearance = (theme::IsDark() ? 1 : 0) + (libresrc_classic() ? 2 : 0);
+		if (!icon.IsOk() || icon_made_for != appearance) {
+			icon = make_icon();
+			icon_made_for = appearance;
 		}
-		dc.SetFont(font);
-		dc.SetTextForeground(colour);
-		wxSize size = GetClientSize(), extent = dc.GetTextExtent(letter);
-		int x = (size.x - extent.x) / 2, y = (size.y - extent.y) / 2;
-		dc.DrawText(letter, x, y);
-		// Drawn lines: not every graphics context draws a font's decorations
-		dc.SetPen(*wxTRANSPARENT_PEN);
-		dc.SetBrush(wxBrush(colour));
-		int thick = std::max(1, FromDIP(1));
-		if (glyph == Glyph::Underline)
-			dc.DrawRectangle(x - FromDIP(1), y + extent.y - thick, extent.x + FromDIP(2), thick);
-		else if (glyph == Glyph::Strikeout)
-			dc.DrawRectangle(x - FromDIP(2), y + extent.y / 2, extent.x + FromDIP(4), thick);
-	}
-
-	void DrawAlignment(wxDC &dc, Palette const& p, wxColour const& colour) {
-		wxSize size = GetClientSize();
-		int box = FromDIP(14), thick = std::max(1, FromDIP(3) / 2);
-		int left = (size.x - box) / 2, top = (size.y - box) / 2;
-		dc.SetPen(*wxTRANSPARENT_PEN);
-		dc.SetBrush(wxBrush(colour));
-		if (glyph == Glyph::Left || glyph == Glyph::Centre || glyph == Glyph::Right) {
-			// Three lines of text set to the side
-			int lengths[] = {box, box * 3 / 5, box * 4 / 5};
-			for (int i = 0; i < 3; ++i) {
-				int w = lengths[i];
-				int x = glyph == Glyph::Left ? left : glyph == Glyph::Right ? left + box - w : left + (box - w) / 2;
-				dc.DrawRectangle(x, top + FromDIP(2) + i * FromDIP(5), w, thick);
-			}
-		}
-		else {
-			// A frame with the text at its top, middle or bottom
-			dc.SetBrush(wxBrush(theme::Mix(p.surface, colour, 0.45)));
-			dc.DrawRectangle(left, top, box, thick);
-			dc.DrawRectangle(left, top + box - thick, box, thick);
-			int h = FromDIP(4);
-			int y = glyph == Glyph::Top ? top + thick + FromDIP(1) : glyph == Glyph::Bottom ? top + box - thick - FromDIP(1) - h : top + (box - h) / 2;
-			dc.SetBrush(wxBrush(colour));
-			dc.DrawRectangle(left + FromDIP(3), y, box - FromDIP(6), h);
-		}
+		wxBitmap bitmap = icon.GetBitmapFor(this);
+		if (!bitmap.IsOk()) return;
+		// Dimmed when only some lines have it
+		if (state == State::Mixed) bitmap = bitmap.ConvertToDisabled(theme::IsDark() ? 0 : 255);
+		wxSize size = GetClientSize(), bitmap_size = bitmap.GetLogicalSize();
+		dc.DrawBitmap(bitmap, (size.x - bitmap_size.x) / 2, (size.y - bitmap_size.y) / 2, true);
 	}
 
 	void Draw(wxDC &dc, Palette const& p) override {
@@ -438,16 +406,12 @@ private:
 		dc.SetBrush(wxBrush(back));
 		dc.SetPen(state == State::Off && !hover ? *wxTRANSPARENT_PEN : wxPen(state == State::Off ? p.line : theme::Mix(back, p.accent, 0.5), std::max(1, FromDIP(1))));
 		dc.DrawRoundedRectangle(wxRect(wxPoint(0, 0), size), radius);
-		wxColour colour = state == State::Mixed ? p.dim : p.text;
-		if (glyph <= Glyph::Strikeout)
-			DrawLetter(dc, colour);
-		else
-			DrawAlignment(dc, p, colour);
+		DrawIcon(dc);
 	}
 
 public:
-	Toggle(wxWindow *parent, Glyph glyph, wxString const& tip)
-	: Part(parent, wxSize(28, 28)), glyph(glyph)
+	Toggle(wxWindow *parent, IconMaker make_icon, wxString const& tip)
+	: Part(parent, wxSize(28, 28)), make_icon(std::move(make_icon))
 	{
 		SetToolTip(tip);
 		SetCursor(wxCursor(wxCURSOR_HAND));
@@ -592,7 +556,7 @@ public:
 /// A small button with a drawn symbol: the style row's actions
 class StylePanel::IconButton final : public StylePanel::Part {
 public:
-	enum class Glyph { Up, Down, Plus, More };
+	enum class Glyph { Up, Down, Plus, More, Collapse };
 
 private:
 	Glyph glyph;
@@ -628,6 +592,15 @@ private:
 				int r = std::max(1, FromDIP(3) / 2);
 				for (int i = -1; i <= 1; ++i)
 					dc.DrawCircle(centre.x + i * FromDIP(5), centre.y, r);
+				break;
+			}
+			case Glyph::Collapse: {
+				// » : the panel goes to the right
+				int half = FromDIP(4);
+				for (int x : {centre.x - FromDIP(4), centre.x + FromDIP(1)}) {
+					dc.DrawLine(x, centre.y - half, x + half, centre.y);
+					dc.DrawLine(x + half, centre.y, x, centre.y + half);
+				}
 				break;
 			}
 		}
@@ -678,14 +651,19 @@ class StylePanel::Header final : public StylePanel::Part {
 			dc.SetBrush(wxBrush(p.line));
 			dc.DrawRectangle(0, 0, size.x, std::max(1, FromDIP(1)));
 		}
+		// Lined up with the fields below, the divider across the panel
+		int left = FromDIP(12);
 		int chevron = FromDIP(8);
 		int cy = size.y / 2 + (divider ? FromDIP(2) : 0);
-		DrawChevron(dc, hover ? p.text : p.dim, 0, cy, chevron, expanded, std::max(1, FromDIP(3) / 2));
 		wxFont font = GetFont();
 		font.MakeBold();
+		// The title's ink and the chevron both centred on the same line: a
+		// glyph box leaves room below the letters, so it would sit high
+		auto ink = theme::TextInk(font, title);
 		dc.SetFont(font);
 		dc.SetTextForeground(p.text);
-		dc.DrawText(title, chevron + FromDIP(8), cy - dc.GetCharHeight() / 2);
+		dc.DrawText(title, left + chevron + FromDIP(8), cy - (ink.first + ink.second) / 2);
+		DrawChevron(dc, hover ? p.text : p.dim, left, cy, chevron, expanded, std::max(1, FromDIP(3) / 2));
 	}
 
 public:
@@ -811,7 +789,17 @@ StylePanel::Section &StylePanel::AddSection(wxSizer *sizer, std::string const& n
 	int pad = FromDIP(12);
 	bool first = sections.empty();
 	auto header = new Header(this, title, !first, [this, name] { ShowSection(name, !IsSectionShown(name)); });
-	sizer->Add(header, 0, wxEXPAND | wxLEFT | wxRIGHT | (first ? wxTOP : 0), first ? pad - FromDIP(4) : 0);
+	if (first) {
+		// The first title shares its line with the button folding the panel away
+		auto line = new wxBoxSizer(wxHORIZONTAL);
+		line->Add(header, 1, wxEXPAND);
+		auto collapse = Add<IconButton>("collapse", IconButton::Glyph::Collapse, _("Hide the style panel"));
+		collapse->on_click = [this] { if (on_collapse) on_collapse(); };
+		line->Add(collapse, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, pad - FromDIP(4));
+		sizer->Add(line, 0, wxEXPAND | wxTOP, pad - FromDIP(4));
+	}
+	else
+		sizer->Add(header, 0, wxEXPAND);
 	auto body = new wxBoxSizer(wxVERTICAL);
 	sizer->Add(body, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, pad);
 	return sections[name] = Section{header, body};
@@ -824,46 +812,62 @@ StylePanel::StylePanel(wxWindow *parent, agi::Context *c)
 	theme::UseSurface(this);
 	SetScrollRate(0, FromDIP(12));
 	const int gap = FromDIP(6);
-	using Glyph = Toggle::Glyph;
+	// The edit box's icons, as its buttons show them
+	auto command_icon = [](const char *name) -> Toggle::IconMaker {
+		return [name] { return cmd::get(name)->Icon(); };
+	};
+	auto own_icon = [](const char *name) -> Toggle::IconMaker {
+		return [name] { return libresrc_modern_bundle(libresrc_modern_icon(name), 16); };
+	};
 
 	auto outer = new wxBoxSizer(wxVERTICAL);
 
 	auto &style = AddSection(outer, "style", _("Style"));
+	// The name on a line of its own, what is described and the buttons below
+	style.body->Add(Add<Field>("style", "", "", true, _("The line's style: what the text looks like without override tags")), 0, wxEXPAND);
 	auto style_row = new wxBoxSizer(wxHORIZONTAL);
-	style_row->Add(Add<Field>("style", "", "", true, _("The line's style: what the text looks like without override tags")), 1, wxEXPAND);
+	style_row->Add(Add<Caption>("scope"), 1, wxALIGN_CENTER_VERTICAL);
 	style_row->Add(Add<IconButton>("style_update", IconButton::Glyph::Up,
-		_("Update the style from the current line: the style takes on how the line looks, and the line's tags it makes unneeded go")), 0, wxLEFT, gap / 3);
+		_("Update the style from the current line: the style takes on how the line looks, and the line's tags it makes unneeded go")), 0, wxLEFT, gap);
 	style_row->Add(Add<IconButton>("style_reset", IconButton::Glyph::Down,
 		_("Reset to the style: remove the tags the panel sets from the selected lines")), 0, wxLEFT, gap / 3);
 	style_row->Add(Add<IconButton>("style_new", IconButton::Glyph::Plus,
 		_("New style that looks as the current line does, for the selected lines")), 0, wxLEFT, gap / 3);
 	style_row->Add(Add<IconButton>("style_edit", IconButton::Glyph::More,
 		_("Edit the style in the style editor, with every setting")), 0, wxLEFT, gap / 3);
-	style.body->Add(style_row, 0, wxEXPAND);
-	style.body->Add(Add<Caption>("scope"), 0, wxEXPAND | wxTOP, gap / 2);
+	style.body->Add(style_row, 0, wxEXPAND | wxTOP, gap / 2);
+
+	wxBoxSizer *row;
+	// Only for a shape (\p) line: its size; where it is, its colour and
+	// opacity are in Transform and Appearance as for text
+	auto &shape = AddSection(outer, "shape", _("Shape"));
+	row = new wxBoxSizer(wxHORIZONTAL);
+	row->Add(Add<Field>("shape_width", _("W"), "", false, _("Width of the shape: its points are scaled, so no \\fscx is needed")), 1, wxEXPAND);
+	row->Add(Add<Field>("shape_height", _("H"), "", false, _("Height of the shape: its points are scaled, so no \\fscy is needed")), 1, wxEXPAND | wxLEFT, gap);
+	shape.body->Add(row, 0, wxEXPAND);
 
 	auto &text = AddSection(outer, "text", _("Text"));
 	text.body->Add(Add<Field>("font", "", "", true, _("Font (\\fn)")), 0, wxEXPAND);
-	auto row = new wxBoxSizer(wxHORIZONTAL);
+	row = new wxBoxSizer(wxHORIZONTAL);
 	row->Add(Add<Field>("weight", "", "", true, _("Weight and slant (\\b, \\i)")), 3, wxEXPAND);
 	row->Add(Add<Field>("size", _("Size"), "", false, _("Font size (\\fs)")), 2, wxEXPAND | wxLEFT, gap);
 	text.body->Add(row, 0, wxEXPAND | wxTOP, gap);
 
 	row = new wxBoxSizer(wxHORIZONTAL);
-	row->Add(Add<Toggle>("align_left", Glyph::Left, _("Align left (\\an1, \\an4, \\an7)")));
-	row->Add(Add<Toggle>("align_centre", Glyph::Centre, _("Centre horizontally (\\an2, \\an5, \\an8)")), 0, wxLEFT, gap / 3);
-	row->Add(Add<Toggle>("align_right", Glyph::Right, _("Align right (\\an3, \\an6, \\an9)")), 0, wxLEFT, gap / 3);
+	row->Add(Add<Toggle>("align_left", own_icon("align_left"), _("Align left (\\an1, \\an4, \\an7)")));
+	row->Add(Add<Toggle>("align_centre", own_icon("align_centre"), _("Centre horizontally (\\an2, \\an5, \\an8)")), 0, wxLEFT, gap / 3);
+	row->Add(Add<Toggle>("align_right", own_icon("align_right"), _("Align right (\\an3, \\an6, \\an9)")), 0, wxLEFT, gap / 3);
 	row->AddStretchSpacer();
-	row->Add(Add<Toggle>("align_top", Glyph::Top, _("Align to the top (\\an7, \\an8, \\an9)")));
-	row->Add(Add<Toggle>("align_middle", Glyph::Middle, _("Centre vertically (\\an4, \\an5, \\an6)")), 0, wxLEFT, gap / 3);
-	row->Add(Add<Toggle>("align_bottom", Glyph::Bottom, _("Align to the bottom (\\an1, \\an2, \\an3)")), 0, wxLEFT, gap / 3);
+	row->Add(Add<Toggle>("align_top", own_icon("align_top"), _("Align to the top (\\an7, \\an8, \\an9)")));
+	row->Add(Add<Toggle>("align_middle", own_icon("align_middle"), _("Centre vertically (\\an4, \\an5, \\an6)")), 0, wxLEFT, gap / 3);
+	row->Add(Add<Toggle>("align_bottom", own_icon("align_bottom"), _("Align to the bottom (\\an1, \\an2, \\an3)")), 0, wxLEFT, gap / 3);
 	text.body->Add(row, 0, wxEXPAND | wxTOP, gap);
 
 	row = new wxBoxSizer(wxHORIZONTAL);
-	row->Add(Add<Toggle>("bold", Glyph::Bold, _("Bold (\\b)")));
-	row->Add(Add<Toggle>("italic", Glyph::Italic, _("Italic (\\i)")), 0, wxLEFT, gap / 3);
-	row->Add(Add<Toggle>("underline", Glyph::Underline, _("Underline (\\u)")), 0, wxLEFT, gap / 3);
-	row->Add(Add<Toggle>("strikeout", Glyph::Strikeout, _("Strikeout (\\s)")), 0, wxLEFT, gap / 3);
+	row->Add(Add<Toggle>("bold", command_icon("edit/style/bold"), _("Bold (\\b)")));
+	row->Add(Add<Toggle>("italic", command_icon("edit/style/italic"), _("Italic (\\i)")), 0, wxLEFT, gap / 3);
+	row->Add(Add<Toggle>("underline", command_icon("edit/style/underline"), _("Underline (\\u)")), 0, wxLEFT, gap / 3);
+	row->Add(Add<Toggle>("strikeout", command_icon("edit/style/strikeout"), _("Strikeout (\\s)")), 0, wxLEFT, gap / 3);
 	row->Add(Add<Field>("spacing", _("Spacing"), "px", false, _("Extra space between letters, in pixels (\\fsp)")), 1, wxEXPAND | wxLEFT, gap);
 	text.body->Add(row, 0, wxEXPAND | wxTOP, gap);
 
@@ -889,7 +893,7 @@ StylePanel::StylePanel(wxWindow *parent, agi::Context *c)
 	colour_row("outline", _("Outline"), _("Colour of the outline (\\3c, \\3a): click the colour to change it, the box to remove the outline"),
 		"outline_width", "", "", _("Width of the outline, in pixels (\\bord)"));
 	colour_row("background", _("Background"),
-		_("A box behind the text in the outline colour. Only a style can have one: the box turns it on or off for the styles of the selected lines"), "", "", "", "");
+		_("A box behind the text in the outline colour. Only a style can have one, so ticking it gives the selected lines a copy of their style with the box (\"Default Box\"); the style itself and its other lines stay as they are"), "", "", "", "");
 	colour_row("shadow", _("Shadow"), _("Colour of the shadow (\\4c): click the colour to change it, the box to remove the shadow"),
 		"shadow_opacity", "", "%", _("Opacity of the shadow (\\4a)"));
 	row = new wxBoxSizer(wxHORIZONTAL);
@@ -916,6 +920,7 @@ StylePanel::StylePanel(wxWindow *parent, agi::Context *c)
 
 	SetSizer(outer);
 	ShowSection("transform", false);
+	SetSectionVisible("shape", false);
 	FitInside();
 	BindEditing();
 	SetMinSize(wxSize(FromDIP(min_width), -1));
@@ -998,6 +1003,15 @@ void StylePanel::BindEditing() {
 		l.primary.a = l.outline.a = l.shadow.a = AlphaFor(v);
 	});
 
+	auto shape_number = [this](std::string const& name, bool width) {
+		static_cast<Field*>(parts[name])->SetNumberHandler({0.1, 100000, 1}, [this, width](double v, bool final) {
+			drag_commit = width ? ResizeShape(c, v, std::nullopt, drag_commit) : ResizeShape(c, std::nullopt, v, drag_commit);
+			if (final) drag_commit = -1;
+		});
+	};
+	shape_number("shape_width", true);
+	shape_number("shape_height", false);
+
 	auto colour = [this](std::string const& name) { return static_cast<ColourRow*>(parts[name]); };
 	for (auto name : {"fill", "outline", "background", "shadow"}) {
 		colour(name)->on_check = [this, name, colour] { Check(name, colour(name)->GetState() != State::On); };
@@ -1062,7 +1076,7 @@ ColourProperties PropertiesOf(std::string const& row) {
 void StylePanel::Check(std::string const& row, bool on) {
 	using style_edit::Property;
 	if (row == "background") {
-		style_edit::SetBorderStyle(c, on ? 3 : 1);
+		style_edit::SetBackground(c, on);
 		return;
 	}
 	auto props = PropertiesOf(row);
@@ -1253,9 +1267,37 @@ void StylePanel::ShowSection(std::string const& name, bool show) {
 	if (it == sections.end() || it->second.header->expanded == show) return;
 	it->second.header->expanded = show;
 	it->second.header->Refresh(false);
-	GetSizer()->Show(it->second.body, show, true);
+	GetSizer()->Show(it->second.body, show && it->second.visible, true);
 	Layout();
 	FitInside();
+}
+
+void StylePanel::SetSectionVisible(std::string const& name, bool visible) {
+	auto it = sections.find(name);
+	if (it == sections.end() || it->second.visible == visible) return;
+	it->second.visible = visible;
+	it->second.header->Show(visible);
+	GetSizer()->Show(it->second.body, visible && it->second.header->expanded, true);
+	Layout();
+	FitInside();
+}
+
+bool StylePanel::IsSectionVisible(std::string const& name) const {
+	auto it = sections.find(name);
+	return it != sections.end() && it->second.visible;
+}
+
+void StylePanel::EditShape() {
+	if (request_open) request_open();
+	UpdateNow();
+	if (!IsSectionVisible("shape")) return;
+	ShowSection("shape", true);
+	// The section in sight
+	int y = sections["shape"].header->GetPosition().y;
+	int step = 1;
+	GetScrollPixelsPerUnit(nullptr, &step);
+	if (y < 0 || y > GetClientSize().y - FromDIP(80))
+		Scroll(-1, GetViewStart().y + y / std::max(1, step));
 }
 
 bool StylePanel::IsSectionShown(std::string const& name) const {
@@ -1311,6 +1353,12 @@ void StylePanel::UpdateNow() {
 			scope = fmt_plural(looks.size(), "%d selected line", "%d selected lines", looks.size());
 	}
 	Display(looks, scope);
+
+	// The shape's size, when the line is one and it alone is selected
+	auto size = selected.size() <= 1 ? ShapeSize(c) : std::nullopt;
+	SetSectionVisible("shape", size.has_value());
+	static_cast<Field*>(parts["shape_width"])->SetNumber(size ? size->first : 0, size.has_value());
+	static_cast<Field*>(parts["shape_height"])->SetNumber(size ? size->second : 0, size.has_value());
 }
 
 void StylePanel::Display(std::vector<StyleLook> const& looks, wxString const& scope) {
@@ -1415,6 +1463,8 @@ StylePanelEdge::StylePanelEdge(wxWindow *parent, StylePanel *panel)
 {
 	SetBackgroundStyle(wxBG_STYLE_PAINT);
 	SetWidth(panel->FromDIP(OPT_GET("App/Style Panel/Width")->GetInt()));
+	panel->on_collapse = [this] { Collapse(); };
+	panel->request_open = [this] { if (Folded()) Open(); };
 	option_changed = OPT_SUB("App/Style Panel/Show", [this](agi::OptionValue const& opt) {
 		// Asked for: open even in a narrow window
 		opened = opt.GetBool();
@@ -1496,6 +1546,16 @@ void StylePanelEdge::Update() {
 	GetParent()->Layout();
 	Refresh();
 	if (show) panel->UpdateNow();
+}
+
+void StylePanelEdge::Collapse() {
+	if (opened) {
+		// Opened by hand in a narrow window: back to folded, as it was
+		opened = false;
+		Update();
+		return;
+	}
+	OPT_SET("App/Style Panel/Show")->SetBool(false); // Update follows
 }
 
 void StylePanelEdge::Open() {

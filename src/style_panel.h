@@ -68,6 +68,16 @@ public:
 	void ShowSection(std::string const& name, bool show);
 	bool IsSectionShown(std::string const& name) const;
 
+	/// Called by the button folding the panel away
+	std::function<void()> on_collapse;
+	/// Called to show the panel when it is folded away
+	std::function<void()> request_open;
+
+	/// Show the panel and its Shape section, for the active line's shape
+	void EditShape();
+	/// Whether a section is there at all: Shape only for a shape line
+	bool IsSectionVisible(std::string const& name) const;
+
 	/// Default, smallest and largest width, in DIP
 	static constexpr int default_width = 280;
 	static constexpr int min_width = 220;
@@ -92,11 +102,13 @@ private:
 	struct Section {
 		Header *header;
 		wxSizer *body;
+		bool visible = true;
 	};
 	std::map<std::string, Section> sections;
 	std::map<std::string, Part*> parts;
 
 	void BindEditing();
+	void SetSectionVisible(std::string const& name, bool visible);
 	void ShowWeightMenu();
 	void ShowStyleMenu();
 	void AskNewStyle();
@@ -136,4 +148,6 @@ public:
 	bool Folded() const;
 	/// Act as clicking the folded strip does
 	void Open();
+	/// Fold the panel away, as its » button does
+	void Collapse();
 };

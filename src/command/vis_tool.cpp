@@ -121,9 +121,9 @@ namespace {
 		CMD_NAME("edit/line/rectangle")
 		CMD_ICON(visual_rectangle)
 		CMD_TYPE(COMMAND_VALIDATE)
-		STR_MENU("Edit Shape...")
+		STR_MENU("Edit Shape")
 		STR_DISP("Edit Shape")
-		STR_HELP("Adjust the shape's width, height, position, fill color and transparency")
+		STR_HELP("Show the shape in the style panel: its size, and its position, fill and opacity in the sections below")
 		bool Validate(const agi::Context *c) override { return CanEditDrawing(c); }
 		void operator()(agi::Context *c) override { EditDrawing(c); }
 	};

@@ -95,6 +95,8 @@ private:
 #endif
 
 public:
+	/// The style panel at the right of the window
+	StylePanel *GetStylePanel() const { return stylePanel; }
 	FrameMain();
 	~FrameMain();
     bool Destroy() override;

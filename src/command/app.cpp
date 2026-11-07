@@ -46,6 +46,7 @@
 #include "../main.h"
 #include "../options.h"
 #include "../project.h"
+#include "../theme.h"
 #include "../utils.h"
 
 namespace {
@@ -222,6 +223,17 @@ struct app_options final : public Command {
 	void operator()(agi::Context *c) override {
 		try {
 			ShowPreferences(c->parent);
+			// Windows draws its own controls light or dark as at startup:
+			// offer a restart once for each change of the theme
+			static int asked_for = -1;
+			int theme_mode = OPT_GET("App/Theme")->GetInt();
+			if (theme::RestartNeeded() && asked_for != theme_mode) {
+				asked_for = theme_mode;
+				int result = wxMessageBox(_("Windows switches its own controls (text boxes, lists, scroll bars) between light and dark only when Aegisub starts. Restart Aegisub now to use the new theme everywhere?"),
+					_("Restart Aegisub?"), wxYES_NO | wxICON_QUESTION | wxCENTER);
+				if (result == wxYES && c->frame->Close())
+					RestartAegisub();
+			}
 		} catch (agi::Exception& e) {
 			LOG_E("config/init") << "Caught exception: " << e.GetMessage();
 		}

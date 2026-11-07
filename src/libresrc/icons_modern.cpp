@@ -15,6 +15,12 @@ struct ModernIcon { std::string_view name; const char *body; };
 // Sorted by name for the binary search below
 const ModernIcon icons[] = {
 	{"about_menu", "<circle cx='8' cy='8' r='6.5'/><path d='M8 7.3V11.5'/><circle cx='8' cy='4.9' r='0.95' fill='@' stroke='none'/>"},
+	{"align_bottom", "<path d='M2 2H14' opacity='.4'/><path d='M2 14H14'/><path d='M5 8H11M5 11H11'/>"},
+	{"align_centre", "<path d='M2 3.5H14M4 8H12M3 12.5H13'/>"},
+	{"align_left", "<path d='M2 3.5H14M2 8H10M2 12.5H12'/>"},
+	{"align_middle", "<path d='M2 2H14M2 14H14' opacity='.4'/><path d='M5 6.5H11M5 9.5H11'/>"},
+	{"align_right", "<path d='M2 3.5H14M6 8H14M4 12.5H14'/>"},
+	{"align_top", "<path d='M2 2H14'/><path d='M2 14H14' opacity='.4'/><path d='M5 5H11M5 8H11'/>"},
 	{"arrow_down", "<path d='M8 2.5V13.5M3.5 9L8 13.5L12.5 9'/>"},
 	{"arrow_down_stop", "<path d='M3 14H13'/><path d='M8 2V11M4 7L8 11L12 7'/>"},
 	{"arrow_sort", "<path d='M5 2V14M2.5 11.5L5 14L7.5 11.5'/><path d='M9.5 3.5H14.5M9.5 8H13M9.5 12.5H11.5'/>"},

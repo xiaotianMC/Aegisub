@@ -7,12 +7,10 @@
 #include "utils.h"
 
 #include <algorithm>
-#include <map>
 
 #include <wx/dcbuffer.h>
 #include <wx/dcgraph.h>
 #include <wx/dcmemory.h>
-#include <wx/image.h>
 #include <wx/menu.h>
 #include <wx/settings.h>
 #include <wx/textctrl.h>
@@ -35,45 +33,6 @@ struct MeasureDC {
 	explicit MeasureDC(wxFont const& font) { dc.SetFont(font); }
 };
 
-/// The rows of @p text drawn at y = 0 that hold ink: [top, bottom).
-/// Glyph boxes include the room for descenders and accents, so a capital
-/// centred by its box sits high; centring the ink does not.
-std::pair<int, int> InkRows(wxFont const& font, wxString const& text) {
-	static std::map<wxString, std::pair<int, int>> cache;
-	wxString key = font.GetNativeFontInfoDesc() + "\n" + text;
-	auto found = cache.find(key);
-	if (found != cache.end()) return found->second;
-
-	const int pad = 2;
-	wxSize extent;
-	{
-		MeasureDC measure(font);
-		extent = measure.dc.GetTextExtent(text);
-	}
-	std::pair<int, int> rows{0, std::max(1, extent.y)};
-	wxBitmap bitmap(extent.x + 2 * pad, extent.y + 2 * pad, 24);
-	{
-		wxMemoryDC memory(bitmap);
-		memory.SetBackground(*wxWHITE_BRUSH);
-		memory.Clear();
-		wxGCDC dc(memory);
-		dc.SetFont(font);
-		dc.SetTextForeground(*wxBLACK);
-		dc.DrawText(text, pad, pad);
-	}
-	wxImage image = bitmap.ConvertToImage();
-	int top = -1, bottom = -1;
-	for (int y = 0; y < image.GetHeight(); ++y)
-		for (int x = 0; x < image.GetWidth(); ++x)
-			if (image.GetRed(x, y) < 128) {
-				if (top < 0) top = y;
-				bottom = y + 1;
-				break;
-			}
-	if (top >= 0) rows = {top - pad, bottom - pad};
-	cache[key] = rows;
-	return rows;
-}
 }
 
 VideoTimeLabel::VideoTimeLabel(wxWindow *parent, wxString sample, bool badge, bool dim)
@@ -355,12 +314,12 @@ void VideoTimeLabel::OnPaint(wxPaintEvent &) {
 	}
 	if (badge_on) {
 		// Centred on the digits' ink, the letter on its own ink
-		auto digits = InkRows(GetFont(), "0");
+		auto digits = theme::TextInk(GetFont(), "0");
 		int middle = y + (digits.first + digits.second) / 2;
 		wxFont font = BadgeFont(GetFont());
 		dc.SetFont(font);
 		wxSize extent = dc.GetTextExtent(badge_text);
-		auto ink = InkRows(font, badge_text);
+		auto ink = theme::TextInk(font, badge_text);
 		int ink_height = ink.second - ink.first;
 		int height = ink_height + 2 * FromDIP(3);
 		wxRect rect(x + FromDIP(6), middle - height / 2, extent.x + FromDIP(8), height);

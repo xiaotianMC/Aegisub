@@ -272,22 +272,6 @@ int Apply(agi::Context *c, Property property, std::function<void(StyleLook&)> co
 	return ApplyWithStyle(c, property, [&](StyleLook &look, StyleLook const&) { change(look); }, amend_id);
 }
 
-int SetBorderStyle(agi::Context *c, int border_style, int amend_id) {
-	auto scope = c->subtitleAccess->TryWrite();
-	if (!scope) return -1;
-	auto const& file = c->subtitleAccess->Read();
-	std::vector<std::string> names;
-	for (auto line : c->selectionController->ReadSelectedSet()) {
-		auto style = file.GetStyle(line->Style.get());
-		if (style && style->borderstyle != border_style && std::find(names.begin(), names.end(), style->name) == names.end())
-			names.push_back(style->name);
-	}
-	if (names.empty()) return amend_id;
-	auto edit = c->subtitleAccess->Edit(scope->Lease());
-	for (auto const& name : names)
-		edit.SetStyleField(name, &AssStyle::borderstyle, border_style);
-	return edit.Commit(border_style == 3 ? _("add background") : _("remove background"), AssFile::COMMIT_STYLES, amend_id);
-}
 
 std::vector<Property> const& StyleProperties() {
 	static const std::vector<Property> properties = {
@@ -456,6 +440,59 @@ int NewStyleFromLine(agi::Context *c, std::string const& name) {
 			DropRepeated(*line, find);
 		}
 	return edit.Commit(_("new style from line"), AssFile::COMMIT_STYLES | AssFile::COMMIT_DIAG_FULL);
+}
+
+namespace {
+/// A style that looks as @p style does but with border style @p border_style,
+/// from @p file or added to it: named @p style's name with " Box" added, or
+/// taken off
+std::string BorderTwin(AssFile &file, AssStyle const& style, int border_style) {
+	AssStyle twin(style);
+	twin.borderstyle = border_style;
+	std::string base = style.name;
+	std::string const suffix = " Box";
+	if (border_style == 3) base += suffix;
+	else if (base.size() > suffix.size() && base.ends_with(suffix)) base.erase(base.size() - suffix.size());
+	else base += " No Box";
+
+	// One that already looks so, the expected name first
+	auto same = [&](AssStyle const& other) {
+		AssStyle a(other), b(twin);
+		a.name = b.name = "";
+		a.UpdateData();
+		b.UpdateData();
+		return a.GetEntryData() == b.GetEntryData();
+	};
+	if (auto named = file.GetStyle(base); named && same(*named)) return named->name;
+	for (auto const& other : file.Styles)
+		if (&other != &style && same(other)) return other.name;
+
+	std::string name = base;
+	for (int n = 2; file.GetStyle(name); ++n)
+		name = base + " " + std::to_string(n);
+	auto added = new AssStyle(twin);
+	added->name = name;
+	added->UpdateData();
+	file.Styles.push_back(*added);
+	return name;
+}
+}
+
+int SetBackground(agi::Context *c, bool on) {
+	auto scope = c->subtitleAccess->TryWrite();
+	if (!scope) return -1;
+	SubtitleValueEdit edit(c);
+	int const border_style = on ? 3 : 1;
+	bool changed = false;
+	for (int id : SelectedIds(c)) {
+		AssDialogue *line = Find(edit.file, id);
+		AssStyle const* style = line ? edit.file.GetStyle(line->Style.get()) : nullptr;
+		if (!style || style->borderstyle == border_style) continue;
+		line->Style = BorderTwin(edit.file, *style, border_style);
+		changed = true;
+	}
+	if (!changed) return -1;
+	return edit.Commit(on ? _("add background") : _("remove background"), AssFile::COMMIT_STYLES | AssFile::COMMIT_DIAG_META);
 }
 
 Staged Stage(agi::Context const* c, Property property, std::function<void(StyleLook&, StyleLook const&)> const& change) {

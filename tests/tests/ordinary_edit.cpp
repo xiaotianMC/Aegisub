@@ -1280,6 +1280,7 @@ TEST_F(ordinary_edit, style_panel_changes_fill_outline_shadow_and_background) {
      auto style=new AssStyle();style->name="Look";style->outline_w=3;style->shadow_w=0;
      style->primary=agi::Color(255,255,255);style->outline=agi::Color(0,0,0);style->shadow=agi::Color(0,0,0,0x80);file.Styles.push_back(*style);
      auto &row=file.Events.front();row.Style="Look";row.Text="Hello";
+     auto other=new AssDialogue();other->Style="Look";other->Text="Other";file.Events.push_back(*other);
      file.Commit("fixture",AssFile::COMMIT_NEW);}
     auto line=[&] { return std::string(LiveRead(*c).Events.front().Text.get()); };
     auto id=LiveRead(*c).Events.front().Id;
@@ -1331,15 +1332,42 @@ TEST_F(ordinary_edit, style_panel_changes_fill_outline_shadow_and_background) {
     EXPECT_EQ("{\\c&H0000FF&\\1a&H40&\\3c&HFF0000&\\4c&H00FF00&}Hello",line()) << "the same alpha needs no tag";
     EXPECT_EQ("off #00FF00",shown()["shadow"]) << "the colour of a shadow turned off";
 
-    // Background is the style's: an opaque box, and then no outline
+    // Only a style has a background (an opaque box, and then no outline):
+    // the line gets a copy of its style with one; the style and its other
+    // lines stay as they are.
+    auto style_of=[&](int i) { return std::string(std::next(LiveRead(*c).Events.begin(),i)->Style.get()); };
+    size_t styles=LiveRead(*c).Styles.size();
     panel->Check("background",true);
-    EXPECT_EQ(3,LiveRead(*c).GetStyle("Look")->borderstyle);
+    EXPECT_EQ("Look Box",style_of(0));
+    EXPECT_EQ("Look",style_of(1)) << "the other line keeps its style";
+    EXPECT_EQ(1,LiveRead(*c).GetStyle("Look")->borderstyle) << "the style stays";
+    ASSERT_NE(nullptr,LiveRead(*c).GetStyle("Look Box"));
+    EXPECT_EQ(3,LiveRead(*c).GetStyle("Look Box")->borderstyle);
+    {AssStyle a(*LiveRead(*c).GetStyle("Look")),b(*LiveRead(*c).GetStyle("Look Box"));
+     a.name=b.name="";b.borderstyle=1;a.UpdateData();b.UpdateData();
+     EXPECT_EQ(a.GetEntryData(),b.GetEntryData()) << "a copy, but for the box";}
+    EXPECT_EQ(styles+1,LiveRead(*c).Styles.size());
     EXPECT_EQ("on #0000FF",shown()["background"]);
     std::string before=line();
     panel->Check("outline",true);
     EXPECT_EQ(before,line()) << "a box has no outline to show";
+    // Off: back to the style it came from; on again: the copy made before
+    panel->Check("background",false);
+    EXPECT_EQ("Look",style_of(0));
+    panel->Check("background",true);
+    EXPECT_EQ("Look Box",style_of(0));
+    EXPECT_EQ(styles+1,LiveRead(*c).Styles.size()) << "no second copy";
+    // A line whose style has a box of its own gets a copy without one
+    {auto write=c->subtitleAccess->TryWrite();auto &file=LiveWriteForTest(*c);
+     auto boxed=new AssStyle();boxed->name="Boxed";boxed->fontsize=33;boxed->borderstyle=3;file.Styles.push_back(*boxed);
+     file.Events.front().Style="Boxed";file.Commit("boxed",AssFile::COMMIT_STYLES|AssFile::COMMIT_DIAG_META);}
+    panel->Check("background",false);
+    EXPECT_EQ("Boxed No Box",style_of(0));
+    EXPECT_EQ(1,LiveRead(*c).GetStyle("Boxed No Box")->borderstyle);
+    EXPECT_EQ(3,LiveRead(*c).GetStyle("Boxed")->borderstyle);
     c->subsController->Undo();
-    EXPECT_EQ(1,LiveRead(*c).GetStyle("Look")->borderstyle);
+    EXPECT_EQ("Boxed",style_of(0));
+    EXPECT_EQ(nullptr,LiveRead(*c).GetStyle("Boxed No Box")) << "one undo step takes the copy away too";
     panel->Destroy();
 }
 
@@ -1488,6 +1516,27 @@ TEST_F(ordinary_edit, style_panel_folds_away_in_narrow_windows_and_opens_from_it
     OPT_SET("App/Style Panel/Show")->SetBool(false);
     edge->Open();
     EXPECT_TRUE(OPT_GET("App/Style Panel/Show")->GetBool()) << "the strip turns the option back on";
+    EXPECT_FALSE(edge->Folded());
+    // The » button folds it away: the option off when wide, back to folded
+    // when it was opened by hand in a narrow window
+    resize(root->FromDIP(1400));
+    panel->Press("collapse");
+    EXPECT_FALSE(OPT_GET("App/Style Panel/Show")->GetBool());
+    EXPECT_TRUE(edge->Folded());
+    edge->Open();
+    EXPECT_FALSE(edge->Folded());
+    resize(root->FromDIP(900));
+    edge->Open();
+    ASSERT_FALSE(edge->Folded());
+    panel->Press("collapse");
+    EXPECT_TRUE(edge->Folded());
+    EXPECT_TRUE(OPT_GET("App/Style Panel/Show")->GetBool()) << "still shown once the window is wide";
+    resize(root->FromDIP(1400));
+    EXPECT_FALSE(edge->Folded());
+    // A shape line asks for the panel: it opens
+    OPT_SET("App/Style Panel/Show")->SetBool(false);
+    ASSERT_TRUE(edge->Folded());
+    panel->EditShape();
     EXPECT_FALSE(edge->Folded());
     delete frame; // now: it watches an option the next test changes
 }
@@ -2520,36 +2569,53 @@ TEST_F(visual_edit, unnotified_metadata_and_one_millisecond_changes_are_not_over
     EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
 }
 
-TEST_F(visual_edit, drawing_dialog_preview_confirm_cancel_and_undo_use_independent_data) {
-    Install<VisualToolRectangle>();Drag(30,40,120,150);auto text=Text();
-    {RunModal edit("Edit Shape",[&](wxDialog* dialog){
-        EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
-        wxSpinCtrlDouble* width=nullptr;for(auto child:descendants(dialog))if((width=dynamic_cast<wxSpinCtrlDouble*>(child)))break;
-        ASSERT_NE(nullptr,width);width->SetValue(width->GetValue()+20);
-        wxSpinDoubleEvent event(wxEVT_SPINCTRLDOUBLE,width->GetId());event.SetEventObject(width);width->GetEventHandler()->ProcessEvent(event);
-        EXPECT_EQ(text,Text());EXPECT_FALSE(c->subtitleEditGate.TryBeginComparison());
-        button(dialog,wxID_OK);
-    });
-    EditDrawing(c.get());}EXPECT_NE(text,Text());auto changed=Text();
-    c->subsController->Undo();EXPECT_EQ(text,Text());c->subsController->Redo();EXPECT_EQ(changed,Text());
-    RunModal cancel("Edit Shape",[&](wxDialog* dialog){
-        wxSpinCtrlDouble* width=nullptr;for(auto child:descendants(dialog))if((width=dynamic_cast<wxSpinCtrlDouble*>(child)))break;
-        ASSERT_NE(nullptr,width);width->SetValue(width->GetValue()+30);
-        wxCommandEvent event(wxEVT_TEXT,width->GetId());width->GetEventHandler()->ProcessEvent(event);
-        EXPECT_EQ(changed,Text());dialog->EndModal(wxID_CANCEL);
-    });
-    EditDrawing(c.get());EXPECT_EQ(changed,Text());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
-}
-TEST_F(visual_edit, drawing_dialog_rejects_changed_target_and_comparison_authorization) {
-    Install<VisualToolRectangle>();Drag(30,40,120,150);auto text=Text();AcceptMessages accept;
-    {RunModal changed("Edit Shape",[&](wxDialog* dialog){
-        {auto write=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).Events.front().Layer=9;}
-        button(dialog,wxID_OK);EXPECT_EQ(text,Text());EXPECT_TRUE(dialog->IsModal());
-    });
-    EditDrawing(c.get());}EXPECT_EQ(9,LiveRead(*c).Events.front().Layer);EXPECT_EQ(text,Text());
-    auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);
-    RunModal blocked("Edit Shape",[&](wxDialog* dialog){button(dialog,wxID_OK);EXPECT_TRUE(dialog->IsModal());});
-    EditDrawing(c.get());EXPECT_EQ(text,Text());
+TEST_F(ordinary_edit, style_panel_resizes_shapes) {
+    auto Text=[&] { return std::string(LiveRead(*c).Events.front().Text.get()); };
+    {auto write=c->subtitleAccess->TryWrite();auto& row=LiveWriteForTest(*c).Events.front();
+     row.Text="{\\an7\\pos(30,40)\\p1}m 0 0 l 90 0 90 110 0 110{\\p0}";
+     LiveWriteForTest(*c).Commit("shape",AssFile::COMMIT_DIAG_TEXT);}
+    {auto id=LiveRead(*c).Events.front().Id;c->selectionController->SetSelectionAndActiveIDs({id},id);}
+    auto text=Text();
+    ASSERT_TRUE(CanEditDrawing(c.get()));
+    auto size=ShapeSize(c.get());ASSERT_TRUE(size);
+    // The panel's Shape section, only for a shape
+    auto panel=new StylePanel(window,c.get());
+    BOOST_SCOPE_EXIT_ALL(&){panel->Destroy();};
+    panel->UpdateNow();
+    EXPECT_TRUE(panel->IsSectionVisible("shape"));
+    EXPECT_EQ(wxString::Format("%g",std::round(size->first*100)/100),panel->Shown()["shape_width"]);
+    // A drag is one undo step; the points are scaled, no \fscx
+    panel->EnterNumber("shape_width",size->first+10,false);
+    panel->EnterNumber("shape_width",size->first+20,true);
+    EXPECT_NEAR(size->first+20,ShapeSize(c.get())->first,0.01);
+    EXPECT_NEAR(size->second,ShapeSize(c.get())->second,0.01) << "the height stays";
+    EXPECT_EQ(std::string::npos,Text().find("\\fscx"));
+    panel->EnterNumber("shape_height",size->second/2,true);
+    EXPECT_NEAR(size->second/2,ShapeSize(c.get())->second,0.01);
+    auto changed=Text();
+    c->subsController->Undo();EXPECT_NEAR(size->first+20,ShapeSize(c.get())->first,0.01);EXPECT_NEAR(size->second,ShapeSize(c.get())->second,0.01);
+    c->subsController->Undo();EXPECT_EQ(text,Text()) << "the whole drag in one step";
+    c->subsController->Redo();c->subsController->Redo();EXPECT_EQ(changed,Text());
+    // Scale tags are baked into the points
+    {auto write=c->subtitleAccess->TryWrite();auto& row=LiveWriteForTest(*c).Events.front();
+     row.Text="{\\an7\\pos(10,10)\\fscx200\\p1}m 0 0 l 50 0 50 20 0 20{\\p0}";
+     LiveWriteForTest(*c).Commit("scaled",AssFile::COMMIT_DIAG_TEXT);}
+    EXPECT_NEAR(100,ShapeSize(c.get())->first,0.01);
+    EXPECT_NE(-1,ResizeShape(c.get(),60,std::nullopt));
+    EXPECT_EQ(std::string::npos,Text().find("\\fscx")) << Text();
+    EXPECT_NE(std::string::npos,Text().find("l 60 0 60 20 0 20")) << "the points carry the scale: " << Text();
+    EXPECT_NEAR(60,ShapeSize(c.get())->first,0.01);
+    EXPECT_NEAR(20,ShapeSize(c.get())->second,0.01);
+    // Not while another edit holds the subtitles
+    auto before=Text();
+    {auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);
+     EXPECT_EQ(-1,ResizeShape(c.get(),40,std::nullopt));EXPECT_EQ(before,Text());}
+    // Text is not a shape: no section
+    {auto write=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).Events.front().Text="Hello";
+     LiveWriteForTest(*c).Commit("text",AssFile::COMMIT_DIAG_TEXT);}
+    panel->UpdateNow();
+    EXPECT_FALSE(CanEditDrawing(c.get()));
+    EXPECT_FALSE(panel->IsSectionVisible("shape"));
 }
 TEST_F(ordinary_edit, dialog_snapshot_closes_with_parent_and_rejects_duplicate_batch_before_writing) {
     SubtitleDialogEdit edit(c.get());edit.ResetActive();ASSERT_TRUE(edit.Begin());
