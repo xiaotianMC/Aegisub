@@ -24,6 +24,8 @@ enum class Property {
 	FillColour, FillAlpha, OutlineColour, OutlineAlpha, Border,
 	ShadowColour, ShadowAlpha, Shadow, Blur,
 	ScaleX, ScaleY, Rotation,
+	Position,  ///< \pos; lines placed by \move are left alone
+	Opacity,   ///< \alpha: fill, outline and shadow together
 };
 
 /// The tags that set @p property, e.g. \bord, \xbord and \ybord

@@ -1296,7 +1296,7 @@ TEST_F(ordinary_edit, style_panel_sets_updates_resets_and_makes_styles) {
     {auto write=c->subtitleAccess->TryWrite();auto &file=LiveWriteForTest(*c);
      auto style=new AssStyle();style->name="Look";style->fontsize=40;style->alignment=2;style->bold=false;file.Styles.push_back(*style);
      style=new AssStyle();style->name="Other";style->fontsize=20;file.Styles.push_back(*style);
-     auto &row=file.Events.front();row.Style="Look";row.Text="{\\fs60\\b1\\an8\\blur2\\pos(10,20)}Big {\\fs30}small";
+     auto &row=file.Events.front();row.Style="Look";row.Text="{\\fs60\\b1\\an8\\blur2\\pos(10,20)}Big {\\fs30\\alpha&H40&}small";
      auto other=new AssDialogue();other->Style="Look";other->Text="{\\fs60}two";second=other->Id;file.Events.push_back(*other);
      file.Commit("fixture",AssFile::COMMIT_NEW);}
     auto text=[&](int n) { return std::string(std::next(LiveRead(*c).Events.begin(),n)->Text.get()); };
@@ -1318,12 +1318,12 @@ TEST_F(ordinary_edit, style_panel_sets_updates_resets_and_makes_styles) {
     panel->Press("style_update");
     ASSERT_NE(nullptr,style("Look"));
     EXPECT_EQ(60,style("Look")->fontsize); EXPECT_TRUE(style("Look")->bold); EXPECT_EQ(8,style("Look")->alignment);
-    EXPECT_EQ("{\\blur2\\pos(10,20)}Big {\\fs30}small",text(0)) << "blur stays: a style has none; tags inside the line stay";
+    EXPECT_EQ("{\\blur2\\pos(10,20)}Big {\\fs30\\alpha&H40&}small",text(0)) << "blur stays: a style has none; tags inside the line stay";
     EXPECT_EQ("{\\fs60}two",text(1)) << "lines not selected keep their tags";
     EXPECT_EQ("60",shown()["size"]);
     c->subsController->Undo();
     EXPECT_EQ(40,style("Look")->fontsize);
-    EXPECT_EQ("{\\fs60\\b1\\an8\\blur2\\pos(10,20)}Big {\\fs30}small",text(0));
+    EXPECT_EQ("{\\fs60\\b1\\an8\\blur2\\pos(10,20)}Big {\\fs30\\alpha&H40&}small",text(0));
 
     // Reset to the style: the panel's tags go, others stay
     c->selectionController->SetSelectionAndActiveIDs({first,second},first);
@@ -1339,7 +1339,7 @@ TEST_F(ordinary_edit, style_panel_sets_updates_resets_and_makes_styles) {
     EXPECT_EQ(40,style("Look")->fontsize) << "the old style stays";
     EXPECT_EQ("Big",std::string(LiveRead(*c).Events.front().Style.get()));
     EXPECT_EQ("Big",std::string(LiveRead(*c).Events.back().Style.get()));
-    EXPECT_EQ("{\\blur2\\pos(10,20)}Big {\\fs30}small",text(0));
+    EXPECT_EQ("{\\blur2\\pos(10,20)}Big {\\fs30\\alpha&H40&}small",text(0));
     EXPECT_EQ("two",text(1)) << "its \\fs60 is now the style's";
     EXPECT_FALSE(panel->NewStyle("big")) << "names are unique without regard to case";
     c->subsController->Undo();
@@ -1351,6 +1351,93 @@ TEST_F(ordinary_edit, style_panel_sets_updates_resets_and_makes_styles) {
     EXPECT_EQ("disabled",shown()["style_update"]);
     EXPECT_EQ(-1,style_edit::ResetToStyle(c.get()));
     panel->Destroy();
+}
+
+TEST_F(ordinary_edit, style_panel_moves_scales_turns_and_fades_lines) {
+    int moving;
+    {auto write=c->subtitleAccess->TryWrite();auto &file=LiveWriteForTest(*c);
+     file.SetScriptInfo("PlayResX","640");file.SetScriptInfo("PlayResY","480");
+     auto style=new AssStyle();style->name="Look";style->alignment=2;style->Margin={{10,20,30}};
+     style->primary.a=0;style->outline.a=0;style->shadow.a=0;file.Styles.push_back(*style);
+     auto &row=file.Events.front();row.Style="Look";row.Text="Hello";
+     auto other=new AssDialogue();other->Style="Look";other->Text="{\\move(1,2,3,4)}moving";moving=other->Id;file.Events.push_back(*other);
+     file.Commit("fixture",AssFile::COMMIT_NEW);}
+    auto text=[&](int n) { return std::string(std::next(LiveRead(*c).Events.begin(),n)->Text.get()); };
+    int first=LiveRead(*c).Events.front().Id;
+    c->selectionController->SetSelectionAndActiveIDs({first},first);
+    c->textSelectionController->SetSelection(0,0);
+    auto panel=new StylePanel(window,c.get());
+    auto shown=[&] { panel->UpdateNow(); return panel->Shown(); };
+    EXPECT_FALSE(panel->IsSectionShown("transform")) << "folded at first";
+
+    // Without \pos: where alignment and margins put it
+    auto s=shown();
+    EXPECT_EQ("315",s["position_x"]); EXPECT_EQ("450",s["position_y"]);
+    EXPECT_EQ("100",s["scale_x"]); EXPECT_EQ("0",s["rotation"]); EXPECT_EQ("100",s["opacity"]);
+    panel->EnterNumber("position_x",100,true);
+    EXPECT_EQ("{\\pos(100,450)}Hello",text(0));
+    panel->UpdateNow(); panel->EnterNumber("position_y",200,true);
+    EXPECT_EQ("{\\pos(100,200)}Hello",text(0));
+    EXPECT_EQ("200",shown()["position_y"]);
+
+    panel->EnterNumber("scale_x",150,true); panel->UpdateNow(); panel->EnterNumber("rotation",-10,true);
+    EXPECT_EQ("{\\pos(100,200)\\fscx150\\frz-10}Hello",text(0));
+    panel->UpdateNow(); panel->EnterNumber("opacity",50,true);
+    EXPECT_EQ("{\\pos(100,200)\\fscx150\\frz-10\\alpha&H80&}Hello",text(0));
+    EXPECT_EQ("50",shown()["opacity"]); EXPECT_EQ("50",shown()["fill_opacity"]);
+    panel->EnterNumber("fill_opacity",100,true);
+    EXPECT_EQ("{\\pos(100,200)\\fscx150\\frz-10\\alpha&H80&\\1a&H00&}Hello",text(0)) << "\\alpha would still apply without it";
+    EXPECT_EQ(wxS("—"),shown()["opacity"]) << "fill, outline and shadow differ";
+    panel->EnterNumber("opacity",100,true);
+    EXPECT_EQ("{\\pos(100,200)\\fscx150\\frz-10}Hello",text(0)) << "the style's opacity needs no tag";
+
+    // A moving line keeps its \move
+    c->selectionController->SetSelectionAndActiveIDs({first,moving},first);
+    panel->UpdateNow(); panel->EnterNumber("position_x",5,true);
+    EXPECT_EQ("{\\fscx150\\frz-10\\pos(5,200)}Hello",text(0));
+    EXPECT_EQ("{\\move(1,2,3,4)}moving",text(1));
+    // Updating the style takes scale and rotation, not the position
+    c->selectionController->SetSelectionAndActiveIDs({first},first);
+    panel->Press("style_update");
+    EXPECT_EQ(150,LiveRead(*c).GetStyle("Look")->scalex); EXPECT_EQ(-10,LiveRead(*c).GetStyle("Look")->angle);
+    EXPECT_EQ("{\\pos(5,200)}Hello",text(0));
+    panel->Destroy();
+}
+
+TEST_F(ordinary_edit, style_panel_folds_away_in_narrow_windows_and_opens_from_its_edge) {
+    OPT_SET("App/Style Panel/Show")->SetBool(true);
+    auto frame=new wxFrame(nullptr,-1,"edge");
+    auto root=new wxPanel(frame);
+    auto panel=new StylePanel(root,c.get());
+    auto edge=new StylePanelEdge(root,panel);
+    auto sizer=new wxBoxSizer(wxHORIZONTAL);
+    sizer->Add(new wxPanel(root),1,wxEXPAND);sizer->Add(edge,0,wxEXPAND);sizer->Add(panel,0,wxEXPAND);
+    root->SetSizer(sizer);
+    auto resize=[&](int width) { root->SetSize(width,600); edge->Update(); root->Layout(); };
+    resize(root->FromDIP(1400));
+    EXPECT_FALSE(edge->Folded());
+    EXPECT_GE(panel->GetSize().x,panel->FromDIP(StylePanel::min_width));
+    resize(root->FromDIP(900));
+    EXPECT_TRUE(edge->Folded()) << "narrow: folded";
+    EXPECT_GT(edge->GetSize().x,theme::BlockGap(root)) << "a strip wide enough to click";
+    edge->Open();
+    EXPECT_FALSE(edge->Folded()) << "opened by hand";
+    resize(root->FromDIP(1000));
+    EXPECT_FALSE(edge->Folded()) << "stays open while narrow";
+    resize(root->FromDIP(1400)); resize(root->FromDIP(900));
+    EXPECT_TRUE(edge->Folded()) << "folds again after being wide";
+    // The option hides it everywhere; asking for it opens it even when narrow
+    resize(root->FromDIP(1400));
+    OPT_SET("App/Style Panel/Show")->SetBool(false);
+    EXPECT_TRUE(edge->Folded());
+    resize(root->FromDIP(900));
+    OPT_SET("App/Style Panel/Show")->SetBool(true);
+    EXPECT_FALSE(edge->Folded());
+    OPT_SET("App/Style Panel/Show")->SetBool(false);
+    edge->Open();
+    EXPECT_TRUE(OPT_GET("App/Style Panel/Show")->GetBool()) << "the strip turns the option back on";
+    EXPECT_FALSE(edge->Folded());
+    delete frame; // now: it watches an option the next test changes
 }
 
 TEST_F(ordinary_edit, style_edit_writes_one_property_for_lines_or_selected_text) {

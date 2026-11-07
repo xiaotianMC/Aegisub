@@ -10,6 +10,7 @@
 #include "dialog_style_editor.h"
 #include "dialogs.h"
 #include "format.h"
+#include "options.h"
 #include "style_edit.h"
 #include "include/aegisub/context.h"
 #include "selection_controller.h"
@@ -205,8 +206,8 @@ private:
 		if (IsEditing()) return;
 		int x = TextLeft(dc);
 		wxString shown_unit = value == mixed ? wxString() : unit;
-		// A degree sign sits against its number
-		int unit_gap = shown_unit == wxS("°") ? 0 : FromDIP(3);
+		// Degree and percent signs sit against their number
+		int unit_gap = shown_unit == wxS("°") || shown_unit == "%" ? 0 : FromDIP(3);
 		int unit_width = shown_unit.empty() ? 0 : dc.GetTextExtent(shown_unit).x + unit_gap;
 		wxString text = Ellipsize(dc, value, std::max(0, right - x - unit_width));
 		// Numbers that can be dragged are in the accent colour
@@ -320,7 +321,7 @@ public:
 		dc.SetFont(GetFont());
 		int left = TextLeft(dc) - FromDIP(2);
 		int height = std::min(GetClientSize().y - FromDIP(4), edit->GetBestSize().y);
-		edit->SetSize(left, (GetClientSize().y - height) / 2, GetClientSize().x - left - FromDIP(6), height);
+		edit->SetSize(left, (GetClientSize().y - height) / 2, std::max(FromDIP(24), GetClientSize().x - left - FromDIP(6)), std::max(1, height));
 		edit->SetBackgroundColour(Colours(this).field);
 		edit->SetForegroundColour(Colours(this).text);
 		edit->ChangeValue(known ? Number(current) : wxString());
@@ -897,7 +898,24 @@ StylePanel::StylePanel(wxWindow *parent, agi::Context *c)
 	look.body->Add(row, 0, wxEXPAND | wxTOP, gap / 2);
 	look.body->Add(Add<Field>("blur", _("Blur"), "", false, _("Softens the edges of the outline, or the letters without one (\\blur)")), 0, wxEXPAND | wxTOP, gap);
 
+	auto &transform = AddSection(outer, "transform", _("Transform"));
+	auto pair = [&](std::string const& a, wxString const& a_label, wxString const& a_unit, wxString const& a_tip,
+		std::string const& b, wxString const& b_label, wxString const& b_unit, wxString const& b_tip, bool first = false)
+	{
+		auto line = new wxBoxSizer(wxHORIZONTAL);
+		line->Add(Add<Field>(a, a_label, a_unit, false, a_tip), 1, wxEXPAND);
+		line->Add(Add<Field>(b, b_label, b_unit, false, b_tip), 1, wxEXPAND | wxLEFT, gap);
+		transform.body->Add(line, 0, wxEXPAND | (first ? 0 : wxTOP), gap);
+	};
+	pair("position_x", "X", "", _("Where the line is, across (\\pos). Lines that move (\\move) are left as they are"),
+		"position_y", "Y", "", _("Where the line is, down (\\pos). Lines that move (\\move) are left as they are"), true);
+	pair("scale_x", _("Scale X"), "%", _("Stretches the letters across (\\fscx)"),
+		"scale_y", _("Scale Y"), "%", _("Stretches the letters up and down (\\fscy)"));
+	pair("rotation", _("Rotation"), wxS("°"), _("Turns the line, anticlockwise (\\frz)"),
+		"opacity", _("Opacity"), "%", _("Opacity of fill, outline and shadow together (\\alpha)"));
+
 	SetSizer(outer);
+	ShowSection("transform", false);
 	FitInside();
 	BindEditing();
 	SetMinSize(wxSize(FromDIP(min_width), -1));
@@ -969,6 +987,15 @@ void StylePanel::BindEditing() {
 	});
 	number("shadow_angle", Property::Shadow, {0, 360, 1}, [](StyleLook &l, double v) {
 		SetShadow(l, std::hypot(l.shadow_x, l.shadow_y), v);
+	});
+
+	number("position_x", Property::Position, {-10000, 10000, 1}, [](StyleLook &l, double v) { l.pos_x = v; });
+	number("position_y", Property::Position, {-10000, 10000, 1}, [](StyleLook &l, double v) { l.pos_y = v; });
+	number("scale_x", Property::ScaleX, {0, 1000, 1}, [](StyleLook &l, double v) { l.scale_x = v; });
+	number("scale_y", Property::ScaleY, {0, 1000, 1}, [](StyleLook &l, double v) { l.scale_y = v; });
+	number("rotation", Property::Rotation, {-360, 360, 1}, [](StyleLook &l, double v) { l.angle = v; });
+	number("opacity", Property::Opacity, {0, 100, 1}, [](StyleLook &l, double v) {
+		l.primary.a = l.outline.a = l.shadow.a = AlphaFor(v);
 	});
 
 	auto colour = [this](std::string const& name) { return static_cast<ColourRow*>(parts[name]); };
@@ -1249,6 +1276,14 @@ void StylePanel::ScheduleUpdate() {
 void StylePanel::UpdateNow() {
 	auto const& file = c->subtitleAccess->Read();
 	StyleLookup find = [&](std::string const& name) { return file.GetStyle(name); };
+	int width = 0, height = 0;
+	file.GetResolution(width, height);
+	// With where lines without \pos are, for the position fields
+	auto look_at = [&](AssDialogue const& line, int plain) {
+		StyleLook look = LookAt(line, plain, find);
+		DefaultPosition(look, line, find(line.Style.get()), width, height);
+		return look;
+	};
 
 	std::vector<StyleLook> looks;
 	wxString scope;
@@ -1260,14 +1295,14 @@ void StylePanel::UpdateNow() {
 	int plain_start = text ? PlainPosition(*text, std::min(start, end)) : 0;
 	if (text && selected.size() <= 1 && plain_start != PlainPosition(*text, std::max(start, end))) {
 		// Text selected in the editor: how that text begins
-		looks.push_back(LookAt(*active, plain_start, find));
+		looks.push_back(look_at(*active, plain_start));
 		scope = _("The selected text");
 	}
 	else {
 		for (auto line : selected)
-			looks.push_back(LookAt(*line, 0, find));
+			looks.push_back(look_at(*line, 0));
 		if (looks.empty() && active)
-			looks.push_back(LookAt(*active, 0, find));
+			looks.push_back(look_at(*active, 0));
 		if (looks.empty())
 			scope = _("No line selected");
 		else if (looks.size() == 1)
@@ -1354,6 +1389,17 @@ void StylePanel::Display(std::vector<StyleLook> const& looks, wxString const& sc
 		return std::round(ShadowAngle(l));
 	});
 	number_field("blur", [](StyleLook const& l) { return l.blur; });
+	number_field("position_x", [](StyleLook const& l) { return l.pos_x; });
+	number_field("position_y", [](StyleLook const& l) { return l.pos_y; });
+	number_field("scale_x", [](StyleLook const& l) { return l.scale_x; });
+	number_field("scale_y", [](StyleLook const& l) { return l.scale_y; });
+	number_field("rotation", [](StyleLook const& l) { return l.angle; });
+	// One opacity only when fill, outline and shadow agree
+	auto opacity = [](StyleLook const& l) {
+		return l.primary.a == l.outline.a && l.primary.a == l.shadow.a ? Opacity(l.primary) : -1.;
+	};
+	bool one_opacity = !looks.empty() && same(opacity) && opacity(looks.front()) >= 0;
+	static_cast<Field*>(parts["opacity"])->SetNumber(one_opacity ? opacity(looks.front()) : 100, one_opacity);
 }
 
 std::map<std::string, wxString> StylePanel::Shown() const {
@@ -1361,4 +1407,102 @@ std::map<std::string, wxString> StylePanel::Shown() const {
 	for (auto const& [name, part] : parts)
 		shown[name] = part->Shown();
 	return shown;
+}
+
+StylePanelEdge::StylePanelEdge(wxWindow *parent, StylePanel *panel)
+: wxWindow(parent, -1, wxDefaultPosition, wxSize(theme::BlockGap(parent), -1), wxBORDER_NONE | wxFULL_REPAINT_ON_RESIZE)
+, panel(panel)
+{
+	SetBackgroundStyle(wxBG_STYLE_PAINT);
+	SetWidth(panel->FromDIP(OPT_GET("App/Style Panel/Width")->GetInt()));
+	option_changed = OPT_SUB("App/Style Panel/Show", [this](agi::OptionValue const& opt) {
+		// Asked for: open even in a narrow window
+		opened = opt.GetBool();
+		Update();
+	});
+	theme_changed = theme::AddChangeListener([this] { Refresh(); });
+	parent->Bind(wxEVT_SIZE, [this](wxSizeEvent &event) {
+		event.Skip();
+		Update();
+	});
+
+	Bind(wxEVT_PAINT, [this](wxPaintEvent &) {
+		wxAutoBufferedPaintDC buffered(this);
+		wxGCDC dc(buffered);
+		wxSize size = GetClientSize();
+		wxColour back = theme::Backdrop();
+		dc.SetPen(*wxTRANSPARENT_PEN);
+		dc.SetBrush(wxBrush(back));
+		dc.DrawRectangle(wxPoint(0, 0), size);
+		if (!Folded()) return;
+		// Folded: an arrow pointing to where the panel opens
+		wxColour text = wxSystemSettings::GetColour(wxSYS_COLOUR_BTNTEXT);
+		if (hover) {
+			dc.SetBrush(wxBrush(theme::Mix(back, text, 0.1)));
+			dc.DrawRoundedRectangle(wxRect(FromDIP(1), size.y / 2 - FromDIP(20), size.x - FromDIP(2), FromDIP(40)), FromDIP(3));
+		}
+		int arm = FromDIP(4);
+		dc.SetPen(wxPen(theme::Mix(back, text, hover ? 0.9 : 0.5), std::max(1, FromDIP(3) / 2)));
+		int cx = size.x / 2 - arm / 2, cy = size.y / 2;
+		dc.DrawLine(cx + arm, cy - arm, cx, cy);
+		dc.DrawLine(cx, cy, cx + arm, cy + arm);
+	});
+	Bind(wxEVT_ENTER_WINDOW, [this](wxMouseEvent &) { hover = true; Refresh(false); });
+	Bind(wxEVT_LEAVE_WINDOW, [this](wxMouseEvent &) { hover = false; Refresh(false); });
+	Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent &event) {
+		if (Folded()) {
+			CallAfter([this] { Open(); });
+			return;
+		}
+		start_x = ClientToScreen(event.GetPosition()).x;
+		start_width = this->panel->GetSize().x;
+		CaptureMouse();
+	});
+	Bind(wxEVT_MOTION, [this](wxMouseEvent &event) {
+		if (!HasCapture() || !event.LeftIsDown()) return;
+		SetWidth(start_width - (ClientToScreen(event.GetPosition()).x - start_x));
+		GetParent()->Layout();
+	});
+	Bind(wxEVT_LEFT_UP, [this](wxMouseEvent &) {
+		if (!HasCapture()) return;
+		ReleaseMouse();
+		OPT_SET("App/Style Panel/Width")->SetInt(this->panel->ToDIP(this->panel->GetSize().x));
+	});
+	Bind(wxEVT_MOUSE_CAPTURE_LOST, [](wxMouseCaptureLostEvent &) { });
+}
+
+void StylePanelEdge::SetWidth(int width) {
+	width = std::clamp(width, panel->FromDIP(StylePanel::min_width), panel->FromDIP(StylePanel::max_width));
+	panel->SetMinSize(wxSize(width, -1));
+	panel->SetInitialSize(wxSize(width, -1));
+}
+
+bool StylePanelEdge::Folded() const {
+	return !panel->IsShown();
+}
+
+void StylePanelEdge::Update() {
+	bool narrow = GetParent()->GetClientSize().x < FromDIP(narrow_width);
+	if (!narrow) opened = false;
+	bool show = OPT_GET("App/Style Panel/Show")->GetBool() && (!narrow || opened);
+	// Folded, the strip is wide enough to aim at
+	int strip = show ? theme::BlockGap(GetParent()) : FromDIP(14);
+	if (show == panel->IsShown() && GetMinSize().x == strip) return;
+	SetMinSize(wxSize(strip, -1));
+	SetCursor(show ? wxCursor(wxCURSOR_SIZEWE) : wxCursor(wxCURSOR_HAND));
+	SetToolTip(show ? _("Drag to change the width of the style panel") : _("Show the style panel"));
+	if (auto sizer = GetContainingSizer()) sizer->Show(panel, show);
+	else panel->Show(show);
+	GetParent()->Layout();
+	Refresh();
+	if (show) panel->UpdateNow();
+}
+
+void StylePanelEdge::Open() {
+	if (!OPT_GET("App/Style Panel/Show")->GetBool()) {
+		OPT_SET("App/Style Panel/Show")->SetBool(true); // Update follows
+		return;
+	}
+	opened = true;
+	Update();
 }

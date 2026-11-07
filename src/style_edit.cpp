@@ -157,6 +157,8 @@ wxString UndoName(Property property) {
 		case Property::Blur: return _("set blur");
 		case Property::ScaleX: case Property::ScaleY: return _("set scale");
 		case Property::Rotation: return _("set rotation");
+		case Property::Position: return _("set position");
+		case Property::Opacity: return _("set opacity");
 	}
 	return _("style panel");
 }
@@ -168,12 +170,13 @@ std::vector<std::string> const& TagNames(Property property) {
 		{"\\c", "\\1c"}, {"\\1a"}, {"\\3c"}, {"\\3a"}, {"\\bord", "\\xbord", "\\ybord"},
 		{"\\4c"}, {"\\4a"}, {"\\shad", "\\xshad", "\\yshad"}, {"\\blur"},
 		{"\\fscx"}, {"\\fscy"}, {"\\frz", "\\fr"},
+		{"\\pos"}, {"\\alpha", "\\1a", "\\3a", "\\4a"},
 	};
 	return names[static_cast<int>(property)];
 }
 
 bool LineWide(Property property) {
-	return property == Property::Alignment;
+	return property == Property::Alignment || property == Property::Position;
 }
 
 std::string TagFor(Property property, StyleLook const& look) {
@@ -201,6 +204,11 @@ std::string TagFor(Property property, StyleLook const& look) {
 		case Property::ScaleX: return "\\fscx" + Number(look.scale_x);
 		case Property::ScaleY: return "\\fscy" + Number(look.scale_y);
 		case Property::Rotation: return "\\frz" + Number(look.angle);
+		case Property::Position: return "\\pos(" + Number(look.pos_x) + "," + Number(look.pos_y) + ")";
+		case Property::Opacity:
+			if (look.primary.a == look.outline.a && look.primary.a == look.shadow.a)
+				return "\\alpha" + Alpha(look.primary.a);
+			return "\\1a" + Alpha(look.primary.a) + "\\3a" + Alpha(look.outline.a) + "\\4a" + Alpha(look.shadow.a);
 	}
 	return {};
 }
@@ -295,7 +303,7 @@ bool Storable(Property property, StyleLook const& look) {
 	switch (property) {
 		case Property::Weight: return look.weight == 400 || look.weight == 700;
 		case Property::Shadow: return look.shadow_x == look.shadow_y && look.shadow_x >= 0;
-		case Property::Blur: return false;
+		case Property::Blur: case Property::Position: case Property::Opacity: return false;
 		default: return true;
 	}
 }
@@ -322,7 +330,7 @@ void Store(Property property, StyleLook const& look, AssStyle &style) {
 		case Property::ScaleX: style.scalex = look.scale_x; break;
 		case Property::ScaleY: style.scaley = look.scale_y; break;
 		case Property::Rotation: style.angle = look.angle; break;
-		case Property::Blur: break;
+		case Property::Blur: case Property::Position: case Property::Opacity: break;
 	}
 }
 
@@ -410,7 +418,8 @@ int ResetToStyle(agi::Context *c) {
 		std::string text = row->Text;
 		for (auto property : StyleProperties())
 			text = StripBlocks(text, TagNames(property), [](Block const&) { return true; });
-		text = StripBlocks(text, TagNames(Property::Blur), [](Block const&) { return true; });
+		for (auto property : {Property::Blur, Property::Opacity})
+			text = StripBlocks(text, TagNames(property), [](Block const&) { return true; });
 		if (text == row->Text.get()) continue;
 		row->Text = text;
 		changed = true;
@@ -459,6 +468,14 @@ Staged Stage(agi::Context const* c, Property property, std::function<void(StyleL
 	auto active = c->selectionController->ReadActiveLine();
 	auto const& names = TagNames(property);
 
+	int width = 0, height = 0;
+	file.GetResolution(width, height);
+	auto look_at = [&](AssDialogue const& row, int plain) {
+		StyleLook look = LookAt(row, plain, find);
+		DefaultPosition(look, row, find(row.Style.get()), width, height);
+		return look;
+	};
+
 	const int start = c->textSelectionController->GetSelectionStart();
 	const int end = c->textSelectionController->GetSelectionEnd();
 	AssDialogue *active_row = nullptr;
@@ -474,8 +491,8 @@ Staged Stage(agi::Context const* c, Property property, std::function<void(StyleL
 		// The selected text: set at its start, and what came after it
 		// goes back to what it was
 		std::string text = active_row->Text;
-		StyleLook look = LookAt(*active_row, first, find);
-		std::string restore = TagFor(property, LookAt(*active_row, last, find));
+		StyleLook look = look_at(*active_row, first);
+		std::string restore = TagFor(property, look_at(*active_row, last));
 		AssStyle fallback;
 		AssStyle const* style = find(active_row->Style.get());
 		change(look, LookOf(style ? *style : fallback));
@@ -493,13 +510,22 @@ Staged Stage(agi::Context const* c, Property property, std::function<void(StyleL
 			std::string text = row->Text;
 			AssStyle fallback;
 			AssStyle const* style = find(row->Style.get());
-			StyleLook look = LookAt(*row, 0, find);
+			StyleLook look = look_at(*row, 0);
+			// \move is an animation: a new \pos would undo it
+			if (property == Property::Position && look.moving) continue;
 			StyleLook style_look = LookOf(style ? *style : fallback);
 			change(look, style_look);
 			std::string tag = TagFor(property, look);
-			if (tag == TagFor(property, style_look))
-				tag.clear();
 			std::string result = SetForLine(text, names, tag);
+			// No tag where the style already has the value, unless another
+			// tag (\alpha for \1a, say) would then still change it. A style
+			// has no position: a line keeps the one it is given.
+			if (property != Property::Position && tag == TagFor(property, style_look)) {
+				AssDialogue bare(*row);
+				bare.Text = SetForLine(text, names, "");
+				if (TagFor(property, look_at(bare, 0)) == tag)
+					result = bare.Text;
+			}
 			if (result == text) continue;
 			out.changed = true;
 			row->Text = result;

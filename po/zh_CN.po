@@ -8984,3 +8984,59 @@ msgstr "用当前行更新样式"
 #: src/style_panel.cpp
 msgid "Update the style from the current line: the style takes on how the line looks, and the line's tags it makes unneeded go"
 msgstr "用当前行更新样式：样式改成这一行的外观，行里因此多余的标签会被删除"
+
+#: src/style_panel.cpp
+msgid "Drag to change the width of the style panel"
+msgstr "拖动可改变样式面板的宽度"
+
+#: src/style_panel.cpp
+msgid "Scale X"
+msgstr "缩放 X"
+
+#: src/style_panel.cpp
+msgid "Scale Y"
+msgstr "缩放 Y"
+
+#: src/style_panel.cpp
+msgid "Opacity"
+msgstr "不透明度"
+
+#: src/style_panel.cpp
+msgid "Opacity of fill, outline and shadow together (\\alpha)"
+msgstr "填充、描边和阴影一起的不透明度（\\alpha）"
+
+#: src/style_panel.cpp
+msgid "Rotation"
+msgstr "旋转"
+
+#: src/style_panel.cpp
+msgid "Show the style panel"
+msgstr "显示样式面板"
+
+#: src/style_panel.cpp
+msgid "Stretches the letters across (\\fscx)"
+msgstr "横向拉伸文字（\\fscx）"
+
+#: src/style_panel.cpp
+msgid "Stretches the letters up and down (\\fscy)"
+msgstr "纵向拉伸文字（\\fscy）"
+
+#: src/style_panel.cpp
+msgid "Transform"
+msgstr "变换"
+
+#: src/style_panel.cpp
+msgid "Turns the line, anticlockwise (\\frz)"
+msgstr "逆时针旋转这一行（\\frz）"
+
+#: src/style_panel.cpp
+msgid "Where the line is, across (\\pos). Lines that move (\\move) are left as they are"
+msgstr "行的横向位置（\\pos）。用 \\move 移动的行保持不变"
+
+#: src/style_panel.cpp
+msgid "Where the line is, down (\\pos). Lines that move (\\move) are left as they are"
+msgstr "行的纵向位置（\\pos）。用 \\move 移动的行保持不变"
+
+#: src/style_edit.cpp
+msgid "set position"
+msgstr "设置位置"

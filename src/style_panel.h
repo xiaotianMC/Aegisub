@@ -109,3 +109,31 @@ private:
 	Section &AddSection(wxSizer *sizer, std::string const& name, wxString const& title);
 	template<class T, class... Args> T *Add(std::string const& name, Args&&... args);
 };
+
+/// The strip left of the style panel (docs/style-panel.md): the gap
+/// between it and the editing area, which sets its width when dragged.
+/// It also shows and hides the panel: as "App/Style Panel/Show" says, and
+/// folded away while the window is narrower than narrow_width, leaving a
+/// wider strip with an arrow that opens it again.
+class StylePanelEdge final : public wxWindow {
+	StylePanel *panel;
+	agi::signal::Connection option_changed, theme_changed;
+	bool opened = false; ///< Opened by hand while the window is narrow
+	bool hover = false;
+	int start_x = 0, start_width = 0;
+
+	void SetWidth(int width);
+
+public:
+	/// Below this window width, in DIP, the panel folds away
+	static constexpr int narrow_width = 1100;
+
+	StylePanelEdge(wxWindow *parent, StylePanel *panel);
+
+	/// Show or hide the panel for the parent's width and the option
+	void Update();
+	/// Whether the panel is hidden and the strip opens it
+	bool Folded() const;
+	/// Act as clicking the folded strip does
+	void Open();
+};

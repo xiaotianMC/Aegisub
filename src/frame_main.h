@@ -80,12 +80,10 @@ private:
 	void OnSubtitlesOpen();
 
 	void EnableToolBar(agi::OptionValue const& opt);
-	void ShowStylePanel(agi::OptionValue const& opt);
 
 	AudioBox *audioBox;      ///< The audio area
 	VideoBox *videoBox;      ///< The video area
 	StylePanel *stylePanel;  ///< The style panel at the right
-	wxWindow *stylePanelSash; ///< The gap before it, which sets its width
 
 	wxSizer *OuterSizer; ///< The editing area, then the style panel at the right
 	wxSizer *MainSizer;  ///< Arranges things from top to bottom in the window

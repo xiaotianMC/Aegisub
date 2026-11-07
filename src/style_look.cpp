@@ -121,7 +121,7 @@ StyleLook LookAt(AssDialogue const& line, int plain_pos, StyleLookup const& find
 	Applier applier{look, *style, find_style, look.border, look.border};
 
 	auto blocks = line.ParseTags();
-	bool aligned = false;
+	bool aligned = false, positioned = false;
 	int plain = 0;
 	for (auto const& block : blocks) {
 		if (block->GetType() != AssBlockType::OVERRIDE) {
@@ -140,12 +140,31 @@ StyleLook LookAt(AssDialogue const& line, int plain_pos, StyleLookup const& find
 					aligned = true;
 				}
 			}
+			// So does the first \pos or \move
+			if (!positioned && (tag.Name == "\\pos" || tag.Name == "\\move") && tag.Params.size() >= 2
+				&& !tag.Params[0].omitted && !tag.Params[1].omitted)
+			{
+				look.has_position = positioned = true;
+				look.moving = tag.Name == "\\move";
+				look.pos_x = tag.Params[0].Get<double>();
+				look.pos_y = tag.Params[1].Get<double>();
+			}
 			if (plain <= plain_pos)
 				applier.Apply(tag);
 		}
 	}
 	look.border = std::max(applier.border_x, applier.border_y);
 	return look;
+}
+
+void DefaultPosition(StyleLook &look, AssDialogue const& line, AssStyle const* style, int width, int height) {
+	if (look.has_position) return;
+	auto margin = line.Margin;
+	for (int i = 0; i < 3; ++i)
+		if (margin[i] == 0 && style) margin[i] = style->Margin[i];
+	int column = (look.alignment - 1) % 3, row = (look.alignment - 1) / 3;
+	look.pos_x = column == 0 ? margin[0] : column == 1 ? (width + margin[0] - margin[1]) / 2 : width - margin[1];
+	look.pos_y = row == 0 ? height - margin[2] : row == 1 ? height / 2 : margin[2];
 }
 
 int PlainPosition(std::string const& text, int raw_pos) {

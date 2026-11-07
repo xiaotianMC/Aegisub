@@ -30,6 +30,11 @@ struct StyleLook {
 	int border_style = 1;     ///< The style's: 3 draws an opaque box
 	double scale_x = 100, scale_y = 100;
 	double angle = 0;         ///< \frz
+	/// Where the line is: its first \pos, or where \move starts, or
+	/// (has_position false) where its alignment and margins put it
+	bool has_position = false;
+	bool moving = false;      ///< Placed by \move rather than \pos
+	double pos_x = 0, pos_y = 0;
 
 	bool Bold() const { return weight >= 700; }
 };
@@ -46,6 +51,11 @@ StyleLook LookOf(AssStyle const& style);
 /// that open the line. Alignment counts from wherever it is in the line,
 /// as only its first appearance has any effect.
 StyleLook LookAt(AssDialogue const& line, int plain_pos, StyleLookup const& find_style);
+
+/// Where @p look's line goes without \pos, for a script of @p width by
+/// @p height: from its alignment and margins (the line's, or else its
+/// style's), as the renderers place it. Does nothing when it has a position.
+void DefaultPosition(StyleLook &look, AssDialogue const& line, AssStyle const* style, int width, int height);
 
 /// The plain character a byte offset of the line's text falls on: the
 /// number of text bytes before it that are not part of a tag block.
