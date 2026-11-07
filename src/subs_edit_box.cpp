@@ -137,7 +137,7 @@ SubsEditBox::SubsEditBox(wxWindow *parent, agi::Context *context)
 	split_box->Bind(wxEVT_CHECKBOX, &SubsEditBox::OnSplit, this);
 	top_sizer->Add(split_box, wxSizerFlags().Center());
 
-	// When, and on which layer
+	// On which layer, and when
 	middle_left_sizer = new wxBoxSizer(wxHORIZONTAL);
 	start_time = MakeTimeCtrl(wxGETTEXT_IN_CONTEXT("edit box", "Start"), _("Start time"), TIME_START);
 	auto arrow = new wxStaticText(this, -1, wxS("→"));
@@ -154,8 +154,6 @@ SubsEditBox::SubsEditBox(wxWindow *parent, agi::Context *context)
 	time_unit = new TimeUnitToggle(this);
 	time_unit->on_change = [this](bool by_frame) { OnTimeUnitChange(by_frame); };
 	middle_left_sizer->Add(time_unit, wxSizerFlags().Center());
-	middle_left_sizer->AddStretchSpacer();
-	middle_left_sizer->AddSpacer(gap);
 
 	// The layer: typed, or dragged by its label, the wheel or the arrow keys
 	// to move every selected line up or down from where it is
@@ -177,7 +175,10 @@ SubsEditBox::SubsEditBox(wxWindow *parent, agi::Context *context)
 	});
 	layer_frame->SetWheel([this](int steps) { StepLayer(steps); });
 	layer_frame->SetScrub([this](int steps, bool final) { ScrubLayer(steps, final); });
-	middle_left_sizer->Add(layer_frame, wxSizerFlags().Center());
+	// First in the row, and first for Tab
+	middle_left_sizer->Insert(0, layer_frame, wxSizerFlags().Center());
+	middle_left_sizer->InsertSpacer(1, gap * 2);
+	layer_frame->MoveBeforeInTabOrder(start_time->GetParent());
 
 	fields_sizer = new wxBoxSizer(wxVERTICAL);
 	fields_sizer->Add(top_sizer,0,wxEXPAND | wxALL,3);
@@ -569,7 +570,7 @@ void SubsEditBox::ArrangeRows() {
 	if (below)
 		edit_ctrl->MoveBeforeInTabOrder(comment_box);
 	else
-		edit_ctrl->MoveAfterInTabOrder(layer_frame);
+		edit_ctrl->MoveAfterInTabOrder(duration->GetParent());
 	Layout();
 }
 

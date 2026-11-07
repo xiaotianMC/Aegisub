@@ -1515,6 +1515,9 @@ TEST_F(ordinary_edit, edit_box_has_line_fields_below_the_text_and_a_time_unit_sw
     ASSERT_NE(nullptr,unit); ASSERT_NE(nullptr,end); ASSERT_NE(nullptr,style); ASSERT_NE(nullptr,layer);
     ASSERT_NE(nullptr,comment); ASSERT_NE(nullptr,actor); ASSERT_NE(nullptr,effect); ASSERT_NE(nullptr,original);
     auto end_frame=end->GetParent();
+    wxWindow *start_frame=nullptr;
+    for (auto child:descendants(box)) if (auto t=dynamic_cast<TimeEdit*>(child); t && t->GetToolTipText()=="Start time") start_frame=t->GetParent();
+    ASSERT_NE(nullptr,start_frame);
 
     // Where things are: what the line is in the first row, the original at
     // its end; when and on which layer in the second, the layer at its end
@@ -1524,7 +1527,7 @@ TEST_F(ordinary_edit, edit_box_has_line_fields_below_the_text_and_a_time_unit_sw
     for (wxWindow *w:{static_cast<wxWindow*>(style),actor,effect,original}) EXPECT_NEAR(centre_y(comment),centre_y(w),2);
     EXPECT_LT(at(comment).x,at(style).x); EXPECT_LT(at(style).x,at(actor).x); EXPECT_LT(at(actor).x,at(effect).x); EXPECT_LT(at(effect).x,at(original).x);
     for (wxWindow *w:{static_cast<wxWindow*>(unit),static_cast<wxWindow*>(layer)}) EXPECT_NEAR(centre_y(end_frame),centre_y(w),2);
-    EXPECT_LT(at(end_frame).x,at(unit).x); EXPECT_LT(at(unit).x,at(layer).x);
+    EXPECT_LT(at(layer).x,at(start_frame).x) << "the layer comes first"; EXPECT_LT(at(end_frame).x,at(unit).x);
     EXPECT_LT(centre_y(comment),centre_y(end_frame)) << "the times are next to the grid";
     EXPECT_LE(at(effect).x+effect->GetSize().x,at(original).x) << "the effect is narrower than the actor";
     EXPECT_LT(effect->GetSize().x,actor->GetSize().x);
@@ -1534,7 +1537,7 @@ TEST_F(ordinary_edit, edit_box_has_line_fields_below_the_text_and_a_time_unit_sw
     EXPECT_TRUE(end_label->IsLabelShown());
     box->SetSize(0,0,480,300); box->Layout();
     EXPECT_FALSE(end_label->IsLabelShown()) << "the arrow and the tooltips still say which is which";
-    EXPECT_LE(at(layer).x+layer->GetSize().x,box->GetClientSize().x) << "the layer is not cut off";
+    EXPECT_LE(at(unit).x+unit->GetSize().x,box->GetClientSize().x) << "nothing is cut off";
     box->SetSize(0,0,900,300); box->Layout();
     EXPECT_TRUE(end_label->IsLabelShown());
 
