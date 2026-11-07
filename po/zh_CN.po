@@ -9119,10 +9119,6 @@ msgid "Line fields below the text, next to the grid"
 msgstr "行属性放在文本框下方，靠近字幕列表"
 
 #: ../src/subs_edit_box.cpp
-msgid "Style for this line. The wheel and the arrow keys go through the styles; the style panel at the right edits it"
-msgstr "此行的样式。滚动滚轮或按上下键可逐个切换样式；右侧的样式面板可以编辑它"
-
-#: ../src/subs_edit_box.cpp
 msgid ""
 "Show above the text what this line said before you changed it: its text when you moved to it, read-only, to compare or translate against. It follows when you move to another line.\n"
 "\n"

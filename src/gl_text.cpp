@@ -237,6 +237,15 @@ void OpenGLText::SetFont(std::string const& face, int size, bool bold, bool ital
 	glyphs.clear();
 }
 
+void OpenGLText::SetFont(wxFont const& new_font) {
+	if (new_font == font) return;
+	font = new_font;
+	fontFace.clear();
+	fontSize = 0;
+	textures.clear();
+	glyphs.clear();
+}
+
 void OpenGLText::SetColour(agi::Color col) {
 	r = col.r / 255.f;
 	g = col.g / 255.f;
@@ -244,17 +253,19 @@ void OpenGLText::SetColour(agi::Color col) {
 	a = col.a / 255.f;
 }
 
-void OpenGLText::Print(const std::string &text, int x, int y) {
+void OpenGLText::Print(const std::string &text, int x, int y, bool outline) {
 	glEnable(GL_BLEND);
 	glEnable(GL_TEXTURE_2D);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
 	// Draw border
-	glColor4f(0.0f, 0.0f, 0.0f, 1.0f);
-	DrawString(text, x-1, y);
-	DrawString(text, x+1, y);
-	DrawString(text, x, y-1);
-	DrawString(text, x, y+1);
+	if (outline) {
+		glColor4f(0.0f, 0.0f, 0.0f, 1.0f);
+		DrawString(text, x-1, y);
+		DrawString(text, x+1, y);
+		DrawString(text, x, y-1);
+		DrawString(text, x, y+1);
+	}
 
 	// Draw primary string
 	glColor4f(r, g, b, a);

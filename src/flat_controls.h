@@ -30,6 +30,16 @@ void NoteScroll();
 /// changing it: the wheel scrolled a moment ago, so the control has only
 /// come under the pointer. Records the turn as scrolling if so.
 bool Scrolling();
+
+/// Where the keyboard goes when a field is left: the subtitle text
+void SetHome(wxWindow *home);
+/// A field being typed in that Enter or a click anywhere else leaves
+void AddField(wxWindow *field);
+/// Leave the field being typed in, if any: the keyboard goes home
+void LeaveField();
+/// A control the wheel changes: wheel turns over it go to it, even where
+/// the system sends them to the window with the keyboard (Windows)
+void AddWheelTarget(wxWindow *target);
 }
 
 /// A rounded field holding one borderless control (text, a time), with a
@@ -89,6 +99,7 @@ public:
 
 	bool AcceptsFocus() const override { return false; }
 	bool AcceptsFocusFromKeyboard() const override { return false; }
+	bool Enable(bool enable = true) override;
 };
 
 /// A drawn list to choose from, as the style panel's style field: click,
@@ -127,6 +138,7 @@ public:
 	bool AcceptsFocus() const override { return IsEnabled(); }
 	bool AcceptsFocusFromKeyboard() const override { return IsEnabled(); }
 	wxSize DoGetBestClientSize() const override;
+	bool Enable(bool enable = true) override;
 };
 
 /// A small rounded label drawn on a control, such as the character count in

@@ -163,6 +163,13 @@ public:
 	/// Whether the wheel changes the part rather than scrolling the panel
 	virtual bool WantsWheel() const { return false; }
 
+	/// Drawn again at once: a part left looking disabled reads as one
+	bool Enable(bool enable = true) override {
+		bool changed = wxWindow::Enable(enable);
+		if (changed) Refresh(false);
+		return changed;
+	}
+
 	bool AcceptsFocus() const override { return false; }
 	bool AcceptsFocusFromKeyboard() const override { return false; }
 };
@@ -226,9 +233,10 @@ private:
 		int unit_gap = shown_unit == wxS("°") || shown_unit == "%" ? 0 : FromDIP(3);
 		int unit_width = shown_unit.empty() ? 0 : dc.GetTextExtent(shown_unit).x + unit_gap;
 		wxString text = Ellipsize(dc, value, std::max(0, right - x - unit_width));
-		// Numbers that can be dragged are in the accent colour
-		// a value taken from the style is dim
-		dc.SetTextForeground(inherited ? p.dim : range && IsEnabled() && value != mixed ? p.accent : p.text);
+		// Numbers that can be dragged are in the accent colour; a value
+		// taken from the style lighter, still not the grey of a disabled one
+		wxColour number = range && IsEnabled() && value != mixed ? p.accent : p.text;
+		dc.SetTextForeground(inherited && IsEnabled() ? theme::Mix(p.field, p.accent, 0.55) : number);
 		dc.DrawText(text, x, y);
 		if (!shown_unit.empty()) {
 			dc.SetTextForeground(p.dim);
@@ -305,7 +313,10 @@ public:
 
 	/// Turning the wheel over the field goes through its list: @p step gets
 	/// the notches, up positive
-	void SetWheel(std::function<void(int)> step) { on_wheel = std::move(step); }
+	void SetWheel(std::function<void(int)> step) {
+		on_wheel = std::move(step);
+		flat::AddWheelTarget(this);
+	}
 	bool WantsWheel() const override { return on_wheel && IsEnabled() && !IsEditing(); }
 	/// What turning the wheel does, for tests
 	void Wheel(int steps) { if (on_wheel) on_wheel(steps); }
@@ -344,6 +355,8 @@ public:
 		if (!range || IsEditing() || !IsEnabled()) return;
 		if (!edit) {
 			edit = new wxTextCtrl(this, -1, "", wxDefaultPosition, wxDefaultSize, wxTE_PROCESS_ENTER | wxBORDER_NONE);
+			// A click anywhere else enters the number and leaves it
+			flat::AddField(edit);
 			edit->Bind(wxEVT_TEXT_ENTER, [this](wxCommandEvent &) { CommitEditing(); });
 			edit->Bind(wxEVT_KILL_FOCUS, [this](wxFocusEvent &e) { e.Skip(); CallAfter([this] { if (IsEditing()) CommitEditing(); }); });
 			edit->Bind(wxEVT_CHAR_HOOK, [this](wxKeyEvent &e) {
@@ -380,6 +393,8 @@ public:
 			return;
 		}
 		v = Clamp(v);
+		// Back to the text, as Enter in the edit box's fields goes
+		if (edit->HasFocus()) flat::LeaveField();
 		edit->Hide();
 		SetNumber(v, true);
 		Refresh(false);
@@ -388,6 +403,7 @@ public:
 
 	void CancelEditing() {
 		if (!IsEditing()) return;
+		if (edit->HasFocus()) flat::LeaveField();
 		edit->Hide();
 		Refresh(false);
 	}
@@ -1488,7 +1504,6 @@ void StylePanel::UpdateNow() {
 	// Margins: the lines', or their styles' where they leave it at 0
 	std::vector<AssDialogue const*> lines(selected.begin(), selected.end());
 	if (lines.empty() && active) lines.push_back(active);
-	bool all_placed = !lines.empty();
 	for (int i = 0; i < 3; ++i) {
 		static const char *names[] = {"margin_left", "margin_right", "margin_vertical"};
 		auto field = static_cast<Field*>(parts[names[i]]);
@@ -1507,13 +1522,10 @@ void StylePanel::UpdateNow() {
 		field->SetNumber(value.value_or(0), same);
 		field->SetInherited(same && inherited);
 	}
-	for (auto line : lines) {
-		StyleLook look = LookAt(*line, 0, find);
-		if (!look.has_position) all_placed = false;
-	}
-	// Placed by \pos or \move: the margins do not move them
+	// Lines placed by \pos or \move do not use their margins, but they are
+	// still theirs to change; the tooltip says so
 	for (auto name : {"margin_left", "margin_right", "margin_vertical"})
-		parts[name]->Enable(!lines.empty() && !all_placed);
+		parts[name]->Enable(!lines.empty());
 
 	// The shape's size, when the line is one and it alone is selected
 	auto size = selected.size() <= 1 ? ShapeSize(c) : std::nullopt;

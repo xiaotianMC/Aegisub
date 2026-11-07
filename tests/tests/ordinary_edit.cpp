@@ -1593,10 +1593,11 @@ TEST_F(ordinary_edit, edit_box_style_layer_and_character_count) {
     // The style list: the file's styles, the wheel goes down them, turns close together are one undo step
     EXPECT_EQ((std::vector<wxString>{"Default","Alpha","Beta"}),style->GetItems());
     EXPECT_EQ("Default",style->GetStringSelection());
+    EXPECT_EQ("Default",style->GetToolTipText()) << "hovering shows the style's name";
     wxMouseEvent wheel(wxEVT_MOUSEWHEEL); wheel.m_wheelRotation=-120; wheel.m_wheelDelta=120; wheel.SetEventObject(style);
     style->GetEventHandler()->ProcessEvent(wheel);
     EXPECT_EQ("Alpha",row(0)->Style.get());
-    style->Step(1); EXPECT_EQ("Beta",row(0)->Style.get()); EXPECT_EQ("Beta",style->GetStringSelection());
+    style->Step(1); EXPECT_EQ("Beta",row(0)->Style.get()); EXPECT_EQ("Beta",style->GetStringSelection()); EXPECT_EQ("Beta",style->GetToolTipText());
     style->Step(1); EXPECT_EQ("Beta",row(0)->Style.get()) << "stays at the end";
     c->subsController->Undo(); EXPECT_EQ("Default",row(0)->Style.get()) << "one undo step";
     wxKeyEvent up(wxEVT_KEY_DOWN); up.m_keyCode=WXK_DOWN; up.SetEventObject(style); style->GetEventHandler()->ProcessEvent(up);
@@ -1619,6 +1620,37 @@ TEST_F(ordinary_edit, edit_box_style_layer_and_character_count) {
     layer->ChangeValue("x"); layer->GetEventHandler()->ProcessEvent(typed);
     EXPECT_EQ(5,row(0)->Layer); EXPECT_EQ("5",layer->GetValue()) << "not a number: back to the layer";
     c->selectionController->SetSelectionAndActiveIDs({first},first);
+
+    // Enter in a field is done with it: it does not go to the next line
+    wxTextCtrl *actor=nullptr;
+    for (auto child:descendants(box)) if (auto a=dynamic_cast<wxTextCtrl*>(child); a && a->GetToolTipText().StartsWith("Actor name")) actor=a;
+    ASSERT_NE(nullptr,actor);
+    size_t lines=LiveRead(*c).Events.size();
+    for (wxTextCtrl *field:{actor,layer}) {
+        wxKeyEvent enter(wxEVT_CHAR_HOOK); enter.m_keyCode=WXK_RETURN; enter.SetEventObject(field);
+        field->GetEventHandler()->ProcessEvent(enter);
+        EXPECT_EQ(lines,LiveRead(*c).Events.size());
+        EXPECT_EQ(first,c->selectionController->ActiveID());
+    }
+    // ...and goes back to the text, as a click anywhere else does
+    window->Show(); box->SetSize(0,0,900,300); box->Layout();
+    for (int i=0;i<20;++i) wxYield();
+    actor->SetFocus(); for (int i=0;i<20;++i) wxYield();
+    if (wxWindow::FindFocus()==actor) {
+        wxKeyEvent enter(wxEVT_CHAR_HOOK); enter.m_keyCode=WXK_RETURN; enter.SetEventObject(actor);
+        actor->GetEventHandler()->ProcessEvent(enter);
+        EXPECT_EQ(static_cast<wxWindow*>(editor),wxWindow::FindFocus());
+        layer->SetFocus(); for (int i=0;i<20;++i) wxYield();
+        ASSERT_EQ(static_cast<wxWindow*>(layer),wxWindow::FindFocus());
+        wxMouseEvent click(wxEVT_LEFT_DOWN); click.SetEventObject(box); box->GetEventHandler()->ProcessEvent(click);
+        EXPECT_EQ(static_cast<wxWindow*>(editor),wxWindow::FindFocus()) << "a click on the box's background";
+        layer->SetFocus(); for (int i=0;i<20;++i) wxYield();
+        wxMouseEvent in_field(wxEVT_LEFT_DOWN); in_field.SetEventObject(layer); layer->GetEventHandler()->ProcessEvent(in_field);
+        EXPECT_EQ(static_cast<wxWindow*>(layer),wxWindow::FindFocus()) << "a click in the field stays in it";
+    }
+    else
+        std::cerr << "focus not available here: skipped the focus checks\n";
+    window->Hide();
 
     // The character count in the text box's corner: used of the limit, red over it
     Input("Hello");
@@ -1721,9 +1753,9 @@ TEST_F(ordinary_edit, style_panel_sets_karaoke_colour_and_margins) {
     panel->EnterNumber("margin_left",7,true);
     c->selectionController->SetSelectionAndActiveIDs({first,placed},first);
     EXPECT_EQ(wxS("—"),shown()["margin_left"]); EXPECT_EQ("30 (style)",shown()["margin_vertical"]);
-    EXPECT_EQ(0u,shown().count("margin_left disabled")) << "one of them uses them";
+    EXPECT_EQ(0u,shown().count("margin_left disabled"));
     c->selectionController->SetSelectionAndActiveIDs({placed},placed);
-    EXPECT_EQ("yes",shown()["margin_left disabled"]);
+    EXPECT_EQ(0u,shown().count("margin_left disabled")) << "a line placed by \\pos can still have its margins changed";
     EXPECT_EQ("{\\pos(1,2)}placed",text(1));
     panel->Destroy();
 }

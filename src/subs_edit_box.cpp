@@ -80,10 +80,11 @@
 namespace {
 
 void time_edit_char_hook(wxKeyEvent &event) {
-	// Force a modified event on Enter
-	if (event.GetKeyCode() == WXK_RETURN) {
+	// Enter: a modified event, and done with the field
+	if (event.GetKeyCode() == WXK_RETURN || event.GetKeyCode() == WXK_NUMPAD_ENTER) {
 		TimeEdit *edit = static_cast<TimeEdit*>(event.GetEventObject());
 		edit->SetValue(edit->GetValue());
+		flat::LeaveField();
 	}
 	else
 		event.Skip();
@@ -120,7 +121,8 @@ SubsEditBox::SubsEditBox(wxWindow *parent, agi::Context *context)
 #endif
 	top_sizer->Add(comment_box, wxSizerFlags().Center().Border(wxRIGHT, gap));
 
-	style_box = new FlatChoice(this, _("Style for this line. The wheel and the arrow keys go through the styles; the style panel at the right edits it"));
+	// Its tooltip is the style's name, which may be cut short
+	style_box = new FlatChoice(this, "");
 	style_box->on_choose = [this](int) { OnStyleChange(); };
 	top_sizer->Add(style_box, wxSizerFlags(3).Center().Border(wxRIGHT, gap));
 
@@ -170,6 +172,7 @@ SubsEditBox::SubsEditBox(wxWindow *parent, agi::Context *context)
 			case WXK_UP: case WXK_NUMPAD_UP: StepLayer(1); break;
 			case WXK_DOWN: case WXK_NUMPAD_DOWN: StepLayer(-1); break;
 			case WXK_ESCAPE: UpdateLayerField(); layer->SelectAll(); break;
+			case WXK_RETURN: case WXK_NUMPAD_ENTER: CommitLayerText(); flat::LeaveField(); break;
 			default: e.Skip();
 		}
 	});
@@ -189,6 +192,8 @@ SubsEditBox::SubsEditBox(wxWindow *parent, agi::Context *context)
 	// Text editor
 	edit_ctrl = new SubsTextEditCtrl(this, FromDIP(wxSize(300,50)), wxBORDER_NONE, c);
 	edit_ctrl->Bind(wxEVT_CHAR_HOOK, &SubsEditBox::OnKeyDown, this);
+	// Leaving a field (Enter, a click elsewhere) comes back to the text
+	flat::SetHome(edit_ctrl);
 
 	// The character count in its corner; the text wraps before it
 	char_count = new FlatBadge(edit_ctrl);
@@ -279,6 +284,11 @@ wxTextCtrl *SubsEditBox::MakeTextField(FlatFrame *&frame, wxString const& hint, 
 	auto ctrl = new wxTextCtrl(frame, -1, "", wxDefaultPosition, wxDefaultSize, wxTE_PROCESS_ENTER | wxBORDER_NONE);
 	ctrl->SetHint(hint);
 	ctrl->SetToolTip(tooltip);
+	// Enter is done with it, rather than going to the next line
+	ctrl->Bind(wxEVT_CHAR_HOOK, [](wxKeyEvent &e) {
+		if (e.GetKeyCode() == WXK_RETURN || e.GetKeyCode() == WXK_NUMPAD_ENTER) flat::LeaveField();
+		else e.Skip();
+	});
 	frame->SetToolTip(tooltip);
 	frame->SetContent(ctrl, width);
 	// The values the file already has, to choose from
@@ -618,6 +628,7 @@ void SubsEditBox::UpdateStyleBox() {
     auto line = CurrentLine();
 	if (!line) return;
 	style_box->SetStringSelection(to_wx(line->Style));
+	style_box->SetToolTip(to_wx(line->Style));
 }
 
 void SubsEditBox::OnStyleChange() {

@@ -6,12 +6,16 @@
 #include "theme.h"
 
 #include <algorithm>
+#include <set>
 
 #include <wx/dcbuffer.h>
 #include <wx/dcgraph.h>
 #include <wx/menu.h>
+#include <wx/panel.h>
 #include <wx/settings.h>
+#include <wx/textentry.h>
 #include <wx/time.h>
+#include <wx/utils.h>
 
 namespace flat {
 Palette Colours(wxWindow const *window) {
@@ -46,6 +50,113 @@ bool Scrolling() {
 	if (wxGetLocalTimeMillis() - last_scroll > 400) return false;
 	NoteScroll();
 	return true;
+}
+
+namespace {
+wxWindow *home = nullptr;
+std::set<wxWindow*> fields, wheel_targets;
+
+bool Within(wxWindow *window, wxWindow *ancestor) {
+	for (; window; window = window->GetParent())
+		if (window == ancestor) return true;
+	return false;
+}
+
+/// Leaves fields on clicks elsewhere, and sends wheel turns to the control
+/// under the pointer
+class Filter final : public wxEventFilter {
+	bool routing = false;
+
+	int FilterEvent(wxEvent &event) override {
+		auto type = event.GetEventType();
+		if (type == wxEVT_LEFT_DOWN || type == wxEVT_RIGHT_DOWN || type == wxEVT_MIDDLE_DOWN)
+			OnClick(event);
+		else if (type == wxEVT_MOUSEWHEEL && !routing)
+			return OnWheel(static_cast<wxMouseEvent&>(event));
+		return Event_Skip;
+	}
+
+	void OnClick(wxEvent &event) {
+		auto focus = wxWindow::FindFocus();
+		if (!focus || !fields.count(focus)) return;
+		auto clicked = wxDynamicCast(event.GetEventObject(), wxWindow);
+		if (!clicked) return;
+		// In the field or the frame around it: still typing
+		if (Within(clicked, focus) || clicked == focus->GetParent()) return;
+		// Something that takes the keyboard itself gets it
+		if (clicked->AcceptsFocus() && clicked->IsEnabled() && clicked != home && !Within(clicked, home)) {
+			if (dynamic_cast<wxTextEntry*>(clicked)) return;
+		}
+		LeaveField();
+	}
+
+	int OnWheel(wxMouseEvent &event) {
+		auto source = wxDynamicCast(event.GetEventObject(), wxWindow);
+		wxPoint mouse = wxGetMousePosition();
+		auto under = wxFindWindowAtPoint(mouse);
+		wxWindow *target = nullptr;
+		for (auto w = under; w && !target; w = w->GetParent()) {
+			if (wheel_targets.count(w)) target = w;
+			if (w->IsTopLevel()) break;
+		}
+		if (!target || !source || Within(source, target)) return Event_Skip;
+		wxMouseEvent copy(event);
+		copy.SetEventObject(target);
+		copy.SetPosition(target->ScreenToClient(mouse));
+		routing = true;
+		target->GetEventHandler()->ProcessEvent(copy);
+		routing = false;
+		return Event_Processed;
+	}
+};
+
+void Install() {
+	static bool installed = false;
+	if (installed) return;
+	installed = true;
+	// Never destroyed: it is in place for the whole run
+	wxEvtHandler::AddFilter(new Filter);
+}
+
+void Track(std::set<wxWindow*> &set, wxWindow *window) {
+	Install();
+	set.insert(window);
+	window->Bind(wxEVT_DESTROY, [&set, window](wxWindowDestroyEvent &e) {
+		if (e.GetEventObject() == window) set.erase(window);
+		e.Skip();
+	});
+}
+}
+
+void SetHome(wxWindow *window) {
+	Install();
+	home = window;
+	window->Bind(wxEVT_DESTROY, [window](wxWindowDestroyEvent &e) {
+		if (e.GetEventObject() == window && home == window) home = nullptr;
+		e.Skip();
+	});
+}
+
+void AddField(wxWindow *field) {
+	Track(fields, field);
+}
+
+void AddWheelTarget(wxWindow *target) {
+	Track(wheel_targets, target);
+}
+
+void LeaveField() {
+	auto focus = wxWindow::FindFocus();
+	if (!focus || !fields.count(focus)) return;
+	if (home && home->IsShownOnScreen()) home->SetFocus();
+	else {
+		// Nowhere to go: the keyboard leaves for the panel around it
+		for (auto w = focus->GetParent(); w; w = w->GetParent())
+			if (auto panel = dynamic_cast<wxPanel*>(w)) {
+				panel->SetFocusIgnoringChildren();
+				break;
+			}
+	}
 }
 }
 
@@ -109,8 +220,15 @@ void FlatFrame::SetContent(wxWindow *control, int width) {
 	content->Bind(wxEVT_SET_FOCUS, [this](wxFocusEvent &e) { Refresh(false); e.Skip(); });
 	content->Bind(wxEVT_KILL_FOCUS, [this](wxFocusEvent &e) { Refresh(false); e.Skip(); });
 	content->Bind(wxEVT_MOUSEWHEEL, &FlatFrame::OnWheel, this);
+	flat::AddField(content);
 	ApplyColours();
 	Arrange();
+}
+
+bool FlatFrame::Enable(bool enable) {
+	bool changed = wxWindow::Enable(enable);
+	if (changed) { ApplyColours(); Refresh(false); }
+	return changed;
 }
 
 void FlatFrame::SetDimContent(bool dim) {
@@ -136,6 +254,7 @@ void FlatFrame::SetScrub(std::function<void(int, bool)> change) {
 
 void FlatFrame::SetWheel(std::function<void(int)> change) {
 	on_wheel = std::move(change);
+	flat::AddWheelTarget(this);
 }
 
 void FlatFrame::ApplyColours() {
@@ -249,6 +368,13 @@ FlatChoice::FlatChoice(wxWindow *parent, wxString const& tip)
 	Bind(wxEVT_KILL_FOCUS, [this](wxFocusEvent &e) { Refresh(false); e.Skip(); });
 	theme_changed = theme::AddChangeListener([this] { Refresh(false); });
 	SetMinSize(wxSize(FromDIP(60), FromDIP(field_height)));
+	flat::AddWheelTarget(this);
+}
+
+bool FlatChoice::Enable(bool enable) {
+	bool changed = wxWindow::Enable(enable);
+	if (changed) Refresh(false);
+	return changed;
 }
 
 wxSize FlatChoice::DoGetBestClientSize() const {
