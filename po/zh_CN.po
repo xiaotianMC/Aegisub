@@ -8697,9 +8697,6 @@ msgstr "音量：%s"
 msgid "Vertical zoom and volume are linked: click to separate them"
 msgstr "垂直缩放和音量已联动，点击取消联动"
 
-#: src/style_panel.cpp
-msgid "A box behind the text in the outline colour. Only a style can have one: its border style is \"opaque box\""
-msgstr "文字后面的底框，颜色为描边颜色。只有样式能设置：把它的边框样式设为“不透明底框”"
 
 #: src/style_panel.cpp
 msgid "Align left (\\an1, \\an4, \\an7)"
@@ -8757,17 +8754,8 @@ msgstr "下划线（\\u）"
 msgid "Strikeout (\\s)"
 msgstr "删除线（\\s）"
 
-#: src/style_panel.cpp
-msgid "Colour and opacity of the letters (\\1c, \\1a)"
-msgstr "文字的颜色和不透明度（\\1c、\\1a）"
 
-#: src/style_panel.cpp
-msgid "Colour and opacity of the shadow (\\4c, \\4a)"
-msgstr "阴影的颜色和不透明度（\\4c、\\4a）"
 
-#: src/style_panel.cpp
-msgid "Colour and width of the outline (\\3c, \\3a, \\bord)"
-msgstr "描边的颜色和宽度（\\3c、\\3a、\\bord）"
 
 #: src/style_panel.cpp
 msgid "Distance"
@@ -8912,3 +8900,39 @@ msgstr "特粗（800）"
 #: src/style_panel.cpp
 msgid "Black (900)"
 msgstr "极粗（900）"
+
+#: src/style_panel.cpp
+msgid "Colour of the letters (\\1c): click the colour to change it, the box to hide the letters"
+msgstr "文字的颜色（\\1c）：点颜色修改，点勾选框隐藏文字"
+
+#: src/style_panel.cpp
+msgid "Opacity of the letters (\\1a)"
+msgstr "文字的不透明度（\\1a）"
+
+#: src/style_panel.cpp
+msgid "Colour of the outline (\\3c, \\3a): click the colour to change it, the box to remove the outline"
+msgstr "描边的颜色（\\3c、\\3a）：点颜色修改，点勾选框去掉描边"
+
+#: src/style_panel.cpp
+msgid "Width of the outline, in pixels (\\bord)"
+msgstr "描边宽度，单位为像素（\\bord）"
+
+#: src/style_panel.cpp
+msgid "A box behind the text in the outline colour. Only a style can have one: the box turns it on or off for the styles of the selected lines"
+msgstr "文字后面的底框，颜色为描边颜色。只有样式能设置：勾选框会为所选各行的样式打开或关闭底框"
+
+#: src/style_panel.cpp
+msgid "Colour of the shadow (\\4c): click the colour to change it, the box to remove the shadow"
+msgstr "阴影的颜色（\\4c）：点颜色修改，点勾选框去掉阴影"
+
+#: src/style_panel.cpp
+msgid "Opacity of the shadow (\\4a)"
+msgstr "阴影的不透明度（\\4a）"
+
+#: src/style_edit.cpp
+msgid "add background"
+msgstr "添加背景"
+
+#: src/style_edit.cpp
+msgid "remove background"
+msgstr "去掉背景"

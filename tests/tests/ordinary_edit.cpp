@@ -1223,6 +1223,74 @@ TEST_F(ordinary_edit, style_panel_changes_the_text_through_its_controls) {
     panel->Destroy();
 }
 
+TEST_F(ordinary_edit, style_panel_changes_fill_outline_shadow_and_background) {
+    {auto write=c->subtitleAccess->TryWrite();auto &file=LiveWriteForTest(*c);
+     auto style=new AssStyle();style->name="Look";style->outline_w=3;style->shadow_w=0;
+     style->primary=agi::Color(255,255,255);style->outline=agi::Color(0,0,0);style->shadow=agi::Color(0,0,0,0x80);file.Styles.push_back(*style);
+     auto &row=file.Events.front();row.Style="Look";row.Text="Hello";
+     file.Commit("fixture",AssFile::COMMIT_NEW);}
+    auto line=[&] { return std::string(LiveRead(*c).Events.front().Text.get()); };
+    auto id=LiveRead(*c).Events.front().Id;
+    c->selectionController->SetSelectionAndActiveIDs({id},id);
+    c->textSelectionController->SetSelection(0,0);
+    auto panel=new StylePanel(window,c.get());
+    auto shown=[&] { panel->UpdateNow(); return panel->Shown(); };
+
+    // Check boxes: hide, and show again with the style's value
+    panel->Check("fill",false); EXPECT_EQ("{\\1a&HFF&}Hello",line()); EXPECT_EQ("off #FFFFFF",shown()["fill"]);
+    panel->Check("fill",true); EXPECT_EQ("Hello",line());
+    panel->Check("outline",false); EXPECT_EQ("{\\bord0}Hello",line()); EXPECT_EQ("off #000000",shown()["outline"]);
+    panel->Check("outline",true); EXPECT_EQ("Hello",line()) << "the style's width comes back";
+    panel->Check("shadow",true); EXPECT_EQ("{\\shad2}Hello",line()); EXPECT_EQ("on #000000",shown()["shadow"]);
+    EXPECT_EQ("135",shown()["shadow_angle"]); EXPECT_EQ("2.83",shown()["shadow_distance"]);
+    // Distance keeps the angle, angle keeps the distance
+    panel->EnterNumber("shadow_distance",4,true);
+    EXPECT_EQ("{\\shad2.83}Hello",line()) << "equal offsets are one tag";
+    panel->UpdateNow(); panel->EnterNumber("shadow_angle",90,true);
+    EXPECT_EQ("{\\xshad4\\yshad0}Hello",line());
+    panel->UpdateNow(); panel->EnterNumber("shadow_angle",180,true);
+    EXPECT_EQ("{\\xshad0\\yshad4}Hello",line());
+    panel->Check("shadow",false); EXPECT_EQ("Hello",line()) << "no shadow is the style's";
+
+    // Numbers at the right of the colours
+    panel->EnterNumber("fill_opacity",50,true); EXPECT_EQ("{\\1a&H80&}Hello",line());
+    EXPECT_EQ("50",shown()["fill_opacity"]);
+    panel->EnterNumber("fill_opacity",100,true); EXPECT_EQ("Hello",line());
+    panel->EnterNumber("outline_width",1.5,false); panel->EnterNumber("outline_width",4,true);
+    EXPECT_EQ("{\\bord4}Hello",line());
+    c->subsController->Undo(); EXPECT_EQ("Hello",line()) << "one drag, one step";
+    panel->EnterNumber("shadow_opacity",0,true); EXPECT_EQ("{\\4a&HFF&}Hello",line());
+    c->subsController->Undo();
+    panel->EnterNumber("blur",0.8,true); EXPECT_EQ("{\\blur0.8}Hello",line());
+    c->subsController->Undo();
+
+    // Colours: only what changed is written
+    panel->UpdateNow();
+    panel->ChooseColour("fill",agi::Color(255,0,0));
+    EXPECT_EQ("{\\c&H0000FF&}Hello",line());
+    panel->UpdateNow();
+    panel->ChooseColour("fill",agi::Color(255,0,0,0x40));
+    EXPECT_EQ("{\\c&H0000FF&\\1a&H40&}Hello",line());
+    panel->UpdateNow();
+    panel->ChooseColour("outline",agi::Color(0,0,255));
+    EXPECT_EQ("{\\c&H0000FF&\\1a&H40&\\3c&HFF0000&}Hello",line());
+    panel->UpdateNow();
+    panel->ChooseColour("shadow",agi::Color(0,255,0,0x80));
+    EXPECT_EQ("{\\c&H0000FF&\\1a&H40&\\3c&HFF0000&\\4c&H00FF00&}Hello",line()) << "the same alpha needs no tag";
+    EXPECT_EQ("off #00FF00",shown()["shadow"]) << "the colour of a shadow turned off";
+
+    // Background is the style's: an opaque box, and then no outline
+    panel->Check("background",true);
+    EXPECT_EQ(3,LiveRead(*c).GetStyle("Look")->borderstyle);
+    EXPECT_EQ("on #0000FF",shown()["background"]);
+    std::string before=line();
+    panel->Check("outline",true);
+    EXPECT_EQ(before,line()) << "a box has no outline to show";
+    c->subsController->Undo();
+    EXPECT_EQ(1,LiveRead(*c).GetStyle("Look")->borderstyle);
+    panel->Destroy();
+}
+
 TEST_F(ordinary_edit, style_edit_writes_one_property_for_lines_or_selected_text) {
     using namespace style_edit;
     auto fs=TagNames(Property::Size), b=TagNames(Property::Weight), i=TagNames(Property::Italic);
@@ -1305,10 +1373,10 @@ TEST_F(ordinary_edit, style_panel_shows_the_selected_text_lines_and_where_they_d
     EXPECT_EQ("Look",s["style"]); EXPECT_EQ("Look Sans",s["font"]); EXPECT_EQ("40",s["size"]); EXPECT_EQ("Bold",s["weight"]);
     EXPECT_EQ("on",s["bold"]); EXPECT_EQ("off",s["italic"]);
     EXPECT_EQ("on",s["align_centre"]); EXPECT_EQ("on",s["align_bottom"]); EXPECT_EQ("off",s["align_top"]);
-    EXPECT_EQ("on #FFFFFF 100%",s["fill"]);
-    EXPECT_EQ("on #000000 2",s["outline"]);
+    EXPECT_EQ("on #FFFFFF",s["fill"]); EXPECT_EQ("100",s["fill_opacity"]);
+    EXPECT_EQ("on #000000",s["outline"]); EXPECT_EQ("2",s["outline_width"]);
     EXPECT_EQ("off #000000",s["background"]);
-    EXPECT_EQ("off #000000 50%",s["shadow"]);
+    EXPECT_EQ("off #000000",s["shadow"]); EXPECT_EQ("50",s["shadow_opacity"]);
     EXPECT_EQ("0",s["shadow_distance"]);
 
     // Several lines: what they share, and "—" where they differ
@@ -1318,8 +1386,8 @@ TEST_F(ordinary_edit, style_panel_shows_the_selected_text_lines_and_where_they_d
     EXPECT_EQ("Look Sans",s["font"]); EXPECT_EQ(wxS("—"),s["size"]); EXPECT_EQ(wxS("—"),s["weight"]);
     EXPECT_EQ("mixed",s["bold"]); EXPECT_EQ("off",s["italic"]);
     EXPECT_EQ("mixed",s["align_top"]); EXPECT_EQ("mixed",s["align_bottom"]); EXPECT_EQ("on",s["align_centre"]);
-    EXPECT_EQ(wxS("mixed #000000 —"),s["outline"]);
-    EXPECT_EQ("mixed #000000 50%",s["shadow"]);
+    EXPECT_EQ("mixed #000000",s["outline"]); EXPECT_EQ(wxS("—"),s["outline_width"]);
+    EXPECT_EQ("mixed #000000",s["shadow"]); EXPECT_EQ("50",s["shadow_opacity"]);
     EXPECT_EQ(wxS("—"),s["shadow_distance"]);
 
     // Text selected in the editor: how that text looks
@@ -1343,13 +1411,13 @@ TEST_F(ordinary_edit, style_panel_shows_the_selected_text_lines_and_where_they_d
     c->selectionController->SetSelectionAndActiveIDs({ids[2]},ids[2]);
     s=shown();
     EXPECT_EQ("2.83",s["shadow_distance"]); EXPECT_EQ("135",s["shadow_angle"]);
-    EXPECT_EQ("on #000000 50%",s["shadow"]); EXPECT_EQ("off #000000 0",s["outline"]);
+    EXPECT_EQ("on #000000",s["shadow"]); EXPECT_EQ("off #000000",s["outline"]); EXPECT_EQ("0",s["outline_width"]);
 
     // An opaque box is the style's background, and then there is no outline
     {auto write=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).GetStyle("Look")->borderstyle=3;LiveWriteForTest(*c).Commit("fixture",AssFile::COMMIT_STYLES);}
     c->selectionController->SetSelectionAndActiveIDs({ids[0]},ids[0]);
     s=shown();
-    EXPECT_EQ("on #000000",s["background"]); EXPECT_EQ("off #000000 2",s["outline"]);
+    EXPECT_EQ("on #000000",s["background"]); EXPECT_EQ("off #000000",s["outline"]);
 
     // Edits show without asking, once the events have run
     {auto write=c->subtitleAccess->TryWrite();
@@ -3568,6 +3636,41 @@ TEST_F(ordinary_edit, color_picker_cancel_never_undoes_a_commit_made_while_it_wa
     EXPECT_EQ(std::string::npos,LiveRead(*c).Events.front().Text.get().find("00FF00"));
     EXPECT_NE(std::string::npos,LiveRead(*c).Events.front().Text.get().find("0000FF"));
     EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison().has_value());
+}
+TEST_F(ordinary_edit, style_panel_colour_picker_previews_as_an_interaction) {
+    Input("sample");
+    auto panel=new StylePanel(window,c.get());
+    panel->UpdateNow();
+    auto before=c->subsController->GetUndoDescription();
+    bool previewed=false,comparison_refused=false;
+    {
+        RunModal hook("Select Color",[&](wxDialog* dialog){
+            auto input=AssColorInput(dialog);ASSERT_NE(nullptr,input);
+            input->SetValue("&H0000FF&");
+            previewed=LiveRead(*c).Events.front().Text.get()=="{\\c&H0000FF&}sample";
+            comparison_refused=!c->subtitleEditGate.TryBeginComparison().has_value();
+        });
+        panel->PickColour("fill");
+    }
+    EXPECT_TRUE(previewed);EXPECT_TRUE(comparison_refused);
+    EXPECT_EQ("sample",LiveRead(*c).Events.front().Text.get()) << "cancel undoes the preview";
+    EXPECT_EQ(before,c->subsController->GetUndoDescription());
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison().has_value());
+    {
+        RunModal hook("Select Color",[&](wxDialog* dialog){
+            auto input=AssColorInput(dialog);ASSERT_NE(nullptr,input);
+            input->SetValue("&H0000FF&");
+            auto write=c->subtitleAccess->TryWrite();ASSERT_TRUE(write);
+            AssDialogueBase row=LiveRead(*c).Events.front();row.Actor="other handler";
+            auto edit=c->subtitleAccess->Edit(write->Lease());edit.UpdateRows({row});
+            edit.Commit("other handler",AssFile::COMMIT_DIAG_META);
+            input->SetValue("&H00FF00&");
+        });
+        panel->PickColour("outline");
+    }
+    EXPECT_EQ(wxString("other handler"),c->subsController->GetUndoDescription()) << "never undone";
+    EXPECT_EQ("{\\3c&H0000FF&}sample",LiveRead(*c).Events.front().Text.get()) << "and the stale preview is ignored";
+    panel->Destroy();
 }
 TEST_F(ordinary_edit, font_resample_and_style_manager_questions_hold_no_write_lease) {
     Input("sample");

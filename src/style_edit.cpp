@@ -254,9 +254,31 @@ RangeResult SetForRange(std::string const& text, int start, int end,
 }
 
 int Apply(agi::Context *c, Property property, std::function<void(StyleLook&)> const& change, int amend_id) {
+	return ApplyWithStyle(c, property, [&](StyleLook &look, StyleLook const&) { change(look); }, amend_id);
+}
+
+int SetBorderStyle(agi::Context *c, int border_style, int amend_id) {
 	auto scope = c->subtitleAccess->TryWrite();
 	if (!scope) return -1;
+	auto const& file = c->subtitleAccess->Read();
+	std::vector<std::string> names;
+	for (auto line : c->selectionController->ReadSelectedSet()) {
+		auto style = file.GetStyle(line->Style.get());
+		if (style && style->borderstyle != border_style && std::find(names.begin(), names.end(), style->name) == names.end())
+			names.push_back(style->name);
+	}
+	if (names.empty()) return amend_id;
+	auto edit = c->subtitleAccess->Edit(scope->Lease());
+	for (auto const& name : names)
+		edit.SetStyleField(name, &AssStyle::borderstyle, border_style);
+	return edit.Commit(border_style == 3 ? _("add background") : _("remove background"), AssFile::COMMIT_STYLES, amend_id);
+}
+
+Staged Stage(agi::Context const* c, Property property, std::function<void(StyleLook&, StyleLook const&)> const& change) {
+	Staged out;
+	out.name = UndoName(property);
 	SubtitleRowEdit staged(c);
+	if (staged.rows.empty()) return out;
 	auto const& file = c->subtitleAccess->Read();
 	StyleLookup find = [&](std::string const& name) { return file.GetStyle(name); };
 	auto active = c->selectionController->ReadActiveLine();
@@ -267,13 +289,11 @@ int Apply(agi::Context *c, Property property, std::function<void(StyleLook&)> co
 	AssDialogue *active_row = nullptr;
 	for (auto row : staged.rows)
 		if (active && row->Id == active->Id) active_row = row;
-	if (staged.rows.empty()) return -1;
 
 	std::string const* active_text = active_row ? &active_row->Text.get() : nullptr;
 	int first = active_text ? PlainPosition(*active_text, std::min(start, end)) : 0;
 	int last = active_text ? PlainPosition(*active_text, std::max(start, end)) : 0;
 	int new_start = start, new_end = end;
-	bool changed = false;
 
 	if (active_row && staged.rows.size() == 1 && first != last && !LineWide(property)) {
 		// The selected text: set at its start, and what came after it
@@ -281,9 +301,11 @@ int Apply(agi::Context *c, Property property, std::function<void(StyleLook&)> co
 		std::string text = active_row->Text;
 		StyleLook look = LookAt(*active_row, first, find);
 		std::string restore = TagFor(property, LookAt(*active_row, last, find));
-		change(look);
+		AssStyle fallback;
+		AssStyle const* style = find(active_row->Style.get());
+		change(look, LookOf(style ? *style : fallback));
 		auto result = SetForRange(text, start, end, names, TagFor(property, look), restore);
-		changed = result.text != text;
+		out.changed = result.text != text;
 		active_row->Text = result.text;
 		new_start = result.start;
 		new_end = result.end;
@@ -297,26 +319,46 @@ int Apply(agi::Context *c, Property property, std::function<void(StyleLook&)> co
 			AssStyle fallback;
 			AssStyle const* style = find(row->Style.get());
 			StyleLook look = LookAt(*row, 0, find);
-			change(look);
+			StyleLook style_look = LookOf(style ? *style : fallback);
+			change(look, style_look);
 			std::string tag = TagFor(property, look);
-			if (tag == TagFor(property, LookOf(style ? *style : fallback)))
+			if (tag == TagFor(property, style_look))
 				tag.clear();
 			std::string result = SetForLine(text, names, tag);
 			if (result == text) continue;
-			changed = true;
+			out.changed = true;
 			row->Text = result;
 			if (row == active_row)
 				new_start = new_end = OffsetOf(result, cursor);
 		}
 	}
-	if (!changed) return amend_id;
 
+	out.rows = staged.Values();
+	for (auto row : staged.rows) out.ids.push_back(row->Id);
 	auto const& sel = c->selectionController->ReadSelectedSet();
+	out.single_line_id = sel.size() == 1 ? (*sel.begin())->Id : 0;
+	out.select = active_row && (new_start != start || new_end != end);
+	out.start = new_start;
+	out.end = new_end;
+	return out;
+}
+
+void Select(agi::Context *c, Staged const& staged) {
+	if (staged.select)
+		c->textSelectionController->SetSelection(staged.start, staged.end);
+}
+
+int ApplyWithStyle(agi::Context *c, Property property,
+	std::function<void(StyleLook&, StyleLook const&)> const& change, int amend_id)
+{
+	auto scope = c->subtitleAccess->TryWrite();
+	if (!scope) return -1;
+	Staged staged = Stage(c, property, change);
+	if (!staged.changed) return amend_id;
 	auto edit = c->subtitleAccess->Edit(scope->Lease());
-	edit.UpdateRows(staged.Values());
-	int id = edit.Commit(UndoName(property), AssFile::COMMIT_DIAG_TEXT, amend_id, sel.size() == 1 ? (*sel.begin())->Id : 0);
-	if (active_row && (new_start != start || new_end != end))
-		c->textSelectionController->SetSelection(new_start, new_end);
+	edit.UpdateRows(staged.rows);
+	int id = edit.Commit(staged.name, AssFile::COMMIT_DIAG_TEXT, amend_id, staged.single_line_id);
+	Select(c, staged);
 	return id;
 }
 }

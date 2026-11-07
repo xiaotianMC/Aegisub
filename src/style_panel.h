@@ -8,8 +8,12 @@
 // "—" where they differ.
 #pragma once
 
+#include "style_edit.h"
+
+#include <libaegisub/color.h>
 #include <libaegisub/signal.h>
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -49,6 +53,12 @@ public:
 	void ChooseFont(wxString const& font);
 	/// Use @p weight and slant, as the weight menu does
 	void ChooseWeight(int weight, bool italic);
+	/// Tick or untick "fill", "outline", "background" or "shadow"
+	void Check(std::string const& row, bool on);
+	/// Use @p colour (with its alpha) for a colour row, as the picker does
+	void ChooseColour(std::string const& row, agi::Color colour);
+	/// Open the colour picker for a colour row, as clicking its colour does
+	void PickColour(std::string const& row);
 
 	/// Collapse or expand a section: "style", "text" or "appearance"
 	void ShowSection(std::string const& name, bool show);
@@ -72,6 +82,7 @@ private:
 	agi::signal::Connection theme_changed;
 	bool update_pending = false;
 	int drag_commit = -1; ///< The undo step a drag amends
+	bool box_style = false; ///< The lines' styles draw a box: no outline
 
 	struct Section {
 		Header *header;
@@ -82,6 +93,9 @@ private:
 
 	void BindEditing();
 	void ShowWeightMenu();
+	/// Writes one property's change: through Apply, or the picker's interaction
+	using Writer = std::function<void(style_edit::Property, std::function<void(StyleLook&)>)>;
+	void SetColour(std::string const& row, agi::Color colour, bool rgb, bool alpha, Writer const& write);
 	void ScheduleUpdate();
 	void Display(std::vector<StyleLook> const& looks, wxString const& scope);
 	Section &AddSection(wxSizer *sizer, std::string const& name, wxString const& title);

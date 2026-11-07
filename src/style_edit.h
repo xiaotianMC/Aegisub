@@ -5,9 +5,13 @@
 // tags.
 #pragma once
 
+#include "ass_dialogue.h"
+
 #include <functional>
 #include <string>
 #include <vector>
+
+#include <wx/string.h>
 
 namespace agi { struct Context; }
 class AssStyle;
@@ -49,4 +53,27 @@ RangeResult SetForRange(std::string const& text, int start, int end,
 /// commit to amend (-1: a new undo step).
 /// @return The commit's id, or -1 when nothing was written
 int Apply(agi::Context *c, Property property, std::function<void(StyleLook&)> const& change, int amend_id = -1);
+
+/// As Apply, with @p change also given how the line's style looks
+int ApplyWithStyle(agi::Context *c, Property property,
+	std::function<void(StyleLook&, StyleLook const&)> const& change, int amend_id = -1);
+
+/// The rows Apply would write, without writing them: for a preview
+/// written through an interaction (the colour picker)
+struct Staged {
+	std::vector<AssDialogueBase> rows; ///< The selected rows, changed
+	std::vector<int> ids;              ///< Their ids
+	bool changed = false;              ///< Whether any row changed
+	wxString name;                     ///< For the undo step
+	int single_line_id = 0;            ///< For the commit
+	bool select = false;               ///< Whether the editor's selection moves
+	int start = 0, end = 0;            ///< To there
+};
+Staged Stage(agi::Context const* c, Property property, std::function<void(StyleLook&, StyleLook const&)> const& change);
+/// Move the editor's selection as @p staged says, after writing it
+void Select(agi::Context *c, Staged const& staged);
+
+/// Set the border style of the selected lines' styles: 3 draws an opaque
+/// box behind the text, 1 an outline. @return As Apply
+int SetBorderStyle(agi::Context *c, int border_style, int amend_id = -1);
 }

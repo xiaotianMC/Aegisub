@@ -7,10 +7,12 @@
 #include "ass_file.h"
 #include "ass_style.h"
 #include "compat.h"
+#include "dialogs.h"
 #include "format.h"
 #include "style_edit.h"
 #include "include/aegisub/context.h"
 #include "selection_controller.h"
+#include "subs_controller.h"
 #include "style_look.h"
 #include "subtitle_project_access.h"
 #include "text_selection_controller.h"
@@ -81,6 +83,27 @@ void DrawChevron(wxDC &dc, wxColour const& colour, int x, int cy, int size, bool
 }
 
 const wxString mixed = wxS("—");
+constexpr double pi = 3.14159265358979323846;
+
+/// Opacity in percent for an ASS alpha (0 opaque)
+double Opacity(agi::Color const& colour) {
+	return std::round((255 - colour.a) * 100 / 255.);
+}
+unsigned char AlphaFor(double opacity) {
+	return static_cast<unsigned char>(std::lround((100 - std::clamp(opacity, 0., 100.)) * 255 / 100));
+}
+
+/// The way the shadow falls as in a design program: 0° is up, clockwise
+double ShadowAngle(StyleLook const& look) {
+	if (look.shadow_x == 0 && look.shadow_y == 0) return 0;
+	double degrees = std::atan2(look.shadow_x, -look.shadow_y) * 180 / pi;
+	return degrees < 0 ? degrees + 360 : degrees;
+}
+void SetShadow(StyleLook &look, double distance, double degrees) {
+	double radians = degrees * pi / 180;
+	look.shadow_x = std::round(distance * std::sin(radians) * 100) / 100;
+	look.shadow_y = std::round(-distance * std::cos(radians) * 100) / 100;
+}
 }
 
 // Every part of the panel is drawn: flat on the block colour, as the
@@ -482,7 +505,7 @@ class StylePanel::ColourRow final : public StylePanel::Part {
 		}
 
 		// Colour: over a checkerboard, so that its transparency shows
-		wxRect swatch(box + FromDIP(8), cy - FromDIP(9), FromDIP(24), FromDIP(18));
+		wxRect swatch = SwatchRect();
 		dc.SetPen(*wxTRANSPARENT_PEN);
 		if (colour_known) {
 			int cell = FromDIP(6);
@@ -523,7 +546,27 @@ public:
 	: Part(parent, wxSize(120, 28)), label(std::move(label))
 	{
 		SetToolTip(tip);
+		SetCursor(wxCursor(wxCURSOR_HAND));
+		auto click = [this](wxMouseEvent &event) {
+			// Not skipped: the editor keeps the focus and its selection.
+			// The colour opens the colour picker; the rest is the check box.
+			if (!IsEnabled()) return;
+			bool colour = event.GetX() >= SwatchRect().x - FromDIP(2) && event.GetX() <= SwatchRect().GetRight() + FromDIP(2);
+			auto handler = colour ? on_pick : on_check;
+			if (handler) CallAfter([handler] { handler(); });
+		};
+		Bind(wxEVT_LEFT_DOWN, click);
+		Bind(wxEVT_LEFT_DCLICK, click);
 	}
+
+	std::function<void()> on_check, on_pick;
+
+	wxRect SwatchRect() const {
+		int cy = GetClientSize().y / 2;
+		return wxRect(FromDIP(14) + FromDIP(8), cy - FromDIP(9), FromDIP(24), FromDIP(18));
+	}
+	Toggle::State GetState() const { return checked; }
+	std::optional<agi::Color> GetColour() const { return colour_known ? std::optional<agi::Color>(colour) : std::nullopt; }
 
 	void SetState(Toggle::State state, std::optional<agi::Color> new_colour, wxString const& new_value) {
 		checked = state;
@@ -749,11 +792,30 @@ StylePanel::StylePanel(wxWindow *parent, agi::Context *c)
 	text.body->Add(row, 0, wxEXPAND | wxTOP, gap);
 
 	auto &look = AddSection(outer, "appearance", _("Appearance"));
-	look.body->Add(Add<ColourRow>("fill", _("Fill"), _("Colour and opacity of the letters (\\1c, \\1a)")), 0, wxEXPAND);
-	look.body->Add(Add<ColourRow>("outline", _("Outline"), _("Colour and width of the outline (\\3c, \\3a, \\bord)")), 0, wxEXPAND | wxTOP, gap / 2);
-	look.body->Add(Add<ColourRow>("background", _("Background"),
-		_("A box behind the text in the outline colour. Only a style can have one: its border style is \"opaque box\"")), 0, wxEXPAND | wxTOP, gap / 2);
-	look.body->Add(Add<ColourRow>("shadow", _("Shadow"), _("Colour and opacity of the shadow (\\4c, \\4a)")), 0, wxEXPAND | wxTOP, gap / 2);
+	// Each colour with its number at the right
+	const int value_width = FromDIP(84);
+	auto colour_row = [&](std::string const& name, wxString const& label, wxString const& tip, std::string const& value_name,
+		wxString const& value_label, wxString const& unit, wxString const& value_tip, bool first = false)
+	{
+		auto line = new wxBoxSizer(wxHORIZONTAL);
+		line->Add(Add<ColourRow>(name, label, tip), 1, wxEXPAND);
+		if (!value_name.empty()) {
+			auto value = Add<Field>(value_name, value_label, unit, false, value_tip);
+			value->SetMinSize(wxSize(value_width, -1));
+			line->Add(value, 0, wxEXPAND | wxLEFT, gap);
+		}
+		else
+			line->AddSpacer(value_width + gap);
+		look.body->Add(line, 0, wxEXPAND | (first ? 0 : wxTOP), gap / 2);
+	};
+	colour_row("fill", _("Fill"), _("Colour of the letters (\\1c): click the colour to change it, the box to hide the letters"),
+		"fill_opacity", "", "%", _("Opacity of the letters (\\1a)"), true);
+	colour_row("outline", _("Outline"), _("Colour of the outline (\\3c, \\3a): click the colour to change it, the box to remove the outline"),
+		"outline_width", "", "", _("Width of the outline, in pixels (\\bord)"));
+	colour_row("background", _("Background"),
+		_("A box behind the text in the outline colour. Only a style can have one: the box turns it on or off for the styles of the selected lines"), "", "", "", "");
+	colour_row("shadow", _("Shadow"), _("Colour of the shadow (\\4c): click the colour to change it, the box to remove the shadow"),
+		"shadow_opacity", "", "%", _("Opacity of the shadow (\\4a)"));
 	row = new wxBoxSizer(wxHORIZONTAL);
 	row->Add(Add<Field>("shadow_distance", _("Distance"), "", false, _("How far the shadow falls from the text (\\xshad, \\yshad)")), 1, wxEXPAND);
 	row->Add(Add<Field>("shadow_angle", _("Angle"), wxS("°"), false, _("Which way the shadow falls: 90° is right, 180° down (\\xshad, \\yshad)")), 1, wxEXPAND | wxLEFT, gap);
@@ -822,6 +884,24 @@ void StylePanel::BindEditing() {
 	number("size", Property::Size, {1, 1000, 1}, [](StyleLook &l, double v) { l.size = v; });
 	number("spacing", Property::Spacing, {-100, 100, 0.1}, [](StyleLook &l, double v) { l.spacing = v; });
 
+	number("fill_opacity", Property::FillAlpha, {0, 100, 1}, [](StyleLook &l, double v) { l.primary.a = AlphaFor(v); });
+	number("shadow_opacity", Property::ShadowAlpha, {0, 100, 1}, [](StyleLook &l, double v) { l.shadow.a = AlphaFor(v); });
+	number("outline_width", Property::Border, {0, 100, 0.1}, [](StyleLook &l, double v) { l.border = v; });
+	number("blur", Property::Blur, {0, 100, 0.1}, [](StyleLook &l, double v) { l.blur = v; });
+	// Each line keeps its angle, or its distance
+	number("shadow_distance", Property::Shadow, {0, 100, 0.1}, [](StyleLook &l, double v) {
+		SetShadow(l, v, l.shadow_x == 0 && l.shadow_y == 0 ? 135 : ShadowAngle(l));
+	});
+	number("shadow_angle", Property::Shadow, {0, 360, 1}, [](StyleLook &l, double v) {
+		SetShadow(l, std::hypot(l.shadow_x, l.shadow_y), v);
+	});
+
+	auto colour = [this](std::string const& name) { return static_cast<ColourRow*>(parts[name]); };
+	for (auto name : {"fill", "outline", "background", "shadow"}) {
+		colour(name)->on_check = [this, name, colour] { Check(name, colour(name)->GetState() != State::On); };
+		colour(name)->on_pick = [this, name] { PickColour(name); };
+	}
+
 	static_cast<Field*>(parts["font"])->SetChooser([this] {
 		auto field = parts["font"];
 		auto popup = new FontPopup(this, field->Shown() == mixed ? wxString() : field->Shown(),
@@ -854,6 +934,120 @@ void StylePanel::ShowWeightMenu() {
 	// The extra weights keep each line's slant
 	if (index < 4) ChooseWeight(choices[index].weight, choices[index].italic);
 	else style_edit::Apply(c, style_edit::Property::Weight, [&](StyleLook &l) { l.weight = choices[index].weight; });
+}
+
+namespace {
+struct ColourProperties {
+	style_edit::Property colour, alpha;
+	agi::Color StyleLook::*member;
+};
+ColourProperties PropertiesOf(std::string const& row) {
+	using style_edit::Property;
+	if (row == "fill") return {Property::FillColour, Property::FillAlpha, &StyleLook::primary};
+	if (row == "shadow") return {Property::ShadowColour, Property::ShadowAlpha, &StyleLook::shadow};
+	// The background box is drawn in the outline colour
+	return {Property::OutlineColour, Property::OutlineAlpha, &StyleLook::outline};
+}
+}
+
+void StylePanel::Check(std::string const& row, bool on) {
+	using style_edit::Property;
+	if (row == "background") {
+		style_edit::SetBorderStyle(c, on ? 3 : 1);
+		return;
+	}
+	auto props = PropertiesOf(row);
+	auto member = props.member;
+	// Showing: the style's value when it has one, so nothing is lost
+	auto visible = [member](StyleLook &l, StyleLook const& style) {
+		if ((l.*member).a == 255) (l.*member).a = (style.*member).a != 255 ? (style.*member).a : 0;
+	};
+	if (row == "fill") {
+		style_edit::ApplyWithStyle(c, Property::FillAlpha, [&](StyleLook &l, StyleLook const& style) {
+			if (on) visible(l, style); else l.primary.a = 255;
+		});
+	}
+	else if (row == "outline") {
+		if (on && box_style) { wxBell(); return; } // a box has no outline
+		int id = style_edit::ApplyWithStyle(c, Property::Border, [&](StyleLook &l, StyleLook const& style) {
+			if (!on) l.border = 0;
+			else if (l.border == 0) l.border = style.border > 0 ? style.border : 2;
+		});
+		if (on) style_edit::ApplyWithStyle(c, Property::OutlineAlpha, visible, id);
+	}
+	else if (row == "shadow") {
+		int id = style_edit::ApplyWithStyle(c, Property::Shadow, [&](StyleLook &l, StyleLook const& style) {
+			if (!on) l.shadow_x = l.shadow_y = 0;
+			else if (l.shadow_x == 0 && l.shadow_y == 0) {
+				bool styled = style.shadow_x != 0 || style.shadow_y != 0;
+				l.shadow_x = styled ? style.shadow_x : 2;
+				l.shadow_y = styled ? style.shadow_y : 2;
+			}
+		});
+		if (on) style_edit::ApplyWithStyle(c, Property::ShadowAlpha, visible, id);
+	}
+}
+
+void StylePanel::SetColour(std::string const& row, agi::Color colour, bool rgb, bool alpha, Writer const& write) {
+	auto props = PropertiesOf(row);
+	auto member = props.member;
+	// Only what changed: lines that differ keep what was not touched
+	if (rgb)
+		write(props.colour, [&](StyleLook &l) {
+			(l.*member).r = colour.r; (l.*member).g = colour.g; (l.*member).b = colour.b;
+		});
+	if (alpha)
+		write(props.alpha, [&](StyleLook &l) { (l.*member).a = colour.a; });
+}
+
+void StylePanel::ChooseColour(std::string const& row, agi::Color colour) {
+	auto before = static_cast<ColourRow*>(parts[row])->GetColour();
+	// Lines in different colours all take the new one
+	bool rgb = !before || colour.r != before->r || colour.g != before->g || colour.b != before->b;
+	bool alpha = !before || colour.a != before->a;
+	int commit = -1;
+	SetColour(row, colour, rgb, alpha, [&](style_edit::Property property, std::function<void(StyleLook&)> change) {
+		commit = style_edit::Apply(c, property, change, commit);
+	});
+}
+
+void StylePanel::PickColour(std::string const& row) {
+	auto before = static_cast<ColourRow*>(parts[row])->GetColour();
+	agi::Color initial = before ? *before : agi::Color();
+	// The preview runs inside the picker's modal loop: as with the colour
+	// buttons of the editor, it is an interaction over the selected rows,
+	// so nothing else changes them meanwhile and Cancel undoes only it
+	std::vector<int> targets;
+	for (auto line : c->selectionController->ReadSelectedSet()) targets.push_back(line->Id);
+	if (targets.empty()) return;
+	auto session = c->subtitleAccess->TryBeginInteraction(targets);
+	if (!session) return;
+	const int start = c->textSelectionController->GetSelectionStart();
+	const int end = c->textSelectionController->GetSelectionEnd();
+	int commit = -1;
+	bool previewed = false, rgb = !before, alpha = !before;
+	auto write = [&](style_edit::Property property, std::function<void(StyleLook&)> change) {
+		auto staged = style_edit::Stage(c, property, [&](StyleLook &l, StyleLook const&) { change(l); });
+		if (!staged.changed) return;
+		session->UpdateRows(staged.rows);
+		commit = session->Commit(staged.name, AssFile::COMMIT_DIAG_TEXT, commit, staged.single_line_id);
+		style_edit::Select(c, staged);
+		previewed = true;
+	};
+	// The picker's screen dropper also takes colours from the video
+	bool ok = GetColorFromUser(c->parent, initial, true, [&](agi::Color colour) {
+		if (!session->Current()) return;
+		rgb |= colour.r != initial.r || colour.g != initial.g || colour.b != initial.b;
+		alpha |= colour.a != initial.a;
+		SetColour(row, colour, rgb, alpha, write);
+	});
+	// Current(): nothing else has changed the rows since the last preview
+	const bool undo_preview = !ok && previewed && session->Current();
+	session->End();
+	if (undo_preview) {
+		c->subsController->Undo();
+		c->textSelectionController->SetSelection(start, end);
+	}
 }
 
 void StylePanel::ChooseFont(wxString const& font) {
@@ -994,32 +1188,27 @@ void StylePanel::Display(std::vector<StyleLook> const& looks, wxString const& sc
 	toggle("underline", [](StyleLook const& l) { return l.underline; });
 	toggle("strikeout", [](StyleLook const& l) { return l.strikeout; });
 
-	auto colour_row = [&](std::string const& name, auto has, auto colour, auto value) {
+	auto colour_row = [&](std::string const& name, auto has, auto colour) {
 		auto rgb = [&](StyleLook const& l) { agi::Color c = colour(l); return std::make_tuple(c.r, c.g, c.b, c.a); };
 		std::optional<agi::Color> shown;
 		if (same(rgb)) shown = colour(looks.front());
-		static_cast<ColourRow*>(parts[name])->SetState(state(has), shown, value);
+		static_cast<ColourRow*>(parts[name])->SetState(state(has), shown, wxString());
 	};
-	auto opacity = [](agi::Color const& c) { return fmt_wx("%d%%", static_cast<int>(std::lround((255 - c.a) * 100 / 255.))); };
 	auto box = [](StyleLook const& l) { return l.border_style == 3; };
-
-	colour_row("fill", [](StyleLook const& l) { return l.primary.a != 255; },
-		[](StyleLook const& l) { return l.primary; },
-		same([](StyleLook const& l) { return l.primary.a; }) ? opacity(looks.front().primary) : looks.empty() ? wxString() : mixed);
-	colour_row("outline", [&](StyleLook const& l) { return !box(l) && l.border > 0 && l.outline.a != 255; },
-		[](StyleLook const& l) { return l.outline; },
-		same([](StyleLook const& l) { return l.border; }) ? Number(looks.front().border) : looks.empty() ? wxString() : mixed);
-	colour_row("background", box, [](StyleLook const& l) { return l.outline; }, wxString());
-	colour_row("shadow", [](StyleLook const& l) { return (l.shadow_x != 0 || l.shadow_y != 0) && l.shadow.a != 255; },
-		[](StyleLook const& l) { return l.shadow; },
-		same([](StyleLook const& l) { return l.shadow.a; }) ? opacity(looks.front().shadow) : looks.empty() ? wxString() : mixed);
+	box_style = !looks.empty() && std::all_of(looks.begin(), looks.end(), box);
+	colour_row("fill", [](StyleLook const& l) { return l.primary.a != 255; }, [](StyleLook const& l) { return l.primary; });
+	colour_row("outline", [&](StyleLook const& l) { return !box(l) && l.border > 0 && l.outline.a != 255; }, [](StyleLook const& l) { return l.outline; });
+	colour_row("background", box, [](StyleLook const& l) { return l.outline; });
+	colour_row("shadow", [](StyleLook const& l) { return (l.shadow_x != 0 || l.shadow_y != 0) && l.shadow.a != 255; }, [](StyleLook const& l) { return l.shadow; });
+	number_field("fill_opacity", [](StyleLook const& l) { return Opacity(l.primary); });
+	number_field("outline_width", [](StyleLook const& l) { return l.border; });
+	number_field("shadow_opacity", [](StyleLook const& l) { return Opacity(l.shadow); });
 
 	// Distance and angle as in a design program: 0° is up, clockwise
 	number_field("shadow_distance", [](StyleLook const& l) { return std::hypot(l.shadow_x, l.shadow_y); });
 	number_field("shadow_angle", [](StyleLook const& l) {
 		if (l.shadow_x == 0 && l.shadow_y == 0) return 0.;
-		double degrees = std::atan2(l.shadow_x, -l.shadow_y) * 180 / 3.14159265358979323846;
-		return std::round(degrees < 0 ? degrees + 360 : degrees);
+		return std::round(ShadowAngle(l));
 	});
 	number_field("blur", [](StyleLook const& l) { return l.blur; });
 }
