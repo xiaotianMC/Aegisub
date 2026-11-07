@@ -7055,8 +7055,8 @@ msgid "Current frame time and number. K marks a keyframe."
 msgstr "当前帧的时间和帧号。K 表示关键帧。"
 
 #: ../src/video_box.cpp
-msgid "Click to type a time (0:01:23.456, or seconds such as 83.5) or a frame number, then press Enter; Esc cancels."
-msgstr "单击可输入时间（0:01:23.456，或秒数如 83.5）或帧号，按回车跳转；Esc 取消。"
+msgid "Click the time to type a time (0:01:23.456, or seconds such as 83.5), or the frame number to type a frame, then press Enter; Esc or a click elsewhere cancels."
+msgstr "单击时间可输入时间（0:01:23.456，或秒数如 83.5），单击帧号可输入帧号，按回车跳转；Esc 或单击别处取消。"
 
 #: ../src/video_box.cpp
 msgid "Right-click to copy the time or the frame number."

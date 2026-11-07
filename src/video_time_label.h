@@ -11,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include <wx/eventfilter.h>
 #include <wx/window.h>
 
 class wxTextCtrl;
@@ -24,6 +25,7 @@ public:
 	/// @param badge  Room for the badge is kept whether it shows or not
 	/// @param dim    The main part in the dim colour too
 	VideoTimeLabel(wxWindow *parent, wxString sample, bool badge, bool dim);
+	~VideoTimeLabel();
 
 	/// Show @p main, then @p secondary dimmer, then the badge if @p badge_on
 	void SetParts(wxString const& main, wxString const& secondary = {}, bool badge_on = false);
@@ -33,11 +35,19 @@ public:
 
 	/// Badge text, e.g. "K" for a keyframe
 	void SetBadge(wxString const& text);
-	/// Clicking turns the label into a text box holding the main part;
-	/// Enter passes the text to @p commit, which returns false to keep
-	/// editing (bad input). Esc or clicking elsewhere puts the label back.
-	void EnableEditing(std::function<bool(wxString const&)> commit);
-	void StartEditing();
+	/// Clicking turns the part clicked into a text box holding it; Enter
+	/// passes the text to @p commit (the main part) or @p commit_secondary,
+	/// which return false to keep editing (bad input). Without
+	/// @p commit_secondary the whole label edits the main part. Esc or a
+	/// click anywhere else puts the label back.
+	void EnableEditing(std::function<bool(wxString const&)> commit,
+		std::function<bool(wxString const&)> commit_secondary = {});
+	/// Edit part @p part: 0 the main part, 1 the secondary one
+	void StartEditing(int part = 0);
+	/// The part being edited, -1 for none
+	int EditingPart() const { return IsEditing() ? editing_part : -1; }
+	/// The part a click at @p x edits
+	int PartAt(int x) const;
 	/// Whether clicking edits now (e.g. not without a video)
 	void SetEditable(bool on);
 	bool IsEditing() const;
@@ -61,7 +71,16 @@ private:
 	wxString main, secondary, badge_text = "K";
 	bool badge, dim, badge_on = false;
 	bool hover = false;
-	std::function<bool(wxString const&)> on_commit;
+	std::function<bool(wxString const&)> on_commit, on_commit_secondary;
+	int editing_part = 0;
+	int hover_part = -1;
+	/// Closes the box on a click outside it, wherever in the program
+	struct ClickOutside final : wxEventFilter {
+		VideoTimeLabel *label;
+		explicit ClickOutside(VideoTimeLabel *label) : label(label) { }
+		int FilterEvent(wxEvent &event) override;
+	} click_outside{this};
+	bool filtering = false;
 	wxTextCtrl *edit = nullptr;
 	wxWindow *focus_after = nullptr;
 	bool divider = true;
@@ -79,6 +98,10 @@ private:
 	/// Width for main + secondary (+ badge) with the paddings
 	int WidthFor(wxString const& m, wxString const& s) const;
 	void Fit(wxString const& m, wxString const& s);
+	/// Where the secondary part starts, and the box of part @p part
+	int SecondaryX() const;
+	wxRect PartRect(int part) const;
+	void StopFiltering();
 
 	void OnPaint(wxPaintEvent &);
 	void OnMouse(wxMouseEvent &event);

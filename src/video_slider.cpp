@@ -67,7 +67,8 @@ VideoSlider::VideoSlider (wxWindow* parent, agi::Context *c)
 	theme::AddChangeListener([this] { Refresh(false); }),
 }))
 {
-	SetMinSize(wxSize(FromDIP(20), FromDIP(22)));
+	// Tall enough for the handle at its largest: hovered, with the focus ring
+	SetMinSize(wxSize(FromDIP(20), FromDIP(26)));
 	SetBackgroundStyle(wxBG_STYLE_PAINT);
 	SetToolTip(_("Seek video"));
 
@@ -252,7 +253,9 @@ void VideoSlider::OnPaint(wxPaintEvent &) {
 	int left = Margin(), right = w - Margin();
 	if (right <= left) return;
 	int track = FromDIP(hover ? 6 : 4);
-	int cy = h / 2 + FromDIP(2); // room for the keyframe ticks above
+	// Room for the keyframe ticks above, and below for the handle at its
+	// largest (hovered, with the focus ring) so it is never cut off
+	int cy = std::min(h / 2 + FromDIP(2), h - FromDIP(11));
 	int track_top = cy - track / 2;
 
 	// The active line's time, behind the track

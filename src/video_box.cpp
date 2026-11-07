@@ -120,9 +120,15 @@ VideoBox::VideoBox(wxWindow *parent, bool isDetached, agi::Context *context)
 	VideoPosition->SetDivider(false);
 	VideoPosition->SetToolTip(
 		_("Current frame time and number. K marks a keyframe.") + "\n" +
-		_("Click to type a time (0:01:23.456, or seconds such as 83.5) or a frame number, then press Enter; Esc cancels.") + "\n" +
+		_("Click the time to type a time (0:01:23.456, or seconds such as 83.5), or the frame number to type a frame, then press Enter; Esc or a click elsewhere cancels.") + "\n" +
 		_("Right-click to copy the time or the frame number."));
-	VideoPosition->EnableEditing([this](wxString const& text) { return JumpTo(text); });
+	// The time takes a time or a frame number; the frame number only a frame
+	VideoPosition->EnableEditing(
+		[this](wxString const& text) { return JumpTo(text); },
+		[this](wxString text) {
+			text.Trim(true).Trim(false);
+			return !text.empty() && text.find_first_not_of("0123456789") == wxString::npos && JumpTo(text);
+		});
 	VideoPosition->SetFocusAfterEditing(slider);
 	VideoPosition->SetCopyItems({
 		{_("Copy time"), [this, context] { return context->project->VideoProvider() ? VideoPosition->GetMain() : wxString(); }},

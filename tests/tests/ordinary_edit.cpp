@@ -1087,6 +1087,47 @@ TEST_F(ordinary_edit, video_slider_and_readouts_are_flat_and_hold_still) {
     EXPECT_FALSE(position->IsEditing());
     EXPECT_EQ(249,c->videoController->GetFrameN());
 
+    // The frame number is edited on its own: clicking it opens a box over
+    // it alone, holding the frame number, which takes only digits.
+    {int frame_x=position->GetSize().x-position->FromDIP(4);
+     EXPECT_EQ(0,position->PartAt(position->FromDIP(12)));
+     EXPECT_EQ(1,position->PartAt(frame_x));
+     wxMouseEvent click(wxEVT_LEFT_DOWN);click.SetPosition({frame_x,position->GetSize().y/2});click.SetEventObject(position);
+     position->GetEventHandler()->ProcessEvent(click);
+     wxYield();
+     ASSERT_EQ(1,position->EditingPart());
+     EXPECT_EQ("249",position->EditBox()->GetValue());
+     EXPECT_GT(position->EditBox()->GetPosition().x,position->FromDIP(40)) << "the box covers the frame number only";
+     position->EditBox()->ChangeValue("0:00:01.000");position->CommitEditing();
+     EXPECT_EQ(1,position->EditingPart()) << "not a frame number";
+     position->EditBox()->ChangeValue(" 120 ");position->CommitEditing();
+     EXPECT_EQ(120,c->videoController->GetFrameN());
+     EXPECT_FALSE(position->IsEditing());}
+
+    // A click anywhere else closes the box, even on something that never
+    // takes the keyboard, so the box never loses the focus.
+    position->StartEditing();
+    ASSERT_EQ(0,position->EditingPart());
+    {wxMouseEvent away(wxEVT_LEFT_DOWN);away.SetEventObject(relative);
+     relative->GetEventHandler()->ProcessEvent(away);}
+    EXPECT_FALSE(position->IsEditing());
+    EXPECT_EQ(120,c->videoController->GetFrameN());
+    // A click in the box itself keeps it; one on the other part switches.
+    position->StartEditing();
+    {wxMouseEvent inside(wxEVT_LEFT_DOWN);inside.SetEventObject(position->EditBox());
+     position->EditBox()->GetEventHandler()->ProcessEvent(inside);}
+    EXPECT_EQ(0,position->EditingPart());
+    {wxMouseEvent other(wxEVT_LEFT_DOWN);other.SetPosition({position->GetSize().x-position->FromDIP(4),position->GetSize().y/2});other.SetEventObject(position);
+     position->GetEventHandler()->ProcessEvent(other);
+     wxYield();}
+    EXPECT_EQ(1,position->EditingPart());
+    position->CancelEditing();
+    EXPECT_EQ(-1,position->EditingPart());
+
+    // The slider is tall enough for the handle at its largest: hovered,
+    // with the focus ring.
+    EXPECT_GE(slider->GetClientSize().y,slider->FromDIP(26));
+
     // − and + keep the 12.5% steps; the presets are whole percentages.
     display->SetWindowZoom(.75);
     EXPECT_EQ("75%",zoom->ZoomText());
@@ -1117,6 +1158,17 @@ TEST_F(ordinary_edit, video_slider_and_readouts_are_flat_and_hold_still) {
         if(video_w==960) EXPECT_NEAR(block_w/2,centre,1) << "centred on the video";
         else EXPECT_NEAR((right(relative)+options_bar->GetPosition().x)/2,centre,gap) << "narrow: centred between the groups";
     }
+
+    // Offsets longer than the sample widen the readout, and the whole row
+    // makes room, so nothing is cut off or covered.
+    int relative_w=relative->GetSize().x;
+    {auto scope=c->subtitleAccess->TryWrite();
+     auto& row=LiveWriteForTest(*c).Events.front();row.Start=3000000;row.End=3600000;
+     LiveWriteForTest(*c).Commit("line",AssFile::COMMIT_DIAG_TIME);}
+    EXPECT_EQ(10u,relative->GetSecondary().length()) << "seven digits, more than the sample's five";
+    EXPECT_GT(relative->GetSize().x,relative_w);
+    EXPECT_GE(relative->GetSize().x,relative->GetMinSize().x);
+    EXPECT_LT(right(relative),play_bar->GetPosition().x);
 }
 
 TEST_F(ordinary_edit, style_look_applies_the_tags_before_a_point_of_the_line) {
