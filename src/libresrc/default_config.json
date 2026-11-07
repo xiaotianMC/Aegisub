@@ -22,6 +22,10 @@
 		"Save Charset" : "UTF-8",
 		"Save UI State" : true,
 		"Show Toolbar" : true,
+		"Style Panel" : {
+			"Show" : true,
+			"Width" : 280
+		},
 		"Toolbar Icon Size" : 16
 	},
 

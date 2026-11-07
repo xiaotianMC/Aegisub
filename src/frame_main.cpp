@@ -55,6 +55,7 @@
 #include "subs_controller.h"
 #include "subs_edit_box.h"
 #include "status_info.h"
+#include "style_panel.h"
 #include "utils.h"
 #include "version.h"
 #include "video_box.h"
@@ -67,6 +68,9 @@
 #include <libaegisub/dispatch.h>
 #include <libaegisub/log.h>
 
+#include <algorithm>
+
+#include <wx/dcclient.h>
 #include <wx/dnd.h>
 #include <wx/msgdlg.h>
 #include <wx/sizer.h>
@@ -84,6 +88,46 @@ enum {
 #else
 #define StartupLog(a) LOG_I("frame_main/init") << a
 #endif
+
+namespace {
+/// The gap left of the style panel: dragging it sets the panel's width
+class StylePanelSash final : public wxWindow {
+	wxWindow *panel;
+	int start_x = 0, start_width = 0;
+
+	void SetWidth(int width) {
+		width = std::clamp(width, panel->FromDIP(StylePanel::min_width), panel->FromDIP(StylePanel::max_width));
+		panel->SetMinSize(wxSize(width, -1));
+		panel->SetInitialSize(wxSize(width, -1));
+	}
+
+public:
+	StylePanelSash(wxWindow *parent, wxWindow *panel)
+	: wxWindow(parent, -1, wxDefaultPosition, wxSize(theme::BlockGap(parent), -1), wxBORDER_NONE)
+	, panel(panel)
+	{
+		theme::UseBackdrop(this);
+		SetWidth(panel->FromDIP(OPT_GET("App/Style Panel/Width")->GetInt()));
+		Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent &event) {
+			if (!this->panel->IsShown()) return;
+			start_x = ClientToScreen(event.GetPosition()).x;
+			start_width = this->panel->GetSize().x;
+			CaptureMouse();
+		});
+		Bind(wxEVT_MOTION, [this](wxMouseEvent &event) {
+			if (!HasCapture() || !event.LeftIsDown()) return;
+			SetWidth(start_width - (ClientToScreen(event.GetPosition()).x - start_x));
+			GetParent()->Layout();
+		});
+		Bind(wxEVT_LEFT_UP, [this](wxMouseEvent &) {
+			if (!HasCapture()) return;
+			ReleaseMouse();
+			OPT_SET("App/Style Panel/Width")->SetInt(this->panel->ToDIP(this->panel->GetSize().x));
+		});
+		Bind(wxEVT_MOUSE_CAPTURE_LOST, [](wxMouseCaptureLostEvent &) { });
+	}
+};
+}
 
 /// Handle files drag and dropped onto Aegisub
 class AegisubFileDropTarget final : public wxFileDropTarget {
@@ -237,9 +281,19 @@ void FrameMain::InitContents() {
 	// The visual tools sit in the middle between the video and the audio
 	videoBox->SetToolbarGap(gap);
 	MainSizer = new wxBoxSizer(wxVERTICAL);
-	MainSizer->Add(TopSizer, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, gap);
-	MainSizer->Add(context->subsGrid, 1, wxEXPAND | wxALL, gap);
-	Panel->SetSizer(MainSizer);
+	MainSizer->Add(TopSizer, 0, wxEXPAND | wxLEFT | wxTOP, gap);
+	MainSizer->Add(context->subsGrid, 1, wxEXPAND | wxLEFT | wxTOP | wxBOTTOM, gap);
+	// The style panel takes the whole height at the right (docs/style-panel.md);
+	// the gap before it is its resize strip
+	stylePanel = new StylePanel(Panel, context.get());
+	stylePanelSash = new StylePanelSash(Panel, stylePanel);
+	OuterSizer = new wxBoxSizer(wxHORIZONTAL);
+	OuterSizer->Add(MainSizer, 1, wxEXPAND);
+	OuterSizer->Add(stylePanelSash, 0, wxEXPAND);
+	OuterSizer->Add(stylePanel, 0, wxEXPAND | wxTOP | wxBOTTOM | wxRIGHT, gap);
+	Panel->SetSizer(OuterSizer);
+	ShowStylePanel(*OPT_GET("App/Style Panel/Show"));
+	BindConnection(OPT_SUB("App/Style Panel/Show", &FrameMain::ShowStylePanel, this));
 	tabs->SetEditor(Panel);
 	BindConnection(tabs->AddChangeListener(&FrameMain::UpdateStatus, this));
 	BindConnection(context->selectionController->AddActiveLineListener("frame_main.AddActiveLineListener", [this](SubtitleModelRebindTicket ticket) { UpdateStatus(); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime)));
@@ -248,6 +302,15 @@ void FrameMain::InitContents() {
 	StartupLog("Perform layout");
 	Layout();
 	StartupLog("Leaving InitContents");
+}
+
+void FrameMain::ShowStylePanel(agi::OptionValue const& opt) {
+	bool show = opt.GetBool();
+	// Without the panel the sash stays as the margin at the right
+	OuterSizer->Show(stylePanel, show);
+	stylePanelSash->SetCursor(show ? wxCursor(wxCURSOR_SIZEWE) : wxNullCursor);
+	OuterSizer->Layout();
+	if (show) stylePanel->UpdateNow();
 }
 
 void FrameMain::SetDisplayMode(int video, int audio) {

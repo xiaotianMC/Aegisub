@@ -141,6 +141,7 @@
         { "command" : "grid/tags/hide" },
         {},
         { "command" : "app/toggle/toolbar" },
+        { "command" : "app/toggle/style_panel" },
         {},
         { "command" : "app/command_palette" }
     ],

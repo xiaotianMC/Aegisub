@@ -57,6 +57,8 @@
 #include "video_slider.h"
 #include "video_time_label.h"
 #include "video_zoom_control.h"
+#include "style_look.h"
+#include "style_panel.h"
 #include "video_controller.h"
 #include "async_video_provider.h"
 #include "video_frame.h"
@@ -1114,6 +1116,135 @@ TEST_F(ordinary_edit, video_slider_and_readouts_are_flat_and_hold_still) {
         if(video_w==960) EXPECT_NEAR(block_w/2,centre,1) << "centred on the video";
         else EXPECT_NEAR((right(relative)+options_bar->GetPosition().x)/2,centre,gap) << "narrow: centred between the groups";
     }
+}
+
+TEST_F(ordinary_edit, style_look_applies_the_tags_before_a_point_of_the_line) {
+    AssStyle base; base.name="Base"; base.font="Arial"; base.fontsize=40; base.outline_w=2; base.shadow_w=3; base.alignment=2;
+    base.primary=agi::Color(255,255,255); base.outline=agi::Color(0,0,0);
+    AssStyle other; other.name="Other"; other.font="Other Font"; other.fontsize=20; other.alignment=8;
+    StyleLookup find=[&](std::string const& name)->AssStyle const* { return name=="Base"?&base:name=="Other"?&other:nullptr; };
+    AssDialogue line; line.Style="Base";
+    line.Text="{\\an7\\fs50\\b1}ab{\\i1\\1c&H0000FF&\\1a&H80&}cd{\\r}ef{\\rOther\\an3}gh";
+    auto at=[&](int plain) { return LookAt(line,plain,find); };
+    // Leading tags count from the start; the first alignment counts everywhere
+    EXPECT_EQ(50,at(0).size); EXPECT_EQ(700,at(0).weight); EXPECT_EQ(7,at(0).alignment); EXPECT_FALSE(at(0).italic);
+    EXPECT_FALSE(at(1).italic);
+    // The tags in front of a character apply to it
+    EXPECT_TRUE(at(2).italic); EXPECT_EQ(agi::Color(255,0,0,0x80),at(2).primary); EXPECT_EQ(50,at(2).size);
+    // \r goes back to the line's style, \rName to that one, alignment stays
+    EXPECT_EQ(40,at(4).size); EXPECT_FALSE(at(4).italic); EXPECT_EQ(400,at(4).weight); EXPECT_EQ(agi::Color(255,255,255),at(4).primary);
+    EXPECT_EQ("Other Font",at(6).font); EXPECT_EQ(20,at(6).size); EXPECT_EQ(7,at(6).alignment); EXPECT_EQ("Base",at(6).style);
+    // Shadow, border, alpha for all colours, weights, a tag without value
+    line.Text="{\\xshad4\\yshad-2\\xbord1\\ybord5\\alpha&HFF&\\b600\\fsp3\\blur1.5\\fs}x";
+    auto look=at(0);
+    EXPECT_EQ(4,look.shadow_x); EXPECT_EQ(-2,look.shadow_y); EXPECT_EQ(5,look.border); EXPECT_EQ(600,look.weight); EXPECT_FALSE(look.Bold());
+    EXPECT_EQ(255,look.primary.a); EXPECT_EQ(255,look.outline.a); EXPECT_EQ(255,look.shadow.a);
+    EXPECT_EQ(3,look.spacing); EXPECT_EQ(1.5,look.blur); EXPECT_EQ(40,look.size);
+    // Missing styles look like a new style; comments are not text
+    line.Style="Missing"; line.Text="{note}ab{\\u1}c";
+    EXPECT_EQ(AssStyle().font,at(0).font); EXPECT_FALSE(at(1).underline); EXPECT_TRUE(at(2).underline);
+    // Tags inside \t are where an animation ends, not how the text looks
+    line.Style="Base"; line.Text="{\\t(\\fs99\\b1)}x";
+    EXPECT_EQ(40,at(0).size); EXPECT_EQ(400,at(0).weight);
+    EXPECT_EQ(0,PlainPosition("{\\b1}abc",5)); EXPECT_EQ(2,PlainPosition("{\\b1}abc",7)); EXPECT_EQ(3,PlainPosition("a{b",3));
+}
+
+TEST_F(ordinary_edit, style_panel_shows_the_selected_text_lines_and_where_they_differ) {
+    std::vector<int> ids;
+    {auto write=c->subtitleAccess->TryWrite();auto &file=LiveWriteForTest(*c);
+     auto style=new AssStyle();style->name="Look";style->font="Look Sans";style->fontsize=40;style->outline_w=2;style->shadow_w=0;
+     style->primary=agi::Color(255,255,255);style->outline=agi::Color(0,0,0);style->shadow=agi::Color(0,0,0,0x80);style->alignment=2;
+     file.Styles.push_back(*style);
+     for(auto text:{"{\\b1}one","{\\an8\\fs60}two {\\i1}more","{\\bord0\\xshad2\\yshad2}three"}){
+        auto row=new AssDialogue();row->Style="Look";row->Text=text;ids.push_back(row->Id);file.Events.push_back(*row);}
+     file.Commit("fixture",AssFile::COMMIT_NEW);}
+    auto panel=new StylePanel(window,c.get());
+    auto shown=[&] { panel->UpdateNow(); return panel->Shown(); };
+
+    c->selectionController->SetSelectionAndActiveIDs({ids[0]},ids[0]);
+    auto s=shown();
+    EXPECT_EQ("The current line",s["scope"]);
+    EXPECT_EQ("Look",s["style"]); EXPECT_EQ("Look Sans",s["font"]); EXPECT_EQ("40",s["size"]); EXPECT_EQ("Bold",s["weight"]);
+    EXPECT_EQ("on",s["bold"]); EXPECT_EQ("off",s["italic"]);
+    EXPECT_EQ("on",s["align_centre"]); EXPECT_EQ("on",s["align_bottom"]); EXPECT_EQ("off",s["align_top"]);
+    EXPECT_EQ("on #FFFFFF 100%",s["fill"]);
+    EXPECT_EQ("on #000000 2",s["outline"]);
+    EXPECT_EQ("off #000000",s["background"]);
+    EXPECT_EQ("off #000000 50%",s["shadow"]);
+    EXPECT_EQ("0",s["shadow_distance"]);
+
+    // Several lines: what they share, and "—" where they differ
+    c->selectionController->SetSelectionAndActiveIDs({ids[0],ids[1],ids[2]},ids[0]);
+    s=shown();
+    EXPECT_EQ("3 selected lines",s["scope"]);
+    EXPECT_EQ("Look Sans",s["font"]); EXPECT_EQ(wxS("—"),s["size"]); EXPECT_EQ(wxS("—"),s["weight"]);
+    EXPECT_EQ("mixed",s["bold"]); EXPECT_EQ("off",s["italic"]);
+    EXPECT_EQ("mixed",s["align_top"]); EXPECT_EQ("mixed",s["align_bottom"]); EXPECT_EQ("on",s["align_centre"]);
+    EXPECT_EQ(wxS("mixed #000000 —"),s["outline"]);
+    EXPECT_EQ("mixed #000000 50%",s["shadow"]);
+    EXPECT_EQ(wxS("—"),s["shadow_distance"]);
+
+    // Text selected in the editor: how that text looks
+    c->selectionController->SetSelectionAndActiveIDs({ids[1]},ids[1]);
+    std::string two="{\\an8\\fs60}two {\\i1}more";
+    int more=static_cast<int>(two.find("more"));
+    c->textSelectionController->SetSelection(more,more+4);
+    s=shown();
+    EXPECT_EQ("The selected text",s["scope"]); EXPECT_EQ("on",s["italic"]); EXPECT_EQ("Italic",s["weight"]); EXPECT_EQ("60",s["size"]);
+    EXPECT_EQ("on",s["align_top"]);
+    c->textSelectionController->SetSelection(0,3);
+    s=shown();
+    EXPECT_EQ("The current line",s["scope"]) << "a selection inside the tags is no text";
+    int word=static_cast<int>(two.find("two"));
+    c->textSelectionController->SetSelection(word,word+3);
+    s=shown();
+    EXPECT_EQ("The selected text",s["scope"]); EXPECT_EQ("off",s["italic"]);
+    c->textSelectionController->SetSelection(0,0);
+
+    // Shadow distance and angle: 0° up, clockwise
+    c->selectionController->SetSelectionAndActiveIDs({ids[2]},ids[2]);
+    s=shown();
+    EXPECT_EQ("2.83",s["shadow_distance"]); EXPECT_EQ("135",s["shadow_angle"]);
+    EXPECT_EQ("on #000000 50%",s["shadow"]); EXPECT_EQ("off #000000 0",s["outline"]);
+
+    // An opaque box is the style's background, and then there is no outline
+    {auto write=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).GetStyle("Look")->borderstyle=3;LiveWriteForTest(*c).Commit("fixture",AssFile::COMMIT_STYLES);}
+    c->selectionController->SetSelectionAndActiveIDs({ids[0]},ids[0]);
+    s=shown();
+    EXPECT_EQ("on #000000",s["background"]); EXPECT_EQ("off #000000 2",s["outline"]);
+
+    // Edits show without asking, once the events have run
+    {auto write=c->subtitleAccess->TryWrite();
+     for(auto &line:LiveWriteForTest(*c).Events) if(line.Id==ids[0]) line.Text="{\\fs33}one";
+     LiveWriteForTest(*c).Commit("fixture",AssFile::COMMIT_DIAG_TEXT);}
+    wxTheApp->ProcessPendingEvents();
+    EXPECT_EQ("33",panel->Shown()["size"]);
+
+    c->selectionController->SetSelectionAndActiveIDs({},0);
+    s=shown();
+    EXPECT_EQ("No line selected",s["scope"]); EXPECT_EQ(wxS("—"),s["font"]); EXPECT_EQ("off",s["bold"]);
+
+    // Sections fold away
+    EXPECT_TRUE(panel->IsSectionShown("appearance"));
+    panel->ShowSection("appearance",false);
+    EXPECT_FALSE(panel->IsSectionShown("appearance"));
+    panel->ShowSection("appearance",true);
+    EXPECT_TRUE(panel->IsSectionShown("appearance"));
+    panel->Destroy();
+}
+
+TEST_F(ordinary_edit, style_panel_is_shown_and_hidden_from_the_view_menu) {
+    auto command=cmd::get("app/toggle/style_panel");
+    ASSERT_NE(nullptr,command);
+    bool before=OPT_GET("App/Style Panel/Show")->GetBool();
+    EXPECT_EQ(before?_("Hide Style Panel"):_("Show Style Panel"),command->StrMenu(c.get()));
+    (*command)(c.get());
+    EXPECT_NE(before,OPT_GET("App/Style Panel/Show")->GetBool());
+    (*command)(c.get());
+    EXPECT_EQ(before,OPT_GET("App/Style Panel/Show")->GetBool());
+    std::ifstream menu(AEGISUB_SOURCE_ROOT "/src/libresrc/default_menu.json");
+    std::string json((std::istreambuf_iterator<char>(menu)),std::istreambuf_iterator<char>());
+    EXPECT_NE(std::string::npos,json.find("\"app/toggle/style_panel\""));
 }
 
 class audio_edit : public ordinary_edit {

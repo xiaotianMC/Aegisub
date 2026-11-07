@@ -8696,3 +8696,151 @@ msgstr "音量：%s"
 #: src/audio_levels.cpp
 msgid "Vertical zoom and volume are linked: click to separate them"
 msgstr "垂直缩放和音量已联动，点击取消联动"
+
+#: src/style_panel.cpp
+msgid "A box behind the text in the outline colour. Only a style can have one: its border style is \"opaque box\""
+msgstr "文字后面的底框，颜色为描边颜色。只有样式能设置：把它的边框样式设为“不透明底框”"
+
+#: src/style_panel.cpp
+msgid "Align left (\\an1, \\an4, \\an7)"
+msgstr "左对齐（\\an1、\\an4、\\an7）"
+
+#: src/style_panel.cpp
+msgid "Align right (\\an3, \\an6, \\an9)"
+msgstr "右对齐（\\an3、\\an6、\\an9）"
+
+#: src/style_panel.cpp
+msgid "Align to the bottom (\\an1, \\an2, \\an3)"
+msgstr "底部对齐（\\an1、\\an2、\\an3）"
+
+#: src/style_panel.cpp
+msgid "Align to the top (\\an7, \\an8, \\an9)"
+msgstr "顶部对齐（\\an7、\\an8、\\an9）"
+
+#: src/style_panel.cpp
+msgid "Centre horizontally (\\an2, \\an5, \\an8)"
+msgstr "水平居中（\\an2、\\an5、\\an8）"
+
+#: src/style_panel.cpp
+msgid "Centre vertically (\\an4, \\an5, \\an6)"
+msgstr "垂直居中（\\an4、\\an5、\\an6）"
+
+#: src/style_panel.cpp
+msgid "Blur"
+msgstr "模糊"
+
+#: src/style_panel.cpp
+msgid "Bold"
+msgstr "粗体"
+
+#: src/style_panel.cpp
+msgid "Bold (\\b)"
+msgstr "粗体（\\b）"
+
+#: src/style_panel.cpp
+msgid "Bold Italic"
+msgstr "粗斜体"
+
+#: src/style_panel.cpp
+msgid "Regular"
+msgstr "常规"
+
+#: src/style_panel.cpp
+msgid "Italic (\\i)"
+msgstr "斜体（\\i）"
+
+#: src/style_panel.cpp
+msgid "Underline (\\u)"
+msgstr "下划线（\\u）"
+
+#: src/style_panel.cpp
+msgid "Strikeout (\\s)"
+msgstr "删除线（\\s）"
+
+#: src/style_panel.cpp
+msgid "Colour and opacity of the letters (\\1c, \\1a)"
+msgstr "文字的颜色和不透明度（\\1c、\\1a）"
+
+#: src/style_panel.cpp
+msgid "Colour and opacity of the shadow (\\4c, \\4a)"
+msgstr "阴影的颜色和不透明度（\\4c、\\4a）"
+
+#: src/style_panel.cpp
+msgid "Colour and width of the outline (\\3c, \\3a, \\bord)"
+msgstr "描边的颜色和宽度（\\3c、\\3a、\\bord）"
+
+#: src/style_panel.cpp
+msgid "Distance"
+msgstr "距离"
+
+#: src/style_panel.cpp
+msgid "Extra space between letters, in pixels (\\fsp)"
+msgstr "字母之间额外的间距，单位为像素（\\fsp）"
+
+#: src/style_panel.cpp
+msgid "Font (\\fn)"
+msgstr "字体（\\fn）"
+
+#: src/style_panel.cpp
+msgid "Font size (\\fs)"
+msgstr "字号（\\fs）"
+
+#: src/style_panel.cpp
+msgid "How far the shadow falls from the text (\\xshad, \\yshad)"
+msgstr "阴影离文字的距离（\\xshad、\\yshad）"
+
+#: src/style_panel.cpp
+msgid "No line selected"
+msgstr "没有选中的行"
+
+#: src/style_panel.cpp
+msgid "Softens the edges of the outline, or the letters without one (\\blur)"
+msgstr "柔化描边的边缘；没有描边时柔化文字边缘（\\blur）"
+
+#: src/style_panel.cpp
+msgid "The current line"
+msgstr "当前行"
+
+#: src/style_panel.cpp
+msgid "The line's style: what the text looks like without override tags"
+msgstr "行的样式：不加覆盖标签时文字的样子"
+
+#: src/style_panel.cpp
+msgid "The selected text"
+msgstr "选中的文字"
+
+#: src/style_panel.cpp
+msgid "Weight and slant (\\b, \\i)"
+msgstr "字重和倾斜（\\b、\\i）"
+
+#: src/style_panel.cpp
+msgid "Which way the shadow falls: 90° is right, 180° down (\\xshad, \\yshad)"
+msgstr "阴影的方向：90° 向右，180° 向下（\\xshad、\\yshad）"
+
+#: src/command/app.cpp
+msgid "Show Style Panel"
+msgstr "显示样式面板"
+
+#: src/command/app.cpp
+msgid "Hide Style Panel"
+msgstr "隐藏样式面板"
+
+#: src/command/app.cpp
+msgid "Show or hide the style panel at the right of the window"
+msgstr "显示或隐藏窗口右侧的样式面板"
+
+#: src/style_panel.cpp
+#, c-format
+msgid "Weight %d"
+msgstr "字重 %d"
+
+#: src/style_panel.cpp
+#, c-format
+msgid "Weight %d, italic"
+msgstr "字重 %d，斜体"
+
+#: src/style_panel.cpp
+#, c-format
+msgid "%d selected line"
+msgid_plural "%d selected lines"
+msgstr[0] "所选的 %d 行"

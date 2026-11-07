@@ -123,6 +123,8 @@ aegisub_src = files(
     'spline.cpp',
     'spline_curve.cpp',
     'startup_window.cpp',
+    'style_look.cpp',
+    'style_panel.cpp',
     'subs_controller.cpp',
     'subtitle_binding.cpp',
     'subs_edit_box.cpp',

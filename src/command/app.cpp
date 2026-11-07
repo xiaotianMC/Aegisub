@@ -279,6 +279,27 @@ struct app_toggle_toolbar final : public Command {
 	}
 };
 
+struct app_toggle_style_panel final : public Command {
+	CMD_NAME("app/toggle/style_panel")
+	STR_HELP("Show or hide the style panel at the right of the window")
+	CMD_TYPE(COMMAND_DYNAMIC_NAME)
+
+	wxString StrMenu(const agi::Context *) const override {
+		return OPT_GET("App/Style Panel/Show")->GetBool() ?
+			_("Hide Style Panel") :
+			_("Show Style Panel");
+	}
+
+	wxString StrDisplay(const agi::Context *) const override {
+		return StrMenu(nullptr);
+	}
+
+	void operator()(agi::Context *) override {
+		agi::OptionValue *opt = OPT_SET("App/Style Panel/Show");
+		opt->SetBool(!opt->GetBool());
+	}
+};
+
 struct app_updates final : public Command {
 	CMD_NAME("app/updates")
 	STR_MENU("&Check for Updates...")
@@ -376,6 +397,7 @@ namespace cmd {
 		reg(std::make_unique<app_project_manager>());
 		reg(std::make_unique<app_toggle_global_hotkeys>());
 		reg(std::make_unique<app_toggle_toolbar>());
+		reg(std::make_unique<app_toggle_style_panel>());
 #ifdef __WXMAC__
 		reg(std::make_unique<app_minimize>());
 		reg(std::make_unique<app_maximize>());

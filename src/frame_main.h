@@ -38,6 +38,7 @@
 class AegisubApp;
 class AsyncVideoProvider;
 class AudioBox;
+class StylePanel;
 class VideoBox;
 namespace agi { class AudioProvider; }
 namespace agi { struct Context; class OptionValue; }
@@ -79,10 +80,14 @@ private:
 	void OnSubtitlesOpen();
 
 	void EnableToolBar(agi::OptionValue const& opt);
+	void ShowStylePanel(agi::OptionValue const& opt);
 
 	AudioBox *audioBox;      ///< The audio area
 	VideoBox *videoBox;      ///< The video area
+	StylePanel *stylePanel;  ///< The style panel at the right
+	wxWindow *stylePanelSash; ///< The gap before it, which sets its width
 
+	wxSizer *OuterSizer; ///< The editing area, then the style panel at the right
 	wxSizer *MainSizer;  ///< Arranges things from top to bottom in the window
 	wxSizer *TopSizer;   ///< Arranges video box and tool box from left to right
 	wxSizer *ToolsSizer; ///< Arranges audio and editing areas top to bottom
