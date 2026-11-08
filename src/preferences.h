@@ -30,14 +30,14 @@
 class wxButton;
 class wxSearchCtrl;
 class wxStaticText;
-class wxTreebook;
+class PreferencesBook;
 namespace agi { class OptionValue; }
 
 class Preferences final : public wxDialog {
 public:
 	typedef std::function<void ()> Thunk;
 private:
-	wxTreebook *book;
+	PreferencesBook *book = nullptr;
 	wxButton *applyButton;
 
 	std::map<std::string, std::unique_ptr<agi::OptionValue>> pending_changes;
@@ -62,11 +62,12 @@ private:
 	void IndexPages();
 	void ShowMatches();
 	void NextMatchingPage();
+	/// Scroll @p page to its first match, while searching
+	void ShowFirstMatch(size_t page);
 
 	void OnOK(wxCommandEvent &);
 	void OnCancel(wxCommandEvent &);
 	void OnApply(wxCommandEvent &);
-	void OnResetDefault(wxCommandEvent&);
 
 public:
 	Preferences(wxWindow *parent);
@@ -93,12 +94,21 @@ public:
 	void Search(wxString const& query);
 	/// Put @p query in the search box and search for it
 	void ShowSearch(wxString const& query);
+	/// The value @p name will be given by OK or Apply, if it was changed; for tests
+	agi::OptionValue const* Pending(std::string const& name) const {
+		auto it = pending_changes.find(name);
+		return it == pending_changes.end() ? nullptr : it->second.get();
+	}
 	/// Pages with a match, in order.
 	std::vector<size_t> const& MatchingPages() const { return matching_pages; }
 	/// Highlighted controls on @p page.
 	std::vector<wxWindow*> MatchingControls(size_t page) const;
 	/// Page shown now.
 	size_t CurrentPage() const;
+	PreferencesBook *Book() const { return book; }
+	/// Give the page shown its defaults, as Restore Page Defaults does: its
+	/// settings until OK or Cancel; the hotkeys at once, after asking
+	void RestorePageDefaults();
 	/// What the search found, as shown beside the search box.
 	wxString SearchStatus() const;
 };

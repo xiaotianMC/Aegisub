@@ -30,6 +30,7 @@
 #include "theme.h"
 #include "command_palette.h"
 #include "preferences.h"
+#include "preferences_base.h"
 #include "status_info.h"
 #include <wx/checkbox.h>
 #include "include/aegisub/toolbar.h"
@@ -906,6 +907,104 @@ TEST_F(ordinary_edit, preferences_search_highlights_labels_and_shows_a_matching_
     EXPECT_TRUE(prefs.MatchingPages().empty());
     EXPECT_TRUE(prefs.SearchStatus().empty());
     for (size_t page = 0; page < 20; ++page) EXPECT_TRUE(prefs.MatchingControls(page).empty());
+}
+
+TEST_F(ordinary_edit, preferences_rows_are_drawn_controls_that_set_their_options) {
+    auto undo_levels = OPT_GET("Limits/Undo Levels")->GetInt();
+    ASSERT_NE(81, undo_levels);
+    auto linked = OPT_GET("App/Auto/Load Linked Files")->GetInt();
+    auto autosave = OPT_GET("App/Auto/Save")->GetBool();
+    Preferences prefs(window);
+    auto book = prefs.Book();
+    // The page holding @p option, and its control
+    auto page_of = [&](const char *option) -> OptionPage* {
+        for (size_t i = 0; i < book->GetPageCount(); ++i)
+            if (auto page = dynamic_cast<OptionPage*>(book->GetPage(i)); page && page->ControlOf(option)) return page;
+        return nullptr;
+    };
+    auto control = [&](const char *option) { auto page = page_of(option); return page ? page->ControlOf(option) : nullptr; };
+    // What OK would set
+    auto pending = [&](const char *name) { auto value = prefs.Pending(name); EXPECT_TRUE(value) << name; return value; };
+
+    // A number: typed, then a turn of the wheel; out of range is not taken
+    auto undo = dynamic_cast<FlatFrame*>(control("Limits/Undo Levels"));
+    ASSERT_TRUE(undo);
+    auto undo_text = dynamic_cast<wxTextCtrl*>(undo->GetContent());
+    ASSERT_TRUE(undo_text);
+    undo_text->SetValue("80");
+    undo->Wheel(1);
+    EXPECT_EQ("81", undo_text->GetValue());
+    undo_text->SetValue("1");
+    if (auto v = pending("Limits/Undo Levels")) EXPECT_EQ(81, v->GetInt());
+
+    // A list
+    auto list = dynamic_cast<FlatChoice*>(control("App/Auto/Load Linked Files"));
+    ASSERT_TRUE(list);
+    list->Choose(linked == 0 ? 1 : 0);
+    if (auto v = pending("App/Auto/Load Linked Files")) EXPECT_EQ(linked == 0 ? 1 : 0, v->GetInt());
+
+    // A check box, its label its own, enabling the settings that depend on it
+    auto enable = dynamic_cast<FlatCheck*>(control("App/Auto/Save"));
+    ASSERT_TRUE(enable);
+    EXPECT_EQ("Enable", enable->GetLabel());
+    EXPECT_EQ(autosave, enable->GetValue());
+    auto interval = control("App/Auto/Save Every Seconds");
+    ASSERT_TRUE(interval);
+    EXPECT_EQ(autosave, interval->IsThisEnabled());
+    enable->Toggle();
+    EXPECT_EQ(!autosave, interval->IsThisEnabled());
+    if (auto v = pending("App/Auto/Save")) EXPECT_EQ(!autosave, v->GetBool());
+    EXPECT_EQ(undo_levels, OPT_GET("Limits/Undo Levels")->GetInt()) << "only once OK is pressed";
+
+    // Changed from the default: marked, and the mark's ↺ brings the default back
+    auto general = page_of("Limits/Undo Levels");
+    EXPECT_TRUE(general->IsModified("Limits/Undo Levels"));
+    general->Reset("Limits/Undo Levels");
+    EXPECT_FALSE(general->IsModified("Limits/Undo Levels"));
+    auto fallback = pending("Limits/Undo Levels");
+    ASSERT_TRUE(fallback);
+    EXPECT_EQ(wxString::Format("%d", (int)fallback->GetInt()), undo_text->GetValue());
+
+    // A check box goes back through its event: what depends on it follows
+    auto backup = page_of("App/Auto/Save");
+    bool modified = backup->IsModified("App/Auto/Save");
+    backup->Reset("App/Auto/Save");
+    EXPECT_FALSE(backup->IsModified("App/Auto/Save"));
+    EXPECT_EQ(enable->GetValue(), interval->IsThisEnabled());
+    (void)modified;
+
+    // Restore Page Defaults: every setting of the page shown, and no other
+    list->Choose(linked == 0 ? 1 : 0);
+    for (size_t i = 0; i < book->GetPageCount(); ++i) if (book->GetPage(i) == general) book->ChangeSelection(i);
+    prefs.RestorePageDefaults();
+    for (auto const& option : general->Options()) EXPECT_FALSE(general->IsModified(option)) << option;
+    EXPECT_TRUE(enable->GetValue() == pending("App/Auto/Save")->GetBool());
+}
+
+TEST_F(ordinary_edit, preferences_pages_are_listed_by_use_with_their_matches) {
+    Preferences prefs(window);
+    auto book = prefs.Book();
+    std::vector<wxString> names;
+    for (size_t i = 0; i < book->GetPageCount(); ++i) names.push_back(book->GetPageText(i));
+    std::vector<wxString> expected{"General", "Default styles", "Appearance", "Colors", "Editing", "Subtitle Grid",
+        "Audio", "Video", "Hotkeys", "Backup", "Automation", "Advanced", "Audio", "Video"};
+    EXPECT_EQ(expected, names);
+
+    // Searching: the pages with a match show how many
+    prefs.Search("font");
+    ASSERT_FALSE(prefs.MatchingPages().empty());
+    for (size_t i = 0; i < book->GetPageCount(); ++i) {
+        bool match = std::find(prefs.MatchingPages().begin(), prefs.MatchingPages().end(), i) != prefs.MatchingPages().end();
+        EXPECT_EQ(match, !book->MatchText(i).empty()) << i;
+        if (match) EXPECT_EQ(wxString::Format("%zu", prefs.MatchingControls(i).size()), book->MatchText(i));
+    }
+    prefs.Search("");
+    for (size_t i = 0; i < book->GetPageCount(); ++i) EXPECT_TRUE(book->MatchText(i).empty());
+
+    // Choosing a page in the list remembers it
+    book->SetSelection(4);
+    EXPECT_EQ(4u, prefs.CurrentPage());
+    EXPECT_EQ(4, OPT_GET("Tool/Preferences/Page")->GetInt());
 }
 
 TEST_F(ordinary_edit, status_bar_shows_the_current_line_and_the_file_state) {
@@ -5548,4 +5647,3 @@ TEST_F(audio_edit, level_tracks_set_zoom_and_volume_with_link_and_reset) {
     EXPECT_EQ("+18dB",AudioLevels::VolumeText(100));
     EXPECT_EQ("-18dB",AudioLevels::VolumeText(25));
 }
-

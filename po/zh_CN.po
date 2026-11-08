@@ -9411,3 +9411,81 @@ msgstr "倒放移动"
 
 msgid "Reverse: swap the start and the end, so the selected lines move back the way they came"
 msgstr "倒放：对调起点和终点，选中的行沿原路往回移动"
+
+msgid "%d matches on %d pages; Enter shows the next"
+msgstr "找到 %d 项，分布在 %d 页；按回车看下一页"
+
+msgid "&Restore Page Defaults"
+msgstr "恢复本页默认值(&R)"
+
+msgid "Give every setting of the page shown its default; OK keeps it, Cancel forgets it. On the hotkeys page, restore the default hotkeys."
+msgstr "把当前页的所有设置恢复为默认值；按“确定”生效，按“取消”放弃。在快捷键页则恢复默认快捷键。"
+
+msgid "Restore the default hotkeys? Every hotkey you have set will be lost."
+msgstr "恢复默认快捷键？你设置过的快捷键都会丢失。"
+
+msgid "Changed from the default: click to restore the default"
+msgstr "已改过默认值：点击恢复默认值"
+
+msgid "0 doesn't check"
+msgstr "0 表示不检查"
+
+msgid "?video: next to the video; ?script: next to the subtitles; .: the working folder"
+msgstr "?video：视频所在文件夹；?script：字幕所在文件夹；.：工作文件夹"
+
+msgid "Clicking a line gives the keyboard to the grid, rather than leaving it in the text"
+msgstr "点击字幕行时键盘焦点转到字幕列表，而不是留在文本框"
+
+msgid "Dragging the boundary between two lines that touch moves both"
+msgstr "拖动两行相接处的边界时，两行一起移动"
+
+msgid "Dragging with the left button sets the end; otherwise it sets the start"
+msgstr "按住左键拖动设置结束时间；不勾选时设置开始时间"
+
+msgid "Editing"
+msgstr "编辑"
+
+msgid "Interaction"
+msgstr "操作"
+
+msgid "Keep the playback cursor in view while playing"
+msgstr "播放时让播放光标始终可见"
+
+msgid "Leave tags out of the text column, rather than showing a symbol for each"
+msgstr "文本列中直接省略标签，不再为每个标签显示一个符号"
+
+msgid "Lines showing on the video's current frame get their own background"
+msgstr "在视频当前帧上显示的字幕行用单独的底色标出"
+
+msgid "Playback"
+msgstr "播放"
+
+msgid "Show the parameters of the tag being typed, above the text"
+msgstr "在文本上方显示正在输入的标签的参数"
+
+msgid "Snapping"
+msgstr "吸附"
+
+msgid "Startup"
+msgstr "启动"
+
+msgid "The audio display takes the keyboard when the pointer is over it"
+msgstr "鼠标移到音频栏上时，键盘焦点转到音频栏"
+
+msgid "The video, audio and keyframes a subtitle file names, when it is opened"
+msgstr "打开字幕文件时，一并打开其中记录的视频、音频和关键帧"
+
+msgid "Timing"
+msgstr "时间"
+
+msgid "Toolbar"
+msgstr "工具栏"
+
+msgid "Typing in a time replaces the digits after the cursor, rather than pushing them along"
+msgstr "在时间框中输入时覆盖光标后的数字，而不是把它们往后推"
+
+msgid "Video Display"
+msgstr "视频显示"
+
+msgid "Where the video and the grid were, saved with the file and restored when it is opened again"
+msgstr "把视频和字幕列表的位置保存在文件中，再次打开时恢复"

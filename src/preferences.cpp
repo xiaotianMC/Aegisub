@@ -26,6 +26,7 @@
 #include "command/command.h"
 #include "compat.h"
 #include "format.h"
+#include "flat_controls.h"
 #include "help_button.h"
 #include "hotkey_data_view_model.h"
 #include "include/aegisub/audio_player.h"
@@ -61,8 +62,6 @@
 #include <wx/spinctrl.h>
 #include <wx/statbox.h>
 #include <wx/stattext.h>
-#include <wx/treectrl.h>
-#include <wx/treebook.h>
 
 namespace {
 wxArrayString get_registered_commands() {
@@ -100,21 +99,20 @@ wxArrayString get_hotkey_command_choices(HotkeyDataViewModel *model) {
 #endif
 
 /// General preferences page
-void General(wxTreebook *book, Preferences *parent) {
+void General(PreferencesBook *book, Preferences *parent) {
 	auto p = new OptionPage(book, parent, _("General"));
 
-	auto general = p->PageSizer(_("General"));
-	p->OptionAdd(general, _("Check for updates on startup"), "App/Auto/Check For Updates");
-	p->OptionAdd(general, _("Show main toolbar"), "App/Show Toolbar");
-	p->OptionAdd(general, _("Classic main toolbar (every button)"), "App/Classic Toolbar");
-	p->OptionAdd(general, _("Classic coloured icons"), "App/Classic Icons");
-	p->OptionAdd(general, _("Save UI state in subtitles files"), "App/Save UI State");
-
-	p->OptionAdd(general, _("Toolbar Icon Size"), "App/Toolbar Icon Size");
+	auto startup = p->PageSizer(_("Startup"));
+	p->OptionAdd(startup, _("Check for updates on startup"), "App/Auto/Check For Updates");
 	wxString autoload_modes[] = { _("Never"), _("Always"), _("Ask") };
 	wxArrayString autoload_modes_arr(3, autoload_modes);
-	p->OptionChoice(general, _("Automatically load linked files"), autoload_modes_arr, "App/Auto/Load Linked Files");
-	p->OptionAdd(general, _("Undo Levels"), "Limits/Undo Levels", {.min = 2, .max = 10000});
+	p->OptionChoice(startup, _("Automatically load linked files"), autoload_modes_arr, "App/Auto/Load Linked Files", false,
+		_("The video, audio and keyframes a subtitle file names, when it is opened"));
+
+	auto files = p->PageSizer(_("Files"));
+	p->OptionAdd(files, _("Save UI state in subtitles files"), "App/Save UI State",
+		{.help = _("Where the video and the grid were, saved with the file and restored when it is opened again")});
+	p->OptionAdd(files, _("Undo Levels"), "Limits/Undo Levels", {.min = 2, .max = 10000});
 
 	auto recent = p->PageSizer(_("Recently Used Lists"));
 	p->OptionAdd(recent, _("Files"), "Limits/MRU", {.min = 0, .max = 16});
@@ -123,22 +121,11 @@ void General(wxTreebook *book, Preferences *parent) {
 	p->SetSizerAndFit(p->sizer);
 }
 
-void General_DefaultStyles(wxTreebook *book, Preferences *parent) {
+void General_DefaultStyles(PreferencesBook *book, Preferences *parent) {
 	auto p = new OptionPage(book, parent, _("Default styles"), OptionPage::PAGE_SUB);
 
-	auto staticbox = new wxStaticBoxSizer(wxVERTICAL, p, _("Default style catalogs"));
-	p->sizer->Add(staticbox, 0, wxEXPAND, 5);
-	p->sizer->AddSpacer(8);
-
-	auto instructions = new wxStaticText(staticbox->GetStaticBox(), wxID_ANY, _("The chosen style catalogs will be loaded when you start a new file or import files in the various formats.\n\nYou can set up style catalogs in the Style Manager."));
-	p->sizer->Fit(p);
-	instructions->Wrap(400);
-	staticbox->Add(instructions, 0, wxALL, 5);
-	staticbox->AddSpacer(16);
-
-	auto general = new wxFlexGridSizer(2, 5, 5);
-	general->AddGrowableCol(0, 1);
-	staticbox->Add(general, 1, wxEXPAND, 5);
+	auto section = p->PageSizer(_("Default style catalogs"));
+	p->Note(section, _("The chosen style catalogs will be loaded when you start a new file or import files in the various formats.\n\nYou can set up style catalogs in the Style Manager."));
 
 	// Build a list of available style catalogs, and wished-available ones
 	auto const& avail_catalogs = AssStyleStorage::GetCatalogs();
@@ -155,8 +142,6 @@ void General_DefaultStyles(wxTreebook *book, Preferences *parent) {
 		catalogs.Add(to_wx(cn));
 	catalogs.Sort();
 
-	PageSection section = {general, staticbox->GetStaticBox()};
-
 	p->OptionChoice(section, _("New files"), catalogs, "Subtitle Format/ASS/Default Style Catalog");
 	p->OptionChoice(section, _("MicroDVD import"), catalogs, "Subtitle Format/MicroDVD/Default Style Catalog");
 	p->OptionChoice(section, _("SRT import"), catalogs, "Subtitle Format/SRT/Default Style Catalog");
@@ -166,43 +151,111 @@ void General_DefaultStyles(wxTreebook *book, Preferences *parent) {
 	p->SetSizerAndFit(p->sizer);
 }
 
+/// Appearance preferences page: the theme and the toolbar
+void Appearance(PreferencesBook *book, Preferences *parent) {
+	auto p = new OptionPage(book, parent, _("Appearance"));
+
+	auto theme_section = p->PageSizer(_("Theme"));
+	const wxString themes[] = { _("Follow system"), _("Light"), _("Dark") };
+	p->OptionChoice(theme_section, _("Theme"), wxArrayString(3, themes), "App/Theme");
+	// Custom-drawn parts switch at once; toolkit controls fully only after a restart.
+	p->Note(theme_section, _("The subtitle grid and edit box switch at once; some window controls switch fully only after a restart."));
+
+	auto toolbar = p->PageSizer(_("Toolbar"));
+	p->OptionAdd(toolbar, _("Show main toolbar"), "App/Show Toolbar");
+	p->OptionAdd(toolbar, _("Classic main toolbar (every button)"), "App/Classic Toolbar");
+	p->OptionAdd(toolbar, _("Classic coloured icons"), "App/Classic Icons");
+	p->OptionAdd(toolbar, _("Toolbar Icon Size"), "App/Toolbar Icon Size");
+
+	p->SetSizerAndFit(p->sizer);
+}
+
+/// Editing preferences page: the edit box and what helps typing in it
+void Editing(PreferencesBook *book, Preferences *parent) {
+	auto p = new OptionPage(book, parent, _("Editing"));
+
+	auto edit_box = p->PageSizer(_("Edit Box"));
+	p->OptionAdd(edit_box, _("Enable call tips"), "App/Call Tips",
+		{.help = _("Show the parameters of the tag being typed, above the text")});
+	p->OptionAdd(edit_box, _("Enable ASS autocompletion"), "Subtitle/Edit Box/Auto Completion");
+	p->OptionAdd(edit_box, _("Enable syntax highlighting"), "Subtitle/Highlight/Syntax");
+	p->OptionAdd(edit_box, _("Shift+Enter adds \\n"), "Subtitle/Edit Box/Soft Line Break");
+	p->OptionAdd(edit_box, _("Overwrite in time boxes"), "Subtitle/Time Edit/Insert Mode",
+		{.help = _("Typing in a time replaces the digits after the cursor, rather than pushing them along")});
+	p->OptionAdd(edit_box, _("Line fields below the text, next to the grid"), "Subtitle/Edit Box/Fields Below Text");
+	p->OptionFont(edit_box, "Subtitle/Edit Box/");
+	p->OptionBrowse(edit_box, _("Dictionaries path"), "Path/Dictionary");
+
+	auto character_count = p->PageSizer(_("Character Counter"));
+	p->OptionAdd(character_count, _("Maximum characters per line"), "Subtitle/Character Limit", {.min = 0, .max = 1000, .help = _("0 doesn't check")});
+	p->OptionAdd(character_count, _("Characters Per Second Warning Threshold"), "Subtitle/Character Counter/CPS Warning Threshold", {.min = 0, .max = 1000});
+	p->OptionAdd(character_count, _("Characters Per Second Error Threshold"), "Subtitle/Character Counter/CPS Error Threshold", {.min = 0, .max = 1000});
+	p->OptionAdd(character_count, _("Ignore whitespace"), "Subtitle/Character Counter/Ignore Whitespace");
+	p->OptionAdd(character_count, _("Ignore punctuation"), "Subtitle/Character Counter/Ignore Punctuation");
+
+	auto tl_assistant = p->PageSizer(_("Translation Assistant"));
+	p->OptionAdd(tl_assistant, _("Skip over whitespace"), "Tool/Translation Assistant/Skip Whitespace");
+
+	p->SetSizerAndFit(p->sizer);
+}
+
+/// Subtitle grid preferences page
+void Grid(PreferencesBook *book, Preferences *parent) {
+	auto p = new OptionPage(book, parent, _("Subtitle Grid"));
+
+	auto grid = p->PageSizer(_("Options"));
+	p->OptionAdd(grid, _("Focus grid on click"), "Subtitle/Grid/Focus Allow",
+		{.help = _("Clicking a line gives the keyboard to the grid, rather than leaving it in the text")});
+	p->OptionAdd(grid, _("Highlight visible subtitles"), "Subtitle/Grid/Highlight Subtitles in Frame",
+		{.help = _("Lines showing on the video's current frame get their own background")});
+	p->OptionAdd(grid, _("Shade every other row"), "Subtitle/Grid/Alternate Rows");
+	p->OptionAdd(grid, _("Hide overrides symbol"), "Subtitle/Grid/Hide Overrides Char",
+		{.help = _("Leave tags out of the text column, rather than showing a symbol for each")});
+	p->OptionFont(grid, "Subtitle/Grid/");
+
+	p->SetSizerAndFit(p->sizer);
+}
+
 /// Audio preferences page
-void Audio(wxTreebook *book, Preferences *parent) {
+void Audio(PreferencesBook *book, Preferences *parent) {
 	auto p = new OptionPage(book, parent, _("Audio"));
 
-	auto general = p->PageSizer(_("Options"));
-	p->OptionAdd(general, _("Default mouse wheel to zoom"), "Audio/Wheel Default to Zoom");
-	p->OptionAdd(general, _("Lock scroll on cursor"), "Audio/Lock Scroll on Cursor");
-	p->OptionAdd(general, _("Snap markers by default"), "Audio/Snap/Enable");
-	p->OptionAdd(general, _("Auto-focus on mouse over"), "Audio/Auto/Focus");
-	p->OptionAdd(general, _("Play audio when stepping in video"), "Audio/Plays When Stepping Video");
-	p->OptionAdd(general, _("Left-click-drag moves end marker"), "Audio/Drag Timing");
-	p->OptionAdd(general, _("Default timing length (ms)"), "Timing/Default Duration", {.min = 0, .max = 36000});
-	p->OptionAdd(general, _("Automatically link nearby subtitles"), "Timing/Link Adjacent Lines");
-	p->CellSkip(general);
-	p->OptionAdd(general, _("Link subtitle gaps under (s)"), "Timing/Adjacent Line Gap", {.min = 0, .max = 10, .inc = 0.1});
-	p->OptionAdd(general, _("Default lead-in length (ms)"), "Audio/Lead/IN", {.min = 0, .max = 36000});
-	p->OptionAdd(general, _("Default lead-out length (ms)"), "Audio/Lead/OUT", {.min = 0, .max = 36000});
+	auto interaction = p->PageSizer(_("Interaction"));
+	p->OptionAdd(interaction, _("Default mouse wheel to zoom"), "Audio/Wheel Default to Zoom");
+	p->OptionAdd(interaction, _("Lock scroll on cursor"), "Audio/Lock Scroll on Cursor",
+		{.help = _("Keep the playback cursor in view while playing")});
+	p->OptionAdd(interaction, _("Auto-focus on mouse over"), "Audio/Auto/Focus",
+		{.help = _("The audio display takes the keyboard when the pointer is over it")});
+	p->OptionAdd(interaction, _("Play audio when stepping in video"), "Audio/Plays When Stepping Video");
+	p->OptionAdd(interaction, _("Left-click-drag moves end marker"), "Audio/Drag Timing",
+		{.help = _("Dragging with the left button sets the end; otherwise it sets the start")});
+	p->OptionAdd(interaction, _("Marker drag-start sensitivity (px)"), "Audio/Start Drag Sensitivity", {.min = 1, .max = 15});
 
-	p->OptionAdd(general, _("Marker drag-start sensitivity (px)"), "Audio/Start Drag Sensitivity", {.min = 1, .max = 15});
-	p->OptionAdd(general, _("Line boundary thickness (px)"), "Audio/Line Boundaries Thickness", {.min = 1, .max = 5});
-	p->OptionAdd(general, _("Maximum snap distance (px)"), "Audio/Snap/Distance", {.min = 0, .max = 25});
+	auto timing = p->PageSizer(_("Timing"));
+	p->OptionAdd(timing, _("Default timing length (ms)"), "Timing/Default Duration", {.min = 0, .max = 36000});
+	p->OptionAdd(timing, _("Default lead-in length (ms)"), "Audio/Lead/IN", {.min = 0, .max = 36000});
+	p->OptionAdd(timing, _("Default lead-out length (ms)"), "Audio/Lead/OUT", {.min = 0, .max = 36000});
+	p->OptionAdd(timing, _("Automatically link nearby subtitles"), "Timing/Link Adjacent Lines",
+		{.help = _("Dragging the boundary between two lines that touch moves both")});
+	p->OptionAdd(timing, _("Link subtitle gaps under (s)"), "Timing/Adjacent Line Gap", {.min = 0, .max = 10, .inc = 0.1});
 
-	const wxString dtl_arr[] = { _("Don't show"), _("Show previous"), _("Show previous and next"), _("Show all") };
-	wxArrayString choice_dtl(4, dtl_arr);
-	p->OptionChoice(general, _("Show inactive lines"), choice_dtl, "Audio/Inactive Lines Display Mode");
-	p->CellSkip(general);
-	p->OptionAdd(general, _("Include commented inactive lines"), "Audio/Display/Draw/Inactive Comments");
+	auto snapping = p->PageSizer(_("Snapping"));
+	p->OptionAdd(snapping, _("Snap markers by default"), "Audio/Snap/Enable");
+	p->OptionAdd(snapping, _("Maximum snap distance (px)"), "Audio/Snap/Distance", {.min = 0, .max = 25});
 
 	auto display = p->PageSizer(_("Display Visual Options"));
+	const wxString dtl_arr[] = { _("Don't show"), _("Show previous"), _("Show previous and next"), _("Show all") };
+	wxArrayString choice_dtl(4, dtl_arr);
+	p->OptionChoice(display, _("Show inactive lines"), choice_dtl, "Audio/Inactive Lines Display Mode");
+	p->OptionAdd(display, _("Include commented inactive lines"), "Audio/Display/Draw/Inactive Comments");
 	p->OptionAdd(display, _("Keyframes in dialogue mode"), "Audio/Display/Draw/Keyframes in Dialogue Mode");
 	p->OptionAdd(display, _("Keyframes in karaoke mode"), "Audio/Display/Draw/Keyframes in Karaoke Mode");
 	p->OptionAdd(display, _("Cursor time"), "Audio/Display/Draw/Cursor Time");
 	p->OptionAdd(display, _("Video position"), "Audio/Display/Draw/Video Position");
 	p->OptionAdd(display, _("Seconds boundaries"), "Audio/Display/Draw/Seconds");
-	p->CellSkip(display);
-	p->OptionChoice(display, _("Waveform Style"), AudioWaveformRenderer::GetWaveformStyles(), "Audio/Display/Waveform Style");
 	p->OptionAdd(display, _("dB scale on the waveform"), "Audio/Display/Draw/dB Scale");
+	p->OptionChoice(display, _("Waveform Style"), AudioWaveformRenderer::GetWaveformStyles(), "Audio/Display/Waveform Style");
+	p->OptionAdd(display, _("Line boundary thickness (px)"), "Audio/Line Boundaries Thickness", {.min = 1, .max = 5});
 
 	auto label = p->PageSizer(_("Audio labels"));
 	p->OptionFont(label, "Audio/Karaoke/");
@@ -211,38 +264,32 @@ void Audio(wxTreebook *book, Preferences *parent) {
 }
 
 /// Video preferences page
-void Video(wxTreebook *book, Preferences *parent) {
+void Video(PreferencesBook *book, Preferences *parent) {
 	auto p = new OptionPage(book, parent, _("Video"));
 
-	auto general = p->PageSizer(_("Options"));
-	p->OptionAdd(general, _("Show keyframes in slider"), "Video/Slider/Show Keyframes");
-	p->CellSkip(general);
-	p->OptionAdd(general, _("Only show visual tools when mouse is over video"), "Tool/Visual/Autohide");
-	p->CellSkip(general);
-	p->OptionAdd(general, _("Seek video to line start on selection change"), "Video/Subtitle Sync");
-	p->CellSkip(general);
-	p->OptionAdd(general, _("Automatically open audio when opening video"), "Video/Open Audio");
-	p->CellSkip(general);
+	auto playback = p->PageSizer(_("Playback"));
+	p->OptionAdd(playback, _("Seek video to line start on selection change"), "Video/Subtitle Sync");
+	p->OptionAdd(playback, _("Automatically open audio when opening video"), "Video/Open Audio");
+	p->OptionAdd(playback, _("Show keyframes in slider"), "Video/Slider/Show Keyframes");
+	p->OptionAdd(playback, _("Fast jump step in frames"), "Video/Slider/Fast Jump Step");
 
-	const wxString cscroll_arr[] = {_("Resizes the video box"), _("Resizes the video box (reversed)"), _("Zooms the video"), _("Zooms the video (reversed)"), _("Pans the video"), _("Pans the video (X/Y swapped)"), _("Does nothing")};
-	wxArrayString choice_scroll(7, cscroll_arr);
-	p->OptionChoice(general, _("Scrolling on the video display"), choice_scroll, "Video/Scroll Action");
-	p->OptionChoice(general, _("Ctrl+Scrolling on the video display"), choice_scroll, "Video/Ctrl Scroll Action");
-	p->OptionChoice(general, _("Shift+Scrolling on the video display"), choice_scroll, "Video/Shift Scroll Action");
-
+	auto video_display = p->PageSizer(_("Video Display"));
+	p->OptionAdd(video_display, _("Only show visual tools when mouse is over video"), "Tool/Visual/Autohide");
 	const wxString czoom_arr[24] = { "12.5%", "25%", "37.5%", "50%", "62.5%", "75%", "87.5%", "100%", "112.5%", "125%", "137.5%", "150%", "162.5%", "175%", "187.5%", "200%", "212.5%", "225%", "237.5%", "250%", "262.5%", "275%", "287.5%", "300%" };
 	wxArrayString choice_zoom(24, czoom_arr);
-	p->OptionChoice(general, _("Default Zoom"), choice_zoom, "Video/Default Zoom");
-
-	p->OptionAdd(general, _("Fast jump step in frames"), "Video/Slider/Fast Jump Step");
-
+	p->OptionChoice(video_display, _("Default Zoom"), choice_zoom, "Video/Default Zoom");
+	const wxString cscroll_arr[] = {_("Resizes the video box"), _("Resizes the video box (reversed)"), _("Zooms the video"), _("Zooms the video (reversed)"), _("Pans the video"), _("Pans the video (X/Y swapped)"), _("Does nothing")};
+	wxArrayString choice_scroll(7, cscroll_arr);
+	p->OptionChoice(video_display, _("Scrolling on the video display"), choice_scroll, "Video/Scroll Action");
+	p->OptionChoice(video_display, _("Ctrl+Scrolling on the video display"), choice_scroll, "Video/Ctrl Scroll Action");
+	p->OptionChoice(video_display, _("Shift+Scrolling on the video display"), choice_scroll, "Video/Shift Scroll Action");
 	const wxString cscr_arr[3] = { "?video", "?script", "." };
 	wxArrayString scr_res(3, cscr_arr);
-	p->OptionChoice(general, _("Screenshot save path"), scr_res, "Path/Screenshot");
+	p->OptionChoice(video_display, _("Screenshot save path"), scr_res, "Path/Screenshot", false,
+		_("?video: next to the video; ?script: next to the subtitles; .: the working folder"));
 
 	auto resolution = p->PageSizer(_("Script Resolution"));
-	wxControl *autocb = p->OptionAdd(resolution, _("Use resolution of first video opened"), "Subtitle/Default Resolution/Auto");
-	p->CellSkip(resolution);
+	wxWindow *autocb = p->OptionAdd(resolution, _("Use resolution of first video opened"), "Subtitle/Default Resolution/Auto");
 	p->DisableIfChecked(autocb,
 		p->OptionAdd(resolution, _("Default width"), "Subtitle/Default Resolution/Width"));
 	p->DisableIfChecked(autocb,
@@ -277,49 +324,8 @@ void Video(wxTreebook *book, Preferences *parent) {
 	p->SetSizerAndFit(p->sizer);
 }
 
-/// Interface preferences page
-void Interface(wxTreebook *book, Preferences *parent) {
-	auto p = new OptionPage(book, parent, _("Interface"));
-
-	auto appearance = p->PageSizer(_("Appearance"));
-	const wxString themes[] = { _("Follow system"), _("Light"), _("Dark") };
-	p->OptionChoice(appearance, _("Theme"), wxArrayString(3, themes), "App/Theme");
-	// Custom-drawn parts switch at once; toolkit controls fully only after a restart.
-	appearance.sizer->AddSpacer(0);
-	appearance.sizer->Add(new wxStaticText(appearance.box, -1, _("The subtitle grid and edit box switch at once; some window controls switch fully only after a restart.")));
-
-	auto edit_box = p->PageSizer(_("Edit Box"));
-	p->OptionAdd(edit_box, _("Enable call tips"), "App/Call Tips");
-	p->OptionAdd(edit_box, _("Enable ASS autocompletion"), "Subtitle/Edit Box/Auto Completion");
-	p->OptionAdd(edit_box, _("Overwrite in time boxes"), "Subtitle/Time Edit/Insert Mode");
-	p->OptionAdd(edit_box, _("Shift+Enter adds \\n"), "Subtitle/Edit Box/Soft Line Break");
-	p->OptionAdd(edit_box, _("Line fields below the text, next to the grid"), "Subtitle/Edit Box/Fields Below Text");
-	p->OptionAdd(edit_box, _("Enable syntax highlighting"), "Subtitle/Highlight/Syntax");
-	p->OptionBrowse(edit_box, _("Dictionaries path"), "Path/Dictionary");
-	p->OptionFont(edit_box, "Subtitle/Edit Box/");
-
-	auto character_count = p->PageSizer(_("Character Counter"));
-	p->OptionAdd(character_count, _("Maximum characters per line"), "Subtitle/Character Limit", {.min = 0, .max = 1000});
-	p->OptionAdd(character_count, _("Characters Per Second Warning Threshold"), "Subtitle/Character Counter/CPS Warning Threshold", {.min = 0, .max = 1000});
-	p->OptionAdd(character_count, _("Characters Per Second Error Threshold"), "Subtitle/Character Counter/CPS Error Threshold", {.min = 0, .max = 1000});
-	p->OptionAdd(character_count, _("Ignore whitespace"), "Subtitle/Character Counter/Ignore Whitespace");
-	p->OptionAdd(character_count, _("Ignore punctuation"), "Subtitle/Character Counter/Ignore Punctuation");
-
-	auto grid = p->PageSizer(_("Grid"));
-	p->OptionAdd(grid, _("Focus grid on click"), "Subtitle/Grid/Focus Allow");
-	p->OptionAdd(grid, _("Highlight visible subtitles"), "Subtitle/Grid/Highlight Subtitles in Frame");
-	p->OptionAdd(grid, _("Shade every other row"), "Subtitle/Grid/Alternate Rows");
-	p->OptionAdd(grid, _("Hide overrides symbol"), "Subtitle/Grid/Hide Overrides Char");
-	p->OptionFont(grid, "Subtitle/Grid/");
-
-	auto tl_assistant = p->PageSizer(_("Translation Assistant"));
-	p->OptionAdd(tl_assistant, _("Skip over whitespace"), "Tool/Translation Assistant/Skip Whitespace");
-
-	p->SetSizerAndFit(p->sizer);
-}
-
 /// Interface Colours preferences subpage
-void Interface_Colours(wxTreebook *book, Preferences *parent) {
+void Interface_Colours(PreferencesBook *book, Preferences *parent) {
 	auto p = new OptionPage(book, parent, _("Colors"), OptionPage::PAGE_SCROLL|OptionPage::PAGE_SUB);
 
 	delete p->sizer;
@@ -397,11 +403,11 @@ void Interface_Colours(wxTreebook *book, Preferences *parent) {
 }
 
 /// Backup preferences page
-void Backup(wxTreebook *book, Preferences *parent) {
+void Backup(PreferencesBook *book, Preferences *parent) {
 	auto p = new OptionPage(book, parent, _("Backup"));
 
 	auto save = p->PageSizer(_("Automatic Save"));
-	wxControl *cb = p->OptionAdd(save, _("Enable"), "App/Auto/Save");
+	wxWindow *cb = p->OptionAdd(save, _("Enable"), "App/Auto/Save");
 	p->CellSkip(save);
 	p->EnableIfChecked(cb,
 		p->OptionAdd(save, _("Interval in seconds"), "App/Auto/Save Every Seconds", {.min = 1}));
@@ -417,7 +423,7 @@ void Backup(wxTreebook *book, Preferences *parent) {
 }
 
 /// Automation preferences page
-void Automation(wxTreebook *book, Preferences *parent) {
+void Automation(PreferencesBook *book, Preferences *parent) {
 	auto p = new OptionPage(book, parent, _("Automation"));
 
 	auto general = p->PageSizer(_("General"));
@@ -438,7 +444,7 @@ void Automation(wxTreebook *book, Preferences *parent) {
 }
 
 /// Advanced preferences page
-void Advanced(wxTreebook *book, Preferences *parent) {
+void Advanced(PreferencesBook *book, Preferences *parent) {
 	auto p = new OptionPage(book, parent, _("Advanced"));
 
 	auto general = p->PageSizer(_("General"));
@@ -455,7 +461,7 @@ void Advanced(wxTreebook *book, Preferences *parent) {
 }
 
 /// Advanced Audio preferences subpage
-void Advanced_Audio(wxTreebook *book, Preferences *parent) {
+void Advanced_Audio(PreferencesBook *book, Preferences *parent) {
 	auto p = new OptionPage(book, parent, _("Audio"), OptionPage::PAGE_SUB);
 
 	auto expert = p->PageSizer(_("Expert"));
@@ -522,7 +528,7 @@ void Advanced_Audio(wxTreebook *book, Preferences *parent) {
 }
 
 /// Advanced Video preferences subpage
-void Advanced_Video(wxTreebook *book, Preferences *parent) {
+void Advanced_Video(PreferencesBook *book, Preferences *parent) {
 	auto p = new OptionPage(book, parent, _("Video"), OptionPage::PAGE_SUB);
 
 	auto expert = p->PageSizer(_("Expert"));
@@ -697,20 +703,20 @@ class Interface_Hotkeys final : public OptionPage {
 	void OnNewButton(wxCommandEvent&);
 	void OnUpdateFilter(wxCommandEvent&);
 public:
-	Interface_Hotkeys(wxTreebook *book, Preferences *parent);
+	Interface_Hotkeys(PreferencesBook *book, Preferences *parent);
 };
 
 /// Interface Hotkeys preferences subpage
-Interface_Hotkeys::Interface_Hotkeys(wxTreebook *book, Preferences *parent)
-: OptionPage(book, parent, _("Hotkeys"), OptionPage::PAGE_SUB)
+Interface_Hotkeys::Interface_Hotkeys(PreferencesBook *book, Preferences *parent)
+: OptionPage(book, parent, _("Hotkeys"))
 , model(new HotkeyDataViewModel(parent))
 {
 	quick_search = new wxSearchCtrl(this, -1);
 	quick_search->SetDescriptiveText(_("Search"));
 
-	auto new_button = new wxButton(this, -1, _("&New"));
-	auto edit_button = new wxButton(this, -1, _("&Edit"));
-	auto delete_button = new wxButton(this, -1, _("&Delete"));
+	auto new_button = new FlatButton(this, _("&New"));
+	auto edit_button = new FlatButton(this, _("&Edit"));
+	auto delete_button = new FlatButton(this, _("&Delete"));
 
 	new_button->Bind(wxEVT_BUTTON, &Interface_Hotkeys::OnNewButton, this);
 	edit_button->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { edit_item(dvc, dvc->GetSelection()); });
@@ -772,6 +778,9 @@ void Interface_Hotkeys::OnUpdateFilter(wxCommandEvent&) {
 void Preferences::SetOption(std::unique_ptr<agi::OptionValue> new_value) {
 	pending_changes[new_value->GetName()] = std::move(new_value);
 	applyButton->Enable(true);
+	// The marks of changed settings follow
+	for (size_t page = 0; book && page < book->GetPageCount(); ++page)
+		if (auto options = dynamic_cast<OptionPage*>(book->GetPage(page))) options->RefreshMarks();
 }
 
 void Preferences::AddPendingChange(Thunk const& callback) {
@@ -801,35 +810,47 @@ void Preferences::OnApply(wxCommandEvent &) {
 	config::opt->Flush();
 }
 
-void Preferences::OnResetDefault(wxCommandEvent&) {
-	if (wxYES != wxMessageBox(_("Are you sure that you want to restore the defaults? All your settings will be overridden."), _("Restore defaults?"), wxYES_NO))
+void Preferences::RestorePageDefaults() {
+	auto page = dynamic_cast<OptionPage*>(book->GetPage(CurrentPage()));
+	if (page && !page->Options().empty()) {
+		// Like any change in the dialog: OK keeps it, Cancel forgets it
+		page->ResetAll();
 		return;
-
-	for (auto const& opt_name : option_names) {
-		agi::OptionValue *opt = OPT_SET(opt_name);
-		if (!opt->IsDefault())
-			opt->Reset();
 	}
-	config::opt->Flush();
-
+	if (!dynamic_cast<Interface_Hotkeys*>(book->GetPage(CurrentPage()))) return;
+	if (wxYES != wxMessageBox(_("Restore the default hotkeys? Every hotkey you have set will be lost."), _("Restore defaults?"), wxYES_NO))
+		return;
 	agi::hotkey::Hotkey def_hotkeys("", GET_DEFAULT_CONFIG(default_hotkey));
 	hotkey::inst->SetHotkeyMap(def_hotkeys.GetHotkeyMap());
 
-	// Close and reopen the dialog to update all the controls with the new values
+	// Close and reopen the dialog to show the hotkeys again
 	OPT_SET("Tool/Preferences/Page")->SetInt(book->GetSelection());
 	EndModal(-1);
 }
 
 Preferences::Preferences(wxWindow *parent): wxDialog(parent, -1, _("Preferences"), wxDefaultPosition, wxSize(-1, -1), wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER) {
 	SetIcons(GETICONS(options_button));
+	theme::UseSurface(this);
 
-	book = new wxTreebook(this, -1, wxDefaultPosition, wxDefaultSize);
+	// The list of pages on the left, the search box above it
+	book = new PreferencesBook(this);
+	search = new wxSearchCtrl(book, -1, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(210), -1), wxTE_PROCESS_ENTER);
+	search->SetName("preferences_search");
+	search->SetDescriptiveText(_("Search settings (name or pinyin)"));
+	search->ShowCancelButton(true);
+	search_status = new wxStaticText(book, -1, wxEmptyString);
+	search_status->SetForegroundColour(flat::Colours(this).dim);
+	book->AddAboveList(search);
+	book->AddAboveList(search_status);
+
 	General(book, this);
 	General_DefaultStyles(book, this);
+	Appearance(book, this);
+	Interface_Colours(book, this);
+	Editing(book, this);
+	Grid(book, this);
 	Audio(book, this);
 	Video(book, this);
-	Interface(book, this);
-	Interface_Colours(book, this);
 	new Interface_Hotkeys(book, this);
 	Backup(book, this);
 	Automation(book, this);
@@ -837,14 +858,6 @@ Preferences::Preferences(wxWindow *parent): wxDialog(parent, -1, _("Preferences"
 	Advanced_Audio(book, this);
 	Advanced_Video(book, this);
 
-	book->Fit();
-
-	search = new wxSearchCtrl(this, -1, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(260), -1), wxTE_PROCESS_ENTER);
-	search->SetName("preferences_search");
-	search->SetDescriptiveText(_("Search settings (name or pinyin)"));
-	search->ShowCancelButton(true);
-	search_status = new wxStaticText(this, -1, wxEmptyString);
-	search_status->SetForegroundColour(wxSystemSettings::GetColour(wxSYS_COLOUR_GRAYTEXT));
 	IndexPages();
 	search->Bind(wxEVT_TEXT, [this](wxCommandEvent&) { Search(search->GetValue()); });
 	search->Bind(wxEVT_TEXT_ENTER, [this](wxCommandEvent&) { NextMatchingPage(); });
@@ -852,30 +865,29 @@ Preferences::Preferences(wxWindow *parent): wxDialog(parent, -1, _("Preferences"
 	search->Bind(wxEVT_SEARCHCTRL_CANCEL_BTN, [this](wxCommandEvent&) { search->Clear(); });
 
 	book->ChangeSelection(OPT_GET("Tool/Preferences/Page")->GetInt());
-	book->Bind(wxEVT_TREEBOOK_PAGE_CHANGED, [](wxBookCtrlEvent &evt) {
-		OPT_SET("Tool/Preferences/Page")->SetInt(evt.GetSelection());
-	});
+	book->on_change = [this](size_t page) {
+		OPT_SET("Tool/Preferences/Page")->SetInt(page);
+		ShowFirstMatch(page);
+	};
 
 	// Bottom Buttons
 	auto stdButtonSizer = CreateStdDialogButtonSizer(wxOK | wxCANCEL | wxAPPLY | wxHELP);
 	applyButton = stdButtonSizer->GetApplyButton();
 	wxSizer *buttonSizer = new wxBoxSizer(wxHORIZONTAL);
-	auto defaultButton = new wxButton(this, -1, _("&Restore Defaults"));
+	auto defaultButton = new wxButton(this, -1, _("&Restore Page Defaults"));
+	defaultButton->SetToolTip(_("Give every setting of the page shown its default; OK keeps it, Cancel forgets it. On the hotkeys page, restore the default hotkeys."));
 	buttonSizer->Add(defaultButton, wxSizerFlags(0).Expand());
 	buttonSizer->AddStretchSpacer(1);
 	buttonSizer->Add(stdButtonSizer, wxSizerFlags(0).Expand());
 
 	// Main Sizer
-	wxSizer *searchSizer = new wxBoxSizer(wxHORIZONTAL);
-	searchSizer->Add(search, wxSizerFlags().CenterVertical());
-	searchSizer->Add(search_status, wxSizerFlags(1).CenterVertical().Border(wxLEFT));
-
 	wxSizer *mainSizer = new wxBoxSizer(wxVERTICAL);
-	mainSizer->Add(searchSizer, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxTOP));
-	mainSizer->Add(book, wxSizerFlags(1).Expand().Border());
+	mainSizer->Add(book, wxSizerFlags(1).Expand().Border(wxALL, FromDIP(8)));
 	mainSizer->Add(buttonSizer, wxSizerFlags(0).Expand().Border(wxALL & ~wxTOP));
 
 	SetSizerAndFit(mainSizer);
+	// Not as tall as the tallest page: the pages scroll
+	SetSize(wxSize(std::max(GetSize().x, FromDIP(820)), std::min(GetSize().y, FromDIP(680))));
 	CenterOnParent();
 
 	applyButton->Enable(false);
@@ -883,7 +895,9 @@ Preferences::Preferences(wxWindow *parent): wxDialog(parent, -1, _("Preferences"
 	Bind(wxEVT_BUTTON, &Preferences::OnOK, this, wxID_OK);
 	Bind(wxEVT_BUTTON, &Preferences::OnApply, this, wxID_APPLY);
 	Bind(wxEVT_BUTTON, std::bind(&HelpButton::OpenPage, "Options"), wxID_HELP);
-	defaultButton->Bind(wxEVT_BUTTON, &Preferences::OnResetDefault, this);
+	defaultButton->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { RestorePageDefaults(); });
+	// The keyboard starts in the search box, not on a page's first setting
+	search->SetFocus();
 }
 
 namespace {
@@ -894,7 +908,7 @@ std::wstring WithoutSpaces(std::wstring text) {
 
 /// The label of a control the search looks at, empty for other controls.
 wxString SearchLabel(wxWindow *window) {
-	if (dynamic_cast<wxStaticText*>(window) || dynamic_cast<wxCheckBox*>(window) || dynamic_cast<wxStaticBox*>(window))
+	if (dynamic_cast<wxStaticText*>(window) || dynamic_cast<wxCheckBox*>(window) || dynamic_cast<FlatCheck*>(window) || dynamic_cast<wxStaticBox*>(window))
 		return wxControl::RemoveMnemonics(window->GetLabel());
 	return {};
 }
@@ -903,15 +917,6 @@ void CollectLabels(wxWindow *window, std::vector<wxWindow*>& out) {
 	for (auto child : window->GetChildren()) {
 		if (!SearchLabel(child).empty()) out.push_back(child);
 		CollectLabels(child, out);
-	}
-}
-
-/// Tree items of the book in page order.
-void CollectTreeItems(wxTreeCtrl *tree, wxTreeItemId parent, std::vector<wxTreeItemId>& out) {
-	wxTreeItemIdValue cookie;
-	for (auto item = tree->GetFirstChild(parent, cookie); item.IsOk(); item = tree->GetNextChild(parent, cookie)) {
-		out.push_back(item);
-		CollectTreeItems(tree, item, out);
 	}
 }
 }
@@ -950,7 +955,14 @@ void Preferences::Search(wxString const& query) {
 	}
 	ShowMatches();
 	if (!matching_pages.empty() && std::find(matching_pages.begin(), matching_pages.end(), CurrentPage()) == matching_pages.end())
-		book->SetSelection(matching_pages.front());
+		book->ChangeSelection(matching_pages.front());
+	ShowFirstMatch(CurrentPage());
+}
+
+void Preferences::ShowFirstMatch(size_t page) {
+	auto controls = MatchingControls(page);
+	if (auto options = dynamic_cast<OptionPage*>(book->GetPage(page)); options && !controls.empty())
+		options->ScrollTo(controls.front());
 }
 
 void Preferences::ShowMatches() {
@@ -971,19 +983,18 @@ void Preferences::ShowMatches() {
 		entry.window->Refresh();
 	}
 
-	auto tree = book->GetTreeCtrl();
-	std::vector<wxTreeItemId> items;
-	CollectTreeItems(tree, tree->GetRootItem(), items);
-	if (tree->GetRootItem().IsOk() && !(tree->GetWindowStyle() & wxTR_HIDE_ROOT))
-		items.insert(items.begin(), tree->GetRootItem());
-	auto dim = wxSystemSettings::GetColour(wxSYS_COLOUR_GRAYTEXT);
-	for (size_t page = 0; page < items.size(); ++page) {
-		bool match = std::find(matching_pages.begin(), matching_pages.end(), page) != matching_pages.end();
-		tree->SetItemBold(items[page], searching && match);
-		tree->SetItemTextColour(items[page], searching && !match ? dim : wxNullColour);
+	// The number of matches on each page, beside its name
+	std::vector<size_t> counts;
+	if (searching) {
+		counts.assign(book->GetPageCount(), 0);
+		for (auto const& entry : search_entries)
+			if (entry.matched && entry.page < counts.size()) ++counts[entry.page];
 	}
+	book->SetMatches(counts);
 
 	search_status->SetLabel(SearchStatus());
+	search_status->Wrap(search->GetSize().x);
+	book->Layout();
 	Layout();
 }
 
@@ -991,6 +1002,7 @@ void Preferences::NextMatchingPage() {
 	if (matching_pages.empty()) return;
 	auto next = std::upper_bound(matching_pages.begin(), matching_pages.end(), CurrentPage());
 	book->SetSelection(next == matching_pages.end() ? matching_pages.front() : *next);
+	ShowFirstMatch(CurrentPage());
 }
 
 std::vector<wxWindow*> Preferences::MatchingControls(size_t page) const {
@@ -1008,7 +1020,7 @@ wxString Preferences::SearchStatus() const {
 	if (search_query.empty()) return {};
 	if (matching_pages.empty()) return _("No matching settings");
 	size_t count = std::count_if(search_entries.begin(), search_entries.end(), [](SearchEntry const& entry) { return entry.matched; });
-	return fmt_tl("%d matches on %d pages, Enter shows the next page", count, matching_pages.size());
+	return fmt_tl("%d matches on %d pages; Enter shows the next", count, matching_pages.size());
 }
 
 void ShowPreferences(wxWindow *parent, wxString const& search) {
