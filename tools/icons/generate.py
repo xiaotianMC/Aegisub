@@ -126,11 +126,17 @@ class Hinter:
     """As libresrc.cpp: a whole number of pixels for the stroke, lines on the grid."""
     def __init__(self, px, grid=24):
         self.s = px / grid; self.w = max(1, math.floor(px / 16 * 1.25 + 0.5)); self.grid = grid; self.cur = self.w
-    def line(self, v):
-        d = v * self.s
-        d = math.floor(d + 1e-6) + 0.5 if self.cur % 2 else math.floor(d + 0.5 + 1e-6)
-        return d / self.s
-    def whole(self, v): return round(v * self.s) / self.s
+    def on_grid(self, v, centres):
+        # Rounded the same way on both sides of the icon's middle, so a
+        # shape symmetric about it stays symmetric
+        middle = 12 * self.s
+        g = math.floor(middle + 1e-6) + 0.5 if centres else math.floor(middle + 0.5 + 1e-6)
+        off = v * self.s - middle
+        steps = -math.floor(-off + 0.5 + 1e-6) if off < 0 else math.floor(off + 0.5 + 1e-6)
+        return (g + steps) / self.s
+    def line(self, v): return self.on_grid(v, self.cur % 2)
+    def whole(self, v): return self.on_grid(v, False)
+    def radius(self, r): return r if r * self.s < 1 else round(r * self.s) / self.s  # a tiny one as drawn
     def stroke_units(self): return self.w / self.s
     def path(self, d):
         # Points on the grid; a point very close to the last one (a dot drawn
@@ -150,7 +156,11 @@ class Hinter:
             elif c == 'V':
                 n = snap(ox, v[0]); oy = v[0]; v = [n[1]]
             elif c == 'A':
-                n = snap(v[5], v[6]); ox, oy = v[5], v[6]; v = v[:5] + list(n)
+                # Radii change as the distance between the ends did, so the arc keeps its shape
+                fx, fy, wx, wy = ox + mx, oy + my, ox, oy
+                n = snap(v[5], v[6]); before = math.hypot(v[5] - wx, v[6] - wy); after = math.hypot(n[0] - fx, n[1] - fy)
+                k = after / before if before > 0.1 else 1
+                ox, oy = v[5], v[6]; v = [v[0] * k, v[1] * k] + v[2:5] + list(n)
             elif c == 'C':
                 pmx, pmy = mx, my
                 n = snap(v[4], v[5]); ox, oy = v[4], v[5]
@@ -177,7 +187,7 @@ class Hinter:
                     # A dot: a whole number of pixels across, at least the
                     # stroke, centred on a pixel centre or edge to match
                     dia = max(self.w, round(2 * float(a['r']) * self.s))
-                    c = (lambda v: (math.floor(v * self.s + 1e-6) + 0.5) / self.s) if dia % 2 else (lambda v: math.floor(v * self.s + 0.5 + 1e-6) / self.s)
+                    c = lambda v: self.on_grid(v, dia % 2)
                     cx, cy, r = c(float(a['cx'])), c(float(a['cy'])), dia / 2 / self.s
                     if dia <= 2:  # Too small to antialias as a circle: a square of pixels
                         tag = 'rect'; a = {k: v for k, v in a.items() if k not in ('cx', 'cy', 'r')}
@@ -185,8 +195,9 @@ class Hinter:
                     else:
                         a['cx'] = fmt(cx); a['cy'] = fmt(cy); a['r'] = fmt(r)
                 elif tag in ('circle', 'ellipse') and stroked:
-                    rx = float(a.get('r', a.get('rx', 0))); ry = float(a.get('r', a.get('ry', 0)))
-                    a['cx'] = fmt(self.line(float(a['cx']) - rx) + rx); a['cy'] = fmt(self.line(float(a['cy']) - ry) + ry)
+                    a['cx'] = fmt(self.line(float(a['cx']))); a['cy'] = fmt(self.line(float(a['cy'])))
+                    for r in ('r', 'rx', 'ry'):
+                        if r in a: a[r] = fmt(self.radius(float(a[r])))
                 elif tag == 'rect':
                     f = self.line if stroked else self.whole
                     x, y, w, h = (float(a.get(k, 0)) for k in ('x', 'y', 'width', 'height'))
@@ -263,6 +274,9 @@ CUSTOM = {
  'visual_vector_clip_remove': p('M2 21.5C4.5 11.5 19.5 11.5 22 21.5') + node(12, 14) + p('M9 5H15'),
  'visual_vector_clip_freehand': pencil + p('M2 21L5 16.5L8 21L11 17'),
  'visual_vector_clip_freehand_smooth': pencil + p('M2 20.5C3.5 15.5 6 15.5 7 18.5S10 22 11.5 17.5'),
+ # help: a question mark alone, as large as the icon allows; inside
+ # Lucide's circle it was too small to read at 16 px
+ 'visual_help': p('M7.5 8.5A4.5 4.5 0 1 1 14.25 12.4C12.9 13.2 12 14.2 12 15.5') + dot(12, 20, 1.5),
  'visual_move_conv_move': "<circle cx='5' cy='12' r='3'/>" + arrow_r(10.5, 22),
  'visual_move_conv_pos': p('M20 10C20 14.993 14.461 20.193 12.601 21.799A1 1 0 0 1 11.399 21.799C9.539 20.193 4 14.993 4 10A8 8 0 0 1 20 10') + "<circle cx='12' cy='10' r='3'/>",
  # shapes: room at the bottom right for the flyout mark
@@ -313,7 +327,7 @@ LUCIDE = {
  'button_play': 'play', 'button_pause': 'pause', 'toggle_video_autoscroll': 'monitor-play',
  # visual
  'visual_standard': 'crosshair', 'visual_move': 'move', 'visual_rotatez': 'rotate-cw',
- 'visual_clip': 'crop', 'visual_pan': 'hand', 'visual_help': 'circle-question-mark',
+ 'visual_clip': 'crop', 'visual_pan': 'hand',
  # rest
  'about_menu': 'info', 'arrow_up': 'arrow-up', 'arrow_down': 'arrow-down', 'arrow_up_stop': 'arrow-up-to-line',
  'arrow_down_stop': 'arrow-down-to-line', 'arrow_sort': 'arrow-down-wide-narrow', 'bugtracker_button': 'bug',

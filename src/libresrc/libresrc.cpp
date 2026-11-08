@@ -121,14 +121,25 @@ struct Hinter {
 	, cur(width)
 	{ }
 
-	// A stroke's centre
-	double Line(double v) const {
-		double d = v * scale;
-		d = cur % 2 ? std::floor(d + 1e-6) + 0.5 : std::floor(d + 0.5 + 1e-6);
-		return d / scale;
+	// @p v on the grid of pixel centres (@p centres) or edges, rounded the
+	// same way on both sides of the icon's middle: a shape symmetric about
+	// it stays symmetric. Rounding each point down instead put the middle
+	// of a 16 px icon half a pixel right of where its sides came, and drew
+	// the eye's pupil, the gear's hub and the like off centre.
+	double Grid(double v, bool centres) const {
+		double middle = 12 * scale;
+		double grid_middle = centres ? std::floor(middle + 1e-6) + 0.5 : std::floor(middle + 0.5 + 1e-6);
+		double off = v * scale - middle;
+		double steps = off < 0 ? -std::floor(-off + 0.5 + 1e-6) : std::floor(off + 0.5 + 1e-6);
+		return (grid_middle + steps) / scale;
 	}
+	// A stroke's centre
+	double Line(double v) const { return Grid(v, cur % 2); }
 	// The edge of a filled area
-	double Whole(double v) const { return std::round(v * scale) / scale; }
+	double Whole(double v) const { return Grid(v, false); }
+	// A radius of whole pixels, so a circle centred on the grid has its
+	// outline on it all round; one under a pixel is left as drawn
+	double Radius(double r) const { return r * scale < 1 ? r : std::round(r * scale) / scale; }
 	double StrokeUnits() const { return width / scale; }
 
 	static std::string Format(double v) {
@@ -201,9 +212,15 @@ struct Hinter {
 			case 'H': put(snap(num(), y).first); break;
 			case 'V': put(snap(x, num()).second); break;
 			case 'A': {
-				for (int k = 0; k < 5; ++k) put(num());
+				// The radii change as the distance between the ends did, so
+				// the arc keeps its shape: an eye stays an eye, not a circle
+				double rx = num(), ry = num(), rotation = num(), large = num(), sweep = num();
 				double px = num(), py = num();
+				double from_x = x + moved_x, from_y = y + moved_y, was_x = x, was_y = y;
 				auto [nx, ny] = snap(px, py);
+				double before = std::hypot(px - was_x, py - was_y), after = std::hypot(nx - from_x, ny - from_y);
+				if (before > 0.1) { rx *= after / before; ry *= after / before; }
+				put(rx); put(ry); put(rotation); put(large); put(sweep);
 				put(nx); put(ny);
 				break;
 			}
@@ -268,10 +285,7 @@ struct Hinter {
 			// A dot: a whole number of pixels across, at least the stroke,
 			// centred on a pixel centre or edge to match
 			int dia = std::max(width, static_cast<int>(std::lround(2 * Num(el, "r") * scale)));
-			auto centre = [&](double v) {
-				double d = v * scale;
-				return (dia % 2 ? std::floor(d + 1e-6) + 0.5 : std::floor(d + 0.5 + 1e-6)) / scale;
-			};
+			auto centre = [&](double v) { return Grid(v, dia % 2); };
 			double cx = centre(Num(el, "cx")), cy = centre(Num(el, "cy")), r = dia / 2.0 / scale;
 			if (dia <= 2) // Too small to antialias as a circle: a square of pixels
 				return "<rect x='" + Format(cx - r) + "' y='" + Format(cy - r) + "' width='" + Format(2 * r) +
@@ -280,10 +294,15 @@ struct Hinter {
 		}
 		else if (el.starts_with("<circle") || el.starts_with("<ellipse")) {
 			bool circle = el.starts_with("<circle");
-			double rx = Num(el, circle ? "r" : "rx"), ry = Num(el, circle ? "r" : "ry");
-			// The outline's left and top edge on the grid
-			Set(el, "cx", Format(Line(Num(el, "cx") - rx) + rx));
-			Set(el, "cy", Format(Line(Num(el, "cy") - ry) + ry));
+			// The centre on the grid and whole pixels across, so the outline
+			// is on the grid on every side, not only the left and top
+			Set(el, "cx", Format(Line(Num(el, "cx"))));
+			Set(el, "cy", Format(Line(Num(el, "cy"))));
+			if (circle) Set(el, "r", Format(Radius(Num(el, "r"))));
+			else {
+				Set(el, "rx", Format(Radius(Num(el, "rx"))));
+				Set(el, "ry", Format(Radius(Num(el, "ry"))));
+			}
 		}
 		else if (el.starts_with("<rect")) {
 			double x = Num(el, "x"), y = Num(el, "y"), w = Num(el, "width"), h = Num(el, "height");

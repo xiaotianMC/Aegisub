@@ -787,9 +787,17 @@ TEST_F(ordinary_edit, icons_are_monochrome_in_the_appearance_colour_unless_class
     auto body = libresrc_modern_icon("save_toolbutton");
     // On Lucide's 24 grid: 1 pixel at 16 is 1.5 units
     EXPECT_NE(std::string::npos, libresrc_modern_svg(body, 16).find("stroke-width='1.5'"));
-    EXPECT_NE(std::string::npos, libresrc_modern_svg(body, 16).find("V18.75A2 2 0 0 1 18.75 21.75H5.25")) << "on pixel centres";
+    EXPECT_NE(std::string::npos, libresrc_modern_svg(body, 16).find("V20.25A1.5 1.5 0 0 1 20.25 21.75H5.25")) << "on pixel centres, the corner as round as the lines moved";
     EXPECT_NE(std::string::npos, libresrc_modern_svg(body, 20).find("stroke-width='2.4'")) << "2 pixels";
     EXPECT_NE(std::string::npos, libresrc_modern_svg(body, 32).find("stroke-width='2.25'")) << "3 pixels";
+    // Symmetric about the middle: the eye's pupil between its corners, at
+    // 16 px too, where every line is moved half a pixel the same way
+    {
+        auto eye = libresrc_modern_svg(libresrc_modern_icon("select_visible_button"), 16);
+        EXPECT_NE(std::string::npos, eye.find("M2.25 12.75")) << eye;
+        EXPECT_NE(std::string::npos, eye.find("23.25 12.75")) << eye;
+        EXPECT_NE(std::string::npos, eye.find("cx='12.75' cy='12.75' r='3'")) << eye;
+    }
     // Lucide's dots (zero-length lines it draws round) are small squares of pixels at 16
     EXPECT_NE(std::string::npos, libresrc_modern_svg(libresrc_modern_icon("about_menu"), 16).find("<rect")) << "the i's dot";
 

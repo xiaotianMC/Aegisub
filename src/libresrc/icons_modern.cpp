@@ -131,7 +131,7 @@ const ModernIcon icons[] = {
 	{"video_to_subend", "<path d='M2 12H13.5'/><path d='M10 8.5L13.5 12L10 15.5'/><path d='M18 4H21.5V20H18'/>"},
 	{"video_to_substart", "<path d='M2 12H13.5'/><path d='M10 8.5L13.5 12L10 15.5'/><path d='M21 4H17.5V20H21'/>"},
 	{"visual_clip", "<path d='M6 2V16A2 2 0 0 0 8 18H22'/><path d='M18 22V8A2 2 0 0 0 16 6H2'/>"}, // Lucide: crop
-	{"visual_help", "<circle cx='12' cy='12' r='10'/><path d='M9.09 9A3 3 0 0 1 14.92 10C14.92 12 11.92 13 11.92 13'/><circle cx='12' cy='17' r='1' fill='@' stroke='none'/>"}, // Lucide: circle-question-mark
+	{"visual_help", "<path d='M7.5 8.5A4.5 4.5 0 1 1 14.25 12.4C12.9 13.2 12 14.2 12 15.5'/><circle cx='12' cy='20' r='1.5' fill='@' stroke='none'/>"},
 	{"visual_move", "<path d='M12 2V22'/><path d='M15 19L12 22L9 19'/><path d='M19 9L22 12L19 15'/><path d='M2 12H22'/><path d='M5 9L2 12L5 15'/><path d='M9 5L12 2L15 5'/>"}, // Lucide: move
 	{"visual_move_conv_move", "<circle cx='5' cy='12' r='3'/><path d='M10.5 12H22'/><path d='M18 8L22 12L18 16'/>"},
 	{"visual_move_conv_pos", "<path d='M20 10C20 14.993 14.461 20.193 12.601 21.799A1 1 0 0 1 11.399 21.799C9.539 20.193 4 14.993 4 10A8 8 0 0 1 20 10'/><circle cx='12' cy='10' r='3'/>"},
