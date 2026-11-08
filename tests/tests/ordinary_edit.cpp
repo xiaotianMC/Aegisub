@@ -3454,6 +3454,44 @@ TEST_F(ordinary_edit, search_and_replace_is_drawn_fields_checks_and_switches) {
     {wxKeyEvent esc(wxEVT_CHAR_HOOK); esc.m_keyCode=WXK_ESCAPE; esc.SetEventObject(d); d->GetEventHandler()->ProcessEvent(esc);}
     EXPECT_FALSE(d->IsShown());
 }
+TEST_F(ordinary_edit, select_lines_is_drawn_switches_and_checks) {
+    AcceptMessages messages;
+    cmd::PasteSubtitleLines(c.get(),"Dialogue: 0,0:00:01.00,0:00:02.00,Default,A,0,0,0,,one\nDialogue: 0,0:00:02.00,0:00:03.00,Default,B,0,0,0,,two");
+    OPT_SET("Tool/Select Lines/Field")->SetInt(0);OPT_SET("Tool/Select Lines/Action")->SetInt(0);
+    OPT_SET("Tool/Select Lines/Mode")->SetInt(1);OPT_SET("Tool/Select Lines/Condition")->SetInt(0);
+    OPT_SET("Tool/Select Lines/Match/Case")->SetBool(false);OPT_SET("Tool/Select Lines/Match/Dialogue")->SetBool(true);
+    OPT_SET("Tool/Select Lines/Match/Comment")->SetBool(false);OPT_SET("Tool/Select Lines/Text")->SetString("");
+    ShowSelectLinesDialog(c.get());
+    wxDialog *d=nullptr;
+    for(auto child:window->GetChildren())if(auto x=dynamic_cast<wxDialog*>(child);x && x->GetTitle()==_("Select") && x->IsShown())d=x;
+    ASSERT_NE(nullptr,d);
+    std::vector<wxTextCtrl*> texts; std::vector<FlatSwitch*> switches; std::vector<FlatCheck*> checks;
+    for(auto child:descendants(d)){
+        if(auto t=dynamic_cast<wxTextCtrl*>(child))texts.push_back(t);
+        if(auto s=dynamic_cast<FlatSwitch*>(child))switches.push_back(s);
+        if(auto k=dynamic_cast<FlatCheck*>(child))checks.push_back(k);
+    }
+    ASSERT_EQ(1u,texts.size()); ASSERT_EQ(4u,switches.size()); ASSERT_EQ(3u,checks.size());
+    auto condition=switches[0],mode=switches[1],field=switches[2],action=switches[3];
+    auto dialogue=checks[1],comments=checks[2];
+    EXPECT_EQ(0,condition->GetSelection()); EXPECT_EQ(1,mode->GetSelection()); EXPECT_EQ(0,field->GetSelection()); EXPECT_EQ(0,action->GetSelection());
+    EXPECT_EQ(3u,mode->GetCount()); EXPECT_EQ(4u,action->GetCount());
+    // One kind of line stays ticked
+    dialogue->Toggle(); EXPECT_FALSE(dialogue->GetValue()); EXPECT_TRUE(comments->GetValue());
+    comments->Toggle(); EXPECT_TRUE(dialogue->GetValue()); EXPECT_FALSE(comments->GetValue());
+    // Alt with an option's letter chooses it
+    {wxKeyEvent alt(wxEVT_CHAR_HOOK); alt.m_keyCode='D'; alt.m_altDown=true; alt.SetEventObject(d); d->GetEventHandler()->ProcessEvent(alt);}
+    EXPECT_EQ(1,condition->GetSelection());
+    condition->Choose(0);
+    texts[0]->SetValue("two");
+    button(d,wxID_OK);
+    auto selected=c->selectionController->ReadSortedSelection();
+    ASSERT_EQ(1u,selected.size());
+    EXPECT_EQ("two",selected.front()->Text.get());
+    EXPECT_FALSE(d->IsShown());
+    wxTheApp->ProcessIdle(); // the choices are kept as it goes
+    EXPECT_EQ("two",OPT_GET("Tool/Select Lines/Text")->GetString());
+}
 TEST_F(ordinary_edit, jump_to_names_its_fields_and_jumps) {
     c->project->LoadVideo("?dummy:25:250:640:480:64:64:64:");
     ASSERT_NE(nullptr,c->project->VideoProvider());

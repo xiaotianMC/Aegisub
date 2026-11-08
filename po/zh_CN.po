@@ -9636,6 +9636,57 @@ msgstr "下一行并选样式"
 msgid "Move to the next subtitle line and put the keyboard in the style box, where typing a style's first letters chooses it"
 msgstr "转到下一行字幕，并把键盘焦点放到样式框，输入样式名的开头几个字母即可选中"
 
+#: ../src/dialog_selection.cpp
+msgid "Set selection"
+msgstr "设为选中"
+
+#: ../src/dialog_selection.cpp
+msgid "Add to selection"
+msgstr "加入选中"
+
+#: ../src/dialog_selection.cpp
+msgid "Subtract from selection"
+msgstr "从选中中去除"
+
+#: ../src/dialog_selection.cpp
+msgid "Intersect with selection"
+msgstr "与所选之交集"
+
+#: ../src/dialog_selection.cpp
+msgctxt "match mode"
+msgid "E&xact"
+msgstr "精确(&X)"
+
+#: ../src/dialog_selection.cpp
+msgctxt "match mode"
+msgid "&Regular expression"
+msgstr "正则表达式(&R)"
+
+#: ../src/dialog_selection.cpp
+msgctxt "selection action"
+msgid "Re&place"
+msgstr "替换(&P)"
+
+#: ../src/dialog_selection.cpp
+msgctxt "selection action"
+msgid "&Add"
+msgstr "加入(&A)"
+
+#: ../src/dialog_selection.cpp
+msgctxt "selection action"
+msgid "S&ubtract"
+msgstr "去除(&U)"
+
+#: ../src/dialog_selection.cpp
+msgctxt "selection action"
+msgid "Int&ersect"
+msgstr "交集(&E)"
+
+#: ../src/dialog_selection.cpp
+msgctxt "select lines"
+msgid "Lines"
+msgstr "行"
+
 #: ../src/dialog_shift_times.cpp
 msgid "&Time"
 msgstr "时间(&T)"
