@@ -172,7 +172,8 @@ void AddWheelTarget(wxWindow *target) {
 void LeaveField() {
 	auto focus = wxWindow::FindFocus();
 	if (!focus || !fields.count(focus)) return;
-	if (home && home->IsShownOnScreen()) home->SetFocus();
+	// Home only from its own window: a field in a dialog stays in the dialog
+	if (home && home->IsShownOnScreen() && wxGetTopLevelParent(home) == wxGetTopLevelParent(focus)) home->SetFocus();
 	else {
 		// Nowhere to go: the keyboard leaves for the panel around it
 		for (auto w = focus->GetParent(); w; w = w->GetParent())
@@ -613,7 +614,8 @@ void FlatCheck::OnPaint(wxPaintEvent &) {
 	}
 
 	dc.SetFont(GetFont());
-	dc.SetTextForeground(p.text);
+	// A colour given to it (the preferences' search marking a match) wins
+	dc.SetTextForeground(UseForegroundColour() && IsEnabled() ? GetForegroundColour() : p.text);
 	wxString shown = wxStripMenuCodes(label);
 	wxSize extent = dc.GetTextExtent(shown);
 	dc.DrawText(shown, box + FromDIP(6), (size.y - extent.y) / 2);
