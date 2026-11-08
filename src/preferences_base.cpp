@@ -208,7 +208,7 @@ class PreferencesBook::Nav final : public wxWindow {
 	int selection = -1, hover = -1;
 	agi::signal::Connection theme_changed;
 
-	int RowHeight() const { return GetCharHeight() + FromDIP(12); }
+	int RowHeight() const { return GetCharHeight() + FromDIP(9); }
 	int At(int y) const {
 		int row = (y - FromDIP(4)) / RowHeight();
 		return y >= FromDIP(4) && row < static_cast<int>(items.size()) ? row : -1;
@@ -318,7 +318,7 @@ PreferencesBook::PreferencesBook(wxWindow *parent)
 	auto row = new wxBoxSizer(wxHORIZONTAL);
 	row->Add(nav_column, wxSizerFlags().Expand().Border(wxRIGHT, FromDIP(8)));
 	row->Add(new Divider(this, true), wxSizerFlags().Expand());
-	row->Add(pages, wxSizerFlags(1).Expand().Border(wxLEFT, FromDIP(16)));
+	row->Add(pages, wxSizerFlags(1).Expand().Border(wxLEFT, FromDIP(12)));
 	SetSizer(row);
 }
 
@@ -337,8 +337,14 @@ int PreferencesBook::GetSelection() const { return pages->GetSelection(); }
 
 void PreferencesBook::ChangeSelection(size_t page) {
 	if (page >= pages->GetPageCount()) page = 0;
+	// The keyboard stays where it was (the list, the search box): Windows
+	// gives it to the page's first setting, whose focus ring then reads as
+	// that setting being picked out
+	wxWindow *focus = wxWindow::FindFocus();
 	pages->ChangeSelection(page);
 	nav->Select(static_cast<int>(page));
+	if (focus && wxWindow::FindFocus() != focus && !pages->GetPage(page)->IsDescendant(focus))
+		focus->SetFocus();
 }
 
 void PreferencesBook::SetSelection(size_t page) {
@@ -452,12 +458,20 @@ wxSizer *OptionPage::Label(PageSection section, wxWindow *name, wxString const& 
 	auto column = new wxBoxSizer(wxVERTICAL);
 	column->Add(name);
 	if (!help.empty()) {
+		// The mark beside the name, not halfway down its help
+		if (auto count = section.sizer->GetItemCount()) {
+			auto item = section.sizer->GetItem(count - 1);
+			if (auto mark = dynamic_cast<Mark*>(item->GetWindow())) {
+				item->SetFlag(wxALIGN_TOP | wxTOP);
+				item->SetBorder(std::max(0, (name->GetBestSize().y - mark->GetMinSize().y) / 2));
+			}
+		}
 		auto text = new wxStaticText(section.box, -1, help);
 		text->SetForegroundColour(flat::Colours(this).dim);
 		text->Wrap(FromDIP(380));
 		// Under a check box's words, not its box
 		int indent = dynamic_cast<FlatCheck*>(name) ? FromDIP(20) : 0;
-		column->AddSpacer(FromDIP(2));
+		column->AddSpacer(FromDIP(1));
 		column->Add(text, 0, wxLEFT, indent);
 	}
 	section.sizer->Add(column, 1, wxALIGN_CENTRE_VERTICAL);
@@ -619,10 +633,10 @@ PageSection OptionPage::PageSizer(wxString name) {
 	// changed, its name, and its control in a column on the right
 	auto title = new wxStaticText(this, -1, name);
 	title->SetFont(title->GetFont().Bold());
-	if (!sizer->IsEmpty()) sizer->AddSpacer(FromDIP(18));
+	if (!sizer->IsEmpty()) sizer->AddSpacer(FromDIP(12));
 	sizer->Add(title, 0, wxLEFT | wxRIGHT, FromDIP(4));
-	sizer->Add(new Divider(this), 0, wxEXPAND | wxTOP | wxBOTTOM, FromDIP(6));
-	auto flex = new wxFlexGridSizer(3, FromDIP(8), FromDIP(4));
+	sizer->Add(new Divider(this), 0, wxEXPAND | wxTOP | wxBOTTOM, FromDIP(4));
+	auto flex = new wxFlexGridSizer(3, FromDIP(4), FromDIP(4));
 	flex->AddGrowableCol(1, 1);
 	sizer->Add(flex, 0, wxEXPAND | wxRIGHT, FromDIP(4));
 	return {flex, this};

@@ -834,7 +834,7 @@ Preferences::Preferences(wxWindow *parent): wxDialog(parent, -1, _("Preferences"
 
 	// The list of pages on the left, the search box above it
 	book = new PreferencesBook(this);
-	search = new wxSearchCtrl(book, -1, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(210), -1), wxTE_PROCESS_ENTER);
+	search = new wxSearchCtrl(book, -1, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(180), -1), wxTE_PROCESS_ENTER);
 	search->SetName("preferences_search");
 	search->SetDescriptiveText(_("Search settings (name or pinyin)"));
 	search->ShowCancelButton(true);
@@ -883,11 +883,14 @@ Preferences::Preferences(wxWindow *parent): wxDialog(parent, -1, _("Preferences"
 	// Main Sizer
 	wxSizer *mainSizer = new wxBoxSizer(wxVERTICAL);
 	mainSizer->Add(book, wxSizerFlags(1).Expand().Border(wxALL, FromDIP(8)));
-	mainSizer->Add(buttonSizer, wxSizerFlags(0).Expand().Border(wxALL & ~wxTOP));
+	mainSizer->Add(buttonSizer, wxSizerFlags(0).Expand().Border(wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(8)));
 
 	SetSizerAndFit(mainSizer);
 	// Not as tall as the tallest page: the pages scroll
-	SetSize(wxSize(std::max(GetSize().x, FromDIP(820)), std::min(GetSize().y, FromDIP(680))));
+	// Fitting made the tallest page the least height; the pages scroll, so
+	// the window can be smaller than that
+	SetMinSize(FromDIP(wxSize(640, 420)));
+	SetSize(wxSize(std::max(GetSize().x, FromDIP(760)), std::min(GetSize().y, FromDIP(600))));
 	CenterOnParent();
 
 	applyButton->Enable(false);
@@ -896,8 +899,14 @@ Preferences::Preferences(wxWindow *parent): wxDialog(parent, -1, _("Preferences"
 	Bind(wxEVT_BUTTON, &Preferences::OnApply, this, wxID_APPLY);
 	Bind(wxEVT_BUTTON, std::bind(&HelpButton::OpenPage, "Options"), wxID_HELP);
 	defaultButton->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { RestorePageDefaults(); });
-	// The keyboard starts in the search box, not on a page's first setting
+	// The keyboard starts in the search box, not on a page's first setting:
+	// set again once shown, as Windows gives a dialog's first control the
+	// keyboard when it opens
 	search->SetFocus();
+	Bind(wxEVT_INIT_DIALOG, [this](wxInitDialogEvent &event) {
+		event.Skip();
+		CallAfter([this] { search->SetFocus(); });
+	});
 }
 
 namespace {
