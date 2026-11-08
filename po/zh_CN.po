@@ -9746,3 +9746,15 @@ msgstr "结束前阈"
 #: ../src/dialog_timing_processor.cpp
 msgid "Ends after"
 msgstr "结束后阈"
+
+#: ../src/dialog_resample.cpp
+msgid "Height"
+msgstr "高"
+
+#: ../src/dialog_resample.cpp
+msgid "Top"
+msgstr "上边距"
+
+#: ../src/dialog_resample.cpp
+msgid "Bottom"
+msgstr "下边距"

@@ -3635,13 +3635,41 @@ TEST_F(ordinary_edit, timing_processor_is_drawn_ticks_and_millisecond_fields) {
     EXPECT_EQ(200,OPT_GET("Tool/Timing Post Processor/Lead/IN")->GetInt());
     EXPECT_TRUE(OPT_GET("Tool/Timing Post Processor/Enable/Lead/OUT")->GetBool());
 }
+TEST_F(ordinary_edit, resample_is_drawn_number_fields_a_switch_and_even_margins) {
+    int width,height;LiveRead(*c).GetResolution(width,height);
+    bool ran=false;
+    RunModal hook("Resample Resolution",[&](wxDialog* dialog){
+        FlatSwitch *ar=nullptr; for(auto child:descendants(dialog))if(auto s=dynamic_cast<FlatSwitch*>(child))ar=s;
+        ASSERT_NE(nullptr,ar); EXPECT_EQ(4u,ar->GetCount());
+        EXPECT_FALSE(ar->IsEnabled()) << "the same aspect ratio";
+        auto widths=fields_named(dialog,_("Width")); ASSERT_EQ(2u,widths.size());
+        EXPECT_EQ(wxString::Format("%d",width),widths[0]->GetValue());
+        widths[1]->SetValue(wxString::Format("%d",width*2));
+        EXPECT_TRUE(ar->IsEnabled());
+        auto left=fields_named(dialog,_("Left")),right=fields_named(dialog,_("Right"));
+        ASSERT_EQ(1u,left.size()); ASSERT_EQ(1u,right.size());
+        EXPECT_FALSE(left[0]->IsEnabled());
+        ar->Choose(3);
+        EXPECT_TRUE(left[0]->IsEnabled()); EXPECT_FALSE(right[0]->IsEnabled()) << "symmetrical";
+        left[0]->SetValue("12"); EXPECT_EQ("12",right[0]->GetValue());
+        ran=true;
+        button(dialog,wxID_CANCEL);
+    });
+    cmd::call("tool/resampleres",c.get());
+    EXPECT_TRUE(ran);
+    int after_width,after_height;LiveRead(*c).GetResolution(after_width,after_height);
+    EXPECT_EQ(width,after_width) << "cancelled"; EXPECT_EQ(height,after_height);
+}
 TEST_F(ordinary_edit, controlled_resample_uses_real_settings_confirmation_and_one_history_step) {
     Input("{\\pos(10,20)}sample");
     int width,height;LiveRead(*c).GetResolution(width,height);auto fontsize=LiveRead(*c).GetStyle("Default")->fontsize;
     RunModal hook("Resample Resolution",[&](wxDialog* dialog){
-        int changed=0;
-        for(auto child:descendants(dialog))if(auto spin=dynamic_cast<wxSpinCtrl*>(child);spin && spin->GetParent()->GetLabel()=="Destination Resolution") {spin->SetValue(spin->GetValue()*2);++changed;}
-        ASSERT_EQ(2,changed);button(dialog,wxID_OK);
+        // Width and height of the source, then of the destination
+        std::vector<wxTextCtrl*> sizes;
+        for(auto child:descendants(dialog))if(auto text=dynamic_cast<wxTextCtrl*>(child);text && dynamic_cast<FlatFrame*>(text->GetParent()))sizes.push_back(text);
+        ASSERT_LE(4u,sizes.size());
+        for(int i:{2,3}){long v=0;ASSERT_TRUE(sizes[i]->GetValue().ToLong(&v));sizes[i]->SetValue(wxString::Format("%ld",v*2));}
+        button(dialog,wxID_OK);
     });
     cmd::call("tool/resampleres",c.get());
     EXPECT_EQ(width*2,LiveRead(*c).GetScriptInfoAsInt("PlayResX"));EXPECT_EQ(height*2,LiveRead(*c).GetScriptInfoAsInt("PlayResY"));

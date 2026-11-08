@@ -40,6 +40,7 @@
 - **覆盖粘贴**（`dialog_paste_over.cpp`）：十一个字段是三列勾选框，按行里的位置排（注释、层、开始、结束 / 样式、说话人、特效、文本 / 三个边距）；下面一排快捷按钮：全部、无、时间、文本。
 - **翻译助手**（`dialog_translation.{h,cpp}`）：原文、译文、按键各用小节标题分开，当前行号灰色写在原文标题右侧；按键四列（名称灰色）；“播放音频”“播放视频”放在底部取消按钮之前。
 - **时间后处理**（`dialog_timing_processor.cpp`）：左边是可勾选的样式列表和全部 / 无；右边按小节排：只处理选中行、提前 / 延后、相邻行连续、对齐关键帧。每个毫秒数是数字框，后面灰色的 ms，勾上对应的框才可用；相邻行的偏向原来是滑块，现在是 0–100 的数字框（越大越偏向调整前一行的结束时间）。没有关键帧和时间码时关键帧的勾选框停用并说明原因。一个样式都没勾或一项处理都没开时确定不可用。
+- **重采样分辨率**（`dialog_resample.cpp`）：源和目标各一行“宽 × 高”数字框加“从字幕 / 从视频”按钮，下一行是 YCbCr 矩阵下拉框（第一项“—”表示不转换颜色）。宽高比处理是分段开关，宽高比不变时停用；边距是四个数字框围着“对称”勾选框，对称时右和下跟着左和上。
 
 ## 测试
 
@@ -53,3 +54,4 @@
 - `ordinary_edit.jump_to_names_its_fields_and_jumps`：两个带名称的框、输入帧数时间跟着变、确定后跳到该帧。
 - `ordinary_edit.translation_assistant_is_drawn_with_titles_and_foot_buttons`：预览勾选框、底部四个按钮、没有音视频时播放按钮停用、Esc 按取消。
 - `ordinary_edit.timing_processor_is_drawn_ticks_and_millisecond_fields`：样式默认全勾、没有关键帧时停用、数字框随勾选框可用、全部 / 无决定确定是否可用、确定后保存。
+- `ordinary_edit.resample_is_drawn_number_fields_a_switch_and_even_margins`：宽高比不变时开关停用、改目标宽度后可用、手动时边距可用且对称、取消不改动。
