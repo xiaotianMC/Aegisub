@@ -3423,6 +3423,37 @@ TEST_F(ordinary_edit, shift_times_is_drawn_switches_and_a_history_list) {
     EXPECT_EQ(1500,time->GetTime()); EXPECT_EQ(0,direction->GetSelection());
     shift->Close();
 }
+TEST_F(ordinary_edit, search_and_replace_is_drawn_fields_checks_and_switches) {
+    AcceptMessages messages;
+    cmd::PasteSubtitleLines(c.get(),"Dialogue: 0,0:00:01.00,0:00:02.00,Default,A,0,0,0,,alpha beta");
+    OPT_SET("Tool/Search Replace/Field")->SetInt(0);OPT_SET("Tool/Search Replace/Affect")->SetInt(0);
+    OPT_SET("Tool/Search Replace/Match Case")->SetBool(false);OPT_SET("Tool/Search Replace/RegExp")->SetBool(false);
+    OPT_SET("Tool/Search Replace/Skip Comments")->SetBool(false);OPT_SET("Tool/Search Replace/Skip Tags")->SetBool(false);
+    ShowSearchReplaceDialog(c.get(),true);
+    wxDialog *d=nullptr;
+    for(auto child:window->GetChildren())if(auto x=dynamic_cast<wxDialog*>(child);x && x->GetTitle()==_("Replace") && x->IsShown())d=x;
+    ASSERT_NE(nullptr,d);
+    std::vector<wxTextCtrl*> texts; std::vector<FlatSwitch*> switches; std::vector<FlatCheck*> checks; FlatButton *replace_all=nullptr;
+    for(auto child:descendants(d)){
+        if(auto t=dynamic_cast<wxTextCtrl*>(child))texts.push_back(t);
+        if(auto s=dynamic_cast<FlatSwitch*>(child))switches.push_back(s);
+        if(auto k=dynamic_cast<FlatCheck*>(child))checks.push_back(k);
+        if(auto b=dynamic_cast<FlatButton*>(child);b && b->GetLabel()==_("Replace &all"))replace_all=b;
+    }
+    ASSERT_EQ(2u,texts.size()); ASSERT_EQ(2u,switches.size()); ASSERT_EQ(4u,checks.size()); ASSERT_NE(nullptr,replace_all);
+    EXPECT_EQ(0,switches[0]->GetSelection()); EXPECT_EQ(0,switches[1]->GetSelection());
+    // Alt with a check box's letter ticks it
+    {wxKeyEvent alt(wxEVT_CHAR_HOOK); alt.m_keyCode='M'; alt.m_altDown=true; alt.SetEventObject(d); d->GetEventHandler()->ProcessEvent(alt);}
+    EXPECT_TRUE(checks[0]->GetValue());
+    texts[0]->SetValue("beta"); texts[1]->SetValue("gamma");
+    replace_all->Press();
+    bool replaced=false; for(auto const& line:LiveRead(*c).Events)if(line.Text.get()=="alpha gamma")replaced=true;
+    EXPECT_TRUE(replaced);
+    EXPECT_TRUE(OPT_GET("Tool/Search Replace/Match Case")->GetBool()) << "the choices are kept";
+    // Escape presses Close
+    {wxKeyEvent esc(wxEVT_CHAR_HOOK); esc.m_keyCode=WXK_ESCAPE; esc.SetEventObject(d); d->GetEventHandler()->ProcessEvent(esc);}
+    EXPECT_FALSE(d->IsShown());
+}
 TEST_F(ordinary_edit, controlled_shift_and_timing_processor_use_real_dialog_confirm_events) {
     OPT_SET("Tool/Shift Times/ByTime")->SetBool(true);OPT_SET("Tool/Shift Times/Direction")->SetBool(false);
     OPT_SET("Tool/Shift Times/Type")->SetInt(0);OPT_SET("Tool/Shift Times/Affect")->SetInt(0);
