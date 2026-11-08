@@ -398,7 +398,7 @@ void FlatFrame::OnWheel(wxMouseEvent &event) {
 
 // FlatChoice
 
-FlatChoice::FlatChoice(wxWindow *parent, wxString const& tip)
+FlatChoice::FlatChoice(wxWindow *parent, wxString const& tip, bool editable)
 : wxWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE | wxFULL_REPAINT_ON_RESIZE | wxWANTS_CHARS)
 {
 	SetBackgroundStyle(wxBG_STYLE_PAINT);
@@ -417,14 +417,127 @@ FlatChoice::FlatChoice(wxWindow *parent, wxString const& tip)
 	Bind(wxEVT_LEAVE_WINDOW, [this](wxMouseEvent &e) { hover = false; Refresh(false); e.Skip(); });
 	Bind(wxEVT_SET_FOCUS, [this](wxFocusEvent &e) { Refresh(false); e.Skip(); });
 	Bind(wxEVT_KILL_FOCUS, [this](wxFocusEvent &e) { Refresh(false); e.Skip(); });
-	theme_changed = theme::AddChangeListener([this] { Refresh(false); });
+	theme_changed = theme::AddChangeListener([this] { Refresh(false); if (editor) ApplyEditorColours(true); });
 	SetMinSize(wxSize(FromDIP(60), FromDIP(field_height)));
 	flat::AddWheelTarget(this);
+	if (!editable) return;
+
+	editor = new wxTextCtrl(this, -1, "", wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+	editor->SetToolTip(tip);
+	editor->Bind(wxEVT_TEXT, [this](wxCommandEvent &) { OnEdited(); });
+	editor->Bind(wxEVT_KEY_DOWN, &FlatChoice::OnEditorKey, this);
+	// Enter is done with it, as in the other fields; Ctrl+Enter goes on
+	editor->Bind(wxEVT_CHAR_HOOK, [this](wxKeyEvent &e) {
+		int key = e.GetKeyCode();
+		if ((key == WXK_RETURN || key == WXK_NUMPAD_ENTER) && !e.HasAnyModifiers()) {
+			SyncEditor();
+			flat::LeaveField();
+		}
+		else if (key == WXK_ESCAPE && !e.HasAnyModifiers()) {
+			SyncEditor();
+			editor->SelectAll();
+		}
+		else if (key == WXK_TAB && !e.ControlDown() && !e.AltDown()) {
+			SyncEditor();
+			Navigate(e.ShiftDown() ? wxNavigationKeyEvent::IsBackward : wxNavigationKeyEvent::IsForward);
+		}
+		else e.Skip();
+	});
+	editor->Bind(wxEVT_MOUSEWHEEL, &FlatChoice::OnWheel, this);
+	editor->Bind(wxEVT_SET_FOCUS, [this](wxFocusEvent &e) { Refresh(false); e.Skip(); });
+	editor->Bind(wxEVT_KILL_FOCUS, [this](wxFocusEvent &e) {
+		// What was typed and matched nothing is let go
+		CallAfter([this] { if (!editor->HasFocus()) SyncEditor(); });
+		Refresh(false);
+		e.Skip();
+	});
+	// The keyboard goes to the text, all of it chosen so typing replaces it
+	Bind(wxEVT_SET_FOCUS, [this](wxFocusEvent &e) {
+		editor->SetFocus();
+		editor->SelectAll();
+		e.Skip();
+	});
+	Bind(wxEVT_SIZE, [this](wxSizeEvent &e) { ArrangeEditor(); e.Skip(); });
+	flat::AddField(editor);
+	ApplyEditorColours(true);
+}
+
+void FlatChoice::ArrangeEditor() {
+	if (!editor) return;
+	wxSize size = GetClientSize();
+	int pad = FromDIP(8), right = size.x - pad - FromDIP(7) - FromDIP(6);
+	int height = std::min(editor->GetBestSize().y, size.y - FromDIP(4));
+	editor->SetSize(pad, (size.y - height) / 2, std::max(1, right - pad), std::max(1, height));
+}
+
+void FlatChoice::ApplyEditorColours(bool matched) {
+	auto p = flat::Colours(this);
+	editor->SetBackgroundColour(matched ? p.field : theme::Mix(p.field, theme::Colour("Colour/Subtitle/Syntax/Background/Error"), 0.6));
+	editor->SetForegroundColour(p.text);
+	editor->Refresh();
+}
+
+void FlatChoice::SyncEditor() {
+	if (!editor || completing) return;
+	if (editor->GetValue() != GetStringSelection()) editor->ChangeValue(GetStringSelection());
+	if (editor->HasFocus()) editor->SelectAll();
+	else editor->SetSelection(0, 0);
+	ApplyEditorColours(true);
+}
+
+void FlatChoice::OnEdited() {
+	wxString prefix = editor->GetValue().Lower();
+	if (prefix.empty()) {
+		ApplyEditorColours(true);
+		return;
+	}
+	for (size_t i = 0; i < items.size(); ++i) {
+		if (!items[i].Lower().StartsWith(prefix)) continue;
+		completing = true;
+		Choose(static_cast<int>(i));
+		completing = false;
+		// The rest of the name, chosen so the next letter types over it.
+		// After the event: the field puts the caret after what was typed
+		// once it has told of the change.
+		long typed_length = static_cast<long>(prefix.size());
+		wxString name = items[i];
+		editor->ChangeValue(name);
+		editor->SetSelection(typed_length, static_cast<long>(name.size()));
+		CallAfter([this, name, typed_length] {
+			if (editor->GetValue() == name)
+				editor->SetSelection(typed_length, static_cast<long>(name.size()));
+		});
+		ApplyEditorColours(true);
+		return;
+	}
+	ApplyEditorColours(false);
+}
+
+void FlatChoice::OnEditorKey(wxKeyEvent &event) {
+	switch (event.GetKeyCode()) {
+		case WXK_UP: case WXK_NUMPAD_UP: Step(-1); break;
+		case WXK_DOWN: case WXK_NUMPAD_DOWN:
+			if (event.AltDown()) ShowList(); else Step(1);
+			break;
+		case WXK_F4: ShowList(); break;
+		case WXK_BACK: {
+			// With the completed rest chosen, Backspace takes off a letter
+			// typed rather than only the rest
+			long from, to;
+			editor->GetSelection(&from, &to);
+			if (!event.HasAnyModifiers() && from > 0 && to > from && to == editor->GetLastPosition())
+				editor->SetSelection(from - 1, to);
+			event.Skip();
+			break;
+		}
+		default: event.Skip();
+	}
 }
 
 bool FlatChoice::Enable(bool enable) {
 	bool changed = wxWindow::Enable(enable);
 	if (changed) Refresh(false);
+	if (editor) editor->Enable(enable);
 	return changed;
 }
 
@@ -445,9 +558,11 @@ void FlatChoice::Set(std::vector<wxString> new_items) {
 void FlatChoice::SetStringSelection(wxString const& name) {
 	auto it = std::find(items.begin(), items.end(), name);
 	int index = it == items.end() ? -1 : static_cast<int>(it - items.begin());
-	if (index == selection) return;
-	selection = index;
-	Refresh(false);
+	if (index != selection) {
+		selection = index;
+		Refresh(false);
+	}
+	SyncEditor();
 }
 
 wxString FlatChoice::GetStringSelection() const {
@@ -458,6 +573,7 @@ void FlatChoice::Choose(int index) {
 	if (index < 0 || index >= static_cast<int>(items.size()) || index == selection) return;
 	selection = index;
 	Refresh(false);
+	SyncEditor();
 	if (on_choose) on_choose(index);
 }
 
@@ -511,12 +627,12 @@ void FlatChoice::OnPaint(wxPaintEvent &) {
 	wxAutoBufferedPaintDC buffered(this);
 	wxGCDC dc(buffered);
 	auto p = flat::Colours(this);
-	DrawField(dc, this, p, HasFocus(), hover);
+	DrawField(dc, this, p, HasFocus() || (editor && editor->HasFocus()), hover);
 	dc.SetFont(GetFont());
 	wxSize size = GetClientSize();
 	int pad = FromDIP(8), chevron = FromDIP(7);
 	int right = size.x - pad - chevron - FromDIP(6);
-	wxString text = GetStringSelection();
+	wxString text = editor ? wxString() : GetStringSelection();
 	if (dc.GetTextExtent(text).x > right - pad) {
 		while (!text.empty() && dc.GetTextExtent(text + wxS("…")).x > right - pad) text.RemoveLast();
 		text += wxS("…");

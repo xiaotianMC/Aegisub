@@ -118,7 +118,7 @@ SubsEditBox::SubsEditBox(wxWindow *parent, agi::Context *context)
 	top_sizer->Add(comment_box, wxSizerFlags().Center().Border(wxRIGHT, gap));
 
 	// Its tooltip is the style's name, which may be cut short
-	style_box = new FlatChoice(this, "");
+	style_box = new FlatChoice(this, "", true);
 	style_box->on_choose = [this](int) { OnStyleChange(); };
 	top_sizer->Add(style_box, wxSizerFlags(3).Center().Border(wxRIGHT, gap));
 
@@ -395,7 +395,9 @@ void SubsEditBox::PopulateList(wxTextCtrl *ctrl, wxArrayString &values, boost::f
 }
 
 void SubsEditBox::FocusStyle() {
-	if (style_box->IsEnabled()) style_box->SetFocus();
+	if (!style_box->IsEnabled()) return;
+	style_box->GetEditor()->SetFocus();
+	style_box->GetEditor()->SelectAll();
 }
 
 void SubsEditBox::OnActiveLineChanged() {
@@ -642,6 +644,7 @@ void SubsEditBox::UpdateStyleBox() {
 	if (!line) return;
 	style_box->SetStringSelection(to_wx(line->Style));
 	style_box->SetToolTip(to_wx(line->Style));
+	style_box->GetEditor()->SetToolTip(to_wx(line->Style));
 }
 
 void SubsEditBox::OnStyleChange() {

@@ -122,6 +122,8 @@ class FlatChoice final : public wxWindow {
 	bool hover = false;
 	wxString typed;         ///< What was typed to find an item, kept for a second
 	wxLongLong typed_at = 0;
+	wxTextCtrl *editor = nullptr; ///< The text typed into an editable one
+	bool completing = false;      ///< Choosing what was typed: leave the text be
 	agi::signal::Connection theme_changed;
 
 	void OnPaint(wxPaintEvent &);
@@ -129,9 +131,20 @@ class FlatChoice final : public wxWindow {
 	void OnChar(wxKeyEvent &event);
 	void OnWheel(wxMouseEvent &event);
 	bool Typing() const;
+	void OnEdited();
+	void OnEditorKey(wxKeyEvent &event);
+	/// Show the chosen item in the editor, the colours for no match cleared
+	void SyncEditor();
+	void ApplyEditorColours(bool matched);
+	void ArrangeEditor();
 
 public:
-	FlatChoice(wxWindow *parent, wxString const& tip);
+	/// An @p editable one is typed into as a text field: the first item
+	/// beginning with what was typed is chosen and completed in the field
+	FlatChoice(wxWindow *parent, wxString const& tip, bool editable = false);
+
+	/// The field typed into, if it is editable
+	wxTextCtrl *GetEditor() const { return editor; }
 
 	/// Called with the index when the user chooses an item
 	std::function<void(int)> on_choose;
