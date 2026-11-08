@@ -3539,6 +3539,31 @@ TEST_F(ordinary_edit, jump_to_names_its_fields_and_jumps) {
     EXPECT_TRUE(ran);
     EXPECT_EQ(100,c->videoController->GetFrameN());
 }
+TEST_F(ordinary_edit, translation_assistant_is_drawn_with_titles_and_foot_buttons) {
+    cmd::PasteSubtitleLines(c.get(),"Dialogue: 0,0:00:01.00,0:00:02.00,Default,A,0,0,0,,hello");
+    bool ran=false;
+    {
+        RunModal hook(_("Translation Assistant"),[&](wxDialog *dialog){
+            FlatCheck *preview=nullptr; std::vector<FlatButton*> buttons;
+            for(auto child:descendants(dialog)){
+                if(auto k=dynamic_cast<FlatCheck*>(child))preview=k;
+                if(auto b=dynamic_cast<FlatButton*>(child))buttons.push_back(b);
+            }
+            ASSERT_NE(nullptr,preview); EXPECT_TRUE(preview->GetValue());
+            ASSERT_EQ(4u,buttons.size());
+            for(auto b:buttons){
+                if(b->GetLabel()==_("Play &Audio"))EXPECT_FALSE(b->IsEnabled()) << "no audio";
+                if(b->GetLabel()==_("Play &Video"))EXPECT_FALSE(b->IsEnabled()) << "no video";
+            }
+            // Escape presses Cancel
+            wxKeyEvent esc(wxEVT_CHAR_HOOK); esc.m_keyCode=WXK_ESCAPE; esc.SetEventObject(dialog); dialog->GetEventHandler()->ProcessEvent(esc);
+            EXPECT_FALSE(dialog->IsShown());
+            ran=true;
+        });
+        cmd::call("tool/translation_assistant",c.get());
+    }
+    EXPECT_TRUE(ran);
+}
 TEST_F(ordinary_edit, controlled_shift_and_timing_processor_use_real_dialog_confirm_events) {
     OPT_SET("Tool/Shift Times/ByTime")->SetBool(true);OPT_SET("Tool/Shift Times/Direction")->SetBool(false);
     OPT_SET("Tool/Shift Times/Type")->SetInt(0);OPT_SET("Tool/Shift Times/Affect")->SetInt(0);

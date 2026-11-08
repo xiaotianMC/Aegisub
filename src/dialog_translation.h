@@ -29,7 +29,7 @@ class SubtitleDialogEdit;
 class AssDialogueBlock;
 class PersistLocation;
 class SubsTextEditCtrl;
-class wxCheckBox;
+class FlatCheck;
 class wxStaticText;
 class wxStyledTextCtrl;
 
@@ -62,7 +62,7 @@ private:
 	wxStaticText *line_number_display;
 	wxStyledTextCtrl *original_text;
 	SubsTextEditCtrl *translated_text;
-	wxCheckBox *seek_video;
+	FlatCheck *seek_video;
 
 	std::unique_ptr<PersistLocation> persist;
 
