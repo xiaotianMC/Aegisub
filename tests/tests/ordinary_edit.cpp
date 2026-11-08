@@ -3677,6 +3677,23 @@ TEST_F(ordinary_edit, spell_checker_is_drawn_fields_a_list_and_buttons) {
     {wxKeyEvent esc(wxEVT_CHAR_HOOK); esc.m_keyCode=WXK_ESCAPE; esc.SetEventObject(d); d->GetEventHandler()->ProcessEvent(esc);}
     EXPECT_FALSE(d->IsShown());
 }
+TEST_F(ordinary_edit, fonts_collector_chooses_an_action_from_a_list) {
+    OPT_SET("Tool/Fonts Collector/Action")->SetInt(0);
+    ShowFontsCollectorDialog(c.get());
+    wxDialog *d=nullptr;
+    for(auto child:window->GetChildren())if(auto x=dynamic_cast<wxDialog*>(child);x && x->GetTitle()==_("Fonts Collector") && x->IsShown())d=x;
+    ASSERT_NE(nullptr,d);
+    FlatChoice *action=nullptr; for(auto child:descendants(d))if(auto ch=dynamic_cast<FlatChoice*>(child))action=ch;
+    ASSERT_NE(nullptr,action);
+    for(auto const& item:action->GetItems())EXPECT_NE(_("Copy fonts to subtitle file's folder"),item) << "the subtitles have no folder";
+    auto dest=fields_named(d,_("Destination")); ASSERT_EQ(1u,dest.size());
+    EXPECT_FALSE(dest[0]->IsEnabled());
+    action->Choose(1);
+    EXPECT_EQ(1,OPT_GET("Tool/Fonts Collector/Action")->GetInt()); EXPECT_TRUE(dest[0]->IsEnabled());
+    EXPECT_NE(nullptr,button_labelled(d,_("&Start!")));
+    d->Close();
+    EXPECT_FALSE(d->IsShown());
+}
 TEST_F(ordinary_edit, controlled_resample_uses_real_settings_confirmation_and_one_history_step) {
     Input("{\\pos(10,20)}sample");
     int width,height;LiveRead(*c).GetResolution(width,height);auto fontsize=LiveRead(*c).GetStyle("Default")->fontsize;
@@ -3971,10 +3988,10 @@ TEST_F(ordinary_edit, ordinary_scope_cannot_register_a_live_history_writer_or_ch
 TEST_F(ordinary_edit, font_collection_uses_snapshot_and_can_be_destroyed_with_worker_pending) {
     auto action=OPT_GET("Tool/Fonts Collector/Action")->GetInt();OPT_SET("Tool/Fonts Collector/Action")->SetInt(0);
     Input("font snapshot");auto revision=c->subtitleEditGate.Revision();
-    ShowFontsCollectorDialog(c.get());wxDialog* dialog=nullptr;wxButton* start=nullptr;
+    ShowFontsCollectorDialog(c.get());wxDialog* dialog=nullptr;FlatButton* start=nullptr;
     for(auto child:descendants(window))if(auto candidate=dynamic_cast<wxDialog*>(child);candidate && candidate->GetTitle()=="Fonts Collector")dialog=candidate;
     ASSERT_NE(nullptr,dialog);
-    for(auto child:descendants(dialog))if(auto candidate=dynamic_cast<wxButton*>(child);candidate && candidate->GetLabel()=="&Start!")start=candidate;
+    for(auto child:descendants(dialog))if(auto candidate=dynamic_cast<FlatButton*>(child);candidate && candidate->GetLabel()=="&Start!")start=candidate;
     ASSERT_NE(nullptr,start);
     auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);
     button(start,start->GetId());EXPECT_EQ(revision,c->subtitleEditGate.Revision());

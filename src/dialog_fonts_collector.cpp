@@ -20,10 +20,12 @@
 #include "compat.h"
 #include "dialog_manager.h"
 #include "format.h"
-#include "help_button.h"
+#include "flat_controls.h"
+#include "flat_dialog.h"
 #include "include/aegisub/context.h"
 #include "libresrc/libresrc.h"
 #include "options.h"
+#include "theme.h"
 #include "utils.h"
 #include "value_event.h"
 
@@ -32,15 +34,14 @@
 #include <libaegisub/fs.h>
 #include <libaegisub/path.h>
 
-#include <wx/button.h>
+#include <algorithm>
+
 #include <wx/dialog.h>
 #include <wx/dirdlg.h>
 #include <wx/filedlg.h>
 #include <wx/filename.h>
 #include <wx/msgdlg.h>
-#include <wx/radiobox.h>
 #include <wx/sizer.h>
-#include <wx/statbox.h>
 #include <wx/stattext.h>
 #include <wx/stc/stc.h>
 #include <wx/textctrl.h>
@@ -63,16 +64,18 @@ class DialogFontsCollector final : public wxDialog {
 	FcMode mode = FcMode::CheckFontsOnly;
 
 	wxStyledTextCtrl *collection_log;
-	wxButton *close_btn;
-	wxButton *dest_browse_button;
-	wxButton *start_btn;
-	wxRadioBox *collection_mode;
+	FlatButton *close_btn;
+	FlatButton *dest_browse_button;
+	FlatButton *start_btn;
+	FlatChoice *collection_mode;
+	std::vector<FcMode> modes; ///< The modes in collection_mode, in order
 	wxStaticText *dest_label;
+	FlatFrame *dest_frame;
 	wxTextCtrl *dest_ctrl;
 
 	void OnStart(wxCommandEvent &);
 	void OnBrowse(wxCommandEvent &);
-	void OnRadio(wxCommandEvent &e);
+	void OnMode(int index);
 
 	/// Append text to log message from worker thread
 	void OnAddText(ValueEvent<std::pair<int, wxString>>& event);
@@ -232,59 +235,66 @@ DialogFontsCollector::DialogFontsCollector(agi::Context *c)
 {
 	SetIcons(GETICONS(font_collector_button));
 
-	wxString modes[] = {
-		 _("Check fonts for availability")
-		,_("Copy fonts to folder")
-		,_("Copy fonts to subtitle file's folder")
-		,_("Copy fonts to zipped archive")
+	theme::UseSurface(this);
+	int gap = FromDIP(10), row = FromDIP(6);
+
+	// What to do, the subtitle file's folder only when it has one
+	std::pair<FcMode, wxString> all_modes[] = {
+		 {FcMode::CheckFontsOnly, _("Check fonts for availability")}
+		,{FcMode::CopyToFolder, _("Copy fonts to folder")}
+		,{FcMode::CopyToScriptFolder, _("Copy fonts to subtitle file's folder")}
+		,{FcMode::CopyToZip, _("Copy fonts to zipped archive")}
 #ifndef _WIN32
-		,_("Symlink fonts to folder")
+		,{FcMode::SymlinkToFolder, _("Symlink fonts to folder")}
 #endif
 	};
+	bool has_script_folder = c->path->Decode("?script") != "?script";
+	std::vector<wxString> names;
+	for (auto const& [m, name] : all_modes) {
+		if (m == FcMode::CopyToScriptFolder && !has_script_folder) continue;
+		modes.push_back(m);
+		names.push_back(name);
+	}
+	mode = static_cast<FcMode>(mid<int>(0, OPT_GET("Tool/Fonts Collector/Action")->GetInt(), std::size(all_modes) - 1));
+	if (std::find(modes.begin(), modes.end(), mode) == modes.end()) mode = FcMode::CheckFontsOnly;
+	collection_mode = new FlatChoice(this, _("Action"));
+	collection_mode->Set(names);
+	collection_mode->SetStringSelection(names[std::find(modes.begin(), modes.end(), mode) - modes.begin()]);
+	collection_mode->SetToolTip(_("Action"));
+	collection_mode->on_choose = [this](int index) { OnMode(index); };
 
-	mode = static_cast<FcMode>(mid<int>(0, OPT_GET("Tool/Fonts Collector/Action")->GetInt(), std::size(modes)));
-	collection_mode = new wxRadioBox(this, -1, _("Action"), wxDefaultPosition, wxDefaultSize, std::size(modes), modes, 1);
-	collection_mode->SetSelection(static_cast<int>(mode));
+	// Where to, with a word on what is wanted there
+	dest_frame = new FlatFrame(this, _("Destination"));
+	dest_ctrl = new wxTextCtrl(dest_frame, -1, to_wx(OPT_GET("Path/Fonts Collector Destination")->GetString()), wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+	dest_frame->SetContent(dest_ctrl, 300);
+	dest_browse_button = new FlatButton(this, _("&Browse..."));
+	dest_label = new wxStaticText(this, -1, " ");
+	dest_label->SetForegroundColour(flat::Colours(this).dim);
+	auto dest_browse_sizer = new wxBoxSizer(wxHORIZONTAL);
+	dest_browse_sizer->Add(dest_frame, wxSizerFlags(1).Expand());
+	dest_browse_sizer->Add(dest_browse_button, wxSizerFlags().Border(wxLEFT, row));
 
-	if (c->path->Decode("?script") == "?script")
-		collection_mode->Enable(2, false);
-
-	wxStaticBoxSizer *destination_sizer = new wxStaticBoxSizer(wxVERTICAL, this, _("Destination"));
-	wxWindow *destination_box = destination_sizer->GetStaticBox();
-
-	dest_label = new wxStaticText(destination_box, -1, " ");
-	dest_ctrl = new wxTextCtrl(destination_box, -1, to_wx(OPT_GET("Path/Fonts Collector Destination")->GetString()));
-	dest_browse_button = new wxButton(destination_box, -1, _("&Browse..."));
-
-	wxSizer *dest_browse_sizer = new wxBoxSizer(wxHORIZONTAL);
-	dest_browse_sizer->Add(dest_ctrl, wxSizerFlags(1).Border(wxRIGHT).Align(wxALIGN_CENTER_VERTICAL));
-	dest_browse_sizer->Add(dest_browse_button, wxSizerFlags());
-
-	destination_sizer->Add(dest_label, wxSizerFlags().Border(wxBOTTOM));
-	destination_sizer->Add(dest_browse_sizer, wxSizerFlags().Expand());
-
-	wxStaticBoxSizer *log_sizer = new wxStaticBoxSizer(wxVERTICAL, this, _("Log"));
-	wxWindow *log_box = log_sizer->GetStaticBox();
-	collection_log = new wxStyledTextCtrl(log_box, -1, wxDefaultPosition, DipSize(600, 300));
+	collection_log = new wxStyledTextCtrl(this, -1, wxDefaultPosition, DipSize(600, 300));
 	collection_log->SetWrapMode(wxSTC_WRAP_WORD);
 	collection_log->SetMarginWidth(1, 0);
 	collection_log->SetReadOnly(true);
 	collection_log->StyleSetForeground(1, wxColour(0, 200, 0));
 	collection_log->StyleSetForeground(2, wxColour(200, 0, 0));
 	collection_log->StyleSetForeground(3, wxColour(200, 100, 0));
-	log_sizer->Add(collection_log, wxSizerFlags().Border());
 
-	wxStdDialogButtonSizer *button_sizer = CreateStdDialogButtonSizer(wxOK | wxCANCEL | wxHELP);
-	start_btn = button_sizer->GetAffirmativeButton();
-	close_btn = button_sizer->GetCancelButton();
+	auto buttons = new flat::DialogButtons(this, wxOK | wxCANCEL | wxHELP, "Fonts Collector");
+	start_btn = buttons->Get(wxID_OK);
+	close_btn = buttons->Get(wxID_CANCEL);
 	start_btn->SetLabel(_("&Start!"));
-	start_btn->SetDefault();
+	close_btn->SetLabel(_("Close"));
 
 	wxSizer *main_sizer = new wxBoxSizer(wxVERTICAL);
-	main_sizer->Add(collection_mode, wxSizerFlags().Expand().Border());
-	main_sizer->Add(destination_sizer, wxSizerFlags().Expand().Border(wxALL & ~wxTOP));
-	main_sizer->Add(log_sizer, wxSizerFlags().Border(wxALL & ~wxTOP));
-	main_sizer->Add(button_sizer, wxSizerFlags().Right().Border(wxALL & ~wxTOP));
+	main_sizer->Add(collection_mode, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxTOP, gap));
+	main_sizer->Add(dest_browse_sizer, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxTOP, row));
+	main_sizer->Add(dest_label, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxTOP, row));
+	main_sizer->Add(flat::SectionTitle(this, _("Log")), wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxTOP, gap));
+	main_sizer->Add(collection_log, wxSizerFlags(1).Expand().Border(wxLEFT | wxRIGHT | wxTOP, row));
+	main_sizer->Add(buttons, wxSizerFlags().Expand().Border(wxALL, gap));
 
 	SetSizerAndFit(main_sizer);
 	CenterOnParent();
@@ -294,8 +304,6 @@ DialogFontsCollector::DialogFontsCollector(agi::Context *c)
 
 	start_btn->Bind(wxEVT_BUTTON, &DialogFontsCollector::OnStart, this);
 	dest_browse_button->Bind(wxEVT_BUTTON, &DialogFontsCollector::OnBrowse, this);
-	collection_mode->Bind(wxEVT_RADIOBOX, &DialogFontsCollector::OnRadio, this);
-	button_sizer->GetHelpButton()->Bind(wxEVT_BUTTON, std::bind(&HelpButton::OpenPage, "Fonts Collector"));
 	Bind(EVT_ADD_TEXT, &DialogFontsCollector::OnAddText, this);
 	Bind(EVT_COLLECTION_DONE, &DialogFontsCollector::OnCollectionComplete, this);
 }
@@ -335,10 +343,10 @@ void DialogFontsCollector::OnStart(wxCommandEvent &) {
 	EnableCloseButton(false);
 	start_btn->Enable(false);
 	dest_browse_button->Enable(false);
+	dest_frame->Enable(false);
 	dest_ctrl->Enable(false);
 	close_btn->Enable(false);
 	collection_mode->Enable(false);
-	dest_label->Enable(false);
 
 	FontsCollectorThread(*queue, std::move(snapshot), dest_path, mode, GetEventHandler());
 }
@@ -360,9 +368,9 @@ void DialogFontsCollector::OnBrowse(wxCommandEvent &) {
 		dest_ctrl->SetValue(dest);
 }
 
-void DialogFontsCollector::OnRadio(wxCommandEvent &evt) {
-	OPT_SET("Tool/Fonts Collector/Action")->SetInt(evt.GetInt());
-	mode = static_cast<FcMode>(evt.GetInt());
+void DialogFontsCollector::OnMode(int index) {
+	mode = modes[index];
+	OPT_SET("Tool/Fonts Collector/Action")->SetInt(static_cast<int>(mode));
 	UpdateControls();
 }
 
@@ -370,15 +378,15 @@ void DialogFontsCollector::UpdateControls() {
 	wxString dst = dest_ctrl->GetValue();
 
 	if (mode == FcMode::CheckFontsOnly || mode == FcMode::CopyToScriptFolder) {
+		dest_frame->Enable(false);
 		dest_ctrl->Enable(false);
 		dest_browse_button->Enable(false);
-		dest_label->Enable(false);
 		dest_label->SetLabel(_("N/A"));
 	}
 	else {
+		dest_frame->Enable(true);
 		dest_ctrl->Enable(true);
 		dest_browse_button->Enable(true);
-		dest_label->Enable(true);
 
 		if (mode == FcMode::CopyToFolder || mode == FcMode::SymlinkToFolder) {
 			dest_label->SetLabel(_("Choose the folder where the fonts will be collected to. It will be created if it doesn't exist."));
@@ -425,8 +433,6 @@ void DialogFontsCollector::OnCollectionComplete(wxThreadEvent &) {
 	start_btn->Enable();
 	close_btn->Enable();
 	collection_mode->Enable();
-	if (path.Decode("?script") == "?script")
-		collection_mode->Enable(2, false);
 
 	UpdateControls();
 }
