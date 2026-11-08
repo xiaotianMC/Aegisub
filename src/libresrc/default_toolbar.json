@@ -52,7 +52,6 @@
         ],
         [
             "time/shift",
-            "tool/style/assistant",
             "tool/translation_assistant",
             "tool/resampleres",
             "tool/time/postprocess",
@@ -88,7 +87,6 @@
         "am/meta",
         "",
         "time/shift",
-        "tool/style/assistant",
         "tool/translation_assistant",
         "tool/resampleres",
         "tool/time/postprocess",

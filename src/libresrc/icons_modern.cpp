@@ -113,7 +113,6 @@ const ModernIcon icons[] = {
 	{"snap_subs_to_scene", "<path d='M2.5 3V21M21.5 3V21'/><rect x='7' y='8.5' width='10' height='7' rx='2'/><path d='M5 12H2.5M19 12H21.5'/>"},
 	{"spellcheck_toolbutton", "<path d='M20 15L14.5 20.5L12 18'/><path d='M4 16L10 4L15.115 14.23'/><path d='M6 12H14'/>"}, // Lucide: spell-check
 	{"style_toolbutton", "<path d='M15 16L17.536 8.672A1.02 1.02 1 0 1 19.464 8.672L22 16'/><path d='M15.697 14H21.303'/><path d='M2 16L6.039 6.31A0.5 0.5 0 0 1 6.962 6.31L11 16'/><path d='M3.304 13H9.696'/>"}, // Lucide: a-large-small
-	{"styling_toolbutton", "<path d='M11 10L14 13'/><path d='M6.5 21A3.5 3.5 0 1 0 3 17.5A2.62 2.62 0 0 1 2.292 19.292A1 1 0 0 0 3 21Z'/><path d='M9.969 17.031L21.378 5.624A1 1 0 0 0 18.376 2.622L6.967 14.031'/>"}, // Lucide: brush
 	{"subend_to_video", "<path d='M17.5 8V21'/><path d='M14 2H21V5L17.5 8.5L14 5Z' fill='@'/><path d='M17.5 12H10M17.5 21H10'/>"},
 	{"substart_to_video", "<path d='M6.5 8V21'/><path d='M3 2H10V5L6.5 8.5L3 5Z' fill='@'/><path d='M6.5 12H14M6.5 21H14'/>"},
 	{"timing_processor_toolbutton", "<path d='M10 2L14 2'/><path d='M12 14L15 11'/><circle cx='12' cy='14' r='8'/>"}, // Lucide: timer

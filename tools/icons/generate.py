@@ -320,7 +320,7 @@ LUCIDE = {
  'new_toolbutton': 'file', 'open_toolbutton': 'folder-open', 'save_toolbutton': 'save',
  'jumpto_button': 'arrow-right-to-line', 'zoom_in_button': 'zoom-in', 'zoom_out_button': 'zoom-out',
  'select_visible_button': 'eye', 'style_toolbutton': 'a-large-small', 'properties_toolbutton': 'sliders-horizontal',
- 'attach_button': 'paperclip', 'automation_toolbutton': 'code-xml', 'styling_toolbutton': 'brush',
+ 'attach_button': 'paperclip', 'automation_toolbutton': 'code-xml',
  'translation_toolbutton': 'messages-square', 'resample_toolbutton': 'scaling', 'timing_processor_toolbutton': 'timer',
  'spellcheck_toolbutton': 'spell-check', 'options_button': 'settings', 'toggle_tag_hiding': 'braces',
  # video

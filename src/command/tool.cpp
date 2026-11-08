@@ -35,7 +35,6 @@
 
 #include "../compat.h"
 #include "../dialog_manager.h"
-#include "../dialog_styling_assistant.h"
 #include "../dialog_translation.h"
 #include "../dialogs.h"
 #include "../include/aegisub/context.h"
@@ -109,48 +108,6 @@ struct tool_resampleres final : public Command {
 		ResampleResolution(&staged.file, settings);
 		staged.Publish(AssFile::COMMIT_SCRIPTINFO|AssFile::COMMIT_DIAG_FULL|AssFile::COMMIT_STYLES);
 		staged.Commit(_("resolution resampling"),AssFile::COMMIT_SCRIPTINFO|AssFile::COMMIT_DIAG_FULL);
-	}
-};
-
-struct tool_style_assistant final : public Command {
-	CMD_NAME("tool/style/assistant")
-	CMD_ICON(styling_toolbutton)
-	STR_MENU("St&yling Assistant...")
-	STR_DISP("Styling Assistant")
-	STR_HELP("Open styling assistant")
-
-	void operator()(agi::Context *c) override {
-		c->dialog->Show<DialogStyling>(c);
-	}
-};
-
-struct tool_styling_assistant_validator : public Command {
-	CMD_TYPE(COMMAND_VALIDATE)
-
-	bool Validate(const agi::Context *c) override {
-		return !!c->dialog->Get<DialogStyling>();
-	}
-};
-
-struct tool_styling_assistant_commit final : public tool_styling_assistant_validator {
-	CMD_NAME("tool/styling_assistant/commit")
-	STR_MENU("&Accept changes")
-	STR_DISP("Accept changes")
-	STR_HELP("Commit changes and move to the next line")
-
-	void operator()(agi::Context *c) override {
-		c->dialog->Get<DialogStyling>()->Commit(true);
-	}
-};
-
-struct tool_styling_assistant_preview final : public tool_styling_assistant_validator {
-	CMD_NAME("tool/styling_assistant/preview")
-	STR_MENU("&Preview changes")
-	STR_DISP("Preview changes")
-	STR_HELP("Commit changes and stay on the current line")
-
-	void operator()(agi::Context *c) override {
-		c->dialog->Get<DialogStyling>()->Commit(false);
 	}
 };
 
@@ -278,9 +235,6 @@ namespace cmd {
 		reg(std::make_unique<tool_font_collector>());
 		reg(std::make_unique<tool_line_select>());
 		reg(std::make_unique<tool_resampleres>());
-		reg(std::make_unique<tool_style_assistant>());
-		reg(std::make_unique<tool_styling_assistant_commit>());
-		reg(std::make_unique<tool_styling_assistant_preview>());
 		reg(std::make_unique<tool_style_manager>());
 		reg(std::make_unique<tool_time_kanji>());
 		reg(std::make_unique<tool_time_postprocess>());

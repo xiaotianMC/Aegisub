@@ -223,27 +223,6 @@
 			"Ctrl-KP_Subtract"
 		]
 	},
-	"Styling Assistant" : {
-		"audio/play/selection" : [
-			"End"
-		],
-		"grid/line/next" : [
-			"PageDown"
-		],
-		"grid/line/prev" : [
-			"PageUp"
-		],
-		"tool/styling_assistant/commit" : [
-			"Enter",
-			"KP_Enter"
-		],
-		"tool/styling_assistant/preview" : [
-			"F8"
-		],
-		"video/play/line" : [
-			"Home"
-		]
-	},
 	"Subtitle Edit Box" : {
 		"edit/complete" : [
 			"Ctrl-J"

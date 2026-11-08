@@ -82,7 +82,6 @@
 #include "subtitle_format.h"
 #include "subtitle_dialog_edit.h"
 #include "dialog_rectangle.h"
-#include "dialog_styling_assistant.h"
 #include "dialog_translation.h"
 #include "dialogs.h"
 #include "../support/live_model_test_access.h"
@@ -899,7 +898,7 @@ TEST_F(ordinary_edit, main_toolbar_groups_dialogs_in_dropdowns_and_has_a_classic
             if (tool->GetLabel() == cmd::get("video/jump")->StrDisplay(c.get())) jump = tool;
         }
     EXPECT_EQ(3, dropdowns);
-    EXPECT_EQ(15u, menu_entries) << "every grouped command, the button's own one first";
+    EXPECT_EQ(14u, menu_entries) << "every grouped command, the button's own one first";
     ASSERT_NE(nullptr, jump);
     auto jump_menu = jump->GetDropdownMenu();
     ASSERT_EQ(3u, jump_menu->GetMenuItemCount());
@@ -915,12 +914,12 @@ TEST_F(ordinary_edit, main_toolbar_groups_dialogs_in_dropdowns_and_has_a_classic
     // The classic layout: every command a button of its own.
     OPT_SET("App/Classic Toolbar")->SetBool(true);
     auto classic = buttons();
-    EXPECT_EQ(27u, classic.size());
+    EXPECT_EQ(26u, classic.size());
     EXPECT_TRUE(std::none_of(classic.begin(), classic.end(), [](auto tool) { return tool->GetKind() == wxITEM_DROPDOWN; }));
 
     // The appearance rebuilds it with icons for the new background.
     OPT_SET("App/Theme")->SetInt(2);
-    EXPECT_EQ(27u, buttons().size());
+    EXPECT_EQ(26u, buttons().size());
     OPT_SET("App/Theme")->SetInt(1);
     OPT_SET("App/Classic Toolbar")->SetBool(false);
     EXPECT_EQ(13u, buttons().size());
@@ -3095,22 +3094,6 @@ TEST_F(ordinary_edit, dialog_snapshot_closes_with_parent_and_rejects_duplicate_b
     edit.ResetActive();delete window;window=nullptr;
     EXPECT_FALSE(edit.Alive());EXPECT_FALSE(edit.Begin());
 }
-TEST_F(ordinary_edit, styling_dialog_commits_owned_style_and_rejects_stale_definitions) {
-    {auto write=c->subtitleAccess->TryWrite();auto style=new AssStyle();style->name="Other";LiveWriteForTest(*c).Styles.push_back(*style);LiveWriteForTest(*c).Commit("fixture",AssFile::COMMIT_STYLES);}
-    DialogStyling dialog(c.get());wxTextCtrl* name=nullptr;
-    for(auto child:descendants(&dialog))if(auto text=dynamic_cast<wxTextCtrl*>(child);text && (text->GetWindowStyleFlag() & wxTE_PROCESS_ENTER))name=text;
-    ASSERT_NE(nullptr,name);EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
-    name->SetValue("Other");EXPECT_FALSE(c->subtitleEditGate.TryBeginComparison());dialog.Commit(false);
-    EXPECT_EQ("Other",LiveRead(*c).Events.front().Style.get());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
-    c->subsController->Undo();EXPECT_EQ("Default",LiveRead(*c).Events.front().Style.get());
-    c->subsController->Redo();EXPECT_EQ("Other",LiveRead(*c).Events.front().Style.get());
-    {auto write=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).Styles.front().fontsize+=1;}
-    AcceptMessages accept;name->ChangeValue("Default");dialog.Commit(false);EXPECT_EQ("Other",LiveRead(*c).Events.front().Style.get());
-}
-TEST_F(ordinary_edit, styling_dialog_comparison_denial_and_draft_cancel_do_not_write) {
-    {DialogStyling dialog(c.get());auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);AcceptMessages accept;dialog.Commit(false);EXPECT_EQ("Default",LiveRead(*c).Events.front().Style.get());}
-    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
-}
 
 TEST_F(ordinary_edit, translation_dialog_preserves_tags_ids_and_per_line_undo) {
     int second;
@@ -3218,12 +3201,9 @@ TEST_F(ordinary_edit, dialog_dependency_changes_and_explicit_hide_release_pendin
     EXPECT_FALSE(edit.Begin());edit.ResetActive();
     {auto write=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).Styles.front().fontsize+=1;}
     EXPECT_FALSE(edit.Begin());
-    DialogStyling dialog(c.get());dialog.Show();wxTextCtrl* name=nullptr;for(auto child:descendants(&dialog))if(auto text=dynamic_cast<wxTextCtrl*>(child);text && (text->GetWindowStyleFlag()&wxTE_PROCESS_ENTER))name=text;
-    ASSERT_NE(nullptr,name);name->SetValue("Default");EXPECT_FALSE(c->subtitleEditGate.TryBeginComparison());dialog.Hide();EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
-}
-TEST_F(ordinary_edit, styling_dialog_notification_exception_releases_interaction_without_partial_state) {
-    DialogStyling dialog(c.get());agi::signal::Connection throwing=LiveRead(*c).AddCommitListener([]{throw std::runtime_error("observer");});
-    EXPECT_THROW(dialog.Commit(false),std::runtime_error);EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());EXPECT_EQ("Default",LiveRead(*c).Events.front().Style.get());
+    {auto write=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).Events.front().Text="source";LiveWriteForTest(*c).Commit("fixture",AssFile::COMMIT_DIAG_TEXT);}
+    DialogTranslation dialog(c.get());dialog.Show();SubsTextEditCtrl* target=nullptr;for(auto child:descendants(&dialog))if(auto text=dynamic_cast<SubsTextEditCtrl*>(child))target=text;
+    ASSERT_NE(nullptr,target);target->SetTextRaw("draft");EXPECT_FALSE(c->subtitleEditGate.TryBeginComparison());dialog.Hide();EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
 }
 
 TEST_F(ordinary_edit, video_layout_writeback_rejects_bad_structure_and_keeps_live_nodes_and_other_state) {
@@ -3827,7 +3807,7 @@ TEST_F(model_installation, real_grid_audio_and_long_lived_dialogs_rebind_and_edi
     c->subsGrid=new BaseGrid(window,c.get());c->audioBox=new AudioBox(window,c.get());
     c->project->LoadAudio("dummy-audio:silence?sr=44100&bd=16&ch=1&ln=441000");
     {
-        DialogStyling styling(c.get());DialogTranslation translation(c.get());
+        DialogTranslation translation(c.get());
         c->subsController->Load(path,"utf-8");
         EXPECT_EQ(State::Committed,c->subsController->InstallationStatus());
         EXPECT_TRUE(c->subsController->PendingInstallationObservers().empty());
@@ -4029,7 +4009,7 @@ TEST_F(document_lifecycle, open_close_reload_save_and_reopen_keep_path_mru_and_m
 TEST_F(document_lifecycle, explicit_retry_with_real_grid_and_dialogs_repeats_rebinding_without_duplicate_side_effects) {
     Input("old dialog input");auto path=Candidate("retry-ui");c->subsGrid=new BaseGrid(window,c.get());
     {
-        DialogStyling styling(c.get());DialogTranslation translation(c.get());
+        DialogTranslation translation(c.get());
         bool fail=true;int opened=0;auto recent=Recent();
         agi::signal::Connection open=c->subsController->AddFileOpenListener([&](agi::fs::path const&){++opened;});
         agi::signal::Connection throwing=LiveRead(*c).AddCommitListener([&](int,AssDialogue const*,Ticket t){if(fail)throw std::runtime_error("observer failure");Ack(t);});
@@ -4580,7 +4560,7 @@ TEST_F(document_lifecycle, subscriptions_are_allowed_while_recovery_is_blocked) 
     std::optional<agi::signal::Connection> commit,selected;
     EXPECT_NO_THROW(commit.emplace(LiveRead(*c).AddCommitListener([&](int,AssDialogue const*,Ticket t){++late_commits;Ack(t);})));
     EXPECT_NO_THROW(selected.emplace(c->selectionController->AddSelectionListener([&](Ticket t){++late_selections;Ack(t);})));
-    EXPECT_NO_THROW({ DialogStyling styling(c.get()); seen_text=LiveRead(*c).Events.front().Text.get(); });
+    EXPECT_NO_THROW({ SubtitleDialogEdit edit(c.get()); edit.ResetActive(); seen_text=LiveRead(*c).Events.front().Text.get(); });
     EXPECT_EQ("",seen_text); // the published (blank) model
     fail=false;EXPECT_TRUE(c->subsController->RetryModelInstallation());
     EXPECT_EQ(State::Committed,c->subsController->InstallationStatus());

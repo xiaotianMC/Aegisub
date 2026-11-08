@@ -47,7 +47,6 @@
     ],
     "main/subtitle" : [
         { "command" : "tool/style/manager" },
-        { "command" : "tool/style/assistant" },
         { "command" : "tool/translation_assistant" },
         { "command" : "tool/resampleres" },
         { "command" : "subtitle/spellcheck" },

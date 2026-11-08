@@ -54,7 +54,6 @@ static const char *pages[][2] = {
 	{"Spell Checker", "Spell_Checker"},
 	{"Style Editor", "Styles"},
 	{"Styles Manager", "Styles"},
-	{"Styling Assistant", "Styling_Assistant"},
 	{"Timing Processor", "Timing_Post-Processor"},
 	{"Translation Assistant", "Translation_Assistant"},
 	{"Visual Typesetting", "Visual_Typesetting"},

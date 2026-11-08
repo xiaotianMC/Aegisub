@@ -184,6 +184,20 @@ void init() {
 		migrations.emplace_back("grid/line/next/style");
 	}
 
+	// The styling assistant is gone: the style box takes typed letters
+	// and Ctrl+Enter goes on to the next line (docs/main-window.md)
+	if (boost::find(migrations, "no styling assistant") == end(migrations)) {
+		auto hk_map = hotkey::inst->GetHotkeyMap();
+		for (auto it = hk_map.begin(); it != hk_map.end();) {
+			if (it->second.Context() == "Styling Assistant" || it->first == "tool/style/assistant")
+				it = hk_map.erase(it);
+			else
+				++it;
+		}
+		hotkey::inst->SetHotkeyMap(std::move(hk_map));
+		migrations.emplace_back("no styling assistant");
+	}
+
 #ifdef __WXMAC__
 	if (boost::find(migrations, "app/minimize") == end(migrations)) {
 		migrate_hotkeys(added_hotkeys_minimize);

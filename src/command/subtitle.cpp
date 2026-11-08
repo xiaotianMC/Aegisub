@@ -306,7 +306,7 @@ struct subtitle_compare final : public Command {
 		// Refuse before the file dialog while anything holds the subtitles
 		// (the probe is released at once; the comparison starts after reading).
 		if (!c->subtitleEditGate.TryBeginComparison()) {
-			wxMessageBox(_("The subtitles cannot be compared while they are being edited.\nClose any open editing tool (such as the color picker, the styling assistant or an audio edit) and try again."),
+			wxMessageBox(_("The subtitles cannot be compared while they are being edited.\nClose any open editing tool (such as the color picker, the translation assistant or an audio edit) and try again."),
 				_("Compare Subtitles"), wxOK | wxICON_INFORMATION, c->parent);
 			return;
 		}

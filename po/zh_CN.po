@@ -8540,8 +8540,8 @@ msgstr "与字幕文件比较"
 msgid "Compare the subtitles with another file side by side and accept or reject each difference"
 msgstr "与另一个字幕文件并排比较，逐项应用或放弃差异"
 
-msgid "The subtitles cannot be compared while they are being edited.\nClose any open editing tool (such as the color picker, the styling assistant or an audio edit) and try again."
-msgstr "字幕正在编辑，无法比较。\n请关闭正在使用的编辑工具（如颜色选择器、样式助手或音频编辑）后重试。"
+msgid "The subtitles cannot be compared while they are being edited.\nClose any open editing tool (such as the color picker, the translation assistant or an audio edit) and try again."
+msgstr "字幕正在编辑，无法比较。\n请关闭正在使用的编辑工具（如颜色选择器、翻译助手或音频编辑）后重试。"
 
 msgid "Compare Dropped Subtitles"
 msgstr "对比拖入的字幕"
