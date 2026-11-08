@@ -197,7 +197,7 @@ public:
 	, value(value)
 	{
 		SetBackgroundStyle(wxBG_STYLE_PAINT);
-		SetMinSize(FromDIP(wxSize(96, 84)));
+		SetMinSize(FromDIP(wxSize(84, 72)));
 		SetToolTip(tip);
 		SetCursor(wxCursor(wxCURSOR_HAND));
 		Bind(wxEVT_PAINT, &AlignGrid::OnPaint, this);
@@ -225,22 +225,6 @@ wxString FormatNumber(double v, int precision) {
 	return wxString::FromCDouble(v);
 }
 
-/// A section's title over a thin line
-wxSizer *SectionTitle(wxWindow *parent, wxString const& title) {
-	auto sizer = new wxBoxSizer(wxVERTICAL);
-	auto text = new wxStaticText(parent, -1, title);
-	text->SetFont(text->GetFont().Bold());
-	auto line = new wxWindow(parent, -1);
-	line->SetMinSize(wxSize(-1, std::max(1, parent->FromDIP(1))));
-	auto colour = [line] { line->SetBackgroundColour(flat::Colours(line).line); line->Refresh(); };
-	colour();
-	// Kept for as long as the line is there
-	auto connection = std::make_shared<agi::signal::Connection>(theme::AddChangeListener(colour));
-	line->Bind(wxEVT_DESTROY, [connection](wxWindowDestroyEvent &e) { e.Skip(); });
-	sizer->Add(text, 0, wxBOTTOM, parent->FromDIP(4));
-	sizer->Add(line, 0, wxEXPAND | wxBOTTOM, parent->FromDIP(8));
-	return sizer;
-}
 }
 
 DialogStyleEditor::DialogStyleEditor(wxWindow *parent, AssStyle const* style, agi::Context *c, AssStyleStorage *store, std::string const& new_name, wxArrayString const& font_list)
@@ -306,7 +290,7 @@ DialogStyleEditor::DialogStyleEditor(wxWindow *parent, AssStyle const* style, ag
 	};
 
 	// Preview: the style as it will look, on a background of one's choice
-	SubsPreview = new SubtitlesPreview(this, DipSize(100, 110), wxBORDER_NONE, OPT_GET("Colour/Style Editor/Background/Preview")->GetColor());
+	SubsPreview = new SubtitlesPreview(this, DipSize(100, 96), wxBORDER_NONE, OPT_GET("Colour/Style Editor/Background/Preview")->GetColor());
 	SubsPreview->SetToolTip(_("Preview of current style"));
 	SubsPreview->SetStyle(*style);
 	FlatFrame *preview_frame = new FlatFrame(this, _("Preview"));
@@ -328,7 +312,7 @@ DialogStyleEditor::DialogStyleEditor(wxWindow *parent, AssStyle const* style, ag
 
 	// Font: the face from the list or typed, the size, and the four flags
 	auto left = new wxBoxSizer(wxVERTICAL);
-	left->Add(SectionTitle(this, _("Font")), 0, wxEXPAND);
+	left->Add(flat::SectionTitle(this, _("Font")), 0, wxEXPAND);
 	FlatFrame *font_frame = new FlatFrame(this, "");
 	FontName = new wxTextCtrl(font_frame, -1, to_wx(style->font), wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
 	font_frame->SetContent(FontName, 120);
@@ -362,11 +346,11 @@ DialogStyleEditor::DialogStyleEditor(wxWindow *parent, AssStyle const* style, ag
 		};
 		flags_row->Add(toggle, 0, wxRIGHT, FromDIP(4));
 	}
-	left->Add(flags_row, 0, wxTOP, FromDIP(6));
+	left->Add(flags_row, 0, wxTOP, FromDIP(4));
 
 	// Colours: four swatches with their names under them
-	left->AddSpacer(FromDIP(14));
-	left->Add(SectionTitle(this, _("Colors")), 0, wxEXPAND);
+	left->AddSpacer(FromDIP(10));
+	left->Add(flat::SectionTitle(this, _("Colors")), 0, wxEXPAND);
 	ColourButton *colorButton[] = {
 		new ColourButton(this, wxSize(44, 18), true, style->primary, ColorValidator(&work->primary)),
 		new ColourButton(this, wxSize(44, 18), true, style->secondary, ColorValidator(&work->secondary)),
@@ -378,20 +362,20 @@ DialogStyleEditor::DialogStyleEditor(wxWindow *parent, AssStyle const* style, ag
 	colorButton[2]->SetToolTip(_("Choose outline color"));
 	colorButton[3]->SetToolTip(_("Choose shadow color"));
 	wxString colorLabels[] = { _("Primary"), _("Secondary"), _("Outline"), _("Shadow") };
-	auto colours_row = new wxGridSizer(4, FromDIP(4), FromDIP(6));
+	auto colours_row = new wxGridSizer(4, FromDIP(2), FromDIP(6));
 	for (int i = 0; i < 4; ++i) {
 		auto cell = new wxBoxSizer(wxVERTICAL);
 		cell->Add(colorButton[i], 0, wxALIGN_CENTER_HORIZONTAL);
 		auto name = new wxStaticText(this, -1, colorLabels[i]);
 		name->SetForegroundColour(flat::Colours(this).dim);
-		cell->Add(name, 0, wxALIGN_CENTER_HORIZONTAL | wxTOP, FromDIP(3));
+		cell->Add(name, 0, wxALIGN_CENTER_HORIZONTAL | wxTOP, FromDIP(2));
 		colours_row->Add(cell, 0, wxEXPAND);
 	}
 	left->Add(colours_row, 0, wxEXPAND);
 
 	// Where it goes: the alignment, and the margins beside it
-	left->AddSpacer(FromDIP(14));
-	left->Add(SectionTitle(this, _("Alignment and margins")), 0, wxEXPAND);
+	left->AddSpacer(FromDIP(10));
+	left->Add(flat::SectionTitle(this, _("Alignment and margins")), 0, wxEXPAND);
 	auto align = new AlignGrid(this, work->alignment, _("Alignment in screen, in numpad style"));
 	align->on_choose = [this](int an) { work->alignment = an; Changed(); };
 	auto margins = new wxBoxSizer(wxVERTICAL);
@@ -407,10 +391,21 @@ DialogStyleEditor::DialogStyleEditor(wxWindow *parent, AssStyle const* style, ag
 
 	// Border: outline or a box, and how wide
 	auto right = new wxBoxSizer(wxVERTICAL);
-	right->Add(SectionTitle(this, _("Border")), 0, wxEXPAND);
-	auto border = new StylePanel::PageSwitch(this, std::vector<wxString>{_("Outline"), _("Opaque box"), _("Shadow box")});
-	border->SetToolTip(_("Whether to draw a normal outline or opaque boxes around the text. Shadow box: a box behind the shadow too, with libass only"));
-	border->SetMinSize(FromDIP(wxSize(240, 28)));
+	right->Add(flat::SectionTitle(this, _("Border")), 0, wxEXPAND);
+	auto border = new StylePanel::PageSwitch(this, std::vector<wxString>{_("Outline"), wxGETTEXT_IN_CONTEXT("border style", "Per line"), wxGETTEXT_IN_CONTEXT("border style", "Whole")});
+	// What libass draws for border styles 1, 3 and 4 (docs/main-window.md)
+	border->SetToolTip(_("Outline: the text is outlined in the outline colour, with a shadow in the shadow colour.\n"
+		"Background per line: each line is set on a solid rectangle in the outline colour, the outline width around the text, "
+		"with the shadow as the rectangle's shadow; the text has no outline.\n"
+		"One background: a single solid rectangle in the shadow colour behind the whole subtitle, the shadow distance around it; "
+		"the text keeps its outline but has no shadow. Drawn by libass only."));
+	{
+		// Wide enough for the longest name in each third
+		int widest = 0;
+		for (auto const& name : {_("Outline"), wxGETTEXT_IN_CONTEXT("border style", "Per line"), wxGETTEXT_IN_CONTEXT("border style", "Whole")})
+			widest = std::max(widest, border->GetTextExtent(name).x);
+		border->SetMinSize(wxSize(std::max(FromDIP(240), 3 * (widest + FromDIP(16))), FromDIP(28)));
+	}
 	border->Select(work->borderstyle == 3 ? 1 : work->borderstyle == 4 ? 2 : 0);
 	border->on_choose = [this, border](int index) {
 		border->Select(index);
@@ -418,15 +413,15 @@ DialogStyleEditor::DialogStyleEditor(wxWindow *parent, AssStyle const* style, ag
 		Changed();
 	};
 	right->Add(border, 0, wxEXPAND);
-	auto widths = new wxGridSizer(2, FromDIP(6), FromDIP(6));
+	auto widths = new wxGridSizer(2, FromDIP(4), FromDIP(6));
 	widths->Add(number(_("Outline"), style->outline_w, 0, 1000, 0.1, 2, [this](double v) { work->outline_w = v; }, _("Outline width, in pixels")), 0, wxEXPAND);
 	widths->Add(number(_("Shadow"), style->shadow_w, 0, 1000, 0.1, 2, [this](double v) { work->shadow_w = v; }, _("Shadow distance, in pixels")), 0, wxEXPAND);
-	right->Add(widths, 0, wxEXPAND | wxTOP, FromDIP(6));
+	right->Add(widths, 0, wxEXPAND | wxTOP, FromDIP(4));
 
 	// Transform
-	right->AddSpacer(FromDIP(14));
-	right->Add(SectionTitle(this, _("Transform")), 0, wxEXPAND);
-	auto transform = new wxGridSizer(2, FromDIP(6), FromDIP(6));
+	right->AddSpacer(FromDIP(10));
+	right->Add(flat::SectionTitle(this, _("Transform")), 0, wxEXPAND);
+	auto transform = new wxGridSizer(2, FromDIP(4), FromDIP(6));
 	transform->Add(number(_("Scale X"), style->scalex, 0, 10000, 1, 2, [this](double v) { work->scalex = v; }, _("Scale X, in percentage")), 0, wxEXPAND);
 	transform->Add(number(_("Scale Y"), style->scaley, 0, 10000, 1, 2, [this](double v) { work->scaley = v; }, _("Scale Y, in percentage")), 0, wxEXPAND);
 	transform->Add(number(_("Rotation"), style->angle, -360, 360, 1, 2, [this](double v) { work->angle = v; }, _("Angle to rotate in Z axis, in degrees")), 0, wxEXPAND);
@@ -434,8 +429,8 @@ DialogStyleEditor::DialogStyleEditor(wxWindow *parent, AssStyle const* style, ag
 	right->Add(transform, 0, wxEXPAND);
 
 	// Encoding
-	right->AddSpacer(FromDIP(14));
-	right->Add(SectionTitle(this, _("Encoding")), 0, wxEXPAND);
+	right->AddSpacer(FromDIP(10));
+	right->Add(flat::SectionTitle(this, _("Encoding")), 0, wxEXPAND);
 	wxArrayString encodingStrings;
 	AssStyle::GetEncodings(encodingStrings);
 	auto encoding = new FlatChoice(this, _("Encoding, only useful in unicode if the font doesn't have the proper unicode mapping"));
@@ -461,7 +456,7 @@ DialogStyleEditor::DialogStyleEditor(wxWindow *parent, AssStyle const* style, ag
 
 	auto columns = new wxBoxSizer(wxHORIZONTAL);
 	columns->Add(left, 1, wxEXPAND);
-	columns->AddSpacer(FromDIP(20));
+	columns->AddSpacer(FromDIP(16));
 	columns->Add(right, 1, wxEXPAND);
 
 	// Buttons
@@ -470,11 +465,11 @@ DialogStyleEditor::DialogStyleEditor(wxWindow *parent, AssStyle const* style, ag
 	// General Layout
 	auto content = new wxBoxSizer(wxVERTICAL);
 	content->Add(SubsPreview, 1, wxEXPAND);
-	content->Add(preview_row, 0, wxEXPAND | wxTOP, FromDIP(6));
-	content->Add(name_frame, 0, wxEXPAND | wxTOP, FromDIP(14));
-	content->Add(columns, 0, wxEXPAND | wxTOP, FromDIP(14));
+	content->Add(preview_row, 0, wxEXPAND | wxTOP, FromDIP(4));
+	content->Add(name_frame, 0, wxEXPAND | wxTOP, FromDIP(8));
+	content->Add(columns, 0, wxEXPAND | wxTOP, FromDIP(10));
 	wxSizer *MainSizer = new wxBoxSizer(wxVERTICAL);
-	MainSizer->Add(content, 1, wxEXPAND | wxALL, FromDIP(14));
+	MainSizer->Add(content, 1, wxEXPAND | wxALL, FromDIP(10));
 	MainSizer->Add(ButtonSizer, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, gap);
 
 	SetSizerAndFit(MainSizer);

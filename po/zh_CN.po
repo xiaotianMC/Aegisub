@@ -9560,14 +9560,22 @@ msgstr "对齐与边距"
 msgid "Border"
 msgstr "边框"
 
-msgid "Opaque box"
-msgstr "不透明框"
+msgctxt "border style"
+msgid "Per line"
+msgstr "逐行背景"
 
-msgid "Shadow box"
-msgstr "阴影框"
+msgctxt "border style"
+msgid "Whole"
+msgstr "整体背景"
 
-msgid "Whether to draw a normal outline or opaque boxes around the text. Shadow box: a box behind the shadow too, with libass only"
-msgstr "在文字周围画普通描边还是不透明框。阴影框：阴影后面也画一个框，仅 libass 支持"
+msgid ""
+"Outline: the text is outlined in the outline colour, with a shadow in the shadow colour.\n"
+"Background per line: each line is set on a solid rectangle in the outline colour, the outline width around the text, with the shadow as the rectangle's shadow; the text has no outline.\n"
+"One background: a single solid rectangle in the shadow colour behind the whole subtitle, the shadow distance around it; the text keeps its outline but has no shadow. Drawn by libass only."
+msgstr ""
+"描边：文字带边框颜色的描边，以及阴影颜色的阴影。\n"
+"逐行背景：每行文字垫一块实心矩形，用边框颜色，“描边”宽度是它超出文字的边距，“阴影”成为它的阴影；文字没有描边。\n"
+"整体背景：整条字幕后面只垫一块实心矩形，用阴影颜色，“阴影”距离是它超出文字的边距；文字保留描边，没有阴影。只有 libass 会这样画。"
 
 #: src/dialog_properties.cpp
 msgctxt "script info"

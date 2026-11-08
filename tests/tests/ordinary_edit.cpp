@@ -379,7 +379,7 @@ TEST_F(ordinary_edit, style_editor_is_drawn_fields_that_write_the_style_on_apply
     }
     ASSERT_NE(nullptr,bold);ASSERT_NE(nullptr,border);
     bold->on_click();EXPECT_EQ("on",bold->Shown());
-    border->on_choose(1);EXPECT_EQ("Opaque box",border->Shown());
+    border->on_choose(1);EXPECT_EQ("Per line",border->Shown());
     EXPECT_EQ(48.,LiveRead(*c).GetStyle("Default")->fontsize) << "nothing written before Apply";
     button(&dialog,wxID_APPLY);
     auto style=LiveRead(*c).GetStyle("Default");
