@@ -14,6 +14,7 @@
 #include <wx/simplebook.h>
 #include <wx/sizer.h>
 #include <wx/stattext.h>
+#include <wx/statusbr.h>
 
 #include <utility>
 
@@ -49,6 +50,7 @@ WorkspaceTabs::WorkspaceTabs(wxWindow *parent, agi::Context *c)
         wxPaintDC dc(strip);
         dc.SetBackground(wxBrush(strip->GetBackgroundColour()));
         dc.Clear();
+        if (status_bar) return; // the status bar is line enough
         auto text = wxSystemSettings::GetColour(wxSYS_COLOUR_BTNTEXT);
         dc.SetPen(wxPen(theme::Mix(strip->GetBackgroundColour(), text, 0.15)));
         dc.DrawLine(0, 0, strip->GetClientSize().x, 0);
@@ -97,6 +99,32 @@ wxWindow *WorkspaceTabs::Book() const { return book; }
 void WorkspaceTabs::SetEditor(wxWindow *window) {
     editor = window;
     book->InsertPage(0, editor, _("Subtitles"), true);
+    Update();
+}
+
+namespace {
+/// Over the status bar's first two fields: menu help and messages
+void PlaceStrip(wxStatusBar *bar, wxWindow *strip) {
+    wxRect help, message;
+    if (!bar->GetFieldRect(0, help) || !bar->GetFieldRect(1, message)) return;
+    wxRect rect = help.Union(message);
+    rect.y = 0;
+    rect.height = bar->GetClientSize().y;
+    strip->SetSize(rect);
+    strip->Layout();
+}
+}
+
+void WorkspaceTabs::MoveStripTo(wxStatusBar *bar) {
+    GetSizer()->Detach(strip);
+    strip->Reparent(bar);
+    status_bar = bar;
+    // Bound with what the strip outlives: it goes with the status bar
+    auto moved = strip;
+    bar->Bind(wxEVT_SIZE, [bar, moved](wxSizeEvent &event) {
+        event.Skip();
+        bar->CallAfter([bar, moved] { PlaceStrip(bar, moved); });
+    });
     Update();
 }
 
@@ -150,7 +178,7 @@ void WorkspaceTabs::Update() {
     auto colours = theme::UiColours();
     edit_tab->SetSelected(!front);
     compare_tab->SetSelected(front);
-    strip->SetBackgroundColour(theme::Surface());
+    strip->SetBackgroundColour(status_bar ? status_bar->GetBackgroundColour() : theme::Surface());
     notice->SetForegroundColour(theme::Mix(theme::Surface(), wxSystemSettings::GetColour(wxSYS_COLOUR_BTNTEXT), 0.6));
     strip->Refresh();
     if (open) {
@@ -160,7 +188,13 @@ void WorkspaceTabs::Update() {
     banner->SetBackgroundColour(colours.notice_back);
     banner_text->SetForegroundColour(colours.notice_text);
     banner->Refresh();
-    GetSizer()->Show(strip, open);
+    if (status_bar) {
+        PlaceStrip(status_bar, strip);
+        strip->Show(open);
+        strip->Raise();
+    }
+    else
+        GetSizer()->Show(strip, open);
     GetSizer()->Show(banner, open && !front);
     Layout();
     changed();

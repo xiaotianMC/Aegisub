@@ -9196,3 +9196,204 @@ msgstr "超过 %zu 时变红，这是一行字幕为了读得过来、放得下�
 #: ../src/subs_edit_box.cpp
 msgid "Click to change the limit and what is counted (Preferences, Character Counter)."
 msgstr "单击可修改上限和计数方式（首选项 → 字数统计器）。"
+
+#: ../src/style_panel.cpp
+msgid "Animation"
+msgstr "动画"
+
+#: ../src/style_panel.cpp
+msgid "Style: what the text looks like. Animation: make it move and change over time, as \\move does"
+msgstr "样式：文字是什么样子。动画：让文字随时间移动和变化，如 \\move。"
+
+msgid "Rotation X"
+msgstr "X 轴旋转"
+
+msgid "Rotation Y"
+msgstr "Y 轴旋转"
+
+msgid "Shear X"
+msgstr "横向倾斜"
+
+msgid "Shear Y"
+msgstr "纵向倾斜"
+
+msgid "Fill opacity"
+msgstr "填充不透明度"
+
+msgid "Fill colour"
+msgstr "填充颜色"
+
+msgid "Outline colour"
+msgstr "边框颜色"
+
+msgid "Shadow colour"
+msgstr "阴影颜色"
+
+msgid "Remove this effect from the selected lines"
+msgstr "从选中的行中移除此效果"
+
+msgid "A time of the video, h:mm:ss.cc: drag sideways or click and type. Each selected line gets the same time from its start"
+msgstr "视频时间，格式为 h:mm:ss.cc：左右拖动，或点击后输入。每个选中的行都取相对其开始的同一时间"
+
+msgid "Use the video's current time"
+msgstr "使用视频当前时间"
+
+msgid "The same time as a share of the line: 50% is halfway through each selected line"
+msgstr "同一时间占该行时长的比例：50% 即每个选中行的正中间"
+
+msgid "The line from start to end: drag the ends of the range, snapped to the video's frames unless Shift is held; click elsewhere to go there in the video"
+msgstr "从行开始到结束：拖动范围的两端，会吸附到视频帧（按住 Shift 不吸附）；点击其他位置可在视频中跳转到那里"
+
+msgid "In"
+msgstr "入点"
+
+msgid "Out"
+msgstr "出点"
+
+msgid "Whole line"
+msgstr "整行"
+
+msgid "From the line's start to its end"
+msgstr "从行开始到结束"
+
+msgid "First half"
+msgstr "前半"
+
+msgid "The first half of each selected line"
+msgstr "每个选中行的前一半"
+
+msgid "Second half"
+msgstr "后半"
+
+msgid "The second half of each selected line"
+msgstr "每个选中行的后一半"
+
+msgid "Centre"
+msgstr "中心"
+
+msgid "Across, in the script's pixels"
+msgstr "横向位置，单位为脚本像素"
+
+msgid "Down, in the script's pixels"
+msgstr "纵向位置，单位为脚本像素"
+
+msgid "set move"
+msgstr "设置移动"
+
+msgid "Move"
+msgstr "移动"
+
+msgid "Drag the start and the end on the video, with the drag tool"
+msgstr "用拖动工具在视频上拖动起点和终点"
+
+msgid "set fade"
+msgstr "设置淡入淡出"
+
+msgid "Fade"
+msgstr "淡入淡出"
+
+msgid "How much of the text shows over the line: drag the points where it starts and ends showing, snapped to the video's frames unless Shift is held; click elsewhere to go there in the video"
+msgstr "文字在整行中的显示程度：拖动开始显示和完全消失的点，会吸附到视频帧（按住 Shift 不吸附）；点击其他位置可在视频中跳转到那里"
+
+msgid "Fade in"
+msgstr "淡入"
+
+msgid "Shown"
+msgstr "完全显示"
+
+msgid "Fade out"
+msgstr "淡出"
+
+msgid "Gone"
+msgstr "完全消失"
+
+msgid "Before"
+msgstr "之前"
+
+msgid "How much of the text shows before it fades in"
+msgstr "淡入之前文字的不透明度"
+
+msgid "Mid"
+msgstr "中间"
+
+msgid "How much of the text shows between fading in and out"
+msgstr "淡入与淡出之间文字的不透明度"
+
+msgid "After"
+msgstr "之后"
+
+msgid "How much of the text shows after it fades out"
+msgstr "淡出之后文字的不透明度"
+
+msgid "set transform"
+msgstr "设置变换"
+
+msgid "How the change speeds up: 1 is steady, above 1 starts slowly and ends fast, below 1 the other way"
+msgstr "变化的快慢：1 为匀速，大于 1 先慢后快，小于 1 先快后慢"
+
+msgid "Changes to"
+msgstr "变化到"
+
+msgid "The colour it changes to: click to choose"
+msgstr "变化到的颜色：点击选择"
+
+msgid "The value it changes to (%s)"
+msgstr "变化到的值（%s）"
+
+msgid "A tag set by hand: it stays as it is"
+msgstr "手写的标签：保持原样"
+
+msgid "Change this no more"
+msgstr "不再变化此项"
+
+msgid "+ Property"
+msgstr "+ 属性"
+
+msgid "Choose another property for it to change"
+msgstr "再选一个要变化的属性"
+
+msgid "set origin"
+msgstr "设置旋转中心"
+
+msgid "Drag the origin on the video, with the rotate tool"
+msgstr "用旋转工具在视频上拖动旋转中心"
+
+msgid "Nothing moves yet: add an effect"
+msgstr "还没有动画：添加一个效果"
+
+msgid "+ Add effect"
+msgstr "+ 添加效果"
+
+msgid "Make the selected lines move, fade in and out, change over time or turn about a point"
+msgstr "让选中的行移动、淡入淡出、随时间变化或绕某点旋转"
+
+msgid "add move"
+msgstr "添加移动"
+
+msgid "add fade"
+msgstr "添加淡入淡出"
+
+msgid "add transform"
+msgstr "添加变换"
+
+msgid "add origin"
+msgstr "添加旋转中心"
+
+msgid "remove effect"
+msgstr "移除效果"
+
+msgid "Move (\\move)"
+msgstr "移动 (\\move)"
+
+msgid "Fade in and out (\\fad)"
+msgstr "淡入淡出 (\\fad)"
+
+msgid "Change over time (\\t)"
+msgstr "随时间变化 (\\t)"
+
+msgid "Rotation origin (\\org)"
+msgstr "旋转中心 (\\org)"
+
+msgid "%d selected line, shown as the current one is"
+msgid_plural "%d selected lines, shown as the current one is"
+msgstr[0] "已选中 %d 行，按当前行显示"

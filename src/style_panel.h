@@ -26,6 +26,7 @@ namespace agi { struct Context; }
 struct StyleLook;
 class wxSizer;
 class wxTextCtrl;
+class AnimationPage;
 
 class StylePanel final : public wxScrolledWindow {
 protected:
@@ -70,6 +71,14 @@ public:
 	/// Make a style from the current line, as + does once it has a name
 	bool NewStyle(wxString const& name);
 
+	/// Which page the panel shows: the style's sections, or animation
+	/// (\move, \fad, \t and \org of the current line). The switch at the
+	/// top chooses.
+	enum class Page { Style, Animation };
+	void ShowPage(Page page);
+	Page ShownPage() const { return page; }
+	AnimationPage *Animation() const { return animation; }
+
 	/// Collapse or expand a section: "style", "text" or "appearance"
 	void ShowSection(std::string const& name, bool show);
 	bool IsSectionShown(std::string const& name) const;
@@ -96,6 +105,7 @@ public:
 	class Caption;
 	class Header;
 	class IconButton;
+	class PageSwitch;
 
 private:
 	agi::Context *c;
@@ -113,6 +123,11 @@ private:
 		bool visible = true;
 	};
 	std::map<std::string, Section> sections;
+	Page page = Page::Style;
+	wxSizer *animation_body = nullptr;
+	AnimationPage *animation = nullptr;
+	/// Show or hide a section's title and body for its state and the page
+	void ApplySection(Section const& section);
 	std::map<std::string, Part*> parts;
 
 	void BindEditing();

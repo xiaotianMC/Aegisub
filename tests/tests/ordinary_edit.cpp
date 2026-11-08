@@ -60,6 +60,8 @@
 #include "video_time_label.h"
 #include "video_zoom_control.h"
 #include "style_edit.h"
+#include "animation_page.h"
+#include "animation_tags.h"
 #include "style_look.h"
 #include "style_panel.h"
 #include "video_controller.h"
@@ -4911,6 +4913,191 @@ TEST_F(ordinary_edit, compare_tab_locks_the_editor_until_the_comparison_ends) {
     EXPECT_TRUE(c->subtitleAccess->TryWrite());
     EXPECT_EQ((std::vector<std::string>{"current"}), LiveTexts(*c));
 }
+TEST_F(ordinary_edit, compare_tabs_sit_in_the_status_bar_of_the_main_window) {
+    Input("current");
+    auto path = WriteBaseline(*c, "status-tabs.ass", [](AssFile& f) { f.Events.front().Text = "baseline"; });
+    CompareHook hook(nullptr);
+    window->CreateStatusBar(4);
+    auto bar = window->GetStatusBar();
+    window->SetSize(1200, 800); window->Show();
+    tabs->MoveStripTo(bar);
+    auto strip = bar->FindWindow("workspace-strip"); ASSERT_NE(nullptr, strip);
+    EXPECT_EQ(nullptr, tabs->FindWindow("workspace-strip"));
+    EXPECT_FALSE(strip->IsShown());
+    ASSERT_TRUE(OpenCompareTab(c.get(), path));
+    EXPECT_TRUE(strip->IsShown());
+    wxRect help; ASSERT_TRUE(bar->GetFieldRect(0, help));
+    EXPECT_EQ(help.x, strip->GetPosition().x) << "at the left of the status bar";
+    auto edit = dynamic_cast<WorkspaceTab*>(bar->FindWindow("workspace-tab-edit")); ASSERT_NE(nullptr, edit);
+    edit->Click();
+    EXPECT_FALSE(tabs->ComparisonInFront());
+    dynamic_cast<WorkspaceTab*>(bar->FindWindow("workspace-tab-compare"))->Click();
+    EXPECT_TRUE(tabs->ComparisonInFront());
+    dynamic_cast<WorkspaceTab*>(bar->FindWindow("workspace-tab-close"))->Click();
+    EXPECT_EQ(nullptr, tabs->Comparison());
+    EXPECT_FALSE(strip->IsShown());
+}
+TEST_F(ordinary_edit, style_panel_switches_between_its_style_and_animation_pages) {
+    auto panel=new StylePanel(window,c.get());
+    panel->UpdateNow();
+    EXPECT_EQ(StylePanel::Page::Style, panel->ShownPage());
+    EXPECT_EQ("Style", panel->Shown()["page"]);
+    EXPECT_TRUE(panel->IsSectionVisible("text"));
+    EXPECT_FALSE(panel->IsSectionShown("transform")); // folded at the start
+    auto visible=[&] {
+        int shown = 0;
+        for (auto child : panel->GetChildren()) if (child->IsShown()) ++shown;
+        return shown;
+    };
+    int on_style = visible();
+    panel->ShowPage(StylePanel::Page::Animation);
+    EXPECT_EQ("Animation", panel->Shown()["page"]);
+    // The switch, the fold button and the animation page
+    EXPECT_EQ(3, visible());
+    EXPECT_TRUE(panel->Animation()->IsShown());
+    panel->ShowPage(StylePanel::Page::Style);
+    EXPECT_EQ(on_style, visible());
+    EXPECT_FALSE(panel->IsSectionShown("transform")) << "sections come back as they were";
+    panel->Destroy();
+}
+TEST(animation_tags, read_and_write_move_fade_transform_and_origin) {
+    using namespace animation;
+    // \move over the whole line, and over a part of it
+    auto a = Read("{\\move(10,20,30,40)}x", 4000);
+    ASSERT_TRUE(a.move); EXPECT_EQ((Move{10,20,30,40,0,4000}), *a.move);
+    a = Read("{\\move(10,20,30,40,500,2000)}x", 4000);
+    EXPECT_EQ((Move{10,20,30,40,500,2000}), *a.move);
+    EXPECT_EQ(4000, Read("{\\move(1,2,3,4,0,0)}x", 4000).move->t2) << "0,0 is the whole line";
+    EXPECT_EQ("{\\move(10,20,30,40)}x", WriteMove("x", Move{10,20,30,40,0,4000}, 4000));
+    EXPECT_EQ("{\\move(10,20,30,40,0,2000)}x", WriteMove("x", Move{10,20,30,40,0,2000}, 4000)) << "half the line";
+    EXPECT_EQ("{\\b1\\move(1,2,3,4)}x", WriteMove("{\\pos(5,6)\\b1}x", Move{1,2,3,4,0,4000}, 4000)) << "no \\pos with \\move";
+    EXPECT_EQ("{\\pos(1.5,2)}x", WritePosition("{\\move(1,2,3,4)}x", 1.5, 2));
+    EXPECT_EQ(std::make_pair(5.0, 6.0), *Read("{\\pos(5,6)}x", 100).position);
+
+    // \fad reads as the four times of a fade; written back as \fad while it says it
+    a = Read("{\\fad(200,300)}x", 4000);
+    ASSERT_TRUE(a.fade); EXPECT_EQ((Fade{255,0,255,0,200,3700,4000}), *a.fade);
+    EXPECT_TRUE(a.fade->Simple(4000));
+    EXPECT_EQ("{\\fad(200,300)}x", WriteFade("x", a.fade, 4000));
+    // Gone halfway through: only \fade says it
+    Fade early{255,0,255,0,200,1700,2000};
+    EXPECT_FALSE(early.Simple(4000));
+    EXPECT_EQ("{\\fade(255,0,255,0,200,1700,2000)}x", WriteFade("{\\fad(1,1)}x", early, 4000));
+    EXPECT_EQ((Fade{0,128,255,10,20,30,40}), *Read("{\\fade(0,128,255,10,20,30,40)}x", 4000).fade);
+    EXPECT_EQ("x", WriteFade("{\\fad(1,1)}x", std::nullopt, 4000));
+
+    // \t: times, acceleration, what it changes to
+    a = Read("{\\b1\\t(0,2000,2,\\fscx150\\1c&H0000FF&)\\t(\\frz10)}a{\\t(\\fs5)}b", 4000);
+    ASSERT_EQ(2u, a.transforms.size()) << "only the first block's";
+    EXPECT_EQ(0, a.transforms[0].t1); EXPECT_EQ(2000, a.transforms[0].t2); EXPECT_EQ(2, a.transforms[0].accel);
+    ASSERT_EQ(2u, a.transforms[0].targets.size());
+    EXPECT_EQ((Target{"\\fscx","150"}), a.transforms[0].targets[0]);
+    EXPECT_EQ((Target{"\\1c","&H0000FF&"}), a.transforms[0].targets[1]);
+    EXPECT_EQ(4000, a.transforms[1].t2) << "no times: the whole line";
+    a.transforms[1].t1 = 2000;
+    EXPECT_EQ("{\\b1\\t(0,2000,2,\\fscx150\\1c&H0000FF&)\\t(2000,4000,\\frz10)}a{\\t(\\fs5)}b",
+        WriteTransforms("{\\b1\\t(\\frz1)}a{\\t(\\fs5)}b", a.transforms, 4000));
+    EXPECT_EQ("x", WriteTransforms("{\\t(\\fs1)}x", {}, 4000)) << "an empty block goes";
+    EXPECT_EQ("{\\t(1.5,\\fs80)}x", WriteTransforms("x", {Transform{0,4000,1.5,{{"\\fs","80"}}}}, 4000));
+    auto targets = SplitTargets("\\fscx120\\c&HFF&\\clip(0,0,10,10)\\fs+2");
+    ASSERT_EQ(4u, targets.size());
+    EXPECT_EQ("\\fscx", targets[0].name); EXPECT_EQ("\\c", targets[1].name);
+    EXPECT_EQ("\\clip", targets[2].name); EXPECT_EQ("(0,0,10,10)", targets[2].value);
+    EXPECT_EQ("\\fscx120\\c&HFF&\\clip(0,0,10,10)\\fs+2", JoinTargets(targets));
+
+    // \org
+    EXPECT_EQ((Origin{3,4}), *Read("{\\org(3,4)}x", 1).origin);
+    EXPECT_EQ("{\\b1\\org(7,8)}x", WriteOrigin("{\\org(1,2)\\b1}x", Origin{7,8}));
+}
+TEST_F(ordinary_edit, animation_page_edits_the_selected_lines_effects_in_times_of_the_video) {
+    int first, second;
+    {auto write=c->subtitleAccess->TryWrite();auto &file=LiveWriteForTest(*c);
+     auto &row=file.Events.front();row.Text="Hello";row.Start=62300;row.End=66300;
+     auto other=new AssDialogue(row);other->Start=70000;other->End=72000;other->Text="World";
+     file.Events.push_back(*other);
+     file.Commit("fixture",AssFile::COMMIT_NEW);
+     first=file.Events.front().Id; second=file.Events.back().Id;}
+    auto text=[&](int which) { auto it=LiveRead(*c).Events.begin(); if (which) ++it; return std::string(it->Text.get()); };
+    c->selectionController->SetSelectionAndActiveIDs({first},first);
+    auto panel=new StylePanel(window,c.get());
+    panel->ShowPage(StylePanel::Page::Animation);
+    auto page=panel->Animation();
+    auto shown=[&] { page->UpdateNow(); return page->Shown(); };
+    EXPECT_EQ("", shown()["cards"]);
+    EXPECT_EQ(wxS("0:01:02.30 → 0:01:06.30"), shown()["line"]);
+
+    // Move: standing where the line is until its end is moved
+    page->AddEffect(AnimationPage::Effect::Move);
+    ASSERT_EQ(0u, text(0).find("{\\move(")) << text(0);
+    EXPECT_EQ("move", shown()["cards"]);
+    EXPECT_EQ("0:01:02.30", shown()["move.in"]); EXPECT_EQ("0:01:06.30", shown()["move.out"]);
+    EXPECT_EQ("100", shown()["move.out%"]);
+    page->EnterNumber("move.x1", 100, true); shown();
+    page->EnterNumber("move.y1", 200, true); shown();
+    page->EnterNumber("move.x2", 500, false); page->EnterNumber("move.x2", 600, false); page->EnterNumber("move.y2", 300, true);
+    EXPECT_EQ("{\\move(100,200,600,300)}Hello", text(0));
+    // The movement takes only half the line
+    shown(); page->EnterNumber("move.out%", 50, true);
+    EXPECT_EQ("{\\move(100,200,600,300,0,2000)}Hello", text(0));
+    EXPECT_EQ("0:01:04.30", shown()["move.out"]); EXPECT_EQ("50", shown()["move.out%"]);
+    // Typed as a time of the video
+    EXPECT_TRUE(page->TypeInto("move.in", "0:01:03.30"));
+    EXPECT_EQ("{\\move(100,200,600,300,1000,2000)}Hello", text(0));
+    shown(); page->DragPoint("move", 1, 3000, true);
+    EXPECT_EQ("{\\move(100,200,600,300,1000,3000)}Hello", text(0));
+    EXPECT_EQ("1000,3000/4000", shown()["move.bar"]);
+    shown(); page->Press("move.whole");
+    EXPECT_EQ("{\\move(100,200,600,300)}Hello", text(0));
+    shown(); page->Press("move.second_half");
+    EXPECT_EQ("{\\move(100,200,600,300,2000,4000)}Hello", text(0));
+    EXPECT_EQ(" disabled", shown()["move.in_now"].Right(9)) << "no video, no time of it";
+
+    // Fade: \fad until it no longer says it
+    page->AddEffect(AnimationPage::Effect::Fade);
+    EXPECT_EQ("{\\move(100,200,600,300,2000,4000)\\fad(300,300)}Hello", text(0));
+    EXPECT_EQ("move fade", shown()["cards"]);
+    EXPECT_EQ(wxS("Fade \\fad"), shown()["fade.title"]);
+    page->EnterNumber("fade.out_end%", 50, true);
+    EXPECT_EQ("{\\move(100,200,600,300,2000,4000)\\fade(255,0,255,0,300,2000,2000)}Hello", text(0)) << "out before the end";
+    EXPECT_EQ(wxS("Fade \\fade"), shown()["fade.title"]);
+    page->EnterNumber("fade.during", 50, true);
+    EXPECT_NE(std::string::npos, text(0).find("\\fade(255,128,255,")) << text(0);
+
+    // Transform: to what the line has, then dragged
+    page->AddEffect(AnimationPage::Effect::Transform, "\\fscx");
+    EXPECT_EQ("move fade t0", shown()["cards"]);
+    EXPECT_NE(std::string::npos, text(0).find("\\t(\\fscx100)")) << text(0);
+    page->EnterNumber("t0.target0", 150, true); shown();
+    page->EnterNumber("t0.out%", 50, true); shown();
+    page->EnterNumber("t0.accel", 2, true);
+    EXPECT_NE(std::string::npos, text(0).find("\\t(0,2000,2,\\fscx150)")) << text(0);
+    page->AddTarget(0, "\\frz"); shown();
+    EXPECT_NE(std::string::npos, text(0).find("\\t(0,2000,2,\\fscx150\\frz0)")) << text(0);
+    page->Press("t0.target1.remove");
+    EXPECT_NE(std::string::npos, text(0).find("\\t(0,2000,2,\\fscx150)")) << text(0);
+
+    // Origin, then each card taken away
+    page->AddEffect(AnimationPage::Effect::Origin);
+    EXPECT_EQ("move fade t0 origin", shown()["cards"]);
+    page->RemoveCard("move");
+    EXPECT_NE(std::string::npos, text(0).find("\\pos(100,200)")) << "it stays where it started: " << text(0);
+    EXPECT_EQ(std::string::npos, text(0).find("\\move")) << text(0);
+    page->RemoveCard("t0"); page->RemoveCard("fade"); page->RemoveCard("origin");
+    EXPECT_EQ("{\\pos(100,200)}Hello", text(0));
+    EXPECT_EQ("", shown()["cards"]);
+    // One undo step each
+    c->subsController->Undo();
+    EXPECT_NE(std::string::npos, text(0).find("\\org(")) << text(0);
+
+    // A share of the line is of each line's own length
+    c->selectionController->SetSelectionAndActiveIDs({first, second}, first);
+    shown(); page->RemoveCard("origin");
+    page->AddEffect(AnimationPage::Effect::Fade); shown();
+    page->EnterNumber("fade.in_end%", 50, true);
+    EXPECT_EQ("{\\pos(100,200)\\fad(2000,300)}Hello", text(0));
+    EXPECT_EQ("{\\fad(1000,300)}World", text(1));
+    panel->Destroy();
+}
 TEST_F(ordinary_edit, compare_tab_is_one_at_a_time_and_refuses_drops_while_open) {
     Input("current");
     auto path = WriteBaseline(*c, "compare-one.ass", [](AssFile& f) { f.Events.front().Text = "baseline"; });
@@ -5356,3 +5543,4 @@ TEST_F(audio_edit, level_tracks_set_zoom_and_volume_with_link_and_reset) {
     EXPECT_EQ("+18dB",AudioLevels::VolumeText(100));
     EXPECT_EQ("-18dB",AudioLevels::VolumeText(25));
 }
+

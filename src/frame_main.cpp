@@ -251,6 +251,8 @@ void FrameMain::InitContents() {
 	Panel->SetSizer(OuterSizer);
 	edge->Update();
 	tabs->SetEditor(Panel);
+	// The comparison's tabs at the bottom left, in the status bar
+	if (GetStatusBar()) tabs->MoveStripTo(GetStatusBar());
 	BindConnection(tabs->AddChangeListener(&FrameMain::UpdateStatus, this));
 	BindConnection(context->selectionController->AddActiveLineListener("frame_main.AddActiveLineListener", [this](SubtitleModelRebindTicket ticket) { UpdateStatus(); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime)));
 	BindConnection(context->selectionController->AddSelectionListener("frame_main.AddSelectionListener", [this](SubtitleModelRebindTicket ticket) { UpdateStatus(); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime)));

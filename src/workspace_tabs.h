@@ -17,6 +17,7 @@
 
 class wxButton;
 class wxSimplebook;
+class wxStatusBar;
 class wxStaticText;
 namespace agi { struct Context; }
 
@@ -59,6 +60,7 @@ public:
 class WorkspaceTabs final : public wxPanel {
     agi::Context *c;
     wxPanel *strip;
+    wxStatusBar *status_bar = nullptr; ///< Where the strip is, if not below the page
     WorkspaceTab *edit_tab, *compare_tab, *close_tab;
     wxStaticText *notice;
     wxPanel *banner;
@@ -80,6 +82,9 @@ public:
     /// Parent for the pages: the editor and comparison pages are created on it.
     wxWindow *Book() const;
     void SetEditor(wxWindow *editor);
+    /// Show the tab strip in the left part of the main window's status bar
+    /// (its first two fields), rather than below the page
+    void MoveStripTo(wxStatusBar *bar);
 
     /// Add @p page as the comparison tab of the file @p name and bring it to the front.
     void OpenComparison(ComparisonPage *page, wxString const& name);

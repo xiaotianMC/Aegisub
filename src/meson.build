@@ -19,6 +19,8 @@ aegisub_src = files(
     'subtitle_compare_view.cpp',
     'subtitle_project_access.cpp',
     'subtitle_format_registry.cpp',
+    'animation_page.cpp',
+    'animation_tags.cpp',
     'async_video_provider.cpp',
     'audio_box.cpp',
     'audio_levels.cpp',
