@@ -40,14 +40,9 @@ class AssStyleStorage;
 class PersistLocation;
 class SubtitlesPreview;
 class wxArrayString;
-class wxCheckBox;
 class wxChildFocusEvent;
-class wxComboBox;
 class wxCommandEvent;
-class wxRadioBox;
-class wxSpinCtrl;
 class wxTextCtrl;
-class wxThreadEvent;
 class wxWindow;
 namespace agi { struct Context; struct Color; }
 template<typename T> class ValueEvent;
@@ -77,28 +72,18 @@ class DialogStyleEditor final : public wxDialog {
 	AssStyleStorage *store;
 
 	wxTextCtrl *StyleName;
-	wxComboBox *FontName;
-	wxCheckBox *BoxBold;
-	wxCheckBox *BoxItalic;
-	wxCheckBox *BoxUnderline;
-	wxCheckBox *BoxStrikeout;
-	wxSpinCtrl *margin[3];
-	wxRadioBox *Alignment;
-	wxComboBox *OutlineType;
-	wxComboBox *Encoding;
-	wxTextCtrl *PreviewText;
-	SubtitlesPreview *SubsPreview;
+	wxTextCtrl *FontName;
+	wxTextCtrl *PreviewText = nullptr;
+	SubtitlesPreview *SubsPreview = nullptr;
 
-	void SetBitmapColor(int n,wxColour color);
-	int AlignToControl(int n);
-	int ControlToAlign(int n);
-	int BorderStyleToControl(int n);
-	int ControlToBorderStyle(int n);
+	/// The font, size, flags, alignment, border, numbers and encoding are
+	/// written into work as they change; the name, the font typed and the
+	/// colours are read from their controls here
 	void UpdateWorkStyle();
+	/// Show the work style in the preview, after any change
+	void Changed();
 
 	void OnChildFocus(wxChildFocusEvent &event);
-	void OnCommandPreviewUpdate(wxCommandEvent &event);
-
 	void OnPreviewTextChange(wxCommandEvent &event);
 	void OnPreviewColourChange(ValueEvent<agi::Color> &event);
 

@@ -9552,3 +9552,19 @@ msgstr "复制为文本(&X)\tCtrl+C"
 
 msgid "&Paste styles\tCtrl+V"
 msgstr "粘贴样式(&P)\tCtrl+V"
+
+#: src/dialog_style_editor.cpp
+msgid "Alignment and margins"
+msgstr "对齐与边距"
+
+msgid "Border"
+msgstr "边框"
+
+msgid "Opaque box"
+msgstr "不透明框"
+
+msgid "Shadow box"
+msgstr "阴影框"
+
+msgid "Whether to draw a normal outline or opaque boxes around the text. Shadow box: a box behind the shadow too, with libass only"
+msgstr "在文字周围画普通描边还是不透明框。阴影框：阴影后面也画一个框，仅 libass 支持"

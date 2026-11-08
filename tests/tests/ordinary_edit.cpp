@@ -66,6 +66,7 @@
 #include "animation_tags.h"
 #include "style_look.h"
 #include "style_panel.h"
+#include "style_panel_parts.h"
 #include "video_controller.h"
 #include "async_video_provider.h"
 #include "video_frame.h"
@@ -360,6 +361,29 @@ TEST_F(ordinary_edit, real_style_editor_apply_is_gated_and_new_styles_keep_undo_
     c->subsController->Undo(); EXPECT_EQ(2u,LiveRead(*c).Styles.size());
     c->subsController->Undo(); EXPECT_EQ(nullptr,LiveRead(*c).GetStyle("Copied"));
     c->subsController->Redo(); EXPECT_NE(nullptr,LiveRead(*c).GetStyle("Copied"));
+}
+TEST_F(ordinary_edit, style_editor_is_drawn_fields_that_write_the_style_on_apply) {
+    AcceptMessages messages; wxArrayString fonts; fonts.Add("Arial");
+    DialogStyleEditor dialog(window,LiveRead(*c).GetStyle("Default"),c.get(),nullptr,"",fonts);
+    auto frame=[&](wxString const& label)->FlatFrame*{for(auto child:descendants(&dialog))if(auto f=dynamic_cast<FlatFrame*>(child);f && f->GetLabel()==label)return f;return nullptr;};
+    auto size=frame("Size");ASSERT_NE(nullptr,size);
+    auto size_text=dynamic_cast<wxTextCtrl*>(size->GetContent());ASSERT_NE(nullptr,size_text);
+    EXPECT_EQ("48",size_text->GetValue());
+    size_text->SetValue("60");size->Wheel(2);EXPECT_EQ("62",size_text->GetValue());
+    size->Scrub(-3,false);size->Scrub(-2,true);EXPECT_EQ("60",size_text->GetValue()) << "dragged from where it was";
+    auto outline=frame("Outline");ASSERT_NE(nullptr,outline);outline->Wheel(5);
+    StylePanel::Toggle *bold=nullptr;StylePanel::PageSwitch *border=nullptr;
+    for(auto child:descendants(&dialog)){
+        if(auto t=dynamic_cast<StylePanel::Toggle*>(child);t && t->GetToolTipText()=="Bold")bold=t;
+        if(auto b=dynamic_cast<StylePanel::PageSwitch*>(child))border=b;
+    }
+    ASSERT_NE(nullptr,bold);ASSERT_NE(nullptr,border);
+    bold->on_click();EXPECT_EQ("on",bold->Shown());
+    border->on_choose(1);EXPECT_EQ("Opaque box",border->Shown());
+    EXPECT_EQ(48.,LiveRead(*c).GetStyle("Default")->fontsize) << "nothing written before Apply";
+    button(&dialog,wxID_APPLY);
+    auto style=LiveRead(*c).GetStyle("Default");
+    EXPECT_EQ(60.,style->fontsize);EXPECT_TRUE(style->bold);EXPECT_EQ(3,style->borderstyle);EXPECT_DOUBLE_EQ(2.5,style->outline_w);
 }
 TEST_F(ordinary_edit, style_editor_rejects_stale_live_style_after_another_edit) {
     AcceptMessages messages; wxArrayString fonts; fonts.Add("Arial");
