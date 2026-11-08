@@ -43,10 +43,10 @@ FlatList::FlatList(wxWindow *parent, bool multiple, bool checkable, wxString con
 	});
 	Bind(wxEVT_MOTION, [this](wxMouseEvent &event) {
 		int row = HitRow(event.GetPosition());
-		if (row != hover) { hover = row; Refresh(false); }
+		if (row != hover) { hover = row; ShowRowTip(); Refresh(false); }
 		event.Skip();
 	});
-	Bind(wxEVT_LEAVE_WINDOW, [this](wxMouseEvent &event) { hover = -1; Refresh(false); event.Skip(); });
+	Bind(wxEVT_LEAVE_WINDOW, [this](wxMouseEvent &event) { hover = -1; ShowRowTip(); Refresh(false); event.Skip(); });
 	Bind(wxEVT_KEY_DOWN, &FlatList::OnKey, this);
 	Bind(wxEVT_SET_FOCUS, [this](wxFocusEvent &event) { Refresh(false); event.Skip(); });
 	Bind(wxEVT_KILL_FOCUS, [this](wxFocusEvent &event) { Refresh(false); event.Skip(); });
@@ -367,5 +367,19 @@ void FlatList::OnPaint(wxPaintEvent &) {
 			dc.SetTextForeground(p.dim);
 			dc.DrawText(Cut(dc, row.detail, right - x), x, top + line + FromDIP(2));
 		}
+	}
+}
+
+void FlatList::ShowRowTip() {
+	// A row with a dim line has its words whole in the tip, cut short as
+	// they may be; elsewhere the list's own tip
+	bool on_detail = hover >= 0 && hover < static_cast<int>(rows.size()) && !rows[hover].detail.empty();
+	if (on_detail) {
+		if (!own_tip) own_tip = GetToolTipText();
+		SetToolTip(rows[hover].text + "\n" + rows[hover].detail);
+	}
+	else if (own_tip) {
+		SetToolTip(*own_tip);
+		own_tip.reset();
 	}
 }

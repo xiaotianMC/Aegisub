@@ -6,6 +6,7 @@
 
 #include <libaegisub/signal.h>
 
+#include <optional>
 #include <vector>
 
 #include <wx/dynarray.h>
@@ -32,6 +33,8 @@ private:
 	bool multiple, checkable;
 	int current = -1, anchor = -1, hover = -1;
 	wxString empty_text;
+	/// The list's own tip while a row's is shown
+	std::optional<wxString> own_tip;
 	agi::signal::Connection theme_changed;
 
 	bool TwoLines() const;
@@ -42,6 +45,7 @@ private:
 	void Notify(wxEventType type, int index);
 	void MoveTo(int row, bool extend);
 	void ShowRow(int row);
+	void ShowRowTip();
 	void OnPaint(wxPaintEvent &);
 	void OnLeftDown(wxMouseEvent &event);
 	void OnKey(wxKeyEvent &event);
