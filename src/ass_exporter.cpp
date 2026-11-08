@@ -37,6 +37,7 @@
 #include "ass_export_filter.h"
 #include "ass_file.h"
 #include "compat.h"
+#include "flat_controls.h"
 #include "include/aegisub/context.h"
 #include "subtitle_project_access.h"
 #include "project.h"
@@ -44,25 +45,22 @@
 
 #include <memory>
 #include <wx/sizer.h>
-#include <wx/statbox.h>
+#include <wx/window.h>
 
 AssExporter::AssExporter(agi::Context *c) : c(c) { }
 
 void AssExporter::DrawSettings(wxWindow *parent, wxSizer *target_sizer) {
 	is_default = false;
 	for (auto& filter : *AssExportFilterChain::GetFilterList()) {
-		// Make sure to construct static box sizer first, so it won't overlap
-		// the controls on wxMac.
-		auto box = new wxStaticBoxSizer(wxVERTICAL, parent, to_wx(filter.GetName()));
-		wxWindow *window = filter.GetConfigDialogWindow(box->GetStaticBox(), c);
+		// Each filter's settings under its name
+		wxWindow *window = filter.GetConfigDialogWindow(parent, c);
 		if (window) {
-			box->Add(window, 0, wxEXPAND, 0);
-			target_sizer->Add(box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 5);
+			auto box = new wxBoxSizer(wxVERTICAL);
+			box->Add(flat::SectionTitle(parent, to_wx(filter.GetName())), 0, wxEXPAND);
+			box->Add(window, 0, wxEXPAND | wxTOP, parent->FromDIP(6));
+			target_sizer->Add(box, 0, wxEXPAND | wxBOTTOM, parent->FromDIP(10));
 			target_sizer->Show(box, false);
 			Sizers[filter.GetName()] = box;
-		}
-		else {
-			delete box;
 		}
 	}
 }

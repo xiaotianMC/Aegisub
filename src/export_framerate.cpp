@@ -33,6 +33,7 @@
 #include "ass_file.h"
 #include "async_video_provider.h"
 #include "compat.h"
+#include "flat_controls.h"
 #include "format.h"
 #include "include/aegisub/context.h"
 #include "project.h"
@@ -40,10 +41,7 @@
 #include <libaegisub/of_type_adaptor.h>
 
 #include <utility>
-#include <wx/button.h>
-#include <wx/checkbox.h>
 #include <wx/panel.h>
-#include <wx/radiobut.h>
 #include <wx/sizer.h>
 #include <wx/stattext.h>
 #include <wx/textctrl.h>
@@ -63,11 +61,21 @@ wxWindow *AssTransformFramerateFilter::GetConfigDialogWindow(wxWindow *parent, a
 	LoadSettings(true, c);
 
 	wxWindow *base = new wxPanel(parent, -1);
+	auto dim = [base](wxString const& text) {
+		auto label = new wxStaticText(base, -1, text);
+		label->SetForegroundColour(flat::Colours(base).dim);
+		return label;
+	};
+	auto field = [base](wxTextCtrl *&text, wxString const& value) {
+		auto frame = new FlatFrame(base, wxString());
+		text = new wxTextCtrl(frame, -1, value, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+		frame->SetContent(text, 64);
+		return frame;
+	};
 
-	// Input sizer
-	auto InputSizer = new wxBoxSizer(wxHORIZONTAL);
+	// Input: a frame rate, or the video's
 	wxString initialInput;
-	auto FromVideo = new wxButton(base,-1,_("From &video"));
+	auto FromVideo = new FlatButton(base, _("From &video"));
 	if (Input.IsLoaded()) {
 		initialInput = fmt_wx("%2.3f", Input.FPS());
 		FromVideo->Bind(wxEVT_BUTTON, [c, this](wxCommandEvent&) {
@@ -78,46 +86,36 @@ wxWindow *AssTransformFramerateFilter::GetConfigDialogWindow(wxWindow *parent, a
 		initialInput = "23.976";
 		FromVideo->Enable(false);
 	}
-	InputFramerate = new wxTextCtrl(base,-1,initialInput);
-	InputSizer->Add(InputFramerate,0,wxEXPAND | wxLEFT,5);
-	InputSizer->Add(FromVideo,0,wxEXPAND | wxLEFT,5);
-	InputSizer->AddStretchSpacer(1);
+	auto InputSizer = new wxBoxSizer(wxHORIZONTAL);
+	InputSizer->Add(field(InputFramerate, initialInput), wxSizerFlags().Expand());
+	InputSizer->Add(FromVideo, wxSizerFlags().Border(wxLEFT, base->FromDIP(6)));
 
-	// Output sizers
-	auto OutputSizerTop = new wxBoxSizer(wxHORIZONTAL);
-	auto OutputSizerBottom = new wxBoxSizer(wxHORIZONTAL);
-	auto OutputSizer = new wxBoxSizer(wxVERTICAL);
-
-	// Output top line
-	RadioOutputVFR = new wxRadioButton(base,-1,_("V&ariable"),wxDefaultPosition,wxDefaultSize,wxRB_GROUP);
-	OutputSizerTop->Add(RadioOutputVFR,0,wxEXPAND,0);
-
-	// Output bottom line
-	RadioOutputCFR = new wxRadioButton(base,-1,_("&Constant: "));
-	wxString initialOutput = initialInput;
+	// Output: the timecodes as they vary, or a constant frame rate
+	OutputMode = new FlatSwitch(base, {_("V&ariable"), wxString(_("&Constant: ")).Trim().BeforeLast(':')});
+	auto output_frame = field(OutputFramerate, initialInput);
 	if (!Output.IsVFR()) {
-		RadioOutputVFR->Enable(false);
-		RadioOutputCFR->SetValue(true);
+		OutputMode->EnableItem(0, false);
+		OutputMode->SetSelection(1);
 	}
-	OutputFramerate = new wxTextCtrl(base,-1,initialOutput);
-	OutputSizerBottom->Add(RadioOutputCFR,0,wxEXPAND,0);
-	OutputSizerBottom->Add(OutputFramerate,0,wxEXPAND | wxLEFT,5);
-	OutputSizerBottom->AddStretchSpacer(1);
+	output_frame->Enable(OutputMode->GetSelection() == 1);
+	OutputFramerate->Enable(OutputMode->GetSelection() == 1);
+	OutputMode->on_choose = [=, this](int mode) {
+		output_frame->Enable(mode == 1);
+		OutputFramerate->Enable(mode == 1);
+	};
+	auto OutputSizer = new wxBoxSizer(wxHORIZONTAL);
+	OutputSizer->Add(OutputMode, wxSizerFlags().Expand());
+	OutputSizer->Add(output_frame, wxSizerFlags().Expand().Border(wxLEFT, base->FromDIP(6)));
 
-	// Reverse checkbox
-	Reverse = new wxCheckBox(base,-1,_("&Reverse transformation"));
+	Reverse = new FlatCheck(base, _("&Reverse transformation"));
 
-	// Output final
-	OutputSizer->Add(OutputSizerTop,0,wxLEFT,5);
-	OutputSizer->Add(OutputSizerBottom,0,wxLEFT,5);
-
-	// Main window
-	auto MainSizer = new wxFlexGridSizer(3,2,5,10);
-	MainSizer->Add(new wxStaticText(base,-1,_("Input framerate: ")),0,wxEXPAND | wxALIGN_CENTER_VERTICAL,0);
-	MainSizer->Add(InputSizer,0,wxEXPAND,0);
-	MainSizer->Add(new wxStaticText(base,-1,_("Output: ")),0,wxALIGN_CENTER_VERTICAL,0);
-	MainSizer->Add(OutputSizer,0,wxEXPAND,0);
-	MainSizer->Add(Reverse,0,wxTOP|wxEXPAND,5);
+	auto MainSizer = new wxFlexGridSizer(2, base->FromDIP(6), base->FromDIP(10));
+	MainSizer->Add(dim(wxString(_("Input framerate: ")).Trim().BeforeLast(':')), wxSizerFlags().CenterVertical());
+	MainSizer->Add(InputSizer);
+	MainSizer->Add(dim(wxString(_("Output: ")).Trim().BeforeLast(':')), wxSizerFlags().CenterVertical());
+	MainSizer->Add(OutputSizer);
+	MainSizer->AddSpacer(0);
+	MainSizer->Add(Reverse);
 
 	// Window
 	base->SetSizerAndFit(MainSizer);
@@ -136,7 +134,7 @@ void AssTransformFramerateFilter::LoadSettings(bool is_default, agi::Context *c)
 		double temp;
 		InputFramerate->GetValue().ToDouble(&temp);
 		Input = temp;
-		if (RadioOutputCFR->GetValue()) {
+		if (OutputMode->GetSelection() == 1) {
 			OutputFramerate->GetValue().ToDouble(&temp);
 			Output = temp;
 		}

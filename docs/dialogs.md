@@ -43,6 +43,7 @@
 - **重采样分辨率**（`dialog_resample.cpp`）：源和目标各一行“宽 × 高”数字框加“从字幕 / 从视频”按钮，下一行是 YCbCr 矩阵下拉框（第一项“—”表示不转换颜色）。宽高比处理是分段开关，宽高比不变时停用；边距是四个数字框围着“对称”勾选框，对称时右和下跟着左和上。
 - **拼写检查**（`dialog_spellchecker.cpp`）：拼错的词和替换为是两个带名称的框，建议是 `FlatList`（单击填入替换框，双击直接替换），下面是词典语言下拉框；右侧两个勾选框和一列按钮，“替换”是强调色；底部帮助和关闭。
 - **字体收集**（`dialog_fonts_collector.cpp`）：动作是下拉框；字幕文件没有所在文件夹时不列出“复制到字幕文件所在文件夹”（下拉框不能单项停用）。目标是带名称的框加“浏览”，下面一行灰色说明；日志在小节标题下；底部“开始！”是强调色，取消改名“关闭”。
+- **导出**（`dialog_export.cpp`、`ass_exporter.cpp`、`export_framerate.cpp`）：滤镜是可勾选的 `FlatList`，每个滤镜的说明作为副文字写在名称下（不再有单独的说明框），上移 / 下移连同勾选一起移动；文本编码是下拉框。勾选的滤镜的设置在右侧，标题是小节标题；帧率转换的设置是输入帧率框加“从视频”、输出用“可变 / 固定”开关加帧率框（可变时帧率框停用）、反向转换勾选框。
 
 ## 测试
 
@@ -59,3 +60,4 @@
 - `ordinary_edit.resample_is_drawn_number_fields_a_switch_and_even_margins`：宽高比不变时开关停用、改目标宽度后可用、手动时边距可用且对称、取消不改动。
 - `ordinary_edit.spell_checker_is_drawn_fields_a_list_and_buttons`：拼错的词、单击建议填入替换框、Esc 关闭（没有词典时跳过）。
 - `ordinary_edit.fonts_collector_chooses_an_action_from_a_list`：没有字幕文件夹时不列出对应动作、选择动作保存并启用目标框。
+- `ordinary_edit.export_lists_filters_with_their_descriptions`：每个滤镜有说明、勾选后显示它的设置、鼠标停在行上提示全文、移动时勾选跟着走。

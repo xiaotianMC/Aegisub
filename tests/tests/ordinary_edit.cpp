@@ -28,7 +28,10 @@
 #include "search_replace_engine.h"
 #include "text_selection_controller.h"
 #include "dialog_style_editor.h"
+#include "ass_export_filter.h"
 #include "ass_exporter.h"
+#include "export_fixstyle.h"
+#include "export_framerate.h"
 #include "dialogs.h"
 #include "theme.h"
 #include "command_palette.h"
@@ -3693,6 +3696,32 @@ TEST_F(ordinary_edit, fonts_collector_chooses_an_action_from_a_list) {
     EXPECT_NE(nullptr,button_labelled(d,_("&Start!")));
     d->Close();
     EXPECT_FALSE(d->IsShown());
+}
+TEST_F(ordinary_edit, export_lists_filters_with_their_descriptions) {
+    if(!AssExportFilterChain::GetFilter(from_wx(_("Fix Styles")))){AssExportFilterChain::Register(std::make_unique<AssFixStylesFilter>());AssExportFilterChain::Register(std::make_unique<AssTransformFramerateFilter>());}
+    bool ran=false;
+    RunModal hook("Export",[&](wxDialog* dialog){
+        FlatList *filters=nullptr; for(auto child:descendants(dialog))if(auto l=dynamic_cast<FlatList*>(child))filters=l;
+        ASSERT_NE(nullptr,filters); ASSERT_LE(2u,filters->GetCount());
+        for(unsigned i=0;i<filters->GetCount();++i)EXPECT_FALSE(filters->GetRow(i).detail.empty()) << "described under its name";
+        int framerate=-1; for(unsigned i=0;i<filters->GetCount();++i)if(filters->GetString(i)==_("Transform Framerate"))framerate=i;
+        ASSERT_LE(0,framerate);
+        FlatSwitch *output=nullptr; for(auto child:descendants(dialog))if(auto s=dynamic_cast<FlatSwitch*>(child))output=s;
+        ASSERT_NE(nullptr,output); EXPECT_FALSE(output->GetParent()->IsShown()) << "settings shown while ticked";
+        filters->Click(framerate,false,false,true);
+        EXPECT_TRUE(filters->IsChecked(framerate)); EXPECT_TRUE(output->GetParent()->IsShown());
+        // A row's words are whole in the tip, its description cut short as it may be
+        {wxMouseEvent move(wxEVT_MOTION); move.SetPosition(wxPoint(filters->FromDIP(40),filters->FromDIP(12))); move.SetEventObject(filters); filters->GetEventHandler()->ProcessEvent(move);}
+        EXPECT_TRUE(filters->GetToolTipText().Contains(filters->GetRow(0).detail));
+        // Moving a filter takes its tick along
+        wxString name=filters->GetString(0); bool ticked=filters->IsChecked(0);
+        filters->SetSelection(0); button_labelled(dialog,_("Move &Down"))->Press();
+        EXPECT_EQ(name,filters->GetString(1)); EXPECT_EQ(ticked,filters->IsChecked(1)); EXPECT_EQ(1,filters->GetSelection());
+        ran=true;
+        button(dialog,wxID_CANCEL);
+    });
+    ShowExportDialog(c.get());
+    EXPECT_TRUE(ran);
 }
 TEST_F(ordinary_edit, controlled_resample_uses_real_settings_confirmation_and_one_history_step) {
     Input("{\\pos(10,20)}sample");
