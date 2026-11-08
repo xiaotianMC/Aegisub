@@ -34,6 +34,7 @@
 
 - **平移时间**（`dialog_shift_times.cpp`）：时间或帧数用分段开关选，下面只显示对应的一个框（时间框或数字框）；方向、影响范围、时间字段各一个开关。没有视频帧率时“帧”停用，没有选中行时“选中行”“选中行及之后”停用。右侧历史是 `FlatList`，单击一条载入它的平移，“清除”清空；确定后列表立刻加上这一次。
 - **查找 / 替换**（`dialog_search_replace.{h,cpp}`）：查找和替换各是一个 `FlatFrame`，右端的箭头弹出最近用过的内容；四个勾选框两列；字段和范围是分段开关。右侧一列按钮，“查找下一个”是强调色（在查找框里回车也是它），最下是“关闭”（Esc）。
+- **跳转**（`dialog_jumpto.cpp`）：帧和时间两个框并排，名称在框内，改一个另一个跟着变；底部确定 / 取消。
 
 ## 测试
 
@@ -42,3 +43,4 @@
 - `ordinary_edit.flat_list_is_chosen_and_ticked_as_the_system_lists_are`：单击、Shift、Ctrl、勾选框不改变选择、双击、事件顺序、设置不发事件；单选列表忽略 Ctrl / Shift。
 - `ordinary_edit.shift_times_is_drawn_switches_and_a_history_list`：没有帧率和选中行时对应的段停用、上次的选择、Alt+字母选段、按帧平移后历史加一条、单击历史载入。
 - `ordinary_edit.search_and_replace_is_drawn_fields_checks_and_switches`：两个输入框、四个勾选框、两个开关；Alt+字母勾选；全部替换并保存选择；Esc 关闭。
+- `ordinary_edit.jump_to_names_its_fields_and_jumps`：两个带名称的框、输入帧数时间跟着变、确定后跳到该帧。

@@ -3454,6 +3454,29 @@ TEST_F(ordinary_edit, search_and_replace_is_drawn_fields_checks_and_switches) {
     {wxKeyEvent esc(wxEVT_CHAR_HOOK); esc.m_keyCode=WXK_ESCAPE; esc.SetEventObject(d); d->GetEventHandler()->ProcessEvent(esc);}
     EXPECT_FALSE(d->IsShown());
 }
+TEST_F(ordinary_edit, jump_to_names_its_fields_and_jumps) {
+    c->project->LoadVideo("?dummy:25:250:640:480:64:64:64:");
+    ASSERT_NE(nullptr,c->project->VideoProvider());
+    bool ran=false;
+    {
+        RunModal hook(_("Jump to"),[&](wxDialog *dialog){
+            std::vector<FlatFrame*> frames; wxTextCtrl *frame=nullptr; TimeEdit *time=nullptr;
+            for(auto child:descendants(dialog)){
+                if(auto f=dynamic_cast<FlatFrame*>(child))frames.push_back(f);
+                if(auto t=dynamic_cast<TimeEdit*>(child))time=t;
+                else if(auto t=dynamic_cast<wxTextCtrl*>(child))frame=t;
+            }
+            ASSERT_EQ(2u,frames.size()); ASSERT_NE(nullptr,frame); ASSERT_NE(nullptr,time);
+            frame->SetValue("100");
+            EXPECT_EQ(4000,time->GetTime());
+            ran=true;
+            button(dialog,wxID_OK);
+        });
+        ShowJumpToDialog(c.get());
+    }
+    EXPECT_TRUE(ran);
+    EXPECT_EQ(100,c->videoController->GetFrameN());
+}
 TEST_F(ordinary_edit, controlled_shift_and_timing_processor_use_real_dialog_confirm_events) {
     OPT_SET("Tool/Shift Times/ByTime")->SetBool(true);OPT_SET("Tool/Shift Times/Direction")->SetBool(false);
     OPT_SET("Tool/Shift Times/Type")->SetInt(0);OPT_SET("Tool/Shift Times/Affect")->SetInt(0);
