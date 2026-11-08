@@ -9397,3 +9397,17 @@ msgstr "旋转中心 (\\org)"
 msgid "%d selected line, shown as the current one is"
 msgid_plural "%d selected lines, shown as the current one is"
 msgstr[0] "已选中 %d 行，按当前行显示"
+
+msgctxt "point"
+msgid "Start"
+msgstr "起点"
+
+msgctxt "point"
+msgid "End"
+msgstr "终点"
+
+msgid "reverse move"
+msgstr "倒放移动"
+
+msgid "Reverse: swap the start and the end, so the selected lines move back the way they came"
+msgstr "倒放：对调起点和终点，选中的行沿原路往回移动"

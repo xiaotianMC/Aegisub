@@ -560,7 +560,7 @@ void SetFadeTime(Fade &f, int index, int ms) {
 }
 }
 
-void AnimationPage::AddCardTitle(std::string const& card, wxString const& title, wxString const& tag) {
+wxSizer *AnimationPage::AddCardTitle(std::string const& card, wxString const& title, wxString const& tag) {
 	cards.push_back(card);
 	auto row = new wxBoxSizer(wxHORIZONTAL);
 	row->Add(Add<CardTitle>(card + ".title", title, tag), 1, wxEXPAND);
@@ -570,6 +570,7 @@ void AnimationPage::AddCardTitle(std::string const& card, wxString const& title,
 	body->Add(row, 0, wxEXPAND | wxTOP, FromDIP(4));
 	card_body = new wxBoxSizer(wxVERTICAL);
 	body->Add(card_body, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(12));
+	return row;
 }
 
 void AnimationPage::AddRow(wxSizer *row, bool first) {
@@ -710,7 +711,7 @@ void AnimationPage::AddPoint(std::string const& card, std::string const& x, std:
 		wxClientDC dc(caption);
 		dc.SetFont(caption->GetFont());
 		int widest = 0;
-		for (auto const& name : {_("Start"), _("End"), _("Centre")}) widest = std::max(widest, dc.GetTextExtent(name).x);
+		for (auto const& name : {wxGETTEXT_IN_CONTEXT("point", "Start"), wxGETTEXT_IN_CONTEXT("point", "End"), _("Centre")}) widest = std::max(widest, dc.GetTextExtent(name).x);
 		caption->SetMinSize(wxSize(widest + FromDIP(8), -1));
 	}
 	row->Add(caption, 0, wxEXPAND);
@@ -744,10 +745,21 @@ void AnimationPage::AddPoint(std::string const& card, std::string const& x, std:
 
 void AnimationPage::BuildMove() {
 	const wxString undo = _("set move");
-	AddCardTitle("move", _("Move"), "\\move");
+	auto title = AddCardTitle("move", _("Move"), "\\move");
+	auto reverse = Add<IconButton>("move.reverse", IconButton::Glyph::Swap,
+		_("Reverse: swap the start and the end, so the selected lines move back the way they came"));
+	reverse->on_click = [this] {
+		Write(_("reverse move"), Mutate("move", [](Animation &a, AssDialogue const&, int) {
+			if (!a.move) return false;
+			std::swap(a.move->x1, a.move->x2);
+			std::swap(a.move->y1, a.move->y2);
+			return true;
+		}));
+	};
+	title->Insert(1, reverse, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT | wxTOP, FromDIP(6));
 	const wxString pick_tip = _("Drag the start and the end on the video, with the drag tool");
-	AddPoint("move", "move.x1", "move.y1", _("Start"), undo, "video/tool/drag", pick_tip, true);
-	AddPoint("move", "move.x2", "move.y2", _("End"), undo, "video/tool/drag", pick_tip, false);
+	AddPoint("move", "move.x1", "move.y1", wxGETTEXT_IN_CONTEXT("point", "Start"), undo, "video/tool/drag", pick_tip, true);
+	AddPoint("move", "move.x2", "move.y2", wxGETTEXT_IN_CONTEXT("point", "End"), undo, "video/tool/drag", pick_tip, false);
 	card_body->AddSpacer(FromDIP(6));
 	AddRange("move", undo);
 }

@@ -131,8 +131,9 @@ private:
 	void BuildFade();
 	void BuildTransform(size_t index);
 	void BuildOrigin();
-	/// A card's title with its ✕, and its body for what follows
-	void AddCardTitle(std::string const& card, wxString const& title, wxString const& tag);
+	/// A card's title with its ✕, and its body for what follows; @return
+	/// The title's row, for more buttons
+	wxSizer *AddCardTitle(std::string const& card, wxString const& title, wxString const& tag);
 	void AddRow(wxSizer *row, bool first = false);
 	/// A small title in the card
 	wxWindow *AddSubtitle(std::string const& name, wxString const& text);

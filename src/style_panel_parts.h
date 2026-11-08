@@ -569,7 +569,7 @@ public:
 /// A small button with a drawn symbol: the style row's actions
 class StylePanel::IconButton final : public StylePanel::Part {
 public:
-	enum class Glyph { Up, Down, Plus, More, Collapse, Close, Now, Pick };
+	enum class Glyph { Up, Down, Plus, More, Collapse, Close, Now, Pick, Swap };
 
 private:
 	Glyph glyph;
@@ -625,6 +625,18 @@ private:
 				dc.SetPen(pen);
 				dc.DrawLine(wxRound(cx - half), wxRound(cy - half), wxRound(cx + half), wxRound(cy + half));
 				dc.DrawLine(wxRound(cx - half), wxRound(cy + half), wxRound(cx + half), wxRound(cy - half));
+				break;
+			}
+			case Glyph::Swap: {
+				// ⇄ : the two ends change places
+				int half = FromDIP(6), gap = FromDIP(3), head = FromDIP(3);
+				int top = centre.y - gap, bottom = centre.y + gap;
+				dc.DrawLine(centre.x - half, top, centre.x + half, top);
+				dc.DrawLine(centre.x + half - head, top - head, centre.x + half, top);
+				dc.DrawLine(centre.x + half - head, top + head, centre.x + half, top);
+				dc.DrawLine(centre.x - half, bottom, centre.x + half, bottom);
+				dc.DrawLine(centre.x - half + head, bottom - head, centre.x - half, bottom);
+				dc.DrawLine(centre.x - half + head, bottom + head, centre.x - half, bottom);
 				break;
 			}
 			case Glyph::Now: {

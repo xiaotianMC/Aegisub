@@ -5050,6 +5050,11 @@ TEST_F(ordinary_edit, animation_page_edits_the_selected_lines_effects_in_times_o
     EXPECT_EQ("{\\move(100,200,600,300)}Hello", text(0));
     shown(); page->Press("move.second_half");
     EXPECT_EQ("{\\move(100,200,600,300,2000,4000)}Hello", text(0));
+    // Reversed: back the way it came, at the same times
+    shown(); page->Press("move.reverse");
+    EXPECT_EQ("{\\move(600,300,100,200,2000,4000)}Hello", text(0));
+    shown(); page->Press("move.reverse");
+    EXPECT_EQ("{\\move(100,200,600,300,2000,4000)}Hello", text(0));
     EXPECT_EQ(" disabled", shown()["move.in_now"].Right(9)) << "no video, no time of it";
 
     // Fade: \fad until it no longer says it
