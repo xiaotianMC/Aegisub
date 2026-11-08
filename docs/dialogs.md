@@ -36,6 +36,7 @@
 - **查找 / 替换**（`dialog_search_replace.{h,cpp}`）：查找和替换各是一个 `FlatFrame`，右端的箭头弹出最近用过的内容；四个勾选框两列；字段和范围是分段开关。右侧一列按钮，“查找下一个”是强调色（在查找框里回车也是它），最下是“关闭”（Esc）。
 - **跳转**（`dialog_jumpto.cpp`）：帧和时间两个框并排，名称在框内，改一个另一个跟着变；底部确定 / 取消。
 - **选择行**（`dialog_selection.cpp`）：匹配 / 不匹配、模式、字段、动作都是分段开关（动作的段写短，完整说法在提示里），对话行和注释行两个勾选框至少留一个；底部帮助、应用、取消、确定。
+- **覆盖粘贴**（`dialog_paste_over.cpp`）：十一个字段是三列勾选框，按行里的位置排（注释、层、开始、结束 / 样式、说话人、特效、文本 / 三个边距）；下面一排快捷按钮：全部、无、时间、文本。
 
 ## 测试
 
@@ -45,4 +46,5 @@
 - `ordinary_edit.shift_times_is_drawn_switches_and_a_history_list`：没有帧率和选中行时对应的段停用、上次的选择、Alt+字母选段、按帧平移后历史加一条、单击历史载入。
 - `ordinary_edit.search_and_replace_is_drawn_fields_checks_and_switches`：两个输入框、四个勾选框、两个开关；Alt+字母勾选；全部替换并保存选择；Esc 关闭。
 - `ordinary_edit.select_lines_is_drawn_switches_and_checks`：开关和勾选框载入上次的选择；对话行和注释行至少留一个；Alt+字母选段；确定后选中匹配的行、关闭并保存。
+- `ordinary_edit.paste_over_ticks_fields_in_the_columns_of_a_line`：十一个勾选框载入设置、“时间”只勾开始和结束、确定后保存。
 - `ordinary_edit.jump_to_names_its_fields_and_jumps`：两个带名称的框、输入帧数时间跟着变、确定后跳到该帧。

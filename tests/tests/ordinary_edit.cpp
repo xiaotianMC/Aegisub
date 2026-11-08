@@ -3492,6 +3492,30 @@ TEST_F(ordinary_edit, select_lines_is_drawn_switches_and_checks) {
     wxTheApp->ProcessIdle(); // the choices are kept as it goes
     EXPECT_EQ("two",OPT_GET("Tool/Select Lines/Text")->GetString());
 }
+TEST_F(ordinary_edit, paste_over_ticks_fields_in_the_columns_of_a_line) {
+    OPT_SET("Tool/Paste Lines Over/Fields")->SetListBool(std::vector<bool>(11,true));
+    bool checked=false;
+    {
+        RunModal hook(_("Select Fields to Paste Over"),[&](wxDialog *dialog){
+            std::vector<FlatCheck*> fields; FlatButton *times=nullptr;
+            for(auto child:descendants(dialog)){
+                if(auto k=dynamic_cast<FlatCheck*>(child))fields.push_back(k);
+                if(auto b=dynamic_cast<FlatButton*>(child);b && b->GetLabel()==_("&Times"))times=b;
+            }
+            ASSERT_EQ(11u,fields.size()); ASSERT_NE(nullptr,times);
+            for(auto field:fields)EXPECT_TRUE(field->GetValue());
+            times->Press();
+            for(size_t i=0;i<fields.size();++i)EXPECT_EQ(i==2 || i==3,fields[i]->GetValue()) << i;
+            fields[10]->Toggle();
+            checked=true;
+            button(dialog,wxID_OK);
+        });
+        EXPECT_TRUE(ShowPasteOverDialog(window));
+    }
+    EXPECT_TRUE(checked);
+    std::vector<bool> expected(11,false); expected[2]=expected[3]=expected[10]=true;
+    EXPECT_EQ(expected,OPT_GET("Tool/Paste Lines Over/Fields")->GetListBool());
+}
 TEST_F(ordinary_edit, jump_to_names_its_fields_and_jumps) {
     c->project->LoadVideo("?dummy:25:250:640:480:64:64:64:");
     ASSERT_NE(nullptr,c->project->VideoProvider());

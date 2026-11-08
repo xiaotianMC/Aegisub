@@ -27,27 +27,25 @@
 //
 // Aegisub Project http://www.aegisub.org/
 
-#include "help_button.h"
+#include "flat_controls.h"
+#include "flat_dialog.h"
 #include "options.h"
+#include "theme.h"
 
+#include <algorithm>
+#include <array>
 #include <functional>
-#include <wx/button.h>
 #include <wx/dialog.h>
-#include <wx/checklst.h>
 #include <wx/sizer.h>
-#include <wx/statbox.h>
 #include <wx/stattext.h>
 
 namespace {
 struct DialogPasteOver {
 	wxDialog d;
-	wxCheckListBox *ListBox;
+	std::array<FlatCheck*, 11> fields;
 
-	void CheckAll(bool check);
-
+	void Check(std::initializer_list<size_t> which);
 	void OnOK(wxCommandEvent &);
-	void OnTimes(wxCommandEvent &);
-	void OnText(wxCommandEvent &);
 
 	DialogPasteOver(wxWindow *parent);
 };
@@ -55,84 +53,59 @@ struct DialogPasteOver {
 DialogPasteOver::DialogPasteOver(wxWindow *parent)
 : d(parent, -1, _("Select Fields to Paste Over"))
 {
-	// Label and list sizer
-	wxStaticBoxSizer *ListSizer = new wxStaticBoxSizer(wxVERTICAL, &d, _("Fields"));
-	wxWindow *ListSizerBox = ListSizer->GetStaticBox();
-	ListSizer->Add(new wxStaticText(ListSizerBox, -1, _("Please select the fields that you want to paste over:")), wxSizerFlags());
+	theme::UseSurface(&d);
+	auto prompt = new wxStaticText(&d, -1, _("Please select the fields that you want to paste over:"));
+	prompt->SetForegroundColour(flat::Colours(&d).dim);
 
-	// List box
-	wxArrayString choices;
-	choices.Add(_("Comment"));
-	choices.Add(_("Layer"));
-	choices.Add(_("Start Time"));
-	choices.Add(_("End Time"));
-	choices.Add(_("Style"));
-	choices.Add(_("Actor"));
-	choices.Add(_("Margin Left"));
-	choices.Add(_("Margin Right"));
-	choices.Add(_("Margin Vertical"));
-	choices.Add(_("Effect"));
-	choices.Add(_("Text"));
-	ListBox = new wxCheckListBox(ListSizerBox, -1, wxDefaultPosition, wxDefaultSize, choices);
-	ListSizer->Add(ListBox, wxSizerFlags(0).Expand().Border(wxTOP));
-
+	const wxString names[] = {_("Comment"), _("Layer"), _("Start Time"), _("End Time"), _("Style"), _("Actor"),
+		_("Margin Left"), _("Margin Right"), _("Margin Vertical"), _("Effect"), _("Text")};
 	std::vector<bool> options = OPT_GET("Tool/Paste Lines Over/Fields")->GetListBool();
-	if (options.size() != choices.size())
-		options.resize(choices.size(), false);
+	options.resize(fields.size(), false);
+	for (size_t i = 0; i < fields.size(); ++i) {
+		fields[i] = new FlatCheck(&d, names[i]);
+		fields[i]->SetValue(options[i]);
+	}
 
-	for (size_t i = 0; i < choices.size(); ++i)
-		ListBox->Check(i, options[i]);
+	// In the columns of the line: its kind and times, who and how, where, and what
+	auto grid = new wxFlexGridSizer(3, d.FromDIP(4), d.FromDIP(18));
+	const size_t order[] = {0, 4, 6, 1, 5, 7, 2, 9, 8, 3, 10};
+	for (size_t i : order) grid->Add(fields[i]);
 
-	// Top buttons
-	wxButton *btn;
-	wxSizer *TopButtonSizer = new wxBoxSizer(wxHORIZONTAL);
+	auto quick = new wxBoxSizer(wxHORIZONTAL);
+	auto add_quick = [&](wxString const& label, std::function<void()> action) {
+		auto button = new FlatButton(&d, label);
+		button->Bind(wxEVT_BUTTON, [action](wxCommandEvent &) { action(); });
+		quick->Add(button, wxSizerFlags().Border(wxRIGHT, d.FromDIP(6)));
+	};
+	add_quick(_("&All"), [this] { for (auto field : fields) field->SetValue(true); });
+	add_quick(_("&None"), [this] { Check({}); });
+	add_quick(_("&Times"), [this] { Check({2, 3}); });
+	add_quick(_("T&ext"), [this] { Check({10}); });
 
-	TopButtonSizer->Add(btn = new wxButton(&d, -1, _("&All")), wxSizerFlags(1));
-	btn->Bind(wxEVT_BUTTON, std::bind(&DialogPasteOver::CheckAll, this, true));
-	TopButtonSizer->Add(btn = new wxButton(&d, -1, _("&None")), wxSizerFlags(1));
-	btn->Bind(wxEVT_BUTTON, std::bind(&DialogPasteOver::CheckAll, this, false));
-	TopButtonSizer->Add(btn = new wxButton(&d, -1, _("&Times")), wxSizerFlags(1));
-	btn->Bind(wxEVT_BUTTON, &DialogPasteOver::OnTimes, this);
-	TopButtonSizer->Add(btn = new wxButton(&d, -1, _("T&ext")), wxSizerFlags(1));
-	btn->Bind(wxEVT_BUTTON, &DialogPasteOver::OnText, this);
-
-	// Buttons
-	auto ButtonSizer = d.CreateStdDialogButtonSizer(wxOK | wxCANCEL | wxHELP);
 	d.Bind(wxEVT_BUTTON, &DialogPasteOver::OnOK, this, wxID_OK);
-	d.Bind(wxEVT_BUTTON, std::bind(&HelpButton::OpenPage, "Paste Over"), wxID_HELP);
 
-	// Main sizer
 	wxSizer *MainSizer = new wxBoxSizer(wxVERTICAL);
-	MainSizer->Add(ListSizer,0,wxEXPAND | wxLEFT | wxRIGHT,5);
-	MainSizer->Add(TopButtonSizer,0,wxLEFT | wxRIGHT | wxEXPAND,5);
-	MainSizer->Add(ButtonSizer,0,wxALL | wxEXPAND,5);
+	MainSizer->Add(prompt, wxSizerFlags().Border(wxLEFT | wxRIGHT | wxTOP, d.FromDIP(10)));
+	MainSizer->Add(grid, wxSizerFlags().Expand().Border(wxALL, d.FromDIP(10)));
+	MainSizer->Add(quick, wxSizerFlags().Border(wxLEFT | wxRIGHT, d.FromDIP(10)));
+	MainSizer->Add(new flat::DialogButtons(&d, wxOK | wxCANCEL | wxHELP, "Paste Over"), wxSizerFlags().Expand().Border(wxALL, d.FromDIP(10)));
 	d.SetSizerAndFit(MainSizer);
 	d.CenterOnParent();
 }
 
 void DialogPasteOver::OnOK(wxCommandEvent &) {
 	std::vector<bool> options;
-	for (size_t i = 0; i < ListBox->GetCount(); ++i)
-		options.push_back(ListBox->IsChecked(i));
+	for (auto field : fields)
+		options.push_back(field->GetValue());
 	OPT_SET("Tool/Paste Lines Over/Fields")->SetListBool(std::move(options));
 
 	d.EndModal(wxID_OK);
 }
 
-void DialogPasteOver::OnText(wxCommandEvent &) {
-	CheckAll(false);
-	ListBox->Check(10, true);
-}
-
-void DialogPasteOver::OnTimes(wxCommandEvent &) {
-	CheckAll(false);
-	ListBox->Check(2, true);
-	ListBox->Check(3, true);
-}
-
-void DialogPasteOver::CheckAll(bool check) {
-	for (size_t i = 0; i < ListBox->GetCount(); ++i)
-		ListBox->Check(i, check);
+/// Tick only the fields @p which
+void DialogPasteOver::Check(std::initializer_list<size_t> which) {
+	for (size_t i = 0; i < fields.size(); ++i)
+		fields[i]->SetValue(std::find(which.begin(), which.end(), i) != which.end());
 }
 }
 
