@@ -38,7 +38,7 @@ public:
 	typedef std::function<void ()> Thunk;
 private:
 	PreferencesBook *book = nullptr;
-	wxButton *applyButton;
+	wxWindow *applyButton;
 
 	std::map<std::string, std::unique_ptr<agi::OptionValue>> pending_changes;
 	std::vector<Thunk> pending_callbacks;

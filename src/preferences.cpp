@@ -27,6 +27,7 @@
 #include "compat.h"
 #include "format.h"
 #include "flat_controls.h"
+#include "flat_dialog.h"
 #include "help_button.h"
 #include "hotkey_data_view_model.h"
 #include "include/aegisub/audio_player.h"
@@ -871,14 +872,10 @@ Preferences::Preferences(wxWindow *parent): wxDialog(parent, -1, _("Preferences"
 	};
 
 	// Bottom Buttons
-	auto stdButtonSizer = CreateStdDialogButtonSizer(wxOK | wxCANCEL | wxAPPLY | wxHELP);
-	applyButton = stdButtonSizer->GetApplyButton();
-	wxSizer *buttonSizer = new wxBoxSizer(wxHORIZONTAL);
-	auto defaultButton = new wxButton(this, -1, _("&Restore Page Defaults"));
+	auto buttonSizer = new flat::DialogButtons(this, wxOK | wxCANCEL | wxAPPLY | wxHELP);
+	applyButton = buttonSizer->Get(wxID_APPLY);
+	auto defaultButton = buttonSizer->AddLeft(_("&Restore Page Defaults"));
 	defaultButton->SetToolTip(_("Give every setting of the page shown its default; OK keeps it, Cancel forgets it. On the hotkeys page, restore the default hotkeys."));
-	buttonSizer->Add(defaultButton, wxSizerFlags(0).Expand());
-	buttonSizer->AddStretchSpacer(1);
-	buttonSizer->Add(stdButtonSizer, wxSizerFlags(0).Expand());
 
 	// Main Sizer
 	wxSizer *mainSizer = new wxBoxSizer(wxVERTICAL);

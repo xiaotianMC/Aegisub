@@ -40,6 +40,7 @@
 #include "dialog_style_editor.h"
 #include "dialogs.h"
 #include "flat_controls.h"
+#include "flat_dialog.h"
 #include "format.h"
 #include "help_button.h"
 #include "include/aegisub/context.h"
@@ -329,8 +330,10 @@ DialogStyleManager::DialogStyleManager(agi::Context *context)
 	// What the keyboard and the mouse do, and the dialog's buttons
 	auto hint = new wxStaticText(this, -1, _("Double-click a style to edit it, right-click for more. Ctrl+C and Ctrl+V copy styles as text, between scripts too."));
 	hint->SetForegroundColour(flat::Colours(this).dim);
-	wxStdDialogButtonSizer *stdButtons = CreateStdDialogButtonSizer(wxCANCEL | wxHELP);
-	stdButtons->GetCancelButton()->SetLabel(_("Close"));
+	auto stdButtons = new flat::DialogButtons(this, wxCANCEL | wxHELP);
+	// Closing is all it is left with: Cancel named so, the button it is for
+	stdButtons->Get(wxID_CANCEL)->SetLabel(_("Close"));
+	stdButtons->Get(wxID_CANCEL)->SetAccent(true);
 	Bind(wxEVT_BUTTON, std::bind(&HelpButton::OpenPage, "Styles Manager"), wxID_HELP);
 	auto buttonSizer = new wxBoxSizer(wxHORIZONTAL);
 	buttonSizer->Add(hint, wxSizerFlags(1).Center().Border(wxLEFT | wxRIGHT, FromDIP(4)));

@@ -44,6 +44,7 @@
 #include "colour_button.h"
 #include "compat.h"
 #include "flat_controls.h"
+#include "flat_dialog.h"
 #include "font_popup.h"
 #include "style_panel_parts.h"
 #include "command/command.h"
@@ -218,12 +219,6 @@ public:
 	bool AcceptsFocus() const override { return false; }
 };
 
-wxString FormatNumber(double v, int precision) {
-	double unit = std::pow(10.0, precision);
-	v = std::round(v * unit) / unit;
-	if (v == 0) v = 0; // no "-0"
-	return wxString::FromCDouble(v);
-}
 
 }
 
@@ -256,37 +251,10 @@ DialogStyleEditor::DialogStyleEditor(wxWindow *parent, AssStyle const* style, ag
 	// A number in a rounded field, its name dim before it (docs/main-window.md):
 	// typed, dragged by the name, or a step at a time with the wheel
 	auto number = [&](wxString const& label, double value, double min, double max, double step, int precision, std::function<void(double)> set, wxString const& tip) {
-		auto frame = new FlatFrame(this, label);
-		auto text = new wxTextCtrl(frame, -1, FormatNumber(value, precision), wxDefaultPosition, wxDefaultSize, wxTE_PROCESS_ENTER | wxBORDER_NONE);
-		frame->SetContent(text, 44);
-		frame->SetToolTip(tip);
-		text->SetToolTip(tip);
-		auto current = std::make_shared<double>(value);
-		auto take = [=, this](double v, bool show) {
-			v = std::clamp(v, min, max);
-			double unit = std::pow(10.0, precision);
-			v = std::round(v * unit) / unit;
-			*current = v;
-			if (show) text->ChangeValue(FormatNumber(v, precision));
-			set(v);
-			Changed();
-		};
-		text->Bind(wxEVT_TEXT, [=](wxCommandEvent &event) {
-			event.Skip();
-			double v;
-			if (text->GetValue().ToCDouble(&v) && v >= min && v <= max) take(v, false);
-		});
-		auto show_taken = [=] { text->ChangeValue(FormatNumber(*current, precision)); };
-		text->Bind(wxEVT_KILL_FOCUS, [=](wxFocusEvent &event) { event.Skip(); show_taken(); });
-		text->Bind(wxEVT_TEXT_ENTER, [=](wxCommandEvent &) { show_taken(); });
-		frame->SetWheel([=](int steps) { take(*current + steps * step, true); });
-		auto start = std::make_shared<std::optional<double>>();
-		frame->SetScrub([=](int steps, bool final) {
-			if (!*start) *start = *current;
-			take(**start + steps * step, true);
-			if (final) start->reset();
-		});
-		return frame;
+		auto field = flat::NumberField::Create(this, label, value, min, max, step, precision);
+		field->SetToolTip(tip);
+		field->on_change = [this, set](double v) { set(v); Changed(); };
+		return field->Frame();
 	};
 
 	// Preview: the style as it will look, on a background of one's choice
@@ -457,7 +425,7 @@ DialogStyleEditor::DialogStyleEditor(wxWindow *parent, AssStyle const* style, ag
 	columns->Add(right, 1, wxEXPAND);
 
 	// Buttons
-	auto ButtonSizer = CreateStdDialogButtonSizer(wxOK | wxCANCEL | wxAPPLY | wxHELP);
+	auto ButtonSizer = new flat::DialogButtons(this, wxOK | wxCANCEL | wxAPPLY | wxHELP);
 
 	// General Layout
 	auto content = new wxBoxSizer(wxVERTICAL);

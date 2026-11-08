@@ -33,6 +33,7 @@
 #include "async_video_provider.h"
 #include "compat.h"
 #include "flat_controls.h"
+#include "flat_dialog.h"
 #include "help_button.h"
 #include "include/aegisub/context.h"
 #include "libresrc/libresrc.h"
@@ -109,7 +110,7 @@ DialogProperties::DialogProperties(agi::Context *c)
 	// Create buttons first. See:
 	//  https://github.com/wangqr/Aegisub/issues/6
 	//  https://trac.wxwidgets.org/ticket/18472#comment:9
-	auto ButtonSizer = d.CreateStdDialogButtonSizer(wxOK | wxCANCEL | wxHELP);
+	auto ButtonSizer = new flat::DialogButtons(&d, wxOK | wxCANCEL | wxHELP);
 	d.Bind(wxEVT_BUTTON, &DialogProperties::OnOK, this, wxID_OK);
 	d.Bind(wxEVT_BUTTON, std::bind(&HelpButton::OpenPage, "Properties"), wxID_HELP);
 
