@@ -140,9 +140,9 @@ class AnimationPage::Timeline final : public StylePanel::Part {
 		dc.DrawRoundedRectangle(t, FromDIP(4));
 
 		// Quarters of the line, and their percentages below
-		wxFont small = GetFont();
-		small.SetFractionalPointSize(small.GetFractionalPointSize() * 0.85);
-		dc.SetFont(small);
+		wxFont tick_font = GetFont();
+		tick_font.SetFractionalPointSize(tick_font.GetFractionalPointSize() * 0.85);
+		dc.SetFont(tick_font);
 		dc.SetTextForeground(p.dim);
 		for (int q = 0; q <= 4; ++q) {
 			int x = t.x + t.width * q / 4;
