@@ -240,4 +240,8 @@ public:
 	/// @param parent Parent window
 	SubsEditBox(wxWindow *parent, agi::Context *context);
 	~SubsEditBox();
+
+	/// Put the keyboard in the style box, where typing a style's first
+	/// letters chooses it for the selected lines
+	void FocusStyle();
 };

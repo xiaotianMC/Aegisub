@@ -394,8 +394,13 @@ void SubsEditBox::PopulateList(wxTextCtrl *ctrl, wxArrayString &values, boost::f
 	values = list;
 }
 
+void SubsEditBox::FocusStyle() {
+	if (style_box->IsEnabled()) style_box->SetFocus();
+}
+
 void SubsEditBox::OnActiveLineChanged() {
     active_id = c->selectionController->ActiveID();
+	last_step = 0; // A style chosen on another line is another undo step
     wxEventBlocker blocker(this);
     SetControlsState(CurrentLine() != nullptr);
 	commit_id = -1;

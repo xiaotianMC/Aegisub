@@ -9629,3 +9629,9 @@ msgstr "宽"
 msgctxt "resolution"
 msgid "Height"
 msgstr "高"
+
+msgid "Next Line, Choosing Its Style"
+msgstr "下一行并选样式"
+
+msgid "Move to the next subtitle line and put the keyboard in the style box, where typing a style's first letters chooses it"
+msgstr "转到下一行字幕，并把键盘焦点放到样式框，输入样式名的开头几个字母即可选中"

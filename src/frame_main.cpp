@@ -222,7 +222,7 @@ void FrameMain::InitContents() {
 	context->audioBox = audioBox = new AudioBox(Panel, context.get());
 
 	StartupLog("Create subtitle editing box");
-	auto EditBox = new SubsEditBox(Panel, context.get());
+	auto EditBox = editBox = new SubsEditBox(Panel, context.get());
 
 	StartupLog("Arrange main sizers");
 	// Blocks on a backdrop, the same gap everywhere and no borders

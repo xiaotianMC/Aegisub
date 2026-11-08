@@ -406,6 +406,7 @@ FlatChoice::FlatChoice(wxWindow *parent, wxString const& tip)
 	SetCursor(wxCursor(wxCURSOR_HAND));
 	Bind(wxEVT_PAINT, &FlatChoice::OnPaint, this);
 	Bind(wxEVT_KEY_DOWN, &FlatChoice::OnKey, this);
+	Bind(wxEVT_CHAR, &FlatChoice::OnChar, this);
 	Bind(wxEVT_MOUSEWHEEL, &FlatChoice::OnWheel, this);
 	Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent &) {
 		if (!IsEnabled()) return;
@@ -466,6 +467,37 @@ void FlatChoice::Step(int delta) {
 	Choose(std::clamp(from + delta, 0, static_cast<int>(items.size()) - 1));
 }
 
+bool FlatChoice::Typing() const {
+	return !typed.empty() && wxGetLocalTimeMillis() - typed_at < 1000;
+}
+
+void FlatChoice::TypeAhead(wxString const& text) {
+	if (text.empty() || items.empty() || !IsEnabled()) return;
+	if (!Typing()) typed.clear();
+	typed += text.Lower();
+	typed_at = wxGetLocalTimeMillis();
+	int count = static_cast<int>(items.size());
+	auto begins = [&](int i, wxString const& prefix) { return items[i].Lower().StartsWith(prefix); };
+	for (int i = 0; i < count; ++i) {
+		if (begins(i, typed)) {
+			Choose(i);
+			return;
+		}
+	}
+	// The same letter again, with no name beginning so: the next item
+	// beginning with the letter, round to the first
+	if (typed.size() > 1 && typed.find_first_not_of(typed[0]) == wxString::npos) {
+		wxString letter(typed[0]);
+		for (int n = 1; n <= count; ++n) {
+			int i = (std::max(selection, 0) + n) % count;
+			if (begins(i, letter)) {
+				Choose(i);
+				return;
+			}
+		}
+	}
+}
+
 void FlatChoice::ShowList() {
 	if (items.empty() || !IsEnabled()) return;
 	wxMenu menu;
@@ -502,12 +534,25 @@ void FlatChoice::OnKey(wxKeyEvent &event) {
 			break;
 		case WXK_HOME: Choose(0); break;
 		case WXK_END: Choose(static_cast<int>(items.size()) - 1); break;
-		case WXK_SPACE: case WXK_RETURN: case WXK_NUMPAD_ENTER: case WXK_F4: ShowList(); break;
+		case WXK_SPACE:
+			// A space in a name being typed is part of it
+			if (Typing() && !event.HasAnyModifiers()) event.Skip(); else ShowList();
+			break;
+		case WXK_RETURN: case WXK_NUMPAD_ENTER: case WXK_F4: ShowList(); break;
 		case WXK_TAB:
 			Navigate(event.ShiftDown() ? wxNavigationKeyEvent::IsBackward : wxNavigationKeyEvent::IsForward);
 			break;
 		default: event.Skip();
 	}
+}
+
+void FlatChoice::OnChar(wxKeyEvent &event) {
+	wxChar ch = event.GetUnicodeKey();
+	if (ch == WXK_NONE || ch < 32 || ch == 127 || event.ControlDown() || event.AltDown() || event.MetaDown()) {
+		event.Skip();
+		return;
+	}
+	TypeAhead(wxString(ch));
 }
 
 void FlatChoice::OnWheel(wxMouseEvent &event) {

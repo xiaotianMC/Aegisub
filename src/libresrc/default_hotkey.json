@@ -263,6 +263,10 @@
 		"grid/line/next/create" : [
 			"Enter",
 			"KP_Enter"
+		],
+		"grid/line/next/style" : [
+			"Ctrl-Enter",
+			"Ctrl-KP_Enter"
 		]
 	},
 	"Subtitle Grid" : {

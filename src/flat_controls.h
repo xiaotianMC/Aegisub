@@ -120,11 +120,15 @@ class FlatChoice final : public wxWindow {
 	int selection = -1;
 	int wheel_remainder = 0;
 	bool hover = false;
+	wxString typed;         ///< What was typed to find an item, kept for a second
+	wxLongLong typed_at = 0;
 	agi::signal::Connection theme_changed;
 
 	void OnPaint(wxPaintEvent &);
 	void OnKey(wxKeyEvent &event);
+	void OnChar(wxKeyEvent &event);
 	void OnWheel(wxMouseEvent &event);
+	bool Typing() const;
 
 public:
 	FlatChoice(wxWindow *parent, wxString const& tip);
@@ -145,6 +149,10 @@ public:
 	void Step(int delta);
 	/// Open the list below the control
 	void ShowList();
+	/// Typed while it has the keyboard: choose the first item beginning with
+	/// what was typed in the last second, ignoring case. The same letter
+	/// again, when no item begins so, goes on to the next with the letter.
+	void TypeAhead(wxString const& text);
 
 	bool AcceptsFocus() const override { return IsEnabled(); }
 	bool AcceptsFocusFromKeyboard() const override { return IsEnabled(); }

@@ -42,6 +42,7 @@
 #include "../libresrc/libresrc.h"
 #include "../options.h"
 #include "../selection_controller.h"
+#include "../subs_edit_box.h"
 
 
 namespace {
@@ -55,6 +56,19 @@ struct grid_line_next final : public Command {
 
 	void operator()(agi::Context *c) override {
 		c->selectionController->NextLine();
+	}
+};
+
+struct grid_line_next_style final : public Command {
+	CMD_NAME("grid/line/next/style")
+	STR_MENU("Next Line, Choosing Its Style")
+	STR_DISP("Next Line, Choosing Its Style")
+	STR_HELP("Move to the next subtitle line and put the keyboard in the style box, where typing a style's first letters chooses it")
+
+	void operator()(agi::Context *c) override {
+		c->selectionController->NextLine();
+		if (c->frame)
+			if (auto box = c->frame->GetEditBox()) box->FocusStyle();
 	}
 };
 
@@ -454,6 +468,7 @@ namespace cmd {
 	void init_grid() {
 		reg(std::make_unique<grid_line_next>());
 		reg(std::make_unique<grid_line_next_create>());
+		reg(std::make_unique<grid_line_next_style>());
 		reg(std::make_unique<grid_line_prev>());
 		reg(std::make_unique<grid_sort_actor>());
 		reg(std::make_unique<grid_sort_effect>());

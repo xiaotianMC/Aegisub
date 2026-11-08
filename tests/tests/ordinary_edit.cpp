@@ -20,6 +20,7 @@
 #include "base_grid.h"
 #include "options.h"
 #include "command/command.h"
+#include "include/aegisub/hotkey.h"
 #include "command/edit.h"
 #include "subtitle_binding.h"
 #include "search_replace_engine.h"
@@ -1822,6 +1823,48 @@ TEST_F(ordinary_edit, edit_box_style_layer_and_character_count) {
     EXPECT_TRUE(caption->IsShown());
     original->SetValue(false); check.SetInt(0); original->GetEventHandler()->ProcessEvent(check);
     OPT_SET("Subtitle/Show Original")->SetBool(false);
+}
+TEST_F(ordinary_edit, edit_box_style_box_chooses_a_style_by_its_first_letters) {
+    int second;
+    {auto write=c->subtitleAccess->TryWrite();auto &file=LiveWriteForTest(*c);
+     for (auto name:{"Sign","Song","Default Alt"}) {auto style=new AssStyle();style->name=name;file.Styles.push_back(*style);}
+     auto other=new AssDialogue();second=other->Id;file.Events.push_back(*other);
+     file.Commit("fixture",AssFile::COMMIT_NEW);}
+    int first=LiveRead(*c).Events.front().Id;
+    c->selectionController->SetSelectionAndActiveIDs({first},first);
+    FlatChoice *style=nullptr;
+    for (auto child:descendants(box)) if (auto s=dynamic_cast<FlatChoice*>(child)) style=s;
+    ASSERT_NE(nullptr,style);
+    auto line_style=[&](int n) { return std::next(LiveRead(*c).Events.begin(),n)->Style.get(); };
+    auto type=[&](wxChar ch) { wxKeyEvent e(wxEVT_CHAR); e.m_uniChar=ch; e.m_keyCode=ch; e.SetEventObject(style); style->GetEventHandler()->ProcessEvent(e); };
+    auto pause=[] { wxMilliSleep(1050); };
+
+    // A letter: the first style beginning with it, ignoring case, written at once
+    type('S'); EXPECT_EQ("Sign",style->GetStringSelection()); EXPECT_EQ("Sign",line_style(0));
+    // More letters within a second narrow it
+    type('o'); EXPECT_EQ("Song",line_style(0));
+    // A space typed in a name is part of it, not the key that opens the list
+    pause(); type('d'); type('e');
+    wxKeyEvent space(wxEVT_KEY_DOWN); space.m_keyCode=WXK_SPACE; space.SetEventObject(style); style->GetEventHandler()->ProcessEvent(space);
+    EXPECT_TRUE(space.GetSkipped());
+    type('f'); EXPECT_EQ("Default",line_style(0)) << "\"def\" is the first beginning so";
+    type('a'); type('u'); type('l'); type('t'); type(' '); type('a'); EXPECT_EQ("Default Alt",line_style(0));
+    // The same letter again: the next style beginning with it, round to the first
+    pause(); type('s'); type('s'); EXPECT_EQ("Song",line_style(0)); type('s'); EXPECT_EQ("Sign",line_style(0));
+    // Nothing beginning so: no change; after a pause it starts again
+    pause(); type('x'); EXPECT_EQ("Sign",line_style(0));
+    pause(); type('d'); EXPECT_EQ("Default",line_style(0));
+    // Ctrl with a letter is a hotkey, not a name
+    pause(); {wxKeyEvent e(wxEVT_CHAR); e.m_uniChar='s'; e.m_keyCode='s'; e.m_controlDown=true; style->GetEventHandler()->ProcessEvent(e);}
+    EXPECT_EQ("Default",line_style(0));
+
+    // Ctrl+Enter's command goes to the next line, the keyboard in the style box
+    EXPECT_EQ(std::vector<std::string>({"Ctrl-Enter","Ctrl-KP_Enter"}),hotkey::get_hotkey_strs("Subtitle Edit Box","grid/line/next/style"));
+    cmd::call("grid/line/next/style",c.get());
+    EXPECT_EQ(second,c->selectionController->ActiveID());
+    box->FocusStyle();
+    if (wxWindow::FindFocus()) EXPECT_EQ(static_cast<wxWindow*>(style),wxWindow::FindFocus());
+    pause(); type('s'); EXPECT_EQ("Sign",line_style(1)); EXPECT_EQ("Default",line_style(0));
 }
 
 TEST_F(ordinary_edit, style_panel_wheel_goes_through_lists_and_transform_has_titles) {

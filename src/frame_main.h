@@ -39,6 +39,7 @@ class AegisubApp;
 class AsyncVideoProvider;
 class AudioBox;
 class StylePanel;
+class SubsEditBox;
 class VideoBox;
 namespace agi { class AudioProvider; }
 namespace agi { struct Context; class OptionValue; }
@@ -84,6 +85,7 @@ private:
 	AudioBox *audioBox;      ///< The audio area
 	VideoBox *videoBox;      ///< The video area
 	StylePanel *stylePanel;  ///< The style panel at the right
+	SubsEditBox *editBox;    ///< The fields of the active line
 
 	wxSizer *OuterSizer; ///< The editing area, then the style panel at the right
 	wxSizer *MainSizer;  ///< Arranges things from top to bottom in the window
@@ -97,6 +99,8 @@ private:
 public:
 	/// The style panel at the right of the window
 	StylePanel *GetStylePanel() const { return stylePanel; }
+	/// The edit box below the audio
+	SubsEditBox *GetEditBox() const { return editBox; }
 	FrameMain();
 	~FrameMain();
     bool Destroy() override;

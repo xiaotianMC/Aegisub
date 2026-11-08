@@ -65,6 +65,12 @@ namespace {
 		{nullptr}
 	};
 
+	const char *added_hotkeys_next_style[][3] = {
+		{"grid/line/next/style", "Subtitle Edit Box", "Ctrl-Enter"},
+		{"grid/line/next/style", "Subtitle Edit Box", "Ctrl-KP_Enter"},
+		{nullptr}
+	};
+
 	void migrate_hotkeys(const char *added[][3]) {
 		auto hk_map = hotkey::inst->GetHotkeyMap();
 		bool changed = false;
@@ -171,6 +177,11 @@ void init() {
 	if (boost::find(migrations, "app/command_palette") == end(migrations)) {
 		migrate_hotkeys(added_hotkeys_command_palette);
 		migrations.emplace_back("app/command_palette");
+	}
+
+	if (boost::find(migrations, "grid/line/next/style") == end(migrations)) {
+		migrate_hotkeys(added_hotkeys_next_style);
+		migrations.emplace_back("grid/line/next/style");
 	}
 
 #ifdef __WXMAC__
