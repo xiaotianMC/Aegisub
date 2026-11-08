@@ -618,9 +618,13 @@ private:
 			}
 			case Glyph::Close: {
 				// ✕ : take it away
-				int half = FromDIP(4);
-				dc.DrawLine(centre.x - half, centre.y - half, centre.x + half + 1, centre.y + half + 1);
-				dc.DrawLine(centre.x - half, centre.y + half, centre.x + half + 1, centre.y - half - 1);
+				// Drawn about the same centre both ways, so the strokes match
+				double half = FromDIP(4), cx = size.x / 2.0, cy = size.y / 2.0;
+				wxPen pen(p.text, thick);
+				pen.SetCap(wxCAP_ROUND);
+				dc.SetPen(pen);
+				dc.DrawLine(wxRound(cx - half), wxRound(cy - half), wxRound(cx + half), wxRound(cy + half));
+				dc.DrawLine(wxRound(cx - half), wxRound(cy + half), wxRound(cx + half), wxRound(cy - half));
 				break;
 			}
 			case Glyph::Now: {
