@@ -9758,3 +9758,7 @@ msgstr "上边距"
 #: ../src/dialog_resample.cpp
 msgid "Bottom"
 msgstr "下边距"
+
+#: ../src/dialog_spellchecker.cpp
+msgid "No suggestions"
+msgstr "没有建议"

@@ -3660,6 +3660,23 @@ TEST_F(ordinary_edit, resample_is_drawn_number_fields_a_switch_and_even_margins)
     int after_width,after_height;LiveRead(*c).GetResolution(after_width,after_height);
     EXPECT_EQ(width,after_width) << "cancelled"; EXPECT_EQ(height,after_height);
 }
+TEST_F(ordinary_edit, spell_checker_is_drawn_fields_a_list_and_buttons) {
+    AcceptMessages messages;
+    cmd::PasteSubtitleLines(c.get(),"Dialogue: 0,0:00:01.00,0:00:02.00,Default,A,0,0,0,,Helo");
+    try{ShowSpellcheckerDialog(c.get());}catch(...){}
+    wxDialog *d=nullptr;
+    for(auto child:window->GetChildren())if(auto x=dynamic_cast<wxDialog*>(child);x && x->GetTitle()==_("Spell Checker") && x->IsShown())d=x;
+    if(!d)GTEST_SKIP() << "no spelling dictionary";
+    auto orig=fields_named(d,_("Misspelled word:").BeforeLast(':')),replace=fields_named(d,_("Replace with:").BeforeLast(':'));
+    ASSERT_EQ(1u,orig.size()); ASSERT_EQ(1u,replace.size());
+    EXPECT_FALSE(orig[0]->GetValue().empty());
+    FlatList *suggestions=nullptr; for(auto child:descendants(d))if(auto l=dynamic_cast<FlatList*>(child))suggestions=l;
+    ASSERT_NE(nullptr,suggestions);
+    if(suggestions->GetCount()>1){suggestions->Click(1);EXPECT_EQ(suggestions->GetString(1),replace[0]->GetValue()) << "a click takes a suggestion";}
+    EXPECT_NE(nullptr,button_labelled(d,_("&Replace")));
+    {wxKeyEvent esc(wxEVT_CHAR_HOOK); esc.m_keyCode=WXK_ESCAPE; esc.SetEventObject(d); d->GetEventHandler()->ProcessEvent(esc);}
+    EXPECT_FALSE(d->IsShown());
+}
 TEST_F(ordinary_edit, controlled_resample_uses_real_settings_confirmation_and_one_history_step) {
     Input("{\\pos(10,20)}sample");
     int width,height;LiveRead(*c).GetResolution(width,height);auto fontsize=LiveRead(*c).GetStyle("Default")->fontsize;

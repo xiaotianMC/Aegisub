@@ -20,13 +20,16 @@
 #include "subtitle_project_access.h"
 #include "compat.h"
 #include "dialog_manager.h"
-#include "help_button.h"
+#include "flat_controls.h"
+#include "flat_dialog.h"
+#include "flat_list.h"
 #include "include/aegisub/context.h"
 #include "include/aegisub/spellchecker.h"
 #include "libresrc/libresrc.h"
 #include "options.h"
 #include "selection_controller.h"
 #include "text_selection_controller.h"
+#include "theme.h"
 
 #include <libaegisub/ass/dialogue_parser.h>
 #include <libaegisub/exception.h>
@@ -37,11 +40,8 @@
 #include <memory>
 #include <set>
 #include <wx/arrstr.h>
-#include <wx/checkbox.h>
-#include <wx/combobox.h>
 #include <wx/dialog.h>
 #include <wx/intl.h>
-#include <wx/listbox.h>
 #include <wx/msgdlg.h>
 #include <wx/sizer.h>
 #include <wx/stattext.h>
@@ -66,11 +66,11 @@ class DialogSpellChecker final : public wxDialog {
 
 	wxTextCtrl *orig_word;    ///< The word being corrected
 	wxTextCtrl *replace_word; ///< The replacement that will be used if "Replace" is clicked
-	wxListBox *suggest_list;  ///< The list of suggested replacements
+	FlatList *suggest_list;   ///< The list of suggested replacements
 
-	wxComboBox *language;      ///< The list of available languages
-	wxButton *add_button;      ///< Add word to currently active dictionary
-	wxButton *remove_button;   ///< Remove word from currently active dictionary
+	FlatChoice *language;      ///< The list of available languages
+	FlatButton *add_button;    ///< Add word to currently active dictionary
+	FlatButton *remove_button; ///< Remove word from currently active dictionary
 
 	int start_line_id = 0;  ///< The first line checked
 	int active_line_id = 0; ///< The most recently checked line
@@ -92,7 +92,7 @@ class DialogSpellChecker final : public wxDialog {
 	/// Correct the currently selected word
 	void Replace();
 
-	void OnChangeLanguage(wxCommandEvent&);
+	void OnChangeLanguage();
 	void OnChangeSuggestion(wxCommandEvent&);
 
 	void OnReplace(wxCommandEvent&);
@@ -107,121 +107,107 @@ DialogSpellChecker::DialogSpellChecker(agi::Context *context)
 , spellchecker(SpellCheckerFactory::GetSpellChecker())
 {
 	SetIcons(GETICONS(spellcheck_toolbutton));
+	theme::UseSurface(this);
+	int gap = FromDIP(10), row = FromDIP(6);
 
-	wxSizer *main_sizer = new wxBoxSizer(wxVERTICAL);
+	if (!spellchecker) {
+		wxMessageBox(_("No spellchecker available."), _("Error"), wxOK | wxICON_ERROR | wxCENTER);
+		throw agi::UserCancelException("No spellchecker available");
+	}
+	dictionary_lang_codes = to_wx(spellchecker->GetLanguageList());
+	if (dictionary_lang_codes.empty()) {
+		wxMessageBox(_("No spellchecker dictionaries available."), _("Error"), wxOK | wxICON_ERROR | wxCENTER);
+		throw agi::UserCancelException("No spellchecker dictionaries available");
+	}
 
-	auto current_word_sizer = new wxFlexGridSizer(2, 5, 5);
-	main_sizer->Add(current_word_sizer, wxSizerFlags().Expand().Border(wxALL, 5));
-
-	wxSizer *bottom_sizer = new wxBoxSizer(wxHORIZONTAL);
-	main_sizer->Add(bottom_sizer, wxSizerFlags().Expand().Border(~wxTOP & wxALL, 5));
-
-	wxSizer *bottom_left_sizer = new wxBoxSizer(wxVERTICAL);
-	bottom_sizer->Add(bottom_left_sizer, wxSizerFlags().Expand().Border(wxRIGHT, 5));
-
-	wxSizer *actions_sizer = new wxBoxSizer(wxVERTICAL);
-	bottom_sizer->Add(actions_sizer, wxSizerFlags().Expand());
-
-	// Misspelled word and currently selected correction
-	current_word_sizer->AddGrowableCol(1, 1);
-	current_word_sizer->Add(new wxStaticText(this, -1, _("Misspelled word:")), 0, wxALIGN_CENTER_VERTICAL);
-	current_word_sizer->Add(orig_word = new wxTextCtrl(this, -1, "", wxDefaultPosition, wxDefaultSize, wxTE_READONLY), wxSizerFlags(1).Expand());
-	current_word_sizer->Add(new wxStaticText(this, -1, _("Replace with:")), 0, wxALIGN_CENTER_VERTICAL);
-	current_word_sizer->Add(replace_word = new wxTextCtrl(this, -1, ""), wxSizerFlags(1).Expand());
-
+	// The misspelled word and what replaces it, each named in its field
+	auto orig_frame = new FlatFrame(this, _("Misspelled word:").BeforeLast(':'));
+	orig_word = new wxTextCtrl(orig_frame, -1, "", wxDefaultPosition, wxDefaultSize, wxTE_READONLY | wxBORDER_NONE);
+	orig_frame->SetContent(orig_word, 200);
+	orig_frame->SetDimContent(true);
+	auto replace_frame = new FlatFrame(this, _("Replace with:").BeforeLast(':'));
+	replace_word = new wxTextCtrl(replace_frame, -1, "", wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+	replace_frame->SetContent(replace_word, 200);
 	replace_word->Bind(wxEVT_TEXT, [this](wxCommandEvent&) {
 		remove_button->Enable(spellchecker->CanRemoveWord(from_wx(replace_word->GetValue())));
 	});
 
-	// List of suggested corrections
-	suggest_list = new wxListBox(this, -1, wxDefaultPosition, DipSize(300, 150));
+	// The suggestions: a click takes one, a double click replaces with it
+	suggest_list = new FlatList(this, false, false, _("No suggestions"));
+	suggest_list->SetMinSize(DipSize(300, 150));
 	suggest_list->Bind(wxEVT_LISTBOX, &DialogSpellChecker::OnChangeSuggestion, this);
 	suggest_list->Bind(wxEVT_LISTBOX_DCLICK, &DialogSpellChecker::OnReplace, this);
-	bottom_left_sizer->Add(suggest_list, wxSizerFlags(1).Expand());
 
-	// List of supported spellchecker languages
-	{
-		if (!spellchecker) {
-			wxMessageBox(_("No spellchecker available."), _("Error"), wxOK | wxICON_ERROR | wxCENTER);
-			throw agi::UserCancelException("No spellchecker available");
-		}
-
-		dictionary_lang_codes = to_wx(spellchecker->GetLanguageList());
-		if (dictionary_lang_codes.empty()) {
-			wxMessageBox(_("No spellchecker dictionaries available."), _("Error"), wxOK | wxICON_ERROR | wxCENTER);
-			throw agi::UserCancelException("No spellchecker dictionaries available");
-		}
-
-		wxArrayString language_names(dictionary_lang_codes);
-		for (size_t i = 0; i < dictionary_lang_codes.size(); ++i) {
-			if (const wxLanguageInfo *info = wxLocale::FindLanguageInfo(dictionary_lang_codes[i]))
-				language_names[i] = info->Description;
-		}
-
-		language = new wxComboBox(this, -1, "", wxDefaultPosition, wxDefaultSize, language_names, wxCB_DROPDOWN | wxCB_READONLY);
-		wxString cur_lang = to_wx(OPT_GET("Tool/Spell Checker/Language")->GetString());
-		int cur_lang_index = dictionary_lang_codes.Index(cur_lang);
-		if (cur_lang_index == wxNOT_FOUND) cur_lang_index = dictionary_lang_codes.Index("en");
-		if (cur_lang_index == wxNOT_FOUND) cur_lang_index = dictionary_lang_codes.Index("en_US");
-		if (cur_lang_index == wxNOT_FOUND) cur_lang_index = 0;
-		language->SetSelection(cur_lang_index);
-		language->Bind(wxEVT_COMBOBOX, &DialogSpellChecker::OnChangeLanguage, this);
-
-		bottom_left_sizer->Add(language, wxSizerFlags().Expand().Border(wxTOP, 5));
+	// The dictionary's language
+	std::vector<wxString> language_names(dictionary_lang_codes.begin(), dictionary_lang_codes.end());
+	for (size_t i = 0; i < dictionary_lang_codes.size(); ++i) {
+		if (const wxLanguageInfo *info = wxLocale::FindLanguageInfo(dictionary_lang_codes[i]))
+			language_names[i] = info->Description;
 	}
+	language = new FlatChoice(this, _("Language"));
+	language->Set(language_names);
+	wxString cur_lang = to_wx(OPT_GET("Tool/Spell Checker/Language")->GetString());
+	int cur_lang_index = dictionary_lang_codes.Index(cur_lang);
+	if (cur_lang_index == wxNOT_FOUND) cur_lang_index = dictionary_lang_codes.Index("en");
+	if (cur_lang_index == wxNOT_FOUND) cur_lang_index = dictionary_lang_codes.Index("en_US");
+	if (cur_lang_index == wxNOT_FOUND) cur_lang_index = 0;
+	language->SetStringSelection(language_names[cur_lang_index]);
+	language->SetToolTip(_("Language"));
+	language->on_choose = [this](int) { OnChangeLanguage(); };
 
-	{
-		wxSizerFlags button_flags = wxSizerFlags().Expand().Border(wxBOTTOM, 5);
+	auto left = new wxBoxSizer(wxVERTICAL);
+	left->Add(orig_frame, wxSizerFlags().Expand());
+	left->Add(replace_frame, wxSizerFlags().Expand().Border(wxTOP, row));
+	left->Add(suggest_list, wxSizerFlags(1).Expand().Border(wxTOP, row));
+	left->Add(language, wxSizerFlags().Expand().Border(wxTOP, row));
 
-		auto make_checkbox = [&](wxString const& text, const char *opt) {
-			auto checkbox = new wxCheckBox(this, -1, text);
-			actions_sizer->Add(checkbox, button_flags);
-			checkbox->SetValue(OPT_GET(opt)->GetBool());
-			checkbox->Bind(wxEVT_CHECKBOX,
-				[=](wxCommandEvent &evt) { OPT_SET(opt)->SetBool(!!evt.GetInt()); });
-		};
+	// What to skip, then what to do with the word
+	auto actions = new wxBoxSizer(wxVERTICAL);
+	auto make_checkbox = [&](wxString const& text, const char *opt) {
+		auto checkbox = new FlatCheck(this, text);
+		actions->Add(checkbox, wxSizerFlags().Border(wxBOTTOM, row));
+		checkbox->SetValue(OPT_GET(opt)->GetBool());
+		checkbox->Bind(wxEVT_CHECKBOX, [=](wxCommandEvent &) { OPT_SET(opt)->SetBool(checkbox->GetValue()); });
+	};
+	make_checkbox(_("&Skip Comments"), "Tool/Spell Checker/Skip Comments");
+	make_checkbox(_("Ignore &UPPERCASE words"), "Tool/Spell Checker/Skip Uppercase");
+	actions->AddSpacer(row);
+	auto add_action = [&](FlatButton *button, std::function<void()> action) {
+		button->SetMinSize(wxSize(std::max(FromDIP(150), button->GetBestSize().x), FromDIP(28)));
+		button->Bind(wxEVT_BUTTON, [action](wxCommandEvent &) { action(); });
+		actions->Add(button, wxSizerFlags().Expand().Border(wxBOTTOM, row));
+		return button;
+	};
+	add_action(new FlatButton(this, _("&Replace"), wxID_ANY, true), [this] { Replace(); FindNext(); });
+	add_action(new FlatButton(this, _("Replace &all")), [this] {
+		auto_replace[from_wx(orig_word->GetValue())] = from_wx(replace_word->GetValue());
+		Replace();
+		FindNext();
+	});
+	add_action(new FlatButton(this, _("&Ignore")), [this] { FindNext(); });
+	add_action(new FlatButton(this, _("Ignore a&ll")), [this] {
+		auto_ignore.insert(from_wx(orig_word->GetValue()));
+		FindNext();
+	});
+	add_button = add_action(new FlatButton(this, _("Add to &dictionary")), [this] {
+		spellchecker->AddWord(from_wx(orig_word->GetValue()));
+		FindNext();
+	});
+	remove_button = add_action(new FlatButton(this, _("Remove fro&m dictionary")), [this] {
+		spellchecker->RemoveWord(from_wx(replace_word->GetValue()));
+		SetWord(from_wx(orig_word->GetValue()));
+	});
 
-		make_checkbox(_("&Skip Comments"), "Tool/Spell Checker/Skip Comments");
-		make_checkbox(_("Ignore &UPPERCASE words"), "Tool/Spell Checker/Skip Uppercase");
+	auto top = new wxBoxSizer(wxHORIZONTAL);
+	top->Add(left, wxSizerFlags(1).Expand());
+	top->Add(actions, wxSizerFlags().Expand().Border(wxLEFT, gap));
 
-		wxButton *button;
+	auto buttons = new flat::DialogButtons(this, wxCANCEL | wxHELP, "Spell Checker");
+	buttons->Get(wxID_CANCEL)->SetLabel(_("Close"));
 
-		actions_sizer->Add(button = new wxButton(this, -1, _("&Replace")), button_flags);
-		button->Bind(wxEVT_BUTTON, &DialogSpellChecker::OnReplace, this);
-
-		actions_sizer->Add(button = new wxButton(this, -1, _("Replace &all")), button_flags);
-		button->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
-			auto_replace[from_wx(orig_word->GetValue())] = from_wx(replace_word->GetValue());
-			Replace();
-			FindNext();
-		});
-
-		actions_sizer->Add(button = new wxButton(this, -1, _("&Ignore")), button_flags);
-		button->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { FindNext(); });
-
-		actions_sizer->Add(button = new wxButton(this, -1, _("Ignore a&ll")), button_flags);
-		button->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
-			auto_ignore.insert(from_wx(orig_word->GetValue()));
-			FindNext();
-		});
-
-		actions_sizer->Add(add_button = new wxButton(this, -1, _("Add to &dictionary")), button_flags);
-		add_button->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
-			spellchecker->AddWord(from_wx(orig_word->GetValue()));
-			FindNext();
-		});
-
-		actions_sizer->Add(remove_button = new wxButton(this, -1, _("Remove fro&m dictionary")), button_flags);
-		remove_button->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
-			spellchecker->RemoveWord(from_wx(replace_word->GetValue()));
-			SetWord(from_wx(orig_word->GetValue()));
-		});
-
-		actions_sizer->Add(new HelpButton(this, "Spell Checker"), button_flags);
-
-		actions_sizer->Add(new wxButton(this, wxID_CANCEL), button_flags.Border(0));
-	}
-
+	wxSizer *main_sizer = new wxBoxSizer(wxVERTICAL);
+	main_sizer->Add(top, wxSizerFlags(1).Expand().Border(wxALL, gap));
+	main_sizer->Add(buttons, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxBOTTOM, gap));
 	SetSizerAndFit(main_sizer);
 	CenterOnParent();
 
@@ -234,7 +220,7 @@ void DialogSpellChecker::OnReplace(wxCommandEvent&) {
 	FindNext();
 }
 
-void DialogSpellChecker::OnChangeLanguage(wxCommandEvent&) {
+void DialogSpellChecker::OnChangeLanguage() {
 	wxString code = dictionary_lang_codes[language->GetSelection()];
 	OPT_SET("Tool/Spell Checker/Language")->SetString(from_wx(code));
 
@@ -364,8 +350,7 @@ void DialogSpellChecker::SetWord(std::string const& word) {
 
 	wxArrayString suggestions = to_wx(spellchecker->GetSuggestions(word));
 	replace_word->SetValue(suggestions.size() ? suggestions[0] : to_wx(word));
-	suggest_list->Clear();
-	suggest_list->Append(suggestions);
+	suggest_list->Set(suggestions);
 
 	context->textSelectionController->SetSelection(word_start, word_start + word_len);
 	context->textSelectionController->SetInsertionPoint(word_start + word_len);
