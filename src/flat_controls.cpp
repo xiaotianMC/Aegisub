@@ -619,6 +619,86 @@ void FlatCheck::OnPaint(wxPaintEvent &) {
 	dc.DrawText(shown, box + FromDIP(6), (size.y - extent.y) / 2);
 }
 
+// FlatButton
+
+FlatButton::FlatButton(wxWindow *parent, wxString const& label)
+: wxWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE | wxWANTS_CHARS)
+, label(label)
+{
+	SetBackgroundStyle(wxBG_STYLE_PAINT);
+	SetCursor(wxCursor(wxCURSOR_HAND));
+	Bind(wxEVT_PAINT, &FlatButton::OnPaint, this);
+	Bind(wxEVT_ENTER_WINDOW, [this](wxMouseEvent &) { hover = true; Refresh(false); });
+	Bind(wxEVT_LEAVE_WINDOW, [this](wxMouseEvent &) { hover = pressed = false; Refresh(false); });
+	// Not skipped: the text keeps the keyboard and its selection
+	auto down = [this](wxMouseEvent &) {
+		if (!IsEnabled()) return;
+		pressed = true;
+		Refresh(false);
+	};
+	Bind(wxEVT_LEFT_DOWN, down);
+	Bind(wxEVT_LEFT_DCLICK, down);
+	Bind(wxEVT_LEFT_UP, [this](wxMouseEvent &) {
+		if (!pressed) return;
+		pressed = false;
+		Refresh(false);
+		if (IsEnabled()) Press();
+	});
+	Bind(wxEVT_KEY_DOWN, [this](wxKeyEvent &event) {
+		int key = event.GetKeyCode();
+		if ((key == WXK_SPACE || key == WXK_RETURN || key == WXK_NUMPAD_ENTER) && !event.HasAnyModifiers()) Press();
+		else event.Skip();
+	});
+	Bind(wxEVT_SET_FOCUS, [this](wxFocusEvent &event) { Refresh(false); event.Skip(); });
+	Bind(wxEVT_KILL_FOCUS, [this](wxFocusEvent &event) { Refresh(false); event.Skip(); });
+	theme_changed = theme::AddChangeListener([this] { Refresh(false); });
+}
+
+void FlatButton::Press() {
+	wxCommandEvent event(wxEVT_BUTTON, GetId());
+	event.SetEventObject(this);
+	ProcessWindowEvent(event);
+}
+
+void FlatButton::SetLabel(wxString const& new_label) {
+	if (label == new_label) return;
+	label = new_label;
+	InvalidateBestSize();
+	Refresh(false);
+}
+
+bool FlatButton::Enable(bool enable) {
+	bool changed = wxWindow::Enable(enable);
+	if (changed) Refresh(false);
+	return changed;
+}
+
+wxSize FlatButton::DoGetBestClientSize() const {
+	wxSize extent = GetTextExtent(wxStripMenuCodes(label));
+	return wxSize(extent.x + FromDIP(20), std::max(FromDIP(24), extent.y + FromDIP(8)));
+}
+
+void FlatButton::OnPaint(wxPaintEvent &) {
+	wxAutoBufferedPaintDC buffered(this);
+	wxGCDC dc(buffered);
+	wxSize size = GetClientSize();
+	auto p = flat::Colours(this);
+	dc.SetPen(*wxTRANSPARENT_PEN);
+	dc.SetBrush(wxBrush(GetParent()->GetBackgroundColour()));
+	dc.DrawRectangle(wxPoint(0, 0), size);
+
+	bool lit = hover && IsEnabled();
+	dc.SetBrush(wxBrush(lit ? theme::Mix(p.field, p.text, pressed ? 0.1 : 0.05) : p.field));
+	dc.SetPen(wxPen(HasFocus() ? p.accent : p.line, std::max(1, FromDIP(1))));
+	dc.DrawRoundedRectangle(wxRect(wxPoint(0, 0), size), FromDIP(5));
+
+	dc.SetFont(GetFont());
+	dc.SetTextForeground(p.text);
+	wxString shown = wxStripMenuCodes(label);
+	wxSize extent = dc.GetTextExtent(shown);
+	dc.DrawText(shown, (size.x - extent.x) / 2, (size.y - extent.y) / 2);
+}
+
 // FlatSuggest
 
 namespace {

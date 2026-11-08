@@ -309,9 +309,9 @@ wxTextCtrl *SubsEditBox::MakeTextField(FlatFrame *&frame, wxString const& hint, 
 	return ctrl;
 }
 
-wxButton *SubsEditBox::MakeBottomButton(const char *cmd_name) {
+FlatButton *SubsEditBox::MakeBottomButton(const char *cmd_name) {
 	cmd::Command *command = cmd::get(cmd_name);
-	wxButton *btn = new wxButton(this, -1, command->StrDisplay(c));
+	auto btn = new FlatButton(this, command->StrDisplay(c));
 	tool_tip_bindings.emplace_back(btn, command->StrHelp(), "Subtitle Edit Box", cmd_name);
 
 	btn->Bind(wxEVT_BUTTON, std::bind(&SubsEditBox::CallCommand, this, cmd_name));

@@ -53,7 +53,7 @@ class AssDialogue;
 class AssStyle;
 class SubsTextEditCtrl;
 class TimeEdit;
-class wxButton;
+class FlatButton;
 class wxCheckBox;
 class TimeUnitToggle;
 class wxSizer;
@@ -157,7 +157,7 @@ private:
 	TimeEdit *MakeTimeCtrl(wxString const& label, wxString const& tooltip, TimeField field);
 	/// A text field in a flat frame whose chevron lists @p values
 	wxTextCtrl *MakeTextField(FlatFrame *&frame, wxString const& hint, wxString const& tooltip, int width, wxArrayString &values);
-	wxButton *MakeBottomButton(const char *cmd_name);
+	FlatButton *MakeBottomButton(const char *cmd_name);
 
 	void OnChange(wxStyledTextEvent &event);
 	void OnKeyDown(wxKeyEvent &event);
