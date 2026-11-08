@@ -9489,3 +9489,66 @@ msgstr "视频显示"
 
 msgid "Where the video and the grid were, saved with the file and restored when it is opened again"
 msgstr "把视频和字幕列表的位置保存在文件中，再次打开时恢复"
+
+#: src/dialog_style_manager.cpp
+msgid "Make a new style"
+msgstr "新建一个样式"
+
+msgid "Change the style chosen (or double-click it)"
+msgstr "修改选中的样式（也可以双击它）"
+
+msgid "Make a new style starting from the one chosen"
+msgstr "以选中的样式为基础新建一个样式"
+
+msgid "Delete the styles chosen (Delete)"
+msgstr "删除选中的样式（Delete）"
+
+msgid "No styles stored in this catalog"
+msgstr "这个样式库里还没有样式"
+
+msgid "New catalog: a storage of its own"
+msgstr "新建样式库"
+
+msgid "Delete this catalog and its styles"
+msgstr "删除这个样式库及其中的样式"
+
+msgid "The script has no styles"
+msgstr "脚本里没有样式"
+
+msgid "Copy styles from another subtitle file into this script"
+msgstr "从另一个字幕文件复制样式到本脚本"
+
+msgid "Copy the styles chosen to the current script"
+msgstr "把选中的样式复制到当前脚本"
+
+msgid "Copy the styles chosen to the storage"
+msgstr "把选中的样式复制到样式库"
+
+msgid "Double-click a style to edit it, right-click for more. Ctrl+C and Ctrl+V copy styles as text, between scripts too."
+msgstr "双击样式即可编辑，右键查看更多操作。Ctrl+C 和 Ctrl+V 以文本形式复制粘贴样式，也可在不同脚本之间使用。"
+
+msgid "%d line"
+msgid_plural "%d lines"
+msgstr[0] "%d 行"
+
+msgid "%d style"
+msgid_plural "%d styles"
+msgstr[0] "%d 个样式"
+
+msgid "unused"
+msgstr "未使用"
+
+msgid "in script"
+msgstr "已在脚本中"
+
+msgid "differs from script"
+msgstr "与脚本不同"
+
+msgid "D&uplicate..."
+msgstr "创建副本(&U)..."
+
+msgid "Copy as te&xt\tCtrl+C"
+msgstr "复制为文本(&X)\tCtrl+C"
+
+msgid "&Paste styles\tCtrl+V"
+msgstr "粘贴样式(&P)\tCtrl+V"

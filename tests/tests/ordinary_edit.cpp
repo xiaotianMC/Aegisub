@@ -31,6 +31,7 @@
 #include "command_palette.h"
 #include "preferences.h"
 #include "preferences_base.h"
+#include "style_list.h"
 #include "status_info.h"
 #include <wx/checkbox.h>
 #include "include/aegisub/toolbar.h"
@@ -425,12 +426,12 @@ TEST_F(ordinary_edit, real_style_import_and_delete_preserve_unrelated_data_and_h
     for(auto top:wxTopLevelWindows) if(auto d=dynamic_cast<wxDialog*>(top);d && d->GetTitle()=="Styles Manager")manager=d;
     ASSERT_NE(nullptr,manager); manager->Hide();
     auto cleanup=std::unique_ptr<wxDialog,std::function<void(wxDialog*)>>(manager,[](wxDialog* d){d->Close();});
-    wxButton *import=nullptr,*remove=nullptr;wxListBox *current=nullptr;wxWindow *down=nullptr,*sort=nullptr;
+    FlatButton *import=nullptr,*remove=nullptr;StyleList *current=nullptr;wxWindow *down=nullptr,*sort=nullptr;
     for(auto child:descendants(manager)) {
-        if(auto b=dynamic_cast<wxButton*>(child); b && b->GetLabel()=="&Import from script...")import=b;
+        if(auto b=dynamic_cast<FlatButton*>(child); b && b->GetLabel()=="&Import from script...")import=b;
         if(child->GetParent()->GetLabel()=="Current script") {
-            if(auto b=dynamic_cast<wxButton*>(child);b && b->GetLabel()=="&Delete")remove=b;
-            if(auto list=dynamic_cast<wxListBox*>(child))current=list;
+            if(auto b=dynamic_cast<FlatButton*>(child);b && b->GetLabel()=="&Delete")remove=b;
+            if(auto list=dynamic_cast<StyleList*>(child))current=list;
             if(child->GetToolTipText()=="Move style down")down=child;
             if(child->GetToolTipText()=="Sort styles alphabetically")sort=child;
         }
@@ -4320,12 +4321,12 @@ TEST_F(ordinary_edit, font_resample_and_style_manager_questions_hold_no_write_le
     for(auto top:wxTopLevelWindows) if(auto d=dynamic_cast<wxDialog*>(top);d && d->GetTitle()=="Styles Manager")manager=d;
     ASSERT_NE(nullptr,manager); manager->Hide();
     auto cleanup=std::unique_ptr<wxDialog,std::function<void(wxDialog*)>>(manager,[](wxDialog* d){d->Close();});
-    wxButton *import=nullptr,*remove=nullptr;wxListBox *current=nullptr;
+    FlatButton *import=nullptr,*remove=nullptr;StyleList *current=nullptr;
     for(auto child:descendants(manager)) {
-        if(auto b=dynamic_cast<wxButton*>(child); b && b->GetLabel()=="&Import from script...")import=b;
+        if(auto b=dynamic_cast<FlatButton*>(child); b && b->GetLabel()=="&Import from script...")import=b;
         if(child->GetParent()->GetLabel()=="Current script") {
-            if(auto b=dynamic_cast<wxButton*>(child);b && b->GetLabel()=="&Delete")remove=b;
-            if(auto list=dynamic_cast<wxListBox*>(child))current=list;
+            if(auto b=dynamic_cast<FlatButton*>(child);b && b->GetLabel()=="&Delete")remove=b;
+            if(auto list=dynamic_cast<StyleList*>(child))current=list;
         }
     }
     ASSERT_NE(nullptr,import);ASSERT_NE(nullptr,remove);ASSERT_NE(nullptr,current);
@@ -4341,6 +4342,50 @@ TEST_F(ordinary_edit, font_resample_and_style_manager_questions_hold_no_write_le
     for(auto const& [title,free]:seen) EXPECT_TRUE(free) << title;
     EXPECT_EQ(description,c->subsController->GetUndoDescription());EXPECT_EQ(styles,LiveRead(*c).Styles.size());
     EXPECT_EQ("sample",LiveRead(*c).Events.front().Text.get());
+}
+TEST_F(ordinary_edit, style_manager_lists_show_each_style_with_its_use_and_copy_between_cards) {
+    Input("sample");
+    ShowStyleManagerDialog(c.get());
+    wxDialog* manager=nullptr;
+    for(auto top:wxTopLevelWindows) if(auto d=dynamic_cast<wxDialog*>(top);d && d->GetTitle()=="Styles Manager")manager=d;
+    ASSERT_NE(nullptr,manager); manager->Hide();
+    auto cleanup=std::unique_ptr<wxDialog,std::function<void(wxDialog*)>>(manager,[](wxDialog* d){d->Close();});
+    StyleList *storage=nullptr,*current=nullptr;StyleCard *current_card=nullptr;
+    FlatButton *edit=nullptr;wxWindow *to_storage=nullptr,*to_script=nullptr;
+    for(auto child:descendants(manager)) {
+        if(auto card=dynamic_cast<StyleCard*>(child);card && card->GetLabel()=="Current script")current_card=card;
+        if(auto list=dynamic_cast<StyleList*>(child))(child->GetParent()->GetLabel()=="Storage"?storage:current)=list;
+        if(auto b=dynamic_cast<FlatButton*>(child);b && b->GetLabel()=="&Edit" && child->GetParent()->GetLabel()=="Current script")edit=b;
+        if(child->GetToolTipText()=="Copy the styles chosen to the storage")to_storage=child;
+        if(child->GetToolTipText()=="Copy the styles chosen to the current script")to_script=child;
+    }
+    ASSERT_NE(nullptr,storage);ASSERT_NE(nullptr,current);ASSERT_NE(nullptr,current_card);
+    ASSERT_NE(nullptr,edit);ASSERT_NE(nullptr,to_storage);ASSERT_NE(nullptr,to_script);
+    // Each style of the script, with how many lines use it
+    ASSERT_EQ(1u,current->GetCount());EXPECT_EQ("Default",current->GetString(0));
+    EXPECT_EQ("1 line",current->GetRow(0).note);EXPECT_EQ("1 style",current_card->GetCount());
+    {
+        auto write=c->subtitleAccess->TryWrite();auto extra=new AssStyle;extra->name="Unused";
+        LiveWriteForTest(*c).Styles.push_back(*extra);LiveWriteForTest(*c).Commit("fixture style",AssFile::COMMIT_STYLES);
+    }
+    ASSERT_EQ(2u,current->GetCount());EXPECT_EQ("unused",current->GetRow(1).note);EXPECT_EQ("2 styles",current_card->GetCount());
+    // A click chooses as a list box does, and the buttons follow it
+    current->Click(1);EXPECT_TRUE(current->IsSelected(1));EXPECT_FALSE(current->IsSelected(0));EXPECT_TRUE(edit->IsEnabled());
+    current->Click(0,true);wxArrayInt chosen;EXPECT_EQ(2,current->GetSelections(chosen));EXPECT_FALSE(edit->IsEnabled());
+    current->Click(-1);EXPECT_EQ(0,current->GetSelections(chosen));
+    // Copied to the storage, the stored style is marked as in the script
+    ProbeModal yes([](wxDialog* dialog){return dynamic_cast<wxMessageDialog*>(dialog)?wxID_YES:wxID_CANCEL;});
+    current->SetStringSelection("Unused");button(to_storage,to_storage->GetId());
+    int stored=-1;for(unsigned i=0;i<storage->GetCount();++i)if(storage->GetString(i)=="Unused")stored=i;
+    ASSERT_NE(-1,stored);EXPECT_EQ("in script",storage->GetRow(stored).note);EXPECT_TRUE(storage->IsSelected(stored));
+    {
+        auto write=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).GetStyle("Unused")->fontsize=99;
+        LiveWriteForTest(*c).Commit("fixture change",AssFile::COMMIT_STYLES);
+    }
+    EXPECT_EQ("differs from script",storage->GetRow(stored).note);
+    // And copied back over the script's, the two are the same again
+    storage->SetSelection(stored);button(to_script,to_script->GetId());
+    EXPECT_EQ(48.,LiveRead(*c).GetStyle("Unused")->fontsize);EXPECT_EQ("in script",storage->GetRow(stored).note);
 }
 TEST_F(ordinary_edit, joined_lines_are_committed_before_selection_observers_see_them) {
     int first=LiveRead(*c).Events.front().Id,second=0;

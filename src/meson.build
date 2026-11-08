@@ -128,6 +128,7 @@ aegisub_src = files(
     'startup_window.cpp',
     'style_edit.cpp',
     'style_look.cpp',
+    'style_list.cpp',
     'style_panel.cpp',
     'subs_controller.cpp',
     'subtitle_binding.cpp',
