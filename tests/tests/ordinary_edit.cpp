@@ -3581,13 +3581,59 @@ TEST_F(ordinary_edit, controlled_shift_and_timing_processor_use_real_dialog_conf
     OPT_SET("Tool/Timing Post Processor/Enable/Keyframe")->SetBool(false);
     {
         RunModal hook("Timing Post-Processor",[&](wxDialog* dialog){
-            for(auto child:descendants(dialog))if(auto list=dynamic_cast<wxCheckListBox*>(child))for(unsigned i=0;i<list->GetCount();++i)list->Check(i,true);
+            for(auto child:descendants(dialog))if(auto list=dynamic_cast<FlatList*>(child))for(unsigned i=0;i<list->GetCount();++i)list->Check(i,true);
             button(dialog,wxID_OK);
         });
         ShowTimingProcessorDialog(c.get());EXPECT_EQ(900,LiveRead(*c).Events.front().Start.GetMilliseconds());
     }
     c->subsController->Undo();EXPECT_EQ(1000,LiveRead(*c).Events.front().Start.GetMilliseconds());
     c->subsController->Undo();EXPECT_EQ(0,LiveRead(*c).Events.front().Start.GetMilliseconds());
+}
+/// The text fields of @p dialog named @p label in their frames, in order
+std::vector<wxTextCtrl*> fields_named(wxWindow *dialog, wxString const& label) {
+    std::vector<wxTextCtrl*> found;
+    for(auto child:descendants(dialog))if(auto frame=dynamic_cast<FlatFrame*>(child);frame && frame->GetLabel()==label)
+        for(auto inner:frame->GetChildren())if(auto text=dynamic_cast<wxTextCtrl*>(inner))found.push_back(text);
+    return found;
+}
+FlatButton *button_labelled(wxWindow *dialog, wxString const& label) {
+    for(auto child:descendants(dialog))if(auto b=dynamic_cast<FlatButton*>(child);b && b->GetLabel()==label)return b;
+    return nullptr;
+}
+TEST_F(ordinary_edit, timing_processor_is_drawn_ticks_and_millisecond_fields) {
+    OPT_SET("Tool/Timing Post Processor/Lead/IN")->SetInt(100);
+    OPT_SET("Tool/Timing Post Processor/Enable/Lead/IN")->SetBool(true);
+    OPT_SET("Tool/Timing Post Processor/Enable/Lead/OUT")->SetBool(false);
+    OPT_SET("Tool/Timing Post Processor/Enable/Adjacent")->SetBool(false);
+    OPT_SET("Tool/Timing Post Processor/Enable/Keyframe")->SetBool(false);
+    bool ran=false;
+    {
+        RunModal hook("Timing Post-Processor",[&](wxDialog* dialog){
+            FlatList *styles=nullptr; FlatCheck *lead_out=nullptr,*keys=nullptr;
+            for(auto child:descendants(dialog)){
+                if(auto l=dynamic_cast<FlatList*>(child))styles=l;
+                if(auto k=dynamic_cast<FlatCheck*>(child);k && k->GetLabel()==_("Add lead &out:").BeforeLast(':'))lead_out=k;
+                if(auto k=dynamic_cast<FlatCheck*>(child);k && k->GetLabel()==_("E&nable") )keys=k;
+            }
+            ASSERT_NE(nullptr,styles); ASSERT_NE(nullptr,lead_out); ASSERT_NE(nullptr,keys);
+            for(unsigned i=0;i<styles->GetCount();++i)EXPECT_TRUE(styles->IsChecked(i)) << "every style to begin with";
+            EXPECT_FALSE(keys->IsEnabled()) << "no keyframes";
+            auto leads=fields_named(dialog,_("Lead")); ASSERT_EQ(2u,leads.size());
+            EXPECT_EQ("100",leads[0]->GetValue()); EXPECT_FALSE(leads[1]->IsEnabled());
+            lead_out->Toggle(); EXPECT_TRUE(leads[1]->IsEnabled()) << "a field is used while its box is ticked";
+            // Nothing to process, nothing to accept
+            auto ok=button_labelled(dialog,wxGetStockLabel(wxID_OK)); ASSERT_NE(nullptr,ok);
+            button_labelled(dialog,_("&None"))->Press(); EXPECT_FALSE(ok->IsEnabled());
+            button_labelled(dialog,_("&All"))->Press(); EXPECT_TRUE(ok->IsEnabled());
+            leads[0]->SetValue("200");
+            ran=true;
+            button(dialog,wxID_OK);
+        });
+        ShowTimingProcessorDialog(c.get());
+    }
+    EXPECT_TRUE(ran);
+    EXPECT_EQ(200,OPT_GET("Tool/Timing Post Processor/Lead/IN")->GetInt());
+    EXPECT_TRUE(OPT_GET("Tool/Timing Post Processor/Enable/Lead/OUT")->GetBool());
 }
 TEST_F(ordinary_edit, controlled_resample_uses_real_settings_confirmation_and_one_history_step) {
     Input("{\\pos(10,20)}sample");

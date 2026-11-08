@@ -9710,3 +9710,39 @@ msgstr "还没有平移过"
 #: ../src/dialog_shift_times.cpp
 msgid "Click an entry to load its shift"
 msgstr "点击一条记录以载入它的平移"
+
+#: ../src/dialog_timing_processor.cpp
+msgid "No styles"
+msgstr "没有样式"
+
+#: ../src/dialog_timing_processor.cpp
+msgid "Lead"
+msgstr "时长"
+
+#: ../src/dialog_timing_processor.cpp
+msgid "Bias"
+msgstr "偏向"
+
+#: ../src/dialog_timing_processor.cpp
+msgid "% toward the end of the first line"
+msgstr "% 偏向调整前一行的结束时间"
+
+#: ../src/dialog_timing_processor.cpp
+msgid "Keyframe snapping needs keyframes and timecodes"
+msgstr "对齐关键帧需要关键帧和时间码"
+
+#: ../src/dialog_timing_processor.cpp
+msgid "Starts before"
+msgstr "开始前阈"
+
+#: ../src/dialog_timing_processor.cpp
+msgid "Starts after"
+msgstr "开始后阈"
+
+#: ../src/dialog_timing_processor.cpp
+msgid "Ends before"
+msgstr "结束前阈"
+
+#: ../src/dialog_timing_processor.cpp
+msgid "Ends after"
+msgstr "结束后阈"
