@@ -45,6 +45,8 @@ public:
 
 	/// Get the currently selected color
 	agi::Color GetColor() { return colour; }
+	/// Show @p color, without sending EVT_COLOR
+	void SetColor(agi::Color color);
 };
 
 struct ColorValidator final : public wxValidator {
