@@ -1050,17 +1050,35 @@ StylePanelEdge::StylePanelEdge(wxWindow *parent, StylePanel *panel)
 		dc.SetBrush(wxBrush(back));
 		dc.DrawRectangle(wxPoint(0, 0), size);
 		if (!Folded()) return;
-		// Folded: an arrow pointing to where the panel opens
+		// Folded: a narrow block of its own, as a side bar folded away is,
+		// with a « pointing to where the panel opens and its name down it
+		int gap = theme::BlockGap(GetParent());
+		wxRect block(gap, 0, size.x - gap, size.y);
+		wxColour surface = theme::Surface(), accent = theme::UiColours().accent;
 		wxColour text = wxSystemSettings::GetColour(wxSYS_COLOUR_BTNTEXT);
-		if (hover) {
-			dc.SetBrush(wxBrush(theme::Mix(back, text, 0.1)));
-			dc.DrawRoundedRectangle(wxRect(FromDIP(1), size.y / 2 - FromDIP(20), size.x - FromDIP(2), FromDIP(40)), FromDIP(3));
+		dc.SetBrush(wxBrush(hover ? theme::Mix(surface, accent, 0.12) : surface));
+		dc.DrawRectangle(block);
+		// A line in the accent colour along its inner edge: something is here
+		dc.SetBrush(wxBrush(hover ? accent : theme::Mix(surface, accent, 0.6)));
+		dc.DrawRectangle(block.x, 0, std::max(2, FromDIP(2)), size.y);
+
+		wxColour ink = hover ? accent : theme::Mix(surface, text, 0.75);
+		int cx = block.x + block.width / 2, top = FromDIP(18), arm = FromDIP(4);
+		wxPen pen(ink, std::max(1, FromDIP(3) / 2));
+		pen.SetCap(wxCAP_ROUND);
+		dc.SetPen(pen);
+		for (int x : {cx - FromDIP(3), cx + FromDIP(2)}) {
+			dc.DrawLine(x + arm / 2, top - arm, x - arm / 2, top);
+			dc.DrawLine(x - arm / 2, top, x + arm / 2, top + arm);
 		}
-		int arm = FromDIP(4);
-		dc.SetPen(wxPen(theme::Mix(back, text, hover ? 0.9 : 0.5), std::max(1, FromDIP(3) / 2)));
-		int cx = size.x / 2 - arm / 2, cy = size.y / 2;
-		dc.DrawLine(cx + arm, cy - arm, cx, cy);
-		dc.DrawLine(cx, cy, cx + arm, cy + arm);
+
+		wxFont font = GetFont();
+		dc.SetFont(font);
+		dc.SetTextForeground(ink);
+		wxString label = _("Style");
+		wxSize extent = dc.GetTextExtent(label);
+		// Read from the top down, as a folded side bar's name is
+		dc.DrawRotatedText(label, cx + extent.y / 2, top + FromDIP(14), 270);
 	});
 	Bind(wxEVT_ENTER_WINDOW, [this](wxMouseEvent &) { hover = true; Refresh(false); });
 	Bind(wxEVT_LEAVE_WINDOW, [this](wxMouseEvent &) { hover = false; Refresh(false); });
@@ -1101,7 +1119,7 @@ void StylePanelEdge::Update() {
 	if (!narrow) opened = false;
 	bool show = OPT_GET("App/Style Panel/Show")->GetBool() && (!narrow || opened);
 	// Folded, the strip is wide enough to aim at
-	int strip = show ? theme::BlockGap(GetParent()) : FromDIP(14);
+	int strip = show ? theme::BlockGap(GetParent()) : theme::BlockGap(GetParent()) + FromDIP(24);
 	if (show == panel->IsShown() && GetMinSize().x == strip) return;
 	SetMinSize(wxSize(strip, -1));
 	SetCursor(show ? wxCursor(wxCURSOR_SIZEWE) : wxCursor(wxCURSOR_HAND));
