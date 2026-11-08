@@ -16,6 +16,7 @@
 #include <wx/sizer.h>
 #include <wx/stattext.h>
 #include <wx/textctrl.h>
+#include <wx/stockitem.h>
 #include <wx/textentry.h>
 #include <wx/time.h>
 #include <wx/utils.h>
@@ -809,9 +810,10 @@ void FlatCheck::OnPaint(wxPaintEvent &) {
 
 // FlatButton
 
-FlatButton::FlatButton(wxWindow *parent, wxString const& label)
-: wxWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE | wxWANTS_CHARS)
-, label(label)
+FlatButton::FlatButton(wxWindow *parent, wxString const& label, int id, bool accent)
+: wxWindow(parent, id, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE | wxWANTS_CHARS)
+, label(label.empty() && wxIsStockID(id) ? wxGetStockLabel(id) : label)
+, accent(accent)
 {
 	SetBackgroundStyle(wxBG_STYLE_PAINT);
 	SetCursor(wxCursor(wxCURSOR_HAND));
@@ -848,6 +850,12 @@ void FlatButton::Press() {
 	ProcessWindowEvent(event);
 }
 
+void FlatButton::SetAccent(bool new_accent) {
+	if (accent == new_accent) return;
+	accent = new_accent;
+	Refresh(false);
+}
+
 void FlatButton::SetLabel(wxString const& new_label) {
 	if (label == new_label) return;
 	label = new_label;
@@ -876,12 +884,23 @@ void FlatButton::OnPaint(wxPaintEvent &) {
 	dc.DrawRectangle(wxPoint(0, 0), size);
 
 	bool lit = hover && IsEnabled();
-	dc.SetBrush(wxBrush(lit ? theme::Mix(p.field, p.text, pressed ? 0.1 : 0.05) : p.field));
-	dc.SetPen(wxPen(HasFocus() ? p.accent : p.line, std::max(1, FromDIP(1))));
+	wxColour ink = p.text;
+	if (accent) {
+		wxColour fill = IsEnabled() ? p.accent : theme::Mix(p.surface, p.text, 0.12);
+		if (lit) fill = theme::Mix(fill, *wxWHITE, pressed ? 0.05 : 0.15);
+		dc.SetBrush(wxBrush(fill));
+		// Focus is a ring inside the fill
+		dc.SetPen(HasFocus() ? wxPen(theme::Mix(fill, *wxWHITE, 0.6), std::max(1, FromDIP(1))) : wxPen(fill));
+		ink = IsEnabled() ? *wxWHITE : theme::Mix(p.surface, p.text, 0.4);
+	}
+	else {
+		dc.SetBrush(wxBrush(lit ? theme::Mix(p.field, p.text, pressed ? 0.1 : 0.05) : p.field));
+		dc.SetPen(wxPen(HasFocus() ? p.accent : p.line, std::max(1, FromDIP(1))));
+	}
 	dc.DrawRoundedRectangle(wxRect(wxPoint(0, 0), size), FromDIP(5));
 
 	dc.SetFont(GetFont());
-	dc.SetTextForeground(p.text);
+	dc.SetTextForeground(ink);
 	wxString shown = wxStripMenuCodes(label);
 	wxSize extent = dc.GetTextExtent(shown);
 	dc.DrawText(shown, (size.x - extent.x) / 2, (size.y - extent.y) / 2);

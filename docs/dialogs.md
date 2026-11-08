@@ -1,0 +1,34 @@
+# 对话框
+
+弹窗统一改成和主窗口一样的自绘控件。已完成的对话框在各自的小节里说明；公共部分如下。
+
+## 公共控件
+
+- **底部按钮** `flat::DialogButtons`（`src/flat_dialog.{h,cpp}`）：代替 `CreateStdDialogButtonSizer`。
+  - 按钮是 `FlatButton`，带标准 id（`wxID_OK`、`wxID_CANCEL`、`wxID_APPLY`、`wxID_HELP`、`wxID_CLOSE`、`wxID_YES`、`wxID_NO`）和系统的标签，所以对话框自己的处理和 wxDialog 的默认处理（确定接受并关闭、应用写入、取消关闭）照常工作。
+  - 帮助和其他附加按钮（`AddLeft`）在左边；标准按钮在右边，顺序按系统：GTK 和 macOS 是“应用、取消、确定”，确定在最右；Windows 是“确定、取消、应用”。`AddRight` 加在标准按钮之前。
+  - 对话框为之而来的按钮（确定、是；只有关闭时是关闭）用强调色填充，文字白色；聚焦时填充内加一圈浅色环。
+  - 只有关闭时，关闭是确认 id，和 `CreateStdDialogButtonSizer` 一样。
+- **按键**（`flat::UseFlatButtonKeys`，`DialogButtons` 自动装上；自己排按钮的对话框单独调用）：系统按钮的按键行为不变。
+  - Esc 和标题栏的关闭按钮：按取消（或对话框 escape id 对应的按钮；escape id 是 `wxID_ANY` 时依次找取消、关闭、确认按钮）。按钮不可用时不按。
+  - 回车：焦点在单行输入框（没有 `wxTE_PROCESS_ENTER`）、勾选框、或面板本身时，按确认按钮；多行文本、自己处理回车的输入框、列表、按钮、下拉框里的回车归它们自己。
+  - Alt + 按钮标签里带下划线的字母：按该按钮。
+- **数字框** `flat::NumberField`：名称写在框内的 `FlatFrame`，代替 `wxSpinCtrl`。可以输入（超出范围不采用，离开或回车时显示实际采用的值）、滚轮一步步改、按住名称左右拖动连续调整；`precision` 是保留的小数位。`SetValue` 不触发 `on_change`。样式编辑器的数字框就是它。
+- **列表** `FlatList`（`src/flat_list.{h,cpp}`）：代替 `wxListBox` / `wxCheckListBox`。
+  - 圆角的输入框底色上一行行文字；任何一行有副文字时每行两行高，副文字灰色在下；右侧可以有灰色备注。
+  - 选择和 `wxListBox` 一样：单击、Ctrl / Shift 加单击、方向键、Home/End、翻页，多选时 Ctrl+A；发 `wxEVT_LISTBOX`、双击或回车发 `wxEVT_LISTBOX_DCLICK`。
+  - 可勾选的每行前有勾选框（和样式面板同一种画法），点框或按空格勾选（空格对所有选中行），发 `wxEVT_CHECKLISTBOX`；点框不改变选择。
+  - 设置类方法（`SetSelection`、`Check` 等）都不发事件。
+- 其余沿用已有的：`FlatFrame`（框内带名称的输入框）、`FlatChoice`、`FlatCheck`、`FlatButton`、`flat::SectionTitle`、`StylePanel::PageSwitch`（分段开关，代替单选）。
+
+## 规则
+
+- 不用静态框；分组用 `SectionTitle`（粗体标题加细线），组少时不加标题。
+- 输入框的名称写在框内；四周 8–10 DIP，行距 4 DIP。
+- 对话框底色用 `theme::UseSurface`。
+
+## 测试
+
+- `ordinary_edit.dialog_buttons_are_drawn_and_answer_the_keys_the_system_buttons_do`：标准 id 和标签、确定按钮是强调色；Esc 按取消，回车在单行输入框里按确定、在多行文本里不按，Ctrl+回车不算；Alt+字母；不可用的按钮不按；标题栏关闭按钮按取消；没有自己的处理时取消关闭对话框；只有关闭时关闭是确认 id。
+- `ordinary_edit.number_field_is_typed_stepped_and_dragged_in_range`：输入、保留小数位、超范围不采用、滚轮、拖动从按下时的值起算并夹在范围内、`SetValue` 不算用户修改、格式化。
+- `ordinary_edit.flat_list_is_chosen_and_ticked_as_the_system_lists_are`：单击、Shift、Ctrl、勾选框不改变选择、双击、事件顺序、设置不发事件；单选列表忽略 Ctrl / Shift。

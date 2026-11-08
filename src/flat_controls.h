@@ -229,16 +229,22 @@ public:
 
 /// A drawn button with words on it, as the animation page's are: a rounded
 /// field, a shade darker under the pointer. Sends wxEVT_BUTTON as wxButton
-/// does; Space or Enter presses it when it has the keyboard.
+/// does; Space or Enter presses it when it has the keyboard. The accent kind
+/// is filled with the accent colour, for what the dialog is for.
 class FlatButton final : public wxWindow {
 	wxString label;
+	bool accent = false;
 	bool hover = false, pressed = false;
 	agi::signal::Connection theme_changed;
 
 	void OnPaint(wxPaintEvent &);
 
 public:
-	FlatButton(wxWindow *parent, wxString const& label);
+	/// An empty @p label with a stock @p id (wxID_OK...) is the stock label
+	FlatButton(wxWindow *parent, wxString const& label, int id = wxID_ANY, bool accent = false);
+
+	void SetAccent(bool new_accent);
+	bool IsAccent() const { return accent; }
 
 	/// Send wxEVT_BUTTON, as a click does
 	void Press();

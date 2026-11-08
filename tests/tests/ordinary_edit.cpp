@@ -21,6 +21,8 @@
 #include "options.h"
 #include "command/command.h"
 #include "include/aegisub/hotkey.h"
+#include "flat_dialog.h"
+#include "flat_list.h"
 #include "command/edit.h"
 #include "subtitle_binding.h"
 #include "search_replace_engine.h"
@@ -1869,6 +1871,76 @@ TEST_F(ordinary_edit, edit_box_style_box_is_typed_in_and_completes_a_style) {
     box->FocusStyle();
     if (wxWindow::FindFocus()) EXPECT_EQ(static_cast<wxWindow*>(editor),wxWindow::FindFocus());
     editor->SelectAll(); type("s"); EXPECT_EQ("Sign",line_style(1)); EXPECT_EQ("Default Alt",line_style(0));
+}
+TEST_F(ordinary_edit, dialog_buttons_are_drawn_and_answer_the_keys_the_system_buttons_do) {
+    wxDialog dialog(window,-1,"buttons");
+    auto field=new wxTextCtrl(&dialog,-1,"");
+    auto notes=new wxTextCtrl(&dialog,-1,"",wxDefaultPosition,wxDefaultSize,wxTE_MULTILINE);
+    auto bar=new flat::DialogButtons(&dialog,wxOK|wxCANCEL|wxAPPLY|wxHELP);
+    auto restore=bar->AddLeft("&Restore");
+    auto sizer=new wxBoxSizer(wxVERTICAL); sizer->Add(field); sizer->Add(notes); sizer->Add(bar,0,wxEXPAND); dialog.SetSizerAndFit(sizer);
+    std::map<int,int> pressed;
+    for(int id:{int(wxID_OK),int(wxID_CANCEL),int(wxID_APPLY),int(wxID_HELP),restore->GetId()})
+        dialog.Bind(wxEVT_BUTTON,[&pressed,id](wxCommandEvent&){++pressed[id];},id);
+    // The standard ids and labels, the affirmative one filled
+    for(int id:{int(wxID_OK),int(wxID_CANCEL),int(wxID_APPLY),int(wxID_HELP)}) ASSERT_NE(nullptr,bar->Get(id));
+    EXPECT_TRUE(bar->Get(wxID_OK)->IsAccent()); EXPECT_FALSE(bar->Get(wxID_CANCEL)->IsAccent());
+    EXPECT_EQ(wxGetStockLabel(wxID_OK),bar->Get(wxID_OK)->GetLabel());
+    EXPECT_EQ(dynamic_cast<FlatButton*>(dialog.FindWindow(wxID_OK)),bar->Get(wxID_OK));
+    dialog.Show(); for(int i=0;i<10;++i) wxYield();
+    auto key=[&](int code,int modifiers=0){wxKeyEvent e(wxEVT_CHAR_HOOK);e.m_keyCode=code;e.m_altDown=modifiers&wxMOD_ALT;e.m_controlDown=modifiers&wxMOD_CONTROL;e.SetEventObject(&dialog);dialog.GetEventHandler()->ProcessEvent(e);};
+    // Escape presses Cancel
+    key(WXK_ESCAPE); EXPECT_EQ(1,pressed[wxID_CANCEL]);
+    // Enter in a one-line field presses OK; in a text of several lines it is the text's
+    field->SetFocus(); for(int i=0;i<5;++i) wxYield();
+    if (wxWindow::FindFocus()==field) { key(WXK_RETURN); EXPECT_EQ(1,pressed[wxID_OK]); }
+    notes->SetFocus(); for(int i=0;i<5;++i) wxYield();
+    if (wxWindow::FindFocus()==notes) { int before=pressed[wxID_OK]; key(WXK_RETURN); EXPECT_EQ(before,pressed[wxID_OK]); }
+    key(WXK_RETURN,wxMOD_CONTROL); // not plain Enter
+    // Alt with the underlined letter
+    key('R',wxMOD_ALT); EXPECT_EQ(1,pressed[restore->GetId()]);
+    // A disabled button is not pressed
+    bar->Get(wxID_CANCEL)->Disable(); key(WXK_ESCAPE); EXPECT_EQ(1,pressed[wxID_CANCEL]); bar->Get(wxID_CANCEL)->Enable();
+    // The title bar's close button presses Cancel
+    {wxCloseEvent close(wxEVT_CLOSE_WINDOW,dialog.GetId()); close.SetCanVeto(true); close.SetEventObject(&dialog); dialog.GetEventHandler()->ProcessEvent(close);}
+    EXPECT_EQ(2,pressed[wxID_CANCEL]);
+    // Without a handler of its own, Cancel ends the dialog as the system's does
+    wxDialog plain(window,-1,"plain"); auto plain_bar=new flat::DialogButtons(&plain,wxOK|wxCANCEL); plain.SetSizer(plain_bar); plain.Show();
+    plain_bar->Get(wxID_CANCEL)->Press(); EXPECT_FALSE(plain.IsShown());
+    // Close alone accepts, as CreateStdDialogButtonSizer has it
+    wxDialog closing(window,-1,"close"); auto close_bar=new flat::DialogButtons(&closing,wxCLOSE); closing.SetSizer(close_bar);
+    EXPECT_EQ(wxID_CLOSE,closing.GetAffirmativeId()); EXPECT_TRUE(close_bar->Get(wxID_CLOSE)->IsAccent());
+}
+TEST_F(ordinary_edit, number_field_is_typed_stepped_and_dragged_in_range) {
+    auto field=flat::NumberField::Create(window,"Width",10,0,100,0.5,1);
+    std::vector<double> taken; field->on_change=[&](double v){taken.push_back(v);};
+    EXPECT_EQ("Width",field->Frame()->GetLabel()); EXPECT_EQ("10",field->Text()->GetValue());
+    field->Text()->SetValue("12.25"); EXPECT_DOUBLE_EQ(12.3,field->GetValue()) << "one decimal kept";
+    field->Text()->SetValue("500"); EXPECT_DOUBLE_EQ(12.3,field->GetValue()) << "out of range is not taken";
+    field->Frame()->Wheel(2); EXPECT_DOUBLE_EQ(13.3,field->GetValue()); EXPECT_EQ("13.3",field->Text()->GetValue());
+    field->Frame()->Scrub(4,false); field->Frame()->Scrub(-30,true); EXPECT_DOUBLE_EQ(0,field->GetValue()) << "clamped, from where the drag began";
+    EXPECT_EQ((std::vector<double>{12.3,13.3,15.3,0}),taken);
+    field->SetValue(7); EXPECT_EQ("7",field->Text()->GetValue()); EXPECT_EQ(4u,taken.size()) << "setting it is not the user's change";
+    EXPECT_EQ("-0.5",flat::FormatNumber(-0.5,1)); EXPECT_EQ("0",flat::FormatNumber(-0.01,1));
+    field->Frame()->Destroy();
+}
+TEST_F(ordinary_edit, flat_list_is_chosen_and_ticked_as_the_system_lists_are) {
+    auto list=new FlatList(window,true,true,"Nothing");
+    list->Set({{"Alpha","first","1"},{"Beta","",""},{"Gamma","",""}});
+    std::vector<std::pair<wxEventType,int>> seen;
+    for(auto type:{wxEVT_LISTBOX,wxEVT_LISTBOX_DCLICK,wxEVT_CHECKLISTBOX}) list->Bind(type,[&seen,type](wxCommandEvent&e){seen.emplace_back(type,e.GetInt());});
+    EXPECT_EQ(3u,list->GetCount()); EXPECT_EQ("Beta",list->GetString(1)); EXPECT_EQ(wxNOT_FOUND,list->GetSelection());
+    list->Click(0); list->Click(2,false,true); wxArrayInt chosen; EXPECT_EQ(3,list->GetSelections(chosen)) << "Shift reaches from the first";
+    list->Click(1,true); EXPECT_FALSE(list->IsSelected(1)) << "Ctrl takes one away";
+    list->Click(1,false,false,true); EXPECT_TRUE(list->IsChecked(1)); EXPECT_FALSE(list->IsSelected(1)) << "the box ticks without choosing";
+    list->DoubleClick(2); EXPECT_EQ(2,list->GetSelection()); EXPECT_EQ("Gamma",list->GetStringSelection());
+    EXPECT_EQ((std::vector<std::pair<wxEventType,int>>{{wxEVT_LISTBOX,0},{wxEVT_LISTBOX,2},{wxEVT_LISTBOX,1},{wxEVT_CHECKLISTBOX,1},{wxEVT_LISTBOX,2},{wxEVT_LISTBOX_DCLICK,2}}),seen);
+    seen.clear(); list->SetSelection(0); list->Check(2); EXPECT_TRUE(seen.empty()) << "setting is not the user's change";
+    // One at a time: Ctrl and Shift choose only the row
+    auto single=new FlatList(window); single->Set(wxArrayString(3,std::array<wxString,3>{"a","b","c"}.data()));
+    single->Click(0); single->Click(2,false,true); EXPECT_EQ(2,single->GetSelection()); EXPECT_FALSE(single->IsSelected(0));
+    EXPECT_TRUE(single->SetStringSelection("b")); EXPECT_EQ(1,single->GetSelection());
+    list->Destroy(); single->Destroy();
 }
 TEST_F(ordinary_edit, choice_chooses_an_item_by_its_first_letters) {
     auto choice=new FlatChoice(window,"");

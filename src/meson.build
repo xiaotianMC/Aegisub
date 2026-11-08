@@ -100,6 +100,8 @@ aegisub_src = files(
     'export_framerate.cpp',
     'fft.cpp',
     'flat_controls.cpp',
+    'flat_dialog.cpp',
+    'flat_list.cpp',
     'font_popup.cpp',
     'font_file_lister.cpp',
     'frame_main.cpp',
