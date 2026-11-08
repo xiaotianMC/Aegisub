@@ -30,8 +30,13 @@
 - 对话框底色用 `theme::UseSurface`。
 - 一行一组选项时，灰色的名称在左、控件在右（两列的 `wxFlexGridSizer`），代替静态框。
 
+## 已改的对话框
+
+- **平移时间**（`dialog_shift_times.cpp`）：时间或帧数用分段开关选，下面只显示对应的一个框（时间框或数字框）；方向、影响范围、时间字段各一个开关。没有视频帧率时“帧”停用，没有选中行时“选中行”“选中行及之后”停用。右侧历史是 `FlatList`，单击一条载入它的平移，“清除”清空；确定后列表立刻加上这一次。
+
 ## 测试
 
 - `ordinary_edit.dialog_buttons_are_drawn_and_answer_the_keys_the_system_buttons_do`：标准 id 和标签、确定按钮是强调色；Esc 按取消，回车在单行输入框里按确定、在多行文本里不按，Ctrl+回车不算；Alt+字母；不可用的按钮不按；标题栏关闭按钮按取消；没有自己的处理时取消关闭对话框；只有关闭时关闭是确认 id。
 - `ordinary_edit.number_field_is_typed_stepped_and_dragged_in_range`：输入、保留小数位、超范围不采用、滚轮、拖动从按下时的值起算并夹在范围内、`SetValue` 不算用户修改、格式化。
 - `ordinary_edit.flat_list_is_chosen_and_ticked_as_the_system_lists_are`：单击、Shift、Ctrl、勾选框不改变选择、双击、事件顺序、设置不发事件；单选列表忽略 Ctrl / Shift。
+- `ordinary_edit.shift_times_is_drawn_switches_and_a_history_list`：没有帧率和选中行时对应的段停用、上次的选择、Alt+字母选段、按帧平移后历史加一条、单击历史载入。

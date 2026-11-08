@@ -9635,3 +9635,27 @@ msgstr "下一行并选样式"
 
 msgid "Move to the next subtitle line and put the keyboard in the style box, where typing a style's first letters chooses it"
 msgstr "转到下一行字幕，并把键盘焦点放到样式框，输入样式名的开头几个字母即可选中"
+
+#: ../src/dialog_shift_times.cpp
+msgid "&Time"
+msgstr "时间(&T)"
+
+#: ../src/dialog_shift_times.cpp
+msgid "&Frames"
+msgstr "帧(&F)"
+
+#: ../src/dialog_shift_times.cpp
+msgid "Frames"
+msgstr "帧"
+
+#: ../src/dialog_shift_times.cpp
+msgid "Direction"
+msgstr "方向"
+
+#: ../src/dialog_shift_times.cpp
+msgid "Nothing shifted yet"
+msgstr "还没有平移过"
+
+#: ../src/dialog_shift_times.cpp
+msgid "Click an entry to load its shift"
+msgstr "点击一条记录以载入它的平移"

@@ -3379,6 +3379,50 @@ TEST_F(ordinary_edit, controlled_real_style_rename_updates_references_and_repeat
     c->subsController->Redo();EXPECT_EQ("{\\rRenamed}text",LiveRead(*c).Events.front().Text.get());
 }
 
+TEST_F(ordinary_edit, shift_times_is_drawn_switches_and_a_history_list) {
+    OPT_SET("Tool/Shift Times/ByTime")->SetBool(false);OPT_SET("Tool/Shift Times/Direction")->SetBool(true);
+    OPT_SET("Tool/Shift Times/Type")->SetInt(1);OPT_SET("Tool/Shift Times/Affect")->SetInt(1);
+    c->selectionController->SetSelectedIDs({});
+    auto open=[&]{
+        ShowShiftTimesDialog(c.get());
+        for(auto child:window->GetChildren())if(auto d=dynamic_cast<wxDialog*>(child);d && d->GetTitle()=="Shift Times" && d->IsShown())return d;
+        return static_cast<wxDialog*>(nullptr);
+    };
+    auto shift=open(); ASSERT_NE(nullptr,shift);
+    std::vector<FlatSwitch*> switches; FlatList *history=nullptr; TimeEdit *time=nullptr;
+    for(auto child:descendants(shift)){
+        if(auto s=dynamic_cast<FlatSwitch*>(child))switches.push_back(s);
+        if(auto l=dynamic_cast<FlatList*>(child))history=l;
+        if(auto t=dynamic_cast<TimeEdit*>(child))time=t;
+    }
+    ASSERT_EQ(4u,switches.size()); ASSERT_NE(nullptr,history); ASSERT_NE(nullptr,time);
+    auto by=switches[0],direction=switches[1],affect=switches[2],fields=switches[3];
+    // No timecodes: frames can't be chosen; no selection: only all rows
+    EXPECT_FALSE(by->IsItemEnabled(1)); EXPECT_EQ(0,by->GetSelection());
+    by->Choose(1); EXPECT_EQ(0,by->GetSelection());
+    EXPECT_FALSE(affect->IsItemEnabled(1)); EXPECT_FALSE(affect->IsItemEnabled(2)); EXPECT_EQ(0,affect->GetSelection());
+    EXPECT_EQ(1,direction->GetSelection()); EXPECT_EQ(1,fields->GetSelection()) << "the last choices";
+    // Alt with an option's letter chooses it
+    {wxKeyEvent alt(wxEVT_CHAR_HOOK); alt.m_keyCode='W'; alt.m_altDown=true; alt.SetEventObject(shift); shift->GetEventHandler()->ProcessEvent(alt);}
+    EXPECT_EQ(0,direction->GetSelection());
+    fields->Choose(0);
+    time->SetTime(1500); button(shift,wxID_OK);
+    EXPECT_EQ(1500,LiveRead(*c).Events.front().Start.GetMilliseconds()); EXPECT_EQ(6500,LiveRead(*c).Events.front().End.GetMilliseconds());
+
+    // The shift is in the history; choosing it loads it again
+    shift=open(); ASSERT_NE(nullptr,shift);
+    for(auto child:descendants(shift)){
+        if(auto l=dynamic_cast<FlatList*>(child))history=l;
+        if(auto t=dynamic_cast<TimeEdit*>(child))time=t;
+        if(auto s=dynamic_cast<FlatSwitch*>(child);s && s->GetCount()==2 && s->GetLabel(0)=="For&ward")direction=s;
+    }
+    ASSERT_EQ(1u,history->GetCount());
+    EXPECT_TRUE(history->GetString(0).Contains("0:00:01.50")); EXPECT_TRUE(history->GetString(0).Contains("forward"));
+    time->SetTime(0); direction->SetSelection(1);
+    history->Click(0);
+    EXPECT_EQ(1500,time->GetTime()); EXPECT_EQ(0,direction->GetSelection());
+    shift->Close();
+}
 TEST_F(ordinary_edit, controlled_shift_and_timing_processor_use_real_dialog_confirm_events) {
     OPT_SET("Tool/Shift Times/ByTime")->SetBool(true);OPT_SET("Tool/Shift Times/Direction")->SetBool(false);
     OPT_SET("Tool/Shift Times/Type")->SetInt(0);OPT_SET("Tool/Shift Times/Affect")->SetInt(0);
