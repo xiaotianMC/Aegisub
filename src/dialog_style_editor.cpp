@@ -290,7 +290,7 @@ DialogStyleEditor::DialogStyleEditor(wxWindow *parent, AssStyle const* style, ag
 	};
 
 	// Preview: the style as it will look, on a background of one's choice
-	SubsPreview = new SubtitlesPreview(this, DipSize(100, 96), wxBORDER_NONE, OPT_GET("Colour/Style Editor/Background/Preview")->GetColor());
+	SubsPreview = new SubtitlesPreview(this, DipSize(100, 90), wxBORDER_NONE, OPT_GET("Colour/Style Editor/Background/Preview")->GetColor());
 	SubsPreview->SetToolTip(_("Preview of current style"));
 	SubsPreview->SetStyle(*style);
 	FlatFrame *preview_frame = new FlatFrame(this, _("Preview"));
@@ -298,22 +298,22 @@ DialogStyleEditor::DialogStyleEditor(wxWindow *parent, AssStyle const* style, ag
 	preview_frame->SetContent(PreviewText, 120);
 	PreviewText->SetToolTip(_("Text to be used for the preview"));
 	SubsPreview->SetText(from_wx(PreviewText->GetValue()));
-	auto previewButton = new ColourButton(this, wxSize(40, 16), false, OPT_GET("Colour/Style Editor/Background/Preview")->GetColor());
+	auto previewButton = new ColourButton(this, wxSize(28, 14), false, OPT_GET("Colour/Style Editor/Background/Preview")->GetColor());
 	previewButton->SetToolTip(_("Color of preview background"));
-	auto preview_row = new wxBoxSizer(wxHORIZONTAL);
-	preview_row->Add(preview_frame, wxSizerFlags(1).Expand());
-	preview_row->Add(previewButton, wxSizerFlags().Expand().Border(wxLEFT, FromDIP(6)));
 
-	// Name
+	// Name, on one row with the preview text and its background
 	FlatFrame *name_frame = new FlatFrame(this, _("Name"));
 	StyleName = new wxTextCtrl(name_frame, -1, to_wx(style->name), wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
-	name_frame->SetContent(StyleName, 160);
+	name_frame->SetContent(StyleName, 120);
 	StyleName->SetToolTip(_("Style name"));
+	auto top_row = new wxBoxSizer(wxHORIZONTAL);
+	top_row->Add(name_frame, wxSizerFlags(1).Expand());
+	top_row->Add(preview_frame, wxSizerFlags(1).Expand().Border(wxLEFT, FromDIP(6)));
+	top_row->Add(previewButton, wxSizerFlags().Expand().Border(wxLEFT, FromDIP(4)));
 
 	// Font: the face from the list or typed, the size, and the four flags
 	auto left = new wxBoxSizer(wxVERTICAL);
-	left->Add(flat::SectionTitle(this, _("Font")), 0, wxEXPAND);
-	FlatFrame *font_frame = new FlatFrame(this, "");
+	FlatFrame *font_frame = new FlatFrame(this, _("Font"));
 	FontName = new wxTextCtrl(font_frame, -1, to_wx(style->font), wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
 	font_frame->SetContent(FontName, 120);
 	FontName->SetToolTip(_("Font face"));
@@ -329,7 +329,7 @@ DialogStyleEditor::DialogStyleEditor(wxWindow *parent, AssStyle const* style, ag
 	auto font_row = new wxBoxSizer(wxHORIZONTAL);
 	font_row->Add(font_frame, wxSizerFlags(1).Expand());
 	font_row->Add(number(_("Size"), style->fontsize, 0, 10000, 1, 1, [this](double v) { work->fontsize = v; }, _("Font size")),
-		wxSizerFlags().Expand().Border(wxLEFT, FromDIP(6)));
+		wxSizerFlags().Expand().Border(wxLEFT, FromDIP(4)));
 	left->Add(font_row, 0, wxEXPAND);
 	auto flags_row = new wxBoxSizer(wxHORIZONTAL);
 	struct Flag { const char *command; bool AssStyle::*member; wxString tip; };
@@ -344,38 +344,35 @@ DialogStyleEditor::DialogStyleEditor(wxWindow *parent, AssStyle const* style, ag
 			toggle->SetState(work.get()->*member ? StylePanel::Toggle::State::On : StylePanel::Toggle::State::Off);
 			Changed();
 		};
-		flags_row->Add(toggle, 0, wxRIGHT, FromDIP(4));
+		flags_row->Add(toggle, 0, wxRIGHT | wxALIGN_CENTER_VERTICAL, FromDIP(2));
 	}
-	left->Add(flags_row, 0, wxTOP, FromDIP(4));
 
-	// Colours: four swatches with their names under them
-	left->AddSpacer(FromDIP(10));
-	left->Add(flat::SectionTitle(this, _("Colors")), 0, wxEXPAND);
+	// Colours: four swatches beside the flags, their names small under them
 	ColourButton *colorButton[] = {
-		new ColourButton(this, wxSize(44, 18), true, style->primary, ColorValidator(&work->primary)),
-		new ColourButton(this, wxSize(44, 18), true, style->secondary, ColorValidator(&work->secondary)),
-		new ColourButton(this, wxSize(44, 18), true, style->outline, ColorValidator(&work->outline)),
-		new ColourButton(this, wxSize(44, 18), true, style->shadow, ColorValidator(&work->shadow))
+		new ColourButton(this, wxSize(30, 14), true, style->primary, ColorValidator(&work->primary)),
+		new ColourButton(this, wxSize(30, 14), true, style->secondary, ColorValidator(&work->secondary)),
+		new ColourButton(this, wxSize(30, 14), true, style->outline, ColorValidator(&work->outline)),
+		new ColourButton(this, wxSize(30, 14), true, style->shadow, ColorValidator(&work->shadow))
 	};
 	colorButton[0]->SetToolTip(_("Choose primary color"));
 	colorButton[1]->SetToolTip(_("Choose secondary color"));
 	colorButton[2]->SetToolTip(_("Choose outline color"));
 	colorButton[3]->SetToolTip(_("Choose shadow color"));
 	wxString colorLabels[] = { _("Primary"), _("Secondary"), _("Outline"), _("Shadow") };
-	auto colours_row = new wxGridSizer(4, FromDIP(2), FromDIP(6));
+	auto colours_row = new wxGridSizer(4, 0, FromDIP(4));
 	for (int i = 0; i < 4; ++i) {
 		auto cell = new wxBoxSizer(wxVERTICAL);
-		cell->Add(colorButton[i], 0, wxALIGN_CENTER_HORIZONTAL);
+		cell->Add(colorButton[i], 0, wxEXPAND);
 		auto name = new wxStaticText(this, -1, colorLabels[i]);
+		name->SetFont(name->GetFont().Smaller());
 		name->SetForegroundColour(flat::Colours(this).dim);
-		cell->Add(name, 0, wxALIGN_CENTER_HORIZONTAL | wxTOP, FromDIP(2));
+		cell->Add(name, 0, wxALIGN_CENTER_HORIZONTAL | wxTOP, FromDIP(1));
 		colours_row->Add(cell, 0, wxEXPAND);
 	}
-	left->Add(colours_row, 0, wxEXPAND);
+	flags_row->Add(colours_row, 1, wxLEFT | wxALIGN_CENTER_VERTICAL, FromDIP(6));
+	left->Add(flags_row, 0, wxEXPAND | wxTOP, FromDIP(4));
 
 	// Where it goes: the alignment, and the margins beside it
-	left->AddSpacer(FromDIP(10));
-	left->Add(flat::SectionTitle(this, _("Alignment and margins")), 0, wxEXPAND);
 	auto align = new AlignGrid(this, work->alignment, _("Alignment in screen, in numpad style"));
 	align->on_choose = [this](int an) { work->alignment = an; Changed(); };
 	auto margins = new wxBoxSizer(wxVERTICAL);
@@ -386,12 +383,11 @@ DialogStyleEditor::DialogStyleEditor(wxWindow *parent, AssStyle const* style, ag
 			0, wxEXPAND | (i ? wxTOP : 0), FromDIP(4));
 	auto place_row = new wxBoxSizer(wxHORIZONTAL);
 	place_row->Add(align, 0, wxEXPAND);
-	place_row->Add(margins, 1, wxLEFT | wxALIGN_CENTER_VERTICAL, FromDIP(10));
-	left->Add(place_row, 0, wxEXPAND);
+	place_row->Add(margins, 1, wxLEFT | wxALIGN_CENTER_VERTICAL, FromDIP(6));
+	left->Add(place_row, 0, wxEXPAND | wxTOP, FromDIP(6));
 
 	// Border: outline or a box, and how wide
 	auto right = new wxBoxSizer(wxVERTICAL);
-	right->Add(flat::SectionTitle(this, _("Border")), 0, wxEXPAND);
 	auto border = new StylePanel::PageSwitch(this, std::vector<wxString>{_("Outline"), wxGETTEXT_IN_CONTEXT("border style", "Per line"), wxGETTEXT_IN_CONTEXT("border style", "Whole")});
 	// What libass draws for border styles 1, 3 and 4 (docs/main-window.md)
 	border->SetToolTip(_("Outline: the text is outlined in the outline colour, with a shadow in the shadow colour.\n"
@@ -413,24 +409,20 @@ DialogStyleEditor::DialogStyleEditor(wxWindow *parent, AssStyle const* style, ag
 		Changed();
 	};
 	right->Add(border, 0, wxEXPAND);
-	auto widths = new wxGridSizer(2, FromDIP(4), FromDIP(6));
+	auto widths = new wxGridSizer(2, FromDIP(4), FromDIP(4));
 	widths->Add(number(_("Outline"), style->outline_w, 0, 1000, 0.1, 2, [this](double v) { work->outline_w = v; }, _("Outline width, in pixels")), 0, wxEXPAND);
 	widths->Add(number(_("Shadow"), style->shadow_w, 0, 1000, 0.1, 2, [this](double v) { work->shadow_w = v; }, _("Shadow distance, in pixels")), 0, wxEXPAND);
 	right->Add(widths, 0, wxEXPAND | wxTOP, FromDIP(4));
 
 	// Transform
-	right->AddSpacer(FromDIP(10));
-	right->Add(flat::SectionTitle(this, _("Transform")), 0, wxEXPAND);
-	auto transform = new wxGridSizer(2, FromDIP(4), FromDIP(6));
+	auto transform = new wxGridSizer(2, FromDIP(4), FromDIP(4));
 	transform->Add(number(_("Scale X"), style->scalex, 0, 10000, 1, 2, [this](double v) { work->scalex = v; }, _("Scale X, in percentage")), 0, wxEXPAND);
 	transform->Add(number(_("Scale Y"), style->scaley, 0, 10000, 1, 2, [this](double v) { work->scaley = v; }, _("Scale Y, in percentage")), 0, wxEXPAND);
 	transform->Add(number(_("Rotation"), style->angle, -360, 360, 1, 2, [this](double v) { work->angle = v; }, _("Angle to rotate in Z axis, in degrees")), 0, wxEXPAND);
 	transform->Add(number(_("Spacing"), style->spacing, -1000, 1000, 0.1, 3, [this](double v) { work->spacing = v; }, _("Character spacing, in pixels")), 0, wxEXPAND);
-	right->Add(transform, 0, wxEXPAND);
+	right->Add(transform, 0, wxEXPAND | wxTOP, FromDIP(4));
 
-	// Encoding
-	right->AddSpacer(FromDIP(10));
-	right->Add(flat::SectionTitle(this, _("Encoding")), 0, wxEXPAND);
+	// Encoding, named beside the list
 	wxArrayString encodingStrings;
 	AssStyle::GetEncodings(encodingStrings);
 	auto encoding = new FlatChoice(this, _("Encoding, only useful in unicode if the font doesn't have the proper unicode mapping"));
@@ -452,11 +444,16 @@ DialogStyleEditor::DialogStyleEditor(wxWindow *parent, AssStyle const* style, ag
 		work->encoding = static_cast<int>(value);
 		Changed();
 	};
-	right->Add(encoding, 0, wxEXPAND);
+	auto encoding_row = new wxBoxSizer(wxHORIZONTAL);
+	auto encoding_label = new wxStaticText(this, -1, _("Encoding"));
+	encoding_label->SetForegroundColour(flat::Colours(this).dim);
+	encoding_row->Add(encoding_label, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(6));
+	encoding_row->Add(encoding, 1, wxEXPAND);
+	right->Add(encoding_row, 0, wxEXPAND | wxTOP, FromDIP(4));
 
 	auto columns = new wxBoxSizer(wxHORIZONTAL);
 	columns->Add(left, 1, wxEXPAND);
-	columns->AddSpacer(FromDIP(16));
+	columns->AddSpacer(FromDIP(12));
 	columns->Add(right, 1, wxEXPAND);
 
 	// Buttons
@@ -464,12 +461,11 @@ DialogStyleEditor::DialogStyleEditor(wxWindow *parent, AssStyle const* style, ag
 
 	// General Layout
 	auto content = new wxBoxSizer(wxVERTICAL);
-	content->Add(SubsPreview, 1, wxEXPAND);
-	content->Add(preview_row, 0, wxEXPAND | wxTOP, FromDIP(4));
-	content->Add(name_frame, 0, wxEXPAND | wxTOP, FromDIP(8));
-	content->Add(columns, 0, wxEXPAND | wxTOP, FromDIP(10));
+	content->Add(top_row, 0, wxEXPAND);
+	content->Add(SubsPreview, 1, wxEXPAND | wxTOP, FromDIP(4));
+	content->Add(columns, 0, wxEXPAND | wxTOP, FromDIP(8));
 	wxSizer *MainSizer = new wxBoxSizer(wxVERTICAL);
-	MainSizer->Add(content, 1, wxEXPAND | wxALL, FromDIP(10));
+	MainSizer->Add(content, 1, wxEXPAND | wxALL, FromDIP(8));
 	MainSizer->Add(ButtonSizer, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, gap);
 
 	SetSizerAndFit(MainSizer);
