@@ -32,22 +32,21 @@
 #include "subtitle_value_edit.h"
 #include "async_video_provider.h"
 #include "compat.h"
+#include "flat_controls.h"
 #include "help_button.h"
 #include "include/aegisub/context.h"
 #include "libresrc/libresrc.h"
 #include "project.h"
 #include "resolution_resampler.h"
+#include "theme.h"
 #include "validators.h"
 #include "video_controller.h"
 
 #include <boost/algorithm/string/predicate.hpp>
 #include <vector>
-#include <wx/button.h>
-#include <wx/checkbox.h>
-#include <wx/combobox.h>
 #include <wx/dialog.h>
 #include <wx/gbsizer.h>
-#include <wx/statbox.h>
+#include <wx/sizer.h>
 #include <wx/stattext.h>
 #include <wx/textctrl.h>
 
@@ -60,13 +59,15 @@ class DialogProperties {
 	std::vector<std::pair<std::string, wxTextCtrl*>> properties;
 
 	// Things that effect rendering
-	wxComboBox *WrapStyle;   ///< Wrapping style for long lines
+	FlatChoice *WrapStyle;   ///< Wrapping style for long lines
 	wxTextCtrl *ResX;        ///< Script x resolution
 	wxTextCtrl *ResY;        ///< Script y resolution
 	wxTextCtrl *LayoutResX;  ///< Layout x resolution
 	wxTextCtrl *LayoutResY;  ///< Layout y resolution
-	wxCheckBox *ScaleBorder; ///< If script resolution != video resolution how should borders be handled
-	wxComboBox *YCbCrMatrix;
+	FlatCheck *ScaleBorder; ///< If script resolution != video resolution how should borders be handled
+	FlatChoice *YCbCrMatrix;
+	/// The matrix as the script has it, kept when it is none of the list's
+	wxString original_matrix;
 
 	/// OK button handler
 	void OnOK(wxCommandEvent &event);
@@ -87,7 +88,7 @@ class DialogProperties {
 	/// @param sizer Sizer to add the label and control to
 	/// @param label Label text to use
 	/// @param property Script info property name
-	void AddProperty(wxWindow *parent, wxSizer *sizer, wxString const& label, std::string_view property);
+	wxWindow *AddProperty(wxString const& label, std::string_view property);
 
 public:
 	/// Constructor
@@ -101,6 +102,8 @@ DialogProperties::DialogProperties(agi::Context *c)
 , c(c)
 {
 	d.SetIcons(GETICONS(properties_toolbutton));
+	theme::UseSurface(&d);
+	auto const& file = c->subtitleAccess->Read();
 
 	// Button sizer
 	// Create buttons first. See:
@@ -110,115 +113,125 @@ DialogProperties::DialogProperties(agi::Context *c)
 	d.Bind(wxEVT_BUTTON, &DialogProperties::OnOK, this, wxID_OK);
 	d.Bind(wxEVT_BUTTON, std::bind(&HelpButton::OpenPage, "Properties"), wxID_HELP);
 
-	// Script details crap
-	wxStaticBoxSizer *TopSizer = new wxStaticBoxSizer(wxHORIZONTAL,&d,_("Script"));
-	wxWindow *TopSizerBox = TopSizer->GetStaticBox();
-	auto TopSizerGrid = new wxFlexGridSizer(0,2,5,5);
+	// Drawn as the style editor is (docs/main-window.md): sections under a
+	// bold title, fields with their names inside them
+	const int row_gap = d.FromDIP(4), col_gap = d.FromDIP(8), section_gap = d.FromDIP(12);
 
-	AddProperty(TopSizerBox, TopSizerGrid, _("Title:"), "Title");
-	AddProperty(TopSizerBox, TopSizerGrid, _("Original script:"), "Original Script");
-	AddProperty(TopSizerBox, TopSizerGrid, _("Translation:"), "Original Translation");
-	AddProperty(TopSizerBox, TopSizerGrid, _("Editing:"), "Original Editing");
-	AddProperty(TopSizerBox, TopSizerGrid, _("Timing:"), "Original Timing");
-	AddProperty(TopSizerBox, TopSizerGrid, _("Synch point:"), "Synch Point");
-	AddProperty(TopSizerBox, TopSizerGrid, _("Updated by:"), "Script Updated By");
-	AddProperty(TopSizerBox, TopSizerGrid, _("Update details:"), "Update Details");
+	// Script: who made it. The title on a line of its own, the credits in
+	// pairs, what was updated last on a line of its own.
+	auto script = new wxBoxSizer(wxVERTICAL);
+	script->Add(flat::SectionTitle(&d, _("Script")), 0, wxEXPAND);
+	script->Add(AddProperty(wxGETTEXT_IN_CONTEXT("script info", "Title"), "Title"), 0, wxEXPAND);
+	auto credits = new wxFlexGridSizer(2, row_gap, col_gap);
+	credits->AddGrowableCol(0, 1);
+	credits->AddGrowableCol(1, 1);
+	credits->Add(AddProperty(wxGETTEXT_IN_CONTEXT("script info", "Original script"), "Original Script"), 0, wxEXPAND);
+	credits->Add(AddProperty(wxGETTEXT_IN_CONTEXT("script info", "Translation"), "Original Translation"), 0, wxEXPAND);
+	credits->Add(AddProperty(wxGETTEXT_IN_CONTEXT("script info", "Editing"), "Original Editing"), 0, wxEXPAND);
+	credits->Add(AddProperty(wxGETTEXT_IN_CONTEXT("script info", "Timing"), "Original Timing"), 0, wxEXPAND);
+	credits->Add(AddProperty(wxGETTEXT_IN_CONTEXT("script info", "Synch point"), "Synch Point"), 0, wxEXPAND);
+	credits->Add(AddProperty(wxGETTEXT_IN_CONTEXT("script info", "Updated by"), "Script Updated By"), 0, wxEXPAND);
+	script->Add(credits, 0, wxEXPAND | wxTOP, row_gap);
+	script->Add(AddProperty(wxGETTEXT_IN_CONTEXT("script info", "Update details"), "Update Details"), 0, wxEXPAND | wxTOP, row_gap);
 
-	TopSizerGrid->AddGrowableCol(1,1);
-	TopSizer->Add(TopSizerGrid,1,wxEXPAND,0);
+	// Resolution: a row each for the script's and the layout's, width ×
+	// height and a button taking the video's; the colour matrix below
+	bool video = !!c->project->VideoProvider();
+	auto number = [&](wxTextCtrl *&text, wxString const& label, std::string_view key) {
+		auto frame = new FlatFrame(&d, label);
+		text = new wxTextCtrl(frame, -1, "", wxDefaultPosition, wxDefaultSize, wxBORDER_NONE, IntValidator(file.GetScriptInfoAsInt(key)));
+		frame->SetContent(text, 60);
+		return frame;
+	};
+	auto from_video = [&](wxString const& label, wxString const& tip, void (DialogProperties::*handler)(wxCommandEvent&)) {
+		auto button = new FlatButton(&d, label);
+		button->SetToolTip(video ? tip : _("Open a video to take this from it"));
+		if (video) button->Bind(wxEVT_BUTTON, handler, this);
+		else button->Enable(false);
+		return button;
+	};
+	auto res_grid = new wxGridBagSizer(row_gap, d.FromDIP(6));
+	// The name of a row: an old label without its colon
+	auto row_label = [&](wxString text, int row) {
+		text.Trim().Trim(false);
+		if (text.EndsWith(":") || text.EndsWith(wxString::FromUTF8("\xEF\xBC\x9A"))) text.RemoveLast();
+		res_grid->Add(new wxStaticText(&d, -1, text.Trim()), wxGBPosition(row, 0), wxDefaultSpan, wxALIGN_CENTER_VERTICAL | wxRIGHT, d.FromDIP(4));
+	};
+	auto times = [&](int row) {
+		auto sign = new wxStaticText(&d, -1, wxString::FromUTF8("\xC3\x97"));
+		sign->SetForegroundColour(flat::Colours(&d).dim);
+		res_grid->Add(sign, wxGBPosition(row, 2), wxDefaultSpan, wxALIGN_CENTER);
+	};
+	row_label(_("Script: "), 0);
+	res_grid->Add(number(ResX, wxGETTEXT_IN_CONTEXT("resolution", "Width"), "PlayResX"), wxGBPosition(0, 1), wxDefaultSpan, wxEXPAND);
+	times(0);
+	res_grid->Add(number(ResY, wxGETTEXT_IN_CONTEXT("resolution", "Height"), "PlayResY"), wxGBPosition(0, 3), wxDefaultSpan, wxEXPAND);
+	res_grid->Add(from_video(_("From &video"), _("Use the video's resolution as the script's"), &DialogProperties::OnSetFromVideo), wxGBPosition(0, 4), wxDefaultSpan, wxEXPAND);
+	row_label(_("Layout: "), 1);
+	res_grid->Add(number(LayoutResX, wxGETTEXT_IN_CONTEXT("resolution", "Width"), "LayoutResX"), wxGBPosition(1, 1), wxDefaultSpan, wxEXPAND);
+	times(1);
+	res_grid->Add(number(LayoutResY, wxGETTEXT_IN_CONTEXT("resolution", "Height"), "LayoutResY"), wxGBPosition(1, 3), wxDefaultSpan, wxEXPAND);
+	res_grid->Add(from_video(_("From video"), _("Use the video's resolution as the layout's"), &DialogProperties::OnSetLayoutResFromVideo), wxGBPosition(1, 4), wxDefaultSpan, wxEXPAND);
 
-	// Resolution box
-	wxStaticBoxSizer *res_box_sizer = new wxStaticBoxSizer(wxVERTICAL, &d, _("Resolution"));
-	wxWindow *res_box = res_box_sizer->GetStaticBox();
+	row_label(_("YCbCr Matrix"), 2);
+	YCbCrMatrix = new FlatChoice(&d, _("YCbCr Matrix"));
+	{
+		std::vector<wxString> matrices;
+		for (auto const& name : agi::ycbcr::valid_header_strings) matrices.push_back(to_wx(name));
+		YCbCrMatrix->Set(matrices);
+	}
+	original_matrix = to_wx(file.GetScriptInfo("YCbCr Matrix"));
+	YCbCrMatrix->SetStringSelection(original_matrix);
+	res_grid->Add(YCbCrMatrix, wxGBPosition(2, 1), wxGBSpan(1, 3), wxEXPAND);
+	res_grid->Add(from_video(_("From video"), _("Use the matrix recommended for the video"), &DialogProperties::OnSetYCbCrMatrixFromVideo), wxGBPosition(2, 4), wxDefaultSpan, wxEXPAND);
+	res_grid->AddGrowableCol(1, 1);
+	res_grid->AddGrowableCol(3, 1);
 
-	ResX = new wxTextCtrl(res_box,-1,"",wxDefaultPosition,wxDefaultSize,0,IntValidator(c->subtitleAccess->Read().GetScriptInfoAsInt("PlayResX")));
-	ResY = new wxTextCtrl(res_box,-1,"",wxDefaultPosition,wxDefaultSize,0,IntValidator(c->subtitleAccess->Read().GetScriptInfoAsInt("PlayResY")));
-
-	LayoutResX = new wxTextCtrl(res_box,-1,"",wxDefaultPosition,wxDefaultSize,0,IntValidator(c->subtitleAccess->Read().GetScriptInfoAsInt("LayoutResX")));
-	LayoutResY = new wxTextCtrl(res_box,-1,"",wxDefaultPosition,wxDefaultSize,0,IntValidator(c->subtitleAccess->Read().GetScriptInfoAsInt("LayoutResY")));
-
-	wxButton *FromVideo = new wxButton(res_box,-1,_("From &video"));
-	if (!c->project->VideoProvider())
-		FromVideo->Enable(false);
-	else
-		FromVideo->Bind(wxEVT_BUTTON, &DialogProperties::OnSetFromVideo, this);
-
-	auto res_sizer = new wxGridBagSizer(5, 5);
-	res_sizer->SetCols(5);
-	res_sizer->AddGrowableCol(1, 1);
-	res_sizer->AddGrowableCol(3, 1);
-	res_sizer->Add(new wxStaticText(res_box, -1, _("Script: ")), wxGBPosition(0, 0), wxGBSpan(1, 1), wxSizerFlags().Center().Left().GetFlags());
-	res_sizer->Add(ResX, wxGBPosition(0, 1), wxGBSpan(1, 1), wxRIGHT | wxALIGN_CENTER_VERTICAL | wxEXPAND, 2);
-	res_sizer->Add(new wxStaticText(res_box, -1, _(L"\u00D7")), wxGBPosition(0, 2), wxGBSpan(1, 1), wxALIGN_CENTER | wxRIGHT, 2); // U+00D7 multiplication sign
-	res_sizer->Add(ResY, wxGBPosition(0, 3), wxGBSpan(1, 1), wxRIGHT | wxALIGN_CENTER_VERTICAL | wxEXPAND, 2);
-	res_sizer->Add(FromVideo, wxGBPosition(0, 4), wxGBSpan(1, 1), wxALIGN_CENTER_VERTICAL | wxEXPAND);
-
-	wxButton *LayoutResFromVideo = new wxButton(res_box,-1,_("From video"));
-	if (!c->project->VideoProvider())
-		LayoutResFromVideo->Enable(false);
-	else
-		LayoutResFromVideo->Bind(wxEVT_BUTTON, &DialogProperties::OnSetLayoutResFromVideo, this);
-
-	res_sizer->Add(new wxStaticText(res_box, -1, _("Layout: ")), wxGBPosition(1, 0), wxGBSpan(1, 1), wxSizerFlags().Center().Left().GetFlags());
-	res_sizer->Add(LayoutResX, wxGBPosition(1, 1), wxGBSpan(1, 1), wxRIGHT | wxALIGN_CENTER_VERTICAL | wxEXPAND, 2);
-	res_sizer->Add(new wxStaticText(res_box, -1, _(L"\u00D7")), wxGBPosition(1, 2), wxGBSpan(1, 1), wxALIGN_CENTER | wxRIGHT, 2); // U+00D7 multiplication sign
-	res_sizer->Add(LayoutResY, wxGBPosition(1, 3), wxGBSpan(1, 1), wxRIGHT | wxALIGN_CENTER_VERTICAL | wxEXPAND, 2);
-	res_sizer->Add(LayoutResFromVideo, wxGBPosition(1, 4), wxGBSpan(1, 1), wxALIGN_CENTER_VERTICAL | wxEXPAND);
-
-	YCbCrMatrix = new wxComboBox(res_box, -1, to_wx(c->subtitleAccess->Read().GetScriptInfo("YCbCr Matrix")),
-		 wxDefaultPosition, wxDefaultSize, to_wx(agi::ycbcr::valid_header_strings), wxCB_READONLY);
-
-	wxButton *YCbCrMatrixFromVideo = new wxButton(res_box,-1,_("From video"));
-	if (!c->project->VideoProvider())
-		YCbCrMatrixFromVideo->Enable(false);
-	else
-		YCbCrMatrixFromVideo->Bind(wxEVT_BUTTON, &DialogProperties::OnSetYCbCrMatrixFromVideo, this);
-
-	res_sizer->Add(new wxStaticText(res_box, -1, _("YCbCr Matrix:")), wxGBPosition(2, 0), wxGBSpan(1, 1), wxSizerFlags().Center().GetFlags());
-	res_sizer->Add(YCbCrMatrix, wxGBPosition(2, 1), wxGBSpan(1, 3), wxSizerFlags(1).Expand().CenterVertical().Border(wxLEFT).GetFlags());
-	res_sizer->Add(YCbCrMatrixFromVideo, wxGBPosition(2, 4), wxGBSpan(1, 1), wxSizerFlags().Expand().CenterVertical().GetFlags());
-
-	res_box_sizer->Add(res_sizer, wxSizerFlags().Expand());
+	auto resolution = new wxBoxSizer(wxVERTICAL);
+	resolution->Add(flat::SectionTitle(&d, _("Resolution")), 0, wxEXPAND);
+	resolution->Add(res_grid, 0, wxEXPAND);
 
 	// Options
-	wxStaticBoxSizer *optionsSizer = new wxStaticBoxSizer(wxHORIZONTAL,&d,_("Options"));
-	wxWindow *optionsBox = optionsSizer->GetStaticBox();
-	auto optionsGrid = new wxFlexGridSizer(3,2,5,5);
-	wxString wrap_opts[] = {
+	auto options = new wxBoxSizer(wxVERTICAL);
+	options->Add(flat::SectionTitle(&d, _("Options")), 0, wxEXPAND);
+	auto wrap_row = new wxBoxSizer(wxHORIZONTAL);
+	wrap_row->Add(new wxStaticText(&d, -1, _("Wrap style")), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, d.FromDIP(10));
+	WrapStyle = new FlatChoice(&d, _("Wrap style"));
+	WrapStyle->Set({
 		_("0: Smart wrapping, top line is wider"),
 		_("1: End-of-line word wrapping, only \\N breaks"),
 		_("2: No word wrapping, both \\n and \\N break"),
 		_("3: Smart wrapping, bottom line is wider")
-	};
-	WrapStyle = new wxComboBox(optionsBox, -1, "", wxDefaultPosition, wxDefaultSize, 4, wrap_opts, wxCB_READONLY);
-	WrapStyle->SetSelection(c->subtitleAccess->Read().GetScriptInfoAsInt("WrapStyle"));
-	optionsGrid->Add(new wxStaticText(optionsBox,-1,_("Wrap Style: ")),0,wxALIGN_CENTER_VERTICAL,0);
-	optionsGrid->Add(WrapStyle,1,wxEXPAND,0);
-
-	ScaleBorder = new wxCheckBox(optionsBox,-1,_("Scale Border and Shadow"));
+	});
+	int wrap = file.GetScriptInfoAsInt("WrapStyle");
+	if (wrap >= 0 && wrap < 4) WrapStyle->SetStringSelection(WrapStyle->GetItems()[wrap]);
+	wrap_row->Add(WrapStyle, 1, wxEXPAND);
+	options->Add(wrap_row, 0, wxEXPAND);
+	ScaleBorder = new FlatCheck(&d, _("Scale Border and Shadow"));
 	ScaleBorder->SetToolTip(_("Scale border and shadow together with script/render resolution. If this is unchecked, relative border and shadow size will depend on renderer."));
-	ScaleBorder->SetValue(boost::iequals(c->subtitleAccess->Read().GetScriptInfo("ScaledBorderAndShadow"), "yes"));
-	optionsGrid->AddSpacer(0);
-	optionsGrid->Add(ScaleBorder,1,wxEXPAND,0);
-	optionsGrid->AddGrowableCol(1,1);
-	optionsSizer->Add(optionsGrid,1,wxEXPAND,0);
+	ScaleBorder->SetValue(boost::iequals(file.GetScriptInfo("ScaledBorderAndShadow"), "yes"));
+	options->Add(ScaleBorder, 0, wxTOP, d.FromDIP(6));
 
 	// MainSizer
+	auto content = new wxBoxSizer(wxVERTICAL);
+	content->Add(script, 0, wxEXPAND);
+	content->Add(resolution, 0, wxEXPAND | wxTOP, section_gap);
+	content->Add(options, 0, wxEXPAND | wxTOP, section_gap);
 	wxSizer *MainSizer = new wxBoxSizer(wxVERTICAL);
-	MainSizer->Add(TopSizer,0,wxLEFT | wxRIGHT | wxBOTTOM | wxEXPAND,5);
-	MainSizer->Add(res_box_sizer,0,wxLEFT | wxRIGHT | wxBOTTOM | wxEXPAND,5);
-	MainSizer->Add(optionsSizer,0,wxLEFT | wxRIGHT | wxBOTTOM | wxEXPAND,5);
-	MainSizer->Add(ButtonSizer,0,wxLEFT | wxRIGHT | wxBOTTOM | wxEXPAND,5);
+	MainSizer->Add(content, 1, wxEXPAND | wxALL, d.FromDIP(12));
+	MainSizer->Add(ButtonSizer, 0, wxLEFT | wxRIGHT | wxBOTTOM | wxEXPAND, d.FromDIP(8));
 
 	d.SetSizerAndFit(MainSizer);
+	d.SetSize(wxSize(std::max(d.GetSize().x, d.FromDIP(560)), -1));
 	d.CenterOnParent();
 }
 
-void DialogProperties::AddProperty(wxWindow *parent, wxSizer *sizer, wxString const& label, std::string_view property) {
-	wxTextCtrl *ctrl = new wxTextCtrl(parent, -1, to_wx(c->subtitleAccess->Read().GetScriptInfo(property)));
-	sizer->Add(new wxStaticText(parent, -1, label), wxSizerFlags().Center().Left());
-	sizer->Add(ctrl, wxSizerFlags(1).Expand());
+wxWindow *DialogProperties::AddProperty(wxString const& label, std::string_view property) {
+	auto frame = new FlatFrame(&d, label);
+	wxTextCtrl *ctrl = new wxTextCtrl(frame, -1, to_wx(c->subtitleAccess->Read().GetScriptInfo(property)), wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+	frame->SetContent(ctrl, 100);
 	properties.emplace_back(property, ctrl);
+	return frame;
 }
 
 void DialogProperties::OnOK(wxCommandEvent &) {
@@ -233,9 +246,12 @@ void DialogProperties::OnOK(wxCommandEvent &) {
 	count += SetInfoIfDifferent(staged.file,"PlayResY", from_wx(ResY->GetValue()));
 	count += SetInfoIfDifferent(staged.file,"LayoutResX", from_wx(LayoutResX->GetValue()));
 	count += SetInfoIfDifferent(staged.file,"LayoutResY", from_wx(LayoutResY->GetValue()));
-	count += SetInfoIfDifferent(staged.file,"WrapStyle", std::to_string(WrapStyle->GetSelection()));
+	if (WrapStyle->GetSelection() >= 0)
+		count += SetInfoIfDifferent(staged.file,"WrapStyle", std::to_string(WrapStyle->GetSelection()));
 	count += SetInfoIfDifferent(staged.file,"ScaledBorderAndShadow", ScaleBorder->GetValue() ? "yes" : "no");
-	count += SetInfoIfDifferent(staged.file,"YCbCr Matrix", from_wx(YCbCrMatrix->GetValue()));
+	// One not in the list is kept as the script has it
+	wxString matrix = YCbCrMatrix->GetSelection() >= 0 ? YCbCrMatrix->GetStringSelection() : original_matrix;
+	count += SetInfoIfDifferent(staged.file,"YCbCr Matrix", from_wx(matrix));
 
 	if (count) staged.Commit(_("property changes"), AssFile::COMMIT_SCRIPTINFO);
 
@@ -263,7 +279,7 @@ void DialogProperties::OnSetLayoutResFromVideo(wxCommandEvent &) {
 }
 
 void DialogProperties::OnSetYCbCrMatrixFromVideo(wxCommandEvent &) {
-	YCbCrMatrix->SetValue(to_wx(agi::ycbcr::Header(c->project->VideoProvider()->GetRealColorSpace()).to_best_practice_string()));
+	YCbCrMatrix->SetStringSelection(to_wx(agi::ycbcr::Header(c->project->VideoProvider()->GetRealColorSpace()).to_best_practice_string()));
 }
 }
 

@@ -13,6 +13,8 @@
 #include <wx/menu.h>
 #include <wx/panel.h>
 #include <wx/settings.h>
+#include <wx/sizer.h>
+#include <wx/stattext.h>
 #include <wx/textctrl.h>
 #include <wx/textentry.h>
 #include <wx/time.h>
@@ -52,6 +54,29 @@ void DrawCheck(wxDC &dc, wxWindow const *window, wxRect const& check, int state,
 		dc.DrawLine(check.x + d(3), cy, check.x + d(6), cy + d(3));
 		dc.DrawLine(check.x + d(6), cy + d(3), check.GetRight() - d(3), cy - d(3));
 	}
+}
+
+namespace {
+/// The thin line under a section's title, in the line colour
+class Rule final : public wxWindow {
+	agi::signal::Connection theme_changed;
+public:
+	explicit Rule(wxWindow *parent) : wxWindow(parent, -1) {
+		SetMinSize(wxSize(-1, std::max(1, FromDIP(1))));
+		SetBackgroundColour(Colours(this).line);
+		theme_changed = theme::AddChangeListener([this] { SetBackgroundColour(Colours(this).line); Refresh(); });
+	}
+	bool AcceptsFocus() const override { return false; }
+};
+}
+
+wxSizer *SectionTitle(wxWindow *parent, wxString const& title) {
+	auto sizer = new wxBoxSizer(wxVERTICAL);
+	auto text = new wxStaticText(parent, -1, title);
+	text->SetFont(text->GetFont().Bold());
+	sizer->Add(text, 0, wxBOTTOM, parent->FromDIP(3));
+	sizer->Add(new Rule(parent), 0, wxEXPAND | wxBOTTOM, parent->FromDIP(6));
+	return sizer;
 }
 
 int WheelSteps(wxMouseEvent const& event, int &remainder) {

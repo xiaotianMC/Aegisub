@@ -199,6 +199,17 @@
 
 字体列表从样式面板移到 `src/font_popup.{h,cpp}`，两边共用。实现：`src/dialog_style_editor.{h,cpp}`（`AlignGrid`、数字框），沿用样式面板的 `StylePanel::Toggle`、`StylePanel::PageSwitch`。
 
+## 脚本属性
+
+“字幕 → 属性”对话框改成和样式编辑器一样的样式：粗体标题加细线分三组，输入框是名称写在框内的 `FlatFrame`。
+
+- **脚本**：标题一整行；原始脚本、翻译、校对、时间轴、同步点、更新者两两一行；更新说明一整行。这些名字加了 `script info` 上下文，和界面别处的“翻译”“编辑”“时间”区分开。
+- **分辨率**：脚本、布局各一行，“宽 × 高”两个框和一个“从视频获取”按钮（`FlatButton`）；YCbCr 矩阵是自绘下拉框，跨宽高两列。没有打开视频时三个按钮不可用，悬停提示说明要先打开视频。脚本里的矩阵值不在列表中时，下拉框什么都不选，按确定时保留原值。
+- **选项**：换行方式是自绘下拉框，“缩放边框和阴影”是 `FlatCheck`。
+- 写入脚本的方式（确定时一次提交、比较期间拒绝）不变。
+
+“粗体标题加细线”从样式编辑器移到 `flat::SectionTitle`（`src/flat_controls.{h,cpp}`），两个对话框共用。
+
 ## 按缩放计算的尺寸
 
 对话框和编辑框里约 50 处写死的像素尺寸（列表框、输入框、按钮的初始宽高）改为 DIP（`DipSize`，`src/utils.h`），颜色按钮的大小和色块也按 DIP 计算。
@@ -215,6 +226,7 @@
 ## 测试
 
 - `ordinary_edit.style_editor_is_drawn_fields_that_write_the_style_on_apply`：样式编辑器的大小框输入、滚轮、拖动名称从原值起算；描边宽度滚轮；粗体开关；边框分段开关；按“应用”前不改样式，应用后各项写入。
+- `ordinary_edit.script_properties_are_drawn_fields_written_on_ok`：脚本属性的勾选框、换行方式下拉框、分辨率宽度框，按确定后写入脚本。
 - `ordinary_edit.style_manager_lists_show_each_style_with_its_use_and_copy_between_cards`：当前脚本每个样式的使用行数、“未使用”、卡片上的样式个数；单击、Ctrl+单击、点空白处的选择和按钮的启用；复制到样式库后标“已在脚本中”，脚本里改了之后标“与脚本不同”，再复制回脚本后又相同。
 - `ordinary_edit.preferences_rows_are_drawn_controls_that_set_their_options`：数字框输入、滚轮加一、超出范围不采用；列表选择；勾选框切换并启用 / 停用依赖它的设置；按“确定”之前不改选项；改过的设置有标记，单项恢复默认值（勾选框带上依赖它的设置）；恢复本页默认值。
 - `ordinary_edit.preferences_pages_are_listed_by_use_with_their_matches`：页面顺序；搜索时有匹配的页显示匹配数、清空后消失；在列表里选页会记住。

@@ -9568,3 +9568,56 @@ msgstr "阴影框"
 
 msgid "Whether to draw a normal outline or opaque boxes around the text. Shadow box: a box behind the shadow too, with libass only"
 msgstr "在文字周围画普通描边还是不透明框。阴影框：阴影后面也画一个框，仅 libass 支持"
+
+#: src/dialog_properties.cpp
+msgctxt "script info"
+msgid "Title"
+msgstr "标题"
+
+msgctxt "script info"
+msgid "Original script"
+msgstr "原始脚本"
+
+msgctxt "script info"
+msgid "Translation"
+msgstr "翻译"
+
+msgctxt "script info"
+msgid "Editing"
+msgstr "校对"
+
+msgctxt "script info"
+msgid "Timing"
+msgstr "时间轴"
+
+msgctxt "script info"
+msgid "Synch point"
+msgstr "同步点"
+
+msgctxt "script info"
+msgid "Updated by"
+msgstr "更新者"
+
+msgctxt "script info"
+msgid "Update details"
+msgstr "更新说明"
+
+msgid "Open a video to take this from it"
+msgstr "打开视频后才能从视频获取"
+
+msgid "Use the video's resolution as the script's"
+msgstr "把视频的分辨率用作脚本分辨率"
+
+msgid "Use the video's resolution as the layout's"
+msgstr "把视频的分辨率用作布局分辨率"
+
+msgid "Use the matrix recommended for the video"
+msgstr "使用视频推荐的 YCbCr 矩阵"
+
+msgctxt "resolution"
+msgid "Width"
+msgstr "宽"
+
+msgctxt "resolution"
+msgid "Height"
+msgstr "高"

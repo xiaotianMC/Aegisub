@@ -392,6 +392,26 @@ TEST_F(ordinary_edit, style_editor_rejects_stale_live_style_after_another_edit) 
     button(&dialog,wxID_APPLY);
     EXPECT_EQ(revision,c->subsController->GetUndoDescription()); EXPECT_EQ(1u,LiveRead(*c).Styles.size());
 }
+TEST_F(ordinary_edit, script_properties_are_drawn_fields_written_on_ok) {
+    RunModal hook("Script Properties",[&](wxDialog* dialog) {
+        FlatCheck* scale=nullptr;std::vector<FlatChoice*> lists;wxTextCtrl* width=nullptr;
+        for(auto child:descendants(dialog)){
+            if(auto check=dynamic_cast<FlatCheck*>(child))scale=check;
+            if(auto list=dynamic_cast<FlatChoice*>(child))lists.push_back(list);
+            if(auto frame=dynamic_cast<FlatFrame*>(child);frame && frame->GetLabel()=="Width" && !width)width=dynamic_cast<wxTextCtrl*>(frame->GetContent());
+        }
+        ASSERT_NE(nullptr,scale);ASSERT_EQ(2u,lists.size());ASSERT_NE(nullptr,width);
+        bool was=scale->GetValue();scale->Toggle();EXPECT_NE(was,scale->GetValue());
+        FlatChoice* wrap=lists[0]->GetItems().size()==4?lists[0]:lists[1];
+        wrap->Choose(2);width->ChangeValue("1280");
+        button(dialog,wxID_OK);
+    });
+    auto scaled=LiveRead(*c).GetScriptInfo("ScaledBorderAndShadow");
+    ShowPropertiesDialog(c.get());
+    EXPECT_EQ("2",LiveRead(*c).GetScriptInfo("WrapStyle"));
+    EXPECT_EQ("1280",LiveRead(*c).GetScriptInfo("PlayResX"));
+    EXPECT_NE(scaled,LiveRead(*c).GetScriptInfo("ScaledBorderAndShadow"));
+}
 TEST_F(ordinary_edit, script_properties_event_rejects_comparison_and_preserves_undo) {
     auto original=std::string(LiveRead(*c).GetScriptInfo("Title"));
     RunModal hook("Script Properties",[&](wxDialog* dialog) {

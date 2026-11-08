@@ -14,6 +14,7 @@
 #include <wx/window.h>
 
 class wxMouseEvent;
+class wxSizer;
 class wxTextCtrl;
 
 namespace flat {
@@ -46,6 +47,10 @@ void LeaveField();
 /// A control the wheel changes: wheel turns over it go to it, even where
 /// the system sends them to the window with the keyboard (Windows)
 void AddWheelTarget(wxWindow *target);
+
+/// A section's title in a dialog: bold words over a thin line, as the
+/// preferences and the style editor have them
+wxSizer *SectionTitle(wxWindow *parent, wxString const& title);
 }
 
 /// A rounded field holding one borderless control (text, a time), with a
