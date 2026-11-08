@@ -19,13 +19,16 @@
   - 选择和 `wxListBox` 一样：单击、Ctrl / Shift 加单击、方向键、Home/End、翻页，多选时 Ctrl+A；发 `wxEVT_LISTBOX`、双击或回车发 `wxEVT_LISTBOX_DCLICK`。
   - 可勾选的每行前有勾选框（和样式面板同一种画法），点框或按空格勾选（空格对所有选中行），发 `wxEVT_CHECKLISTBOX`；点框不改变选择。
   - 设置类方法（`SetSelection`、`Check` 等）都不发事件。
-- 其余沿用已有的：`FlatFrame`（框内带名称的输入框）、`FlatChoice`、`FlatCheck`、`FlatButton`、`flat::SectionTitle`、`StylePanel::PageSwitch`（分段开关，代替单选）。
+- **分段开关** `FlatSwitch`（`src/flat_controls.{h,cpp}`）：代替单选按钮和 `wxRadioBox`。一排等宽的段，选中的一段用强调色填充；方向键逐段移动，点击不抢焦点；单段可以停用（变暗、点不动）、带提示；Alt + 段标签的下划线字母选中它。`Choose` 像用户那样选（调 `on_choose`），`SetSelection` 不调。
+- 勾选框 `FlatCheck` 的标签和按钮一样可以带 `&`，Alt + 该字母勾选；标签里的 `&` 画的时候去掉（中文的“延后(&W)”画成“延后(W)”）。
+- 其余沿用已有的：`FlatFrame`（框内带名称的输入框；名称为空时不画）、`FlatChoice`、`FlatButton`、`flat::SectionTitle`。
 
 ## 规则
 
 - 不用静态框；分组用 `SectionTitle`（粗体标题加细线），组少时不加标题。
 - 输入框的名称写在框内；四周 8–10 DIP，行距 4 DIP。
 - 对话框底色用 `theme::UseSurface`。
+- 一行一组选项时，灰色的名称在左、控件在右（两列的 `wxFlexGridSizer`），代替静态框。
 
 ## 测试
 

@@ -173,6 +173,49 @@ public:
 	bool Enable(bool enable = true) override;
 };
 
+/// Options side by side in one rounded field, the chosen one filled with the
+/// accent colour, in place of radio buttons. An option can be unavailable;
+/// Left and Right step through those that are, and Alt with an option's
+/// underlined letter chooses it in a dialog using flat::DialogButtons.
+class FlatSwitch final : public wxWindow {
+	std::vector<wxString> labels;
+	std::vector<bool> available;
+	std::vector<wxString> tips;
+	int selection = 0;
+	int hover = -1;
+	agi::signal::Connection theme_changed;
+
+	wxRect Segment(int index) const;
+	int HitSegment(wxPoint pos) const;
+	void Step(int delta);
+	void OnPaint(wxPaintEvent &);
+
+public:
+	FlatSwitch(wxWindow *parent, std::vector<wxString> labels);
+
+	/// Called with the index when the user chooses an option
+	std::function<void(int)> on_choose;
+
+	/// Choose @p index as the user does: on_choose is called if it changes
+	void Choose(int index);
+	/// Show @p index chosen, without calling on_choose
+	void SetSelection(int index);
+	int GetSelection() const { return selection; }
+	wxString GetLabel(int index) const { return labels[index]; }
+	size_t GetCount() const { return labels.size(); }
+	void EnableItem(int index, bool enable);
+	bool IsItemEnabled(int index) const { return available[index]; }
+	/// The tooltip over option @p index
+	void SetItemToolTip(int index, wxString const& tip);
+	/// The option whose underlined letter is @p key, or -1
+	int MnemonicIndex(int key) const;
+
+	wxSize DoGetBestClientSize() const override;
+	bool AcceptsFocus() const override { return false; }
+	bool AcceptsFocusFromKeyboard() const override { return IsEnabled(); }
+	bool Enable(bool enable = true) override;
+};
+
 /// A small rounded label drawn on a control, such as the character count in
 /// the corner of the text box: dim, or in the error colour when it warns
 class FlatBadge final : public wxWindow {

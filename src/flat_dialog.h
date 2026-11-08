@@ -51,7 +51,7 @@ public:
 /// A number in a FlatFrame, its name inside, in place of a spin control:
 /// typed (a value out of range is not taken, and leaving the field shows
 /// the value taken), stepped with the wheel, or dragged by its name. It
-/// lives as long as its frame.
+/// lives as long as the handlers bound to its windows.
 class NumberField final {
 	FlatFrame *frame;
 	wxTextCtrl *text;
@@ -61,9 +61,10 @@ class NumberField final {
 
 	NumberField(wxWindow *parent, wxString const& label, double value, double min, double max, double step, int precision, int width);
 	void Take(double v, bool show);
+	void ShowTaken();
 
 public:
-	/// Made for @p parent, owned by its frame; @p precision is the decimals kept
+	/// Made for @p parent, going with its windows; @p precision is the decimals kept
 	static NumberField *Create(wxWindow *parent, wxString const& label, double value, double min, double max,
 	                           double step = 1, int precision = 0, int width = 44);
 

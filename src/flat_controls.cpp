@@ -6,6 +6,7 @@
 #include "theme.h"
 
 #include <algorithm>
+#include <cctype>
 #include <set>
 
 #include <wx/dcbuffer.h>
@@ -682,6 +683,154 @@ void FlatChoice::OnWheel(wxMouseEvent &event) {
 		Step(-steps);
 }
 
+// FlatSwitch
+
+namespace {
+int MnemonicOf(wxString const& label) {
+	for (size_t i = 0; i + 1 < label.size(); ++i) {
+		if (label[i] != '&') continue;
+		if (label[i + 1] == '&') { ++i; continue; }
+		return wxToupper(label[i + 1]);
+	}
+	return 0;
+}
+}
+
+FlatSwitch::FlatSwitch(wxWindow *parent, std::vector<wxString> labels)
+: wxWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE | wxFULL_REPAINT_ON_RESIZE | wxWANTS_CHARS)
+, labels(std::move(labels))
+, available(this->labels.size(), true)
+, tips(this->labels.size())
+{
+	SetBackgroundStyle(wxBG_STYLE_PAINT);
+	SetCursor(wxCursor(wxCURSOR_HAND));
+	Bind(wxEVT_PAINT, &FlatSwitch::OnPaint, this);
+	// Not taking the keyboard from a field on a click, as FlatButton does
+	Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent &event) { Choose(HitSegment(event.GetPosition())); });
+	Bind(wxEVT_LEFT_DCLICK, [this](wxMouseEvent &event) { Choose(HitSegment(event.GetPosition())); });
+	Bind(wxEVT_MOTION, [this](wxMouseEvent &event) {
+		int index = HitSegment(event.GetPosition());
+		if (index != hover) {
+			hover = index;
+			SetToolTip(index >= 0 ? tips[index] : wxString());
+			Refresh(false);
+		}
+		event.Skip();
+	});
+	Bind(wxEVT_LEAVE_WINDOW, [this](wxMouseEvent &event) { hover = -1; Refresh(false); event.Skip(); });
+	Bind(wxEVT_KEY_DOWN, [this](wxKeyEvent &event) {
+		switch (event.GetKeyCode()) {
+			case WXK_LEFT: case WXK_NUMPAD_LEFT: case WXK_UP: case WXK_NUMPAD_UP: Step(-1); break;
+			case WXK_RIGHT: case WXK_NUMPAD_RIGHT: case WXK_DOWN: case WXK_NUMPAD_DOWN: Step(1); break;
+			case WXK_TAB:
+				Navigate(event.ShiftDown() ? wxNavigationKeyEvent::IsBackward : wxNavigationKeyEvent::IsForward);
+				break;
+			default: event.Skip();
+		}
+	});
+	Bind(wxEVT_SET_FOCUS, [this](wxFocusEvent &event) { Refresh(false); event.Skip(); });
+	Bind(wxEVT_KILL_FOCUS, [this](wxFocusEvent &event) { Refresh(false); event.Skip(); });
+	theme_changed = theme::AddChangeListener([this] { Refresh(false); });
+}
+
+wxRect FlatSwitch::Segment(int index) const {
+	wxSize size = GetClientSize();
+	int count = static_cast<int>(labels.size());
+	int width = size.x / count;
+	return wxRect(index * width, 0, index + 1 == count ? size.x - index * width : width, size.y);
+}
+
+int FlatSwitch::HitSegment(wxPoint pos) const {
+	for (int i = 0; i < static_cast<int>(labels.size()); ++i)
+		if (Segment(i).Contains(pos)) return i;
+	return -1;
+}
+
+void FlatSwitch::Choose(int index) {
+	if (index < 0 || index >= static_cast<int>(labels.size()) || !available[index] || !IsEnabled() || index == selection) return;
+	selection = index;
+	Refresh(false);
+	if (on_choose) on_choose(index);
+}
+
+void FlatSwitch::SetSelection(int index) {
+	if (index < 0 || index >= static_cast<int>(labels.size()) || index == selection) return;
+	selection = index;
+	Refresh(false);
+}
+
+void FlatSwitch::Step(int delta) {
+	for (int i = selection + delta; i >= 0 && i < static_cast<int>(labels.size()); i += delta) {
+		if (!available[i]) continue;
+		Choose(i);
+		return;
+	}
+}
+
+void FlatSwitch::EnableItem(int index, bool enable) {
+	if (index < 0 || index >= static_cast<int>(labels.size()) || available[index] == enable) return;
+	available[index] = enable;
+	Refresh(false);
+}
+
+void FlatSwitch::SetItemToolTip(int index, wxString const& tip) {
+	if (index >= 0 && index < static_cast<int>(tips.size())) tips[index] = tip;
+}
+
+int FlatSwitch::MnemonicIndex(int key) const {
+	for (int i = 0; i < static_cast<int>(labels.size()); ++i)
+		if (MnemonicOf(labels[i]) == std::toupper(key)) return i;
+	return -1;
+}
+
+bool FlatSwitch::Enable(bool enable) {
+	bool changed = wxWindow::Enable(enable);
+	if (changed) Refresh(false);
+	return changed;
+}
+
+wxSize FlatSwitch::DoGetBestClientSize() const {
+	int widest = 0;
+	for (auto const& label : labels)
+		widest = std::max(widest, GetTextExtent(wxStripMenuCodes(label, wxStrip_Menu)).x);
+	return wxSize(static_cast<int>(labels.size()) * (widest + FromDIP(20)), FromDIP(field_height));
+}
+
+void FlatSwitch::OnPaint(wxPaintEvent &) {
+	wxAutoBufferedPaintDC buffered(this);
+	wxGCDC dc(buffered);
+	auto p = flat::Colours(this);
+	wxSize size = GetClientSize();
+	dc.SetPen(*wxTRANSPARENT_PEN);
+	dc.SetBrush(wxBrush(p.surface));
+	dc.DrawRectangle(wxPoint(0, 0), size);
+	int radius = FromDIP(5), inset = FromDIP(2);
+	dc.SetBrush(wxBrush(p.field));
+	dc.SetPen(wxPen(HasFocus() ? p.accent : p.field, std::max(1, FromDIP(1))));
+	dc.DrawRoundedRectangle(wxRect(wxPoint(0, 0), size), radius);
+	dc.SetFont(GetFont());
+	for (int i = 0; i < static_cast<int>(labels.size()); ++i) {
+		wxRect segment = Segment(i).Deflate(inset);
+		bool on = i == selection;
+		bool usable = available[i] && IsEnabled();
+		if (on) {
+			dc.SetPen(*wxTRANSPARENT_PEN);
+			dc.SetBrush(wxBrush(usable ? p.accent : theme::Mix(p.field, p.text, 0.15)));
+			dc.DrawRoundedRectangle(segment, radius - 1);
+		}
+		else if (i == hover && usable) {
+			dc.SetPen(*wxTRANSPARENT_PEN);
+			dc.SetBrush(wxBrush(theme::Mix(p.field, p.text, 0.05)));
+			dc.DrawRoundedRectangle(segment, radius - 1);
+		}
+		wxColour ink = on && usable ? *wxWHITE : usable ? p.text : theme::Mix(p.field, p.text, 0.35);
+		dc.SetTextForeground(ink);
+		wxString shown = wxStripMenuCodes(labels[i], wxStrip_Menu);
+		wxSize extent = dc.GetTextExtent(shown);
+		dc.DrawText(shown, segment.x + (segment.width - extent.x) / 2, segment.y + (segment.height - extent.y) / 2);
+	}
+}
+
 // FlatBadge
 
 FlatBadge::FlatBadge(wxWindow *parent)
@@ -778,7 +927,7 @@ bool FlatCheck::Enable(bool enable) {
 }
 
 wxSize FlatCheck::DoGetBestClientSize() const {
-	wxSize extent = GetTextExtent(wxStripMenuCodes(label));
+	wxSize extent = GetTextExtent(wxStripMenuCodes(label, wxStrip_Menu));
 	return wxSize(FromDIP(14) + FromDIP(6) + extent.x + FromDIP(2), std::max(FromDIP(18), extent.y + FromDIP(4)));
 }
 
@@ -803,7 +952,7 @@ void FlatCheck::OnPaint(wxPaintEvent &) {
 	dc.SetFont(GetFont());
 	// A colour given to it (the preferences' search marking a match) wins
 	dc.SetTextForeground(UseForegroundColour() && IsEnabled() ? GetForegroundColour() : p.text);
-	wxString shown = wxStripMenuCodes(label);
+	wxString shown = wxStripMenuCodes(label, wxStrip_Menu);
 	wxSize extent = dc.GetTextExtent(shown);
 	dc.DrawText(shown, box + FromDIP(6), (size.y - extent.y) / 2);
 }
@@ -870,7 +1019,7 @@ bool FlatButton::Enable(bool enable) {
 }
 
 wxSize FlatButton::DoGetBestClientSize() const {
-	wxSize extent = GetTextExtent(wxStripMenuCodes(label));
+	wxSize extent = GetTextExtent(wxStripMenuCodes(label, wxStrip_Menu));
 	return wxSize(extent.x + FromDIP(20), std::max(FromDIP(24), extent.y + FromDIP(8)));
 }
 
@@ -901,7 +1050,7 @@ void FlatButton::OnPaint(wxPaintEvent &) {
 
 	dc.SetFont(GetFont());
 	dc.SetTextForeground(ink);
-	wxString shown = wxStripMenuCodes(label);
+	wxString shown = wxStripMenuCodes(label, wxStrip_Menu);
 	wxSize extent = dc.GetTextExtent(shown);
 	dc.DrawText(shown, (size.x - extent.x) / 2, (size.y - extent.y) / 2);
 }

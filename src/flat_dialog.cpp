@@ -11,9 +11,20 @@
 #include <wx/textctrl.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <memory>
 
 namespace {
+int MnemonicOf(wxString const& label) {
+	for (size_t i = 0; i + 1 < label.size(); ++i) {
+		if (label[i] != '&') continue;
+		if (label[i + 1] == '&') { ++i; continue; }
+		return wxToupper(label[i + 1]);
+	}
+	return 0;
+}
+
 /// The enabled, shown FlatButton with @p id in @p dialog
 FlatButton *FindButton(wxWindow *window, int id) {
 	for (auto child : window->GetChildren()) {
@@ -47,22 +58,25 @@ bool EnterIsForDialog(wxWindow *focus, wxDialog *dialog) {
 	return typeid(*focus) == typeid(wxPanel);
 }
 
-/// The FlatButton whose underlined letter is @p key
-FlatButton *MnemonicButton(wxWindow *window, int key) {
+/// What Alt with @p key does: press the button, tick the check box or choose
+/// the switch's option underlining it
+std::function<void()> MnemonicAction(wxWindow *window, int key) {
 	for (auto child : window->GetChildren()) {
 		if (child->IsTopLevel()) continue;
-		if (auto button = dynamic_cast<FlatButton*>(child); button && button->IsEnabled() && button->IsShownOnScreen()) {
-			wxString label = button->GetLabel();
-			for (size_t i = 0; i + 1 < label.size(); ++i) {
-				if (label[i] != '&') continue;
-				if (label[i + 1] == '&') { ++i; continue; }
-				if (wxToupper(label[i + 1]) == wxToupper(key)) return button;
-				break;
+		if (child->IsEnabled() && child->IsShownOnScreen()) {
+			if (auto button = dynamic_cast<FlatButton*>(child); button && MnemonicOf(button->GetLabel()) == std::toupper(key))
+				return [button] { button->Press(); };
+			if (auto check = dynamic_cast<FlatCheck*>(child); check && check->Mnemonic() == std::toupper(key))
+				return [check] { check->Toggle(); };
+			if (auto choice = dynamic_cast<FlatSwitch*>(child)) {
+				int index = choice->MnemonicIndex(key);
+				if (index >= 0 && choice->IsItemEnabled(index))
+					return [choice, index] { choice->SetFocus(); choice->Choose(index); };
 			}
 		}
-		if (auto found = MnemonicButton(child, key)) return found;
+		if (auto found = MnemonicAction(child, key)) return found;
 	}
-	return nullptr;
+	return {};
 }
 }
 
@@ -86,8 +100,8 @@ void UseFlatButtonKeys(wxDialog *dialog) {
 			}
 		}
 		else if (event.GetModifiers() == wxMOD_ALT && key < 128 && wxIsalnum(key)) {
-			if (auto button = MnemonicButton(dialog, key)) {
-				button->Press();
+			if (auto action = MnemonicAction(dialog, key)) {
+				action();
 				return;
 			}
 		}
@@ -176,12 +190,26 @@ wxString FormatNumber(double v, int precision) {
 }
 
 NumberField *NumberField::Create(wxWindow *parent, wxString const& label, double value, double min, double max, double step, int precision, int width) {
-	auto field = new NumberField(parent, label, value, min, max, step, precision, width);
-	field->frame->Bind(wxEVT_DESTROY, [field](wxWindowDestroyEvent &event) {
+	// Kept by the handlers bound to its windows: it goes with the last of them
+	std::shared_ptr<NumberField> field(new NumberField(parent, label, value, min, max, step, precision, width));
+	auto text = field->text;
+	text->Bind(wxEVT_TEXT, [field](wxCommandEvent &event) {
 		event.Skip();
-		if (event.GetEventObject() == field->frame) delete field;
+		double v;
+		if (field->text->GetValue().ToCDouble(&v) && v >= field->min && v <= field->max) field->Take(v, false);
 	});
-	return field;
+	text->Bind(wxEVT_KILL_FOCUS, [field](wxFocusEvent &event) {
+		event.Skip();
+		if (!field->text->IsBeingDeleted()) field->ShowTaken();
+	});
+	text->Bind(wxEVT_TEXT_ENTER, [field](wxCommandEvent &) { field->ShowTaken(); });
+	field->frame->SetWheel([field](int steps) { field->Take(field->value + steps * field->step, true); });
+	field->frame->SetScrub([field](int steps, bool final) {
+		if (!field->scrub_start) field->scrub_start = field->value;
+		field->Take(*field->scrub_start + steps * field->step, true);
+		if (final) field->scrub_start.reset();
+	});
+	return field.get();
 }
 
 NumberField::NumberField(wxWindow *parent, wxString const& label, double value, double min, double max, double step, int precision, int width)
@@ -194,20 +222,10 @@ NumberField::NumberField(wxWindow *parent, wxString const& label, double value, 
 , precision(precision)
 {
 	frame->SetContent(text, width);
-	text->Bind(wxEVT_TEXT, [this](wxCommandEvent &event) {
-		event.Skip();
-		double v;
-		if (text->GetValue().ToCDouble(&v) && v >= this->min && v <= this->max) Take(v, false);
-	});
-	auto show_taken = [this] { text->ChangeValue(FormatNumber(this->value, this->precision)); };
-	text->Bind(wxEVT_KILL_FOCUS, [show_taken](wxFocusEvent &event) { event.Skip(); show_taken(); });
-	text->Bind(wxEVT_TEXT_ENTER, [show_taken](wxCommandEvent &) { show_taken(); });
-	frame->SetWheel([this](int steps) { Take(this->value + steps * this->step, true); });
-	frame->SetScrub([this](int steps, bool final) {
-		if (!scrub_start) scrub_start = this->value;
-		Take(*scrub_start + steps * this->step, true);
-		if (final) scrub_start.reset();
-	});
+}
+
+void NumberField::ShowTaken() {
+	text->ChangeValue(FormatNumber(value, precision));
 }
 
 void NumberField::Take(double v, bool show) {
