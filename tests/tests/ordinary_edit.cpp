@@ -3248,10 +3248,10 @@ TEST_F(ordinary_edit, kanji_dialog_validates_all_targets_and_commits_once_or_dis
     }
     auto text=[&](int id){for(auto const& row:LiveRead(*c).Events)if(row.Id==id)return row.Text.get();return std::string();};
     auto prepare=[&](wxDialog* dialog){
-        std::vector<wxComboBox*> combos;for(auto child:descendants(dialog))if(auto combo=dynamic_cast<wxComboBox*>(child))combos.push_back(combo);
+        std::vector<FlatChoice*> combos;for(auto child:descendants(dialog))if(auto combo=dynamic_cast<FlatChoice*>(child))combos.push_back(combo);
         ASSERT_EQ(2u,combos.size());combos[0]->SetStringSelection("Default");combos[1]->SetStringSelection("Target");
     };
-    auto press=[&](wxDialog* dialog,wxString label){for(auto child:descendants(dialog))if(auto b=dynamic_cast<wxButton*>(child);b && b->GetLabel()==label){button(b,b->GetId());return;}FAIL()<<"Button missing";};
+    auto press=[&](wxDialog* dialog,wxString label){for(auto child:descendants(dialog))if(auto b=dynamic_cast<FlatButton*>(child);b && b->GetLabel()==label){b->Press();return;}FAIL()<<"Button missing";};
     {RunModal accept("Kanji timer",[&](wxDialog* dialog){prepare(dialog);press(dialog,"S&tart!");EXPECT_FALSE(c->subtitleEditGate.TryBeginComparison());for(int i=0;i<2;++i){press(dialog,"&Link");press(dialog,"&Accept Line");}EXPECT_EQ("字",text(ids[1]));press(dialog,"&Close");});ShowKanjiTimerDialog(c.get());}
     EXPECT_EQ(R"({\k10}字)",text(ids[1]));EXPECT_EQ(R"({\k20}字)",text(ids[3]));EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
     c->subsController->Undo();EXPECT_EQ("字",text(ids[1]));EXPECT_EQ("字",text(ids[3]));c->subsController->Redo();EXPECT_EQ(R"({\k20}字)",text(ids[3]));c->subsController->Undo();
@@ -6535,4 +6535,35 @@ TEST_F(ordinary_edit, ebu_export_keeps_level_2_teletext_unless_another_is_chosen
         EXPECT_EQ(wxID_OK,ShowEbuExportConfigurationDialog(window,settings));
     }
     EXPECT_EQ(EbuExportSettings::DSC_Level2,settings.display_standard);
+}
+TEST_F(ordinary_edit, kanji_timer_is_drawn_choices_checks_and_flat_buttons) {
+    {auto write=c->subtitleAccess->TryWrite();auto style=new AssStyle();style->name="Target";LiveWriteForTest(*c).Styles.push_back(*style);
+        LiveWriteForTest(*c).Events.front().Text=R"({\k10}a)";
+        auto row=new AssDialogue();row->Style="Target";row->Text="字";LiveWriteForTest(*c).Events.push_back(*row);
+        LiveWriteForTest(*c).Commit("fixture",AssFile::COMMIT_DIAG_ADDREM|AssFile::COMMIT_STYLES);
+    }
+    auto text=LiveRead(*c).Events.back().Text.get();
+    bool ran=false;
+    {
+        RunModal hook(_("Kanji timer"),[&](wxDialog *dialog){
+            std::vector<FlatChoice*> styles; FlatCheck *interpolate=nullptr;
+            for(auto child:descendants(dialog)){
+                if(auto ch=dynamic_cast<FlatChoice*>(child))styles.push_back(ch);
+                if(auto k=dynamic_cast<FlatCheck*>(child))interpolate=k;
+                EXPECT_EQ(nullptr,dynamic_cast<wxButton*>(child)) << "every button is flat";
+            }
+            ASSERT_EQ(2u,styles.size()); ASSERT_NE(nullptr,interpolate);
+            EXPECT_EQ((std::vector<wxString>{"Default","Target"}),styles[0]->GetItems());
+            auto accept=button_labelled(dialog,_("&Accept Line")); ASSERT_NE(nullptr,accept); EXPECT_TRUE(accept->IsAccent());
+            styles[0]->SetStringSelection("Default"); styles[1]->SetStringSelection("Target");
+            button_labelled(dialog,_("S&tart!"))->Press();
+            button_labelled(dialog,_("&Link"))->Press(); accept->Press();
+            wxKeyEvent esc(wxEVT_CHAR_HOOK);esc.m_keyCode=WXK_ESCAPE;esc.SetEventObject(dialog);dialog->GetEventHandler()->ProcessEvent(esc);
+            EXPECT_FALSE(dialog->IsShown()) << "Escape leaves";
+            ran=true;
+        });
+        ShowKanjiTimerDialog(c.get());
+    }
+    EXPECT_TRUE(ran);
+    EXPECT_EQ(text,LiveRead(*c).Events.back().Text.get()) << "Escape leaves without applying";
 }
