@@ -31,13 +31,13 @@
 #include "format.h"
 #include "version.h"
 
-#include <wx/button.h>
+#include "flat_controls.h"
+#include "flat_dialog.h"
+#include "theme.h"
+
 #include <wx/dialog.h>
-#include <wx/panel.h>
 #include <wx/sizer.h>
 #include <wx/statbmp.h>
-#include <wx/statline.h>
-#include <wx/stattext.h>
 #include <wx/textctrl.h>
 
 void ShowAboutDialog(wxWindow *parent) {
@@ -138,14 +138,18 @@ void ShowAboutDialog(wxWindow *parent) {
 	wxChar copySymbol = 0xA9;
 	aboutString.Replace("(c)", wxString(copySymbol));
 
-	wxTextCtrl *textctrl = new wxTextCtrl(&d, -1, aboutString, wxDefaultPosition, wxSize(-1, 200), wxTE_MULTILINE | wxTE_READONLY | wxBORDER_NONE);
+	theme::UseSurface(&d);
+	int gap = d.FromDIP(10);
+
+	// The credits on the dialog's own colour, as text that can be copied
+	wxTextCtrl *textctrl = new wxTextCtrl(&d, -1, aboutString, wxDefaultPosition, wxSize(-1, d.FromDIP(200)), wxTE_MULTILINE | wxTE_READONLY | wxBORDER_NONE);
+	textctrl->SetBackgroundColour(flat::Colours(&d).surface);
+	textctrl->SetForegroundColour(flat::Colours(&d).text);
 
 	wxSizer *MainSizer = new wxBoxSizer(wxVERTICAL);
 	MainSizer->Add(new wxStaticBitmap(&d, -1, GETIMAGE(splash)), 0, wxCENTER, 0);
-	MainSizer->Add(new wxStaticLine(&d, wxID_ANY), 0, wxEXPAND, 0);
-	MainSizer->Add(textctrl, 0, wxEXPAND, 0);
-	MainSizer->Add(new wxStaticLine(&d, wxID_ANY), 0, wxEXPAND, 0);
-	MainSizer->Add(d.CreateButtonSizer(wxOK), 0, wxEXPAND | wxALL, 6);
+	MainSizer->Add(textctrl, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxTOP, gap));
+	MainSizer->Add(new flat::DialogButtons(&d, wxOK), wxSizerFlags().Expand().Border(wxALL, gap));
 
 	d.SetSizerAndFit(MainSizer);
 	d.CentreOnParent();
