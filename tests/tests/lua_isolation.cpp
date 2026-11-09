@@ -15,6 +15,7 @@
 #include "auto4_base.h"
 #include "auto4_lua_factory.h"
 #include "command/command.h"
+#include "flat_controls.h"
 #include "compat.h"
 #include "options.h"
 #include "selection_controller.h"
@@ -85,7 +86,7 @@ public:
     void Notify() override {
         if (!dialog || !dialog->IsModal()) return;
         for (auto child : all_children(dialog)) {
-            auto button = dynamic_cast<wxButton*>(child);
+            auto button = dynamic_cast<FlatButton*>(child);
             if (!button || button->GetId() != wxID_CANCEL) continue;
             if (press_cancel) {
                 press_cancel = false;

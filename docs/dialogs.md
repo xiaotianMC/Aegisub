@@ -59,6 +59,7 @@
 - **关于**（`dialog_about.cpp`）：启动图下是致谢文字（对话框底色上的只读文字，可以复制），去掉两条分隔线；底部确定。
 - **日志窗口**（`dialog_log.cpp`）：日志文本框不变，对话框底色和四周边距同其他对话框；底部确定。
 - **多项选择**（`dialog_selected_choices.cpp`，`GetSelectedChoices`，导入样式时选样式用）：不再借用 `wxMultiChoiceDialog`；说明文字下是可勾选的 `FlatList`，勾上传入的选择；全选、全不选在底部左侧，右侧取消、确定。返回勾选的项。
+- **进度**（`dialog_progress.cpp`）：对话框底色，标题、进度条、灰色的说明、取消按钮（`FlatButton`，Esc 按它）；取消后按钮显示“正在取消...”并停用；任务写了日志时不自动关闭，按钮改为“关闭”，下面显示日志。进度条仍是系统的 `wxGauge`。
 
 ## 测试
 
@@ -89,3 +90,4 @@
 - `ordinary_edit.ebu_export_keeps_level_2_teletext_unless_another_is_chosen`：二级图文电视不改选时保留。
 - `ordinary_edit.kanji_timer_is_drawn_choices_checks_and_flat_buttons`：两个样式下拉框列出样式、没有系统按钮、“接受此行”是强调色、Esc 离开且不应用。
 - `ordinary_edit.selected_choices_are_ticked_in_a_flat_list`：传入的选择已勾、全选、全不选、确定返回勾选的项、取消返回 -1。
+- `ordinary_edit.progress_cancels_with_a_flat_button_and_stays_for_its_log`：Esc 按取消、任务看到取消后对话框自己结束并抛出取消；写了日志时留着、按钮变“关闭”。

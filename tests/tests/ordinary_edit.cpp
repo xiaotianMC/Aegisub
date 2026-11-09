@@ -20,6 +20,7 @@
 #include "base_grid.h"
 #include "auto4_base.h"
 #include "dialog_export_ebu3264.h"
+#include "dialog_progress.h"
 #include "options.h"
 #include "command/command.h"
 #include "include/aegisub/hotkey.h"
@@ -6592,4 +6593,36 @@ TEST_F(ordinary_edit, selected_choices_are_ticked_in_a_flat_list) {
         RunModal hook("Pick",[&](wxDialog *dialog){ button(dialog,wxID_CANCEL); });
         EXPECT_EQ(-1,GetSelectedChoices(window,selections,"Choose","Pick",choices));
     }
+}
+TEST_F(ordinary_edit, progress_cancels_with_a_flat_button_and_stays_for_its_log) {
+    bool ran=false;
+    {
+        RunModal hook("Working",[&](wxDialog *dialog){
+            auto cancel=dynamic_cast<FlatButton*>(dialog->FindWindow(wxID_CANCEL)); ASSERT_NE(nullptr,cancel);
+            EXPECT_EQ(_("Cancel"),cancel->GetLabel());
+            wxKeyEvent esc(wxEVT_CHAR_HOOK);esc.m_keyCode=WXK_ESCAPE;esc.SetEventObject(dialog);dialog->GetEventHandler()->ProcessEvent(esc);
+            EXPECT_EQ(_("Cancelling..."),cancel->GetLabel()) << "Escape presses Cancel";
+            EXPECT_FALSE(cancel->IsEnabled());
+            // The task sees it and stops, and the dialog ends itself
+            for(int i=0;i<400 && dialog->IsShown();++i){wxYield();wxMilliSleep(5);}
+            EXPECT_FALSE(dialog->IsShown());
+            ran=true;
+        });
+        DialogProgress progress(window,"Working","Something long");
+        EXPECT_THROW(progress.Run([](agi::ProgressSink *ps){ while(!ps->IsCancelled())wxMilliSleep(5); }),agi::UserCancelException);
+    }
+    EXPECT_TRUE(ran);
+    ran=false;
+    {
+        RunModal hook("Working",[&](wxDialog *dialog){
+            auto close=dynamic_cast<FlatButton*>(dialog->FindWindow(wxID_CANCEL)); ASSERT_NE(nullptr,close);
+            for(int i=0;i<200 && close->GetLabel()!=_("Close");++i){wxYield();wxMilliSleep(5);}
+            EXPECT_EQ(_("Close"),close->GetLabel()) << "left open to read what it wrote";
+            ran=true;
+            close->Press();
+        });
+        DialogProgress progress(window,"Working","Something long");
+        EXPECT_NO_THROW(progress.Run([](agi::ProgressSink *ps){ ps->Log("written"); }));
+    }
+    EXPECT_TRUE(ran);
 }

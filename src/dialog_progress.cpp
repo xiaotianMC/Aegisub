@@ -21,6 +21,8 @@
 #include "theme.h"
 
 #include "compat.h"
+#include "flat_controls.h"
+#include "flat_dialog.h"
 #include "utils.h"
 
 #include <libaegisub/dispatch.h>
@@ -28,7 +30,7 @@
 #include <libaegisub/util_osx.h>
 
 #include <atomic>
-#include <wx/button.h>
+
 #include <wx/gauge.h>
 #include <wx/sizer.h>
 #include <wx/stattext.h>
@@ -115,7 +117,8 @@ DialogProgress::DialogProgress(wxWindow *parent, wxString const& title_text, wxS
 	title = new wxStaticText(this, -1, title_text, wxDefaultPosition, wxDefaultSize, wxALIGN_CENTRE | wxST_NO_AUTORESIZE);
 	gauge = new wxGauge(this, -1, 300, wxDefaultPosition, DipSize(300,20));
 	text = new wxStaticText(this, -1, message, wxDefaultPosition, wxDefaultSize, wxALIGN_CENTRE | wxST_NO_AUTORESIZE);
-	cancel_button = new wxButton(this, wxID_CANCEL);
+	cancel_button = new FlatButton(this, _("Cancel"), wxID_CANCEL);
+	cancel_button->SetLeastSize(wxSize(FromDIP(76), FromDIP(28)));
 	log_output = new wxTextCtrl(this, -1, "", wxDefaultPosition, DipSize(600, 240), wxTE_MULTILINE | wxTE_READONLY);
 
 	// make the title a slightly larger font
@@ -125,17 +128,23 @@ DialogProgress::DialogProgress(wxWindow *parent, wxString const& title_text, wxS
 	title_font.SetWeight(wxFONTWEIGHT_BOLD);
 	title->SetFont(title_font);
 
+	theme::UseSurface(this);
+	text->SetForegroundColour(flat::Colours(this).dim);
+	int gap = FromDIP(10), row = FromDIP(6);
+
 	wxSizer *sizer = new wxBoxSizer(wxVERTICAL);
-	sizer->Add(title, wxSizerFlags().Expand());
-	sizer->Add(gauge, wxSizerFlags(1).Expand().Border());
-	sizer->Add(text, wxSizerFlags().Expand());
-	sizer->Add(cancel_button, wxSizerFlags().Center().Border());
-	sizer->Add(log_output, wxSizerFlags().Expand().Border(wxALL & ~wxTOP));
+	sizer->Add(title, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxTOP, gap));
+	sizer->Add(gauge, wxSizerFlags(1).Expand().Border(wxLEFT | wxRIGHT | wxTOP, gap));
+	sizer->Add(text, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxTOP, row));
+	sizer->Add(cancel_button, wxSizerFlags().Center().Border(wxALL, gap));
+	sizer->Add(log_output, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxBOTTOM, gap));
 	sizer->Hide(log_output);
 
 	SetSizerAndFit(sizer);
 	CenterOnParent();
 
+	// Escape presses Cancel, as it did the system's button
+	flat::UseFlatButtonKeys(this);
 	Bind(wxEVT_SHOW, &DialogProgress::OnShow, this);
 	Bind(wxEVT_TIMER, [this](wxTimerEvent&) { gauge->Pulse(); });
 }
@@ -173,7 +182,7 @@ void DialogProgress::Run(std::function<void(agi::ProgressSink*)> task) {
 					wxIdleEvent evt;
 					OnIdle(evt);
 				}
-				cancel_button->SetLabelText(_("Close"));
+				cancel_button->SetLabel(_("Close"));
 				gauge->SetValue(300);
 			}
 			set_taskbar_progress(0);
@@ -191,7 +200,7 @@ void DialogProgress::OnShow(wxShowEvent& evt) {
 	// button
 	Bind(wxEVT_BUTTON, &DialogProgress::OnCancel, this, wxID_CANCEL);
 	Bind(wxEVT_IDLE, &DialogProgress::OnIdle, this);
-	cancel_button->SetLabelText(_("Cancel"));
+	cancel_button->SetLabel(_("Cancel"));
 	cancel_button->Enable();
 
 	wxSizer *sizer = GetSizer();
@@ -239,7 +248,7 @@ void DialogProgress::OnIdle(wxIdleEvent&) {
 void DialogProgress::OnCancel(wxCommandEvent &) {
 	ps->Cancel();
 	cancel_button->Enable(false);
-	cancel_button->SetLabelText(_("Cancelling..."));
+	cancel_button->SetLabel(_("Cancelling..."));
 }
 
 void DialogProgress::SetProgress(int target) {
