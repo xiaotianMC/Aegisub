@@ -22,186 +22,165 @@
 #include "dialog_export_ebu3264.h"
 
 #include "compat.h"
+#include "flat_controls.h"
+#include "flat_dialog.h"
 #include "format.h"
 #include "options.h"
+#include "theme.h"
 
 #include <libaegisub/charset_conv.h>
+
+#include <algorithm>
 
 #include <boost/lexical_cast.hpp>
 #include <boost/regex.hpp>
 
-#include <wx/checkbox.h>
-#include <wx/combobox.h>
 #include <wx/dialog.h>
 #include <wx/msgdlg.h>
-#include <wx/radiobox.h>
 #include <wx/sizer.h>
-#include <wx/spinctrl.h>
-#include <wx/statbox.h>
 #include <wx/stattext.h>
 #include <wx/textctrl.h>
-#include <wx/valgen.h>
 
 namespace {
 	const boost::regex timecode_regex("([[:digit:]]{2}):([[:digit:]]{2}):([[:digit:]]{2}):([[:digit:]]{2})");
 
-	/// Validator for SMPTE timecodes
-	class TimecodeValidator final : public wxValidator {
-		EbuTimecode *value;
+	/// @p text as a time code into @p value, if it is one
+	bool ParseTimecode(wxString const& text, EbuTimecode &value) {
+		std::string str = from_wx(text);
+		boost::smatch result;
+		if (!regex_match(str, result, timecode_regex))
+			return false;
 
-		wxTextCtrl *GetCtrl() const { return dynamic_cast<wxTextCtrl*>(GetWindow()); }
-
-		bool TransferToWindow() override {
-			wxTextCtrl *ctrl = GetCtrl();
-			if (!ctrl) return false;
-			ctrl->SetValue(fmt_wx("%02d:%02d:%02d:%02d", value->h, value->m, value->s, value->f));
-			return true;
-		}
-
-		bool TransferFromWindow() override {
-			wxTextCtrl *ctrl = GetCtrl();
-			if (!ctrl) return false;
-
-			std::string str = from_wx(ctrl->GetValue());
-			boost::smatch result;
-			if (!regex_match(str, result, timecode_regex))
-				return false;
-
-			value->h = boost::lexical_cast<int>(result.str(1));
-			value->m = boost::lexical_cast<int>(result.str(2));
-			value->s = boost::lexical_cast<int>(result.str(3));
-			value->f = boost::lexical_cast<int>(result.str(4));
-
-			return true;
-		}
-
-		bool Validate(wxWindow *) override {
-			wxTextCtrl *ctrl = GetCtrl();
-			if (!ctrl) return false;
-
-			if (!regex_match(from_wx(ctrl->GetValue()), timecode_regex)) {
-				wxMessageBox(_("Time code offset in incorrect format. Ensure it is entered as four groups of two digits separated by colons."), _("EBU STL export"), wxICON_EXCLAMATION);
-				return false;
-			}
-			return true;
-		}
-
-		wxObject *Clone() const override { return new TimecodeValidator(*this); }
-
-	public:
-		TimecodeValidator(EbuTimecode *target) : value(target) { assert(target); }
-		TimecodeValidator(TimecodeValidator const& other) : wxValidator(other), value(other.value) { }
-	};
-
+		value.h = boost::lexical_cast<int>(result.str(1));
+		value.m = boost::lexical_cast<int>(result.str(2));
+		value.s = boost::lexical_cast<int>(result.str(3));
+		value.f = boost::lexical_cast<int>(result.str(4));
+		return true;
+	}
 } // namespace {
 
 int ShowEbuExportConfigurationDialog(wxWindow *owner, EbuExportSettings &s) {
 	wxDialog d(owner, -1, _("Export to EBU STL format"));
+	theme::UseSurface(&d);
+	int gap = d.FromDIP(10), row = d.FromDIP(6);
 
-	wxStaticBoxSizer *text_formatting_sizer = new wxStaticBoxSizer(wxVERTICAL, &d, _("Text formatting"));
-	wxStaticBoxSizer *timecode_control_sizer = new wxStaticBoxSizer(wxVERTICAL, &d, _("Time codes"));
-	wxStaticBoxSizer *display_standard_sizer = new wxStaticBoxSizer(wxVERTICAL, &d, _("Display standard"));
+	auto choice = [&](wxString const& name, std::vector<wxString> items, int chosen) {
+		auto ctrl = new FlatChoice(&d, name);
+		ctrl->Set(items);
+		// Wide enough for the longest, with room for the arrow
+		int widest = 0;
+		for (auto const& item : items) widest = std::max(widest, ctrl->GetTextExtent(item).x);
+		ctrl->SetMinSize(wxSize(widest + d.FromDIP(40), -1));
+		if (chosen >= 0 && chosen < static_cast<int>(items.size()))
+			ctrl->SetStringSelection(items[chosen]);
+		return ctrl;
+	};
 
-	wxWindow *text_formatting_box = text_formatting_sizer->GetStaticBox();
-	wxWindow *timecode_control_box = timecode_control_sizer->GetStaticBox();
-	wxWindow *display_standard_box = display_standard_sizer->GetStaticBox();
-
-	wxString tv_standards[] = {
+	// What the file is for: the frame rate, the characters and the display
+	auto tv_standard = choice(_("TV standard"), {
 		_("23.976 fps (non-standard, STL24.01)"),
 		_("24 fps (non-standard, STL24.01)"),
 		_("25 fps (STL25.01)"),
 		_("29.97 fps (non-dropframe, STL30.01)"),
 		_("29.97 fps (dropframe, STL30.01)"),
 		_("30 fps (STL30.01)")
-	};
-	wxRadioBox *tv_standard_box = new wxRadioBox(&d, -1, _("TV standard"), wxDefaultPosition, wxDefaultSize, 6, tv_standards, 0, wxRA_SPECIFY_ROWS);
-
-	wxTextCtrl *timecode_offset_entry = new wxTextCtrl(timecode_control_box, -1, "00:00:00:00");
-	timecode_offset_entry->SetInitialSize(timecode_offset_entry->GetSizeFromText(timecode_offset_entry->GetValue()));
-	wxCheckBox *inclusive_end_times_check = new wxCheckBox(timecode_control_box, -1, _("Out-times are inclusive"));
-
-	wxString text_encodings[] = {
+	}, s.tv_standard);
+	auto text_encoding = choice(_("Text encoding"), {
 		_("ISO 6937-2 (Latin/Western Europe)"),
 		_("ISO 8859-5 (Cyrillic)"),
 		_("ISO 8859-6 (Arabic)"),
 		_("ISO 8859-7 (Greek)"),
 		_("ISO 8859-8 (Hebrew)"),
 		_("UTF-8 Unicode (non-standard)")
-	};
-	wxRadioBox *text_encoding_box = new wxRadioBox(&d, -1, _("Text encoding"), wxDefaultPosition, wxDefaultSize, 6, text_encodings, 0, wxRA_SPECIFY_ROWS);
+	}, s.text_encoding);
+	auto display_standard = new FlatSwitch(&d, {_("Open subtitles"), _("Level-1 teletext")});
+	// Level-2 teletext, not offered, is kept unless another is chosen
+	int display_shown = std::clamp(static_cast<int>(s.display_standard), 0, 1);
+	display_standard->SetSelection(display_shown);
 
-	wxString wrap_modes[] = {
+	// How the text is laid out
+	auto max_line_length = flat::NumberField::Create(&d, wxString(), s.max_line_length, 10, 99, 1, 0, 32);
+	auto wrap_mode = choice(_("Text formatting"), {
 		_("Automatically wrap long lines (ASS)"),
 		_("Automatically wrap long lines (Balanced)"),
 		_("Abort if any lines are too long"),
 		_("Skip lines that are too long")
+	}, s.line_wrapping_mode);
+	auto translate_alignments = new FlatCheck(&d, _("Translate alignments"));
+	translate_alignments->SetValue(s.translate_alignments);
+
+	// When the lines are shown
+	auto offset_frame = new FlatFrame(&d, wxString());
+	auto timecode_offset = new wxTextCtrl(offset_frame, -1, fmt_wx("%02d:%02d:%02d:%02d", s.timecode_offset.h, s.timecode_offset.m, s.timecode_offset.s, s.timecode_offset.f),
+		wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+	offset_frame->SetContent(timecode_offset, d.ToDIP(timecode_offset->GetSizeFromText("00:00:00:00").x));
+	auto inclusive_end_times = new FlatCheck(&d, _("Out-times are inclusive"));
+	inclusive_end_times->SetValue(s.inclusive_end_times);
+
+	// Grey names at the left, under a section's title
+	auto main_sizer = new wxBoxSizer(wxVERTICAL);
+	wxFlexGridSizer *grid = nullptr;
+	auto section = [&](wxString const& title) {
+		if (!title.empty())
+			main_sizer->Add(flat::SectionTitle(&d, title), wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxTOP, gap));
+		grid = new wxFlexGridSizer(2, row, gap);
+		grid->AddGrowableCol(1, 1);
+		main_sizer->Add(grid, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxTOP, gap));
 	};
-
-	wxSpinCtrl *max_line_length_ctrl = new wxSpinCtrl(text_formatting_box, -1, wxString(), wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS, 10, 99);
-	wxComboBox *wrap_mode_ctrl = new wxComboBox(text_formatting_box, -1, wrap_modes[0], wxDefaultPosition, wxDefaultSize, 4, wrap_modes, wxCB_DROPDOWN | wxCB_READONLY);
-	wxCheckBox *translate_alignments_check = new wxCheckBox(text_formatting_box, -1, _("Translate alignments"));
-
-	wxString display_standards[] = {
-		_("Open subtitles"),
-		_("Level-1 teletext"),
-		_("Level-2 teletext")
+	// The names one column wide through the sections
+	std::vector<wxWindow*> names;
+	auto add = [&](wxString const& name, wxWindow *ctrl, bool expand = true) {
+		names.push_back(flat::DimLabel(&d, flat::WithoutColon(name)));
+		grid->Add(names.back(), wxSizerFlags().CenterVertical());
+		grid->Add(ctrl, expand ? wxSizerFlags().Expand() : wxSizerFlags());
 	};
+	auto add_unnamed = [&](wxWindow *ctrl, bool expand = false) {
+		names.push_back(new wxWindow(&d, -1, wxDefaultPosition, wxSize(0, 0)));
+		grid->Add(names.back());
+		grid->Add(ctrl, expand ? wxSizerFlags().Expand() : wxSizerFlags());
+	};
+	// What the file is for needs no title
+	section(wxString());
+	add(_("TV standard"), tv_standard);
+	add(_("Text encoding"), text_encoding);
+	add(_("Display standard"), display_standard, false);
+	section(_("Text formatting"));
+	add(_("Max. line length:"), max_line_length->Frame(), false);
+	add_unnamed(wrap_mode, true);
+	add_unnamed(translate_alignments);
+	section(_("Time codes"));
+	add(_("Time code offset:"), offset_frame, false);
+	add_unnamed(inclusive_end_times);
 
-	wxComboBox *display_standard_ctrl = new wxComboBox(display_standard_box, -1, "", wxDefaultPosition, wxDefaultSize, 2, display_standards, wxCB_DROPDOWN | wxCB_READONLY);
+	int name_width = 0;
+	for (auto name : names) name_width = std::max(name_width, name->GetBestSize().x);
+	for (auto name : names) name->SetMinSize(wxSize(name_width, -1));
 
-	wxSizer *max_line_length_labelled = new wxBoxSizer(wxHORIZONTAL);
-	max_line_length_labelled->Add(new wxStaticText(text_formatting_box, -1, _("Max. line length:")), 1, wxALIGN_CENTRE|wxRIGHT, 12);
-	max_line_length_labelled->Add(max_line_length_ctrl, 0, 0, 0);
-
-	wxSizer *timecode_offset_labelled = new wxBoxSizer(wxHORIZONTAL);
-	timecode_offset_labelled->Add(new wxStaticText(timecode_control_box, -1, _("Time code offset:")), 1, wxALIGN_CENTRE|wxRIGHT, 12);
-	timecode_offset_labelled->Add(timecode_offset_entry, 0, 0, 0);
-
-	text_formatting_sizer->Add(max_line_length_labelled, 0, wxEXPAND | (wxALL & ~wxTOP), 6);
-	text_formatting_sizer->Add(wrap_mode_ctrl, 0, wxEXPAND | (wxALL & ~wxTOP), 6);
-	text_formatting_sizer->Add(translate_alignments_check, 0, wxEXPAND | (wxALL & ~wxTOP), 6);
-
-	timecode_control_sizer->Add(timecode_offset_labelled, 0, wxEXPAND | (wxALL & ~wxTOP), 6);
-	timecode_control_sizer->Add(inclusive_end_times_check, 0, wxEXPAND | (wxALL & ~wxTOP), 6);
-
-	display_standard_sizer->Add(display_standard_ctrl, 0, wxEXPAND | (wxALL & ~wxTOP), 6);
-
-	wxSizer *left_column = new wxBoxSizer(wxVERTICAL);
-	left_column->Add(tv_standard_box, 0, wxEXPAND | wxBOTTOM, 6);
-	left_column->Add(timecode_control_sizer, 0, wxEXPAND | wxBOTTOM, 6);
-	left_column->Add(display_standard_sizer, 0, wxEXPAND, 0);
-
-	wxSizer *right_column = new wxBoxSizer(wxVERTICAL);
-	right_column->Add(text_encoding_box, 0, wxEXPAND|wxBOTTOM, 6);
-	right_column->Add(text_formatting_sizer, 0, wxEXPAND, 0);
-
-	wxSizer *vertical_split_sizer = new wxBoxSizer(wxHORIZONTAL);
-	vertical_split_sizer->Add(left_column, 0, wxRIGHT, 6);
-	vertical_split_sizer->Add(right_column, 0, 0, 0);
-
-	wxSizer *buttons_sizer = new wxBoxSizer(wxHORIZONTAL);
-	// Developers are requested to leave &d message in! Intentionally not translatable.
-	wxStaticText *sponsor_label = new wxStaticText(&d, -1, "EBU STL format writing sponsored by Bandai");
-	sponsor_label->Enable(false);
-	buttons_sizer->Add(sponsor_label, 1, wxALIGN_BOTTOM, 0);
-	buttons_sizer->Add(d.CreateStdDialogButtonSizer(wxOK | wxCANCEL), 0, wxLEFT, 6);
-
-	wxSizer *main_sizer = new wxBoxSizer(wxVERTICAL);
-	main_sizer->Add(vertical_split_sizer, 0, wxEXPAND|wxALL, 12);
-	main_sizer->Add(buttons_sizer, 0, wxEXPAND | (wxALL & ~wxTOP), 12);
+	// Developers are requested to leave this message in! Intentionally not translatable.
+	auto sponsor_label = flat::DimLabel(&d, "EBU STL format writing sponsored by Bandai");
+	main_sizer->Add(sponsor_label, wxSizerFlags().Border(wxLEFT | wxRIGHT | wxTOP, gap));
+	main_sizer->Add(new flat::DialogButtons(&d, wxOK | wxCANCEL), wxSizerFlags().Expand().Border(wxALL, gap));
 
 	d.SetSizerAndFit(main_sizer);
 	d.CenterOnParent();
 
-	// set up validators to move data in and out
-	tv_standard_box->SetValidator(wxGenericValidator((int*)&s.tv_standard));
-	text_encoding_box->SetValidator(wxGenericValidator((int*)&s.text_encoding));
-	translate_alignments_check->SetValidator(wxGenericValidator(&s.translate_alignments));
-	max_line_length_ctrl->SetValidator(wxGenericValidator(&s.max_line_length));
-	wrap_mode_ctrl->SetValidator(wxGenericValidator((int*)&s.line_wrapping_mode));
-	inclusive_end_times_check->SetValidator(wxGenericValidator(&s.inclusive_end_times));
-	timecode_offset_entry->SetValidator(TimecodeValidator(&s.timecode_offset));
-	display_standard_ctrl->SetValidator(wxGenericValidator((int*)&s.display_standard));
+	d.Bind(wxEVT_BUTTON, [&](wxCommandEvent&) {
+		EbuTimecode offset;
+		if (!ParseTimecode(timecode_offset->GetValue(), offset)) {
+			wxMessageBox(_("Time code offset in incorrect format. Ensure it is entered as four groups of two digits separated by colons."), _("EBU STL export"), wxICON_EXCLAMATION);
+			return;
+		}
+		s.timecode_offset = offset;
+		s.tv_standard = static_cast<EbuExportSettings::TvStandard>(tv_standard->GetSelection());
+		s.text_encoding = static_cast<EbuExportSettings::TextEncoding>(text_encoding->GetSelection());
+		if (display_standard->GetSelection() != display_shown || s.display_standard != EbuExportSettings::DSC_Level2)
+			s.display_standard = static_cast<EbuExportSettings::DisplayStandard>(display_standard->GetSelection());
+		s.max_line_length = max_line_length->GetInt();
+		s.line_wrapping_mode = static_cast<EbuExportSettings::LineWrappingMode>(wrap_mode->GetSelection());
+		s.translate_alignments = translate_alignments->GetValue();
+		s.inclusive_end_times = inclusive_end_times->GetValue();
+		d.EndModal(wxID_OK);
+	}, wxID_OK);
 
 	return d.ShowModal();
 }

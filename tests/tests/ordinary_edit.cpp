@@ -19,6 +19,7 @@
 #include "flat_controls.h"
 #include "base_grid.h"
 #include "auto4_base.h"
+#include "dialog_export_ebu3264.h"
 #include "options.h"
 #include "command/command.h"
 #include "include/aegisub/hotkey.h"
@@ -6484,4 +6485,54 @@ TEST_F(ordinary_edit, automation_manager_lists_scripts_with_their_state) {
     EXPECT_EQ(_("&Close"),dynamic_cast<FlatButton*>(dialog->FindWindow(wxID_CANCEL))->GetLabel());
     dialog->Close();
     EXPECT_FALSE(dialog->IsShown());
+}
+TEST_F(ordinary_edit, ebu_export_is_drawn_choices_a_switch_and_a_time_code) {
+    EbuExportSettings settings("Subtitle Format/EBU STL");
+    settings.tv_standard=EbuExportSettings::STL25; settings.text_encoding=EbuExportSettings::utf8;
+    settings.display_standard=EbuExportSettings::DSC_Open; settings.max_line_length=42;
+    settings.line_wrapping_mode=EbuExportSettings::AbortOverLength; settings.translate_alignments=false; settings.inclusive_end_times=false;
+    settings.timecode_offset={0,0,0,0};
+    int ran=0, result=0;
+    {
+        RunModal hook(_("Export to EBU STL format"),[&](wxDialog *dialog){
+            std::vector<FlatChoice*> choices; FlatSwitch *display=nullptr; std::vector<FlatCheck*> checks; wxTextCtrl *offset=nullptr, *length=nullptr;
+            for(auto child:descendants(dialog)){
+                if(auto ch=dynamic_cast<FlatChoice*>(child))choices.push_back(ch);
+                if(auto sw=dynamic_cast<FlatSwitch*>(child))display=sw;
+                if(auto k=dynamic_cast<FlatCheck*>(child))checks.push_back(k);
+                if(auto t=dynamic_cast<wxTextCtrl*>(child)){ if(t->GetValue()=="00:00:00:00")offset=t; else if(t->GetValue()=="42")length=t; }
+            }
+            ASSERT_EQ(3u,choices.size()); ASSERT_NE(nullptr,display); ASSERT_EQ(2u,checks.size()); ASSERT_NE(nullptr,offset); ASSERT_NE(nullptr,length);
+            EXPECT_EQ(_("25 fps (STL25.01)"),choices[0]->GetStringSelection());
+            EXPECT_EQ(_("UTF-8 Unicode (non-standard)"),choices[1]->GetStringSelection());
+            EXPECT_EQ(_("Abort if any lines are too long"),choices[2]->GetStringSelection());
+            EXPECT_EQ(0,display->GetSelection());
+            choices[0]->Choose(5); display->Choose(1); length->SetValue("60"); checks[0]->Toggle(); checks[1]->Toggle();
+            if(ran==0){
+                offset->SetValue("1:00");
+                AcceptMessages messages;
+                button(dialog,wxID_OK);
+                EXPECT_TRUE(dialog->IsShown()) << "a time code in the wrong form is not taken";
+                offset->SetValue("01:00:00:00");
+            }
+            ++ran;
+            button(dialog,wxID_OK);
+        });
+        result=ShowEbuExportConfigurationDialog(window,settings);
+    }
+    EXPECT_EQ(1,ran); EXPECT_EQ(wxID_OK,result);
+    EXPECT_EQ(EbuExportSettings::STL30,settings.tv_standard);
+    EXPECT_EQ(EbuExportSettings::DSC_Level1,settings.display_standard);
+    EXPECT_EQ(60,settings.max_line_length);
+    EXPECT_TRUE(settings.translate_alignments); EXPECT_TRUE(settings.inclusive_end_times);
+    EXPECT_EQ(1,settings.timecode_offset.h); EXPECT_EQ(0,settings.timecode_offset.m);
+}
+TEST_F(ordinary_edit, ebu_export_keeps_level_2_teletext_unless_another_is_chosen) {
+    EbuExportSettings settings("Subtitle Format/EBU STL");
+    settings.display_standard=EbuExportSettings::DSC_Level2;
+    {
+        RunModal hook(_("Export to EBU STL format"),[&](wxDialog *dialog){ button(dialog,wxID_OK); });
+        EXPECT_EQ(wxID_OK,ShowEbuExportConfigurationDialog(window,settings));
+    }
+    EXPECT_EQ(EbuExportSettings::DSC_Level2,settings.display_standard);
 }

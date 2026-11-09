@@ -54,6 +54,7 @@
 - **打开自动保存文件**（`dialog_autosave.cpp`）：文件和版本两个 `FlatList` 并排，各有小节标题；文件按最新版本排序，右侧灰字是最新版本的时间；选中文件后右边列出它的版本，双击版本直接打开。没有文件时列表写“没有自动保存的文件”，打开不可用。
 - **附件**（`dialog_attachments.cpp`）：附件是可多选的 `FlatList`，文件名下灰字是分组（Fonts / Graphics），右侧是大小；列表下一排按钮，左边附加字体、附加图片，右边提取、删除（选中后才可用）；底部帮助和关闭。
 - **自动化脚本管理**（`dialog_automation.cpp`）：脚本是 `FlatList`，名称下灰字是文件名和描述（多行描述合成一行），右侧写全局 / 本地；载入失败或有警告时右侧改成警告徽章（“载入失败”“载入成功但存在警告”）。列表下一排按钮：添加、移除（只对本地脚本可用）、重新载入、显示信息，最右是重新扫描自动载入目录；双击脚本也显示信息。底部帮助和关闭（Esc、回车都关闭）。列表重建后原来选中的脚本仍选中。
+- **EBU STL 导出**（`dialog_export_ebu3264.cpp`）：去掉单选框组和静态框；名称灰色在左，三组的名称列一样宽。第一组不加标题：电视制式和文字编码是下拉框（按最长的选项定宽），显示标准是“开放字幕 / 一级图文电视”开关（原来的下拉框也只有这两项；设置里存的是二级图文电视时保留，除非另选）。“文本格式”一组是最大行长数字框、换行方式下拉框、转换对齐勾选框；“时间码”一组是偏移框和“出点包含在内”勾选框。确定时偏移不是四组两位数字就提示并留在对话框里。赞助说明灰字在按钮上方。
 
 ## 测试
 
@@ -80,3 +81,5 @@
 - `ordinary_edit.autosave_with_nothing_to_open_says_so`：没有文件时列表为空、打开不可用。
 - `ordinary_edit.attachments_list_names_groups_and_sizes`：每行的分组和大小、选中后提取和删除可用、删除全部选中的、关闭。
 - `ordinary_edit.automation_manager_lists_scripts_with_their_state`：本地在前、全局 / 本地备注、多行描述合成一行、警告和失败的徽章、移除只对本地可用、移除后列表更新、关闭。
+- `ordinary_edit.ebu_export_is_drawn_choices_a_switch_and_a_time_code`：载入设置、错误的时间码不被接受、确定后写回每一项。
+- `ordinary_edit.ebu_export_keeps_level_2_teletext_unless_another_is_chosen`：二级图文电视不改选时保留。
