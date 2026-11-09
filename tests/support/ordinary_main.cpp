@@ -23,8 +23,9 @@ int main(int argc, char** argv) {
     if (!wxEntryStart(argc, argv)) return 2;
     wxInitAllImageHandlers();
     wxLog::SetActiveTarget(new wxLogStderr);
-    wxSetAssertHandler([](wxString const& file, int line, wxString const&, wxString const& condition, wxString const&) {
-        std::fprintf(stderr, "wx assertion %s:%d: %s\n", file.utf8_str().data(), line, condition.utf8_str().data());
+    wxSetAssertHandler([](wxString const& file, int line, wxString const& func, wxString const& condition, wxString const& message) {
+        std::fprintf(stderr, "wx assertion %s:%d in %s: %s%s%s\n", file.utf8_str().data(), line, func.utf8_str().data(),
+            condition.utf8_str().data(), message.empty() ? "" : " - ", message.utf8_str().data());
         std::abort();
     });
     agi::dispatch::Init([](agi::dispatch::Thunk work) { wxTheApp->CallAfter(std::move(work)); });

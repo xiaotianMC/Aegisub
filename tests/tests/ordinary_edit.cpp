@@ -122,6 +122,9 @@
 #include <wx/sizer.h>
 #include <wx/slider.h>
 #include <filesystem>
+#ifdef __WXGTK__
+#include <gtk/gtk.h>
+#endif
 #include <boost/scope_exit.hpp>
 
 namespace {
@@ -184,6 +187,17 @@ protected:
         c->selectionController->SetSelectionAndActiveIDs({line->Id}, line->Id);
     }
     void TearDown() override { delete window; c.reset(); }
+    /// Drags capture the mouse, which GTK can do only for a control that
+    /// has its native window. Make it, leaving the frame off the screen as
+    /// the other tests have it: shown, the display would lay itself out
+    /// again whenever the desktop sized the frame.
+    static void RealizeForCapture(wxWindow *control) {
+#ifdef __WXGTK__
+        gtk_widget_realize(control->m_wxwindow ? control->m_wxwindow : control->m_widget);
+#else
+        (void)control;
+#endif
+    }
     void Input(std::string const& value) {
         editor->SetTextRaw(value.c_str());
         // Hidden controls do not receive all native WM_NOTIFY deliveries.
@@ -454,7 +468,12 @@ TEST_F(ordinary_edit, real_style_import_and_delete_preserve_unrelated_data_and_h
         int files=0;
         explicit ImportDialogs(wxString path):path(path) { Register(); }
         int Enter(wxDialog* dialog) override {
-            if(auto file=dynamic_cast<wxFileDialog*>(dialog)) { ++files; file->SetPath(path); return wxID_OK; }
+            if(auto file=dynamic_cast<wxFileDialog*>(dialog)) {
+                ++files; file->SetPath(path);
+                // GTK's chooser takes the path once it has read the folder: wait for it
+                for(int i=0;i<200 && file->GetPath().empty();++i){wxYield();wxMilliSleep(10);}
+                return wxID_OK;
+            }
             if(auto choices=dynamic_cast<wxMultiChoiceDialog*>(dialog)) { wxArrayInt selected;selected.Add(0);selected.Add(1);choices->SetSelections(selected);choices->TransferDataFromWindow(); return wxID_OK; }
             if(dynamic_cast<wxMessageDialog*>(dialog)) return wxID_YES;
             return wxID_NONE;
@@ -2301,6 +2320,7 @@ protected:
         auto display=new AudioDisplay(window,c->audioController.get(),c.get());
         c->project->LoadAudio("dummy-audio:silence?sr=44100&bd=16&ch=1&ln=441000");
         display->SetSize(0,0,900,160);
+        RealizeForCapture(display);
         return display;
     }
     void Mouse(AudioDisplay* display,wxEventType type,int ms,bool down=false) {
@@ -2763,6 +2783,7 @@ protected:
         auto zoom=new VideoZoomControl(window);
         display=new VideoDisplay(toolbar,false,zoom,window,c.get());
         display->SetSize(640,480);
+        RealizeForCapture(display);
         FrameData(); // finish renderer initialization with the main dispatch queue running
     }
     void TearDown() override {
@@ -3385,6 +3406,8 @@ TEST_F(ordinary_edit, controlled_real_style_rename_updates_references_and_repeat
 TEST_F(ordinary_edit, shift_times_is_drawn_switches_and_a_history_list) {
     OPT_SET("Tool/Shift Times/ByTime")->SetBool(false);OPT_SET("Tool/Shift Times/Direction")->SetBool(true);
     OPT_SET("Tool/Shift Times/Type")->SetInt(1);OPT_SET("Tool/Shift Times/Affect")->SetInt(1);
+    // The history starts empty, whatever an earlier run left
+    std::filesystem::remove(std::filesystem::path(config::path->Decode("?user/shift_history.json").wstring()));
     c->selectionController->SetSelectedIDs({});
     auto open=[&]{
         ShowShiftTimesDialog(c.get());
@@ -3927,6 +3950,7 @@ TEST_F(ordinary_edit, save_cleans_only_independent_copy_and_keeps_ass_format_pre
     auto id=LiveRead(*c).Events.front().Id;auto refs=LiveRead(*c).Events.front().ExtradataIds.get();
     auto revision=c->subtitleEditGate.Revision();auto undo=c->subsController->GetUndoDescription();
     auto path=agi::fs::path((std::filesystem::current_path()/"snapshot-save.ass").wstring());
+    std::filesystem::remove(std::filesystem::path(path.wstring())); // left by an earlier run
     {
         // C1-C1c-12: saving during a comparison is refused before any output.
         auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);
@@ -3961,6 +3985,7 @@ TEST_F(ordinary_edit, failed_save_leaves_filename_paths_dirty_state_model_and_hi
 
 TEST_F(ordinary_edit, autosave_owns_complete_input_and_queued_completion_survives_controller_destruction) {
     auto directory=std::filesystem::current_path()/"autosave-snapshot";
+    std::filesystem::remove_all(directory); // left by an earlier run
     auto old_path=OPT_GET("Path/Auto/Save")->GetString();OPT_SET("Path/Auto/Save")->SetString(directory.string());
     Input("automatic snapshot 中 文");
     {
@@ -4002,6 +4027,7 @@ TEST_F(ordinary_edit, metadata_only_save_close_reopen_has_independent_dirty_stat
 }
 TEST_F(ordinary_edit, metadata_only_change_triggers_autosave_after_a_clean_manual_save) {
     auto root=std::filesystem::current_path()/"metadata-autosave";
+    std::filesystem::remove_all(root); // left by an earlier run
     auto old=OPT_GET("Path/Auto/Save")->GetString();OPT_SET("Path/Auto/Save")->SetString(root.string());
     c->subsController->Save(agi::fs::path((std::filesystem::current_path()/"clean-metadata.ass").wstring()),"utf-8");
     auto revision=c->subtitleEditGate.Revision();
@@ -4684,6 +4710,7 @@ TEST_F(document_lifecycle, comparison_session_freezes_save_target_metadata_and_m
     auto provider=c->project->AudioProvider();ASSERT_TRUE(provider);
     Input("compared edit");ASSERT_TRUE(c->subsController->IsModified());
     auto autosave_root=std::filesystem::current_path()/"compare-autosave";
+    std::filesystem::remove_all(autosave_root); // left by an earlier run
     auto old_autosave=OPT_GET("Path/Auto/Save")->GetString();OPT_SET("Path/Auto/Save")->SetString(autosave_root.string());
     auto filename=c->subsController->Filename();auto script=c->path->Decode("?script");
     auto properties=LiveRead(*c).Properties;auto metadata=c->subtitleAccess->MetadataRevision();
@@ -4692,6 +4719,7 @@ TEST_F(document_lifecycle, comparison_session_freezes_save_target_metadata_and_m
         auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);
         RecordMessages messages;
         auto elsewhere=Local("compare-elsewhere.ass");
+        std::filesystem::remove(std::filesystem::path(elsewhere.wstring())); // left by an earlier run
         EXPECT_THROW(c->subsController->Save(elsewhere,"utf-8"),SubtitleProjectBusy);
         EXPECT_FALSE(std::filesystem::exists(std::filesystem::path(elsewhere.wstring())));
         // The production command reports the refusal instead of failing silently.
@@ -5042,6 +5070,7 @@ TEST_F(document_lifecycle, failed_autosave_does_not_undo_a_later_manual_save_bas
     c->subsController->Save(Local("autosave-baseline.ass"),"utf-8"); // covers the same version
     for(int i=0;i<300;++i){wxTheApp->ProcessPendingEvents();std::this_thread::sleep_for(std::chrono::milliseconds(10));}
     auto good=std::filesystem::current_path()/"autosave-good";
+    std::filesystem::remove_all(good); // left by an earlier run
     OPT_SET("Path/Auto/Save")->SetString(good.string());
     c->subsController->RequestAutoSave();               // nothing new since the save
     for(int i=0;i<100;++i){wxTheApp->ProcessPendingEvents();std::this_thread::sleep_for(std::chrono::milliseconds(10));}
