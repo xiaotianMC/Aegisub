@@ -116,6 +116,7 @@
 #include <wx/checklst.h>
 #include <wx/checkbox.h>
 #include <wx/stattext.h>
+#include <wx/radiobut.h>
 #include <wx/tglbtn.h>
 #include <wx/dataview.h>
 #include <wx/button.h>
@@ -5235,9 +5236,10 @@ template<class T = wxWindow> T* Named(wxWindow* dialog, char const* name) {
     return window;
 }
 void Press(wxWindow* dialog, char const* name) {
-    auto b = Named<wxButton>(dialog, name); ASSERT_NE(nullptr, b);
-    ASSERT_TRUE(b->IsEnabled()) << name;
-    button(b, b->GetId());
+    auto w = Named(dialog, name); ASSERT_NE(nullptr, w);
+    ASSERT_TRUE(w->IsEnabled()) << name;
+    if (auto flat = dynamic_cast<FlatButton*>(w)) flat->Press();
+    else button(w, w->GetId());
 }
 wxString Label(wxWindow* dialog, char const* name) {
     auto w = Named(dialog, name);
@@ -5419,20 +5421,16 @@ TEST_F(ordinary_edit, compare_window_filters_by_category_and_leaves_ignored_fiel
     bool time_hidden = false;
     CompareHook hook([&](wxWindow* dialog) {
         auto toggle = [&](char const* name) {
-            auto b = Named<wxToggleButton>(dialog, name); ASSERT_NE(nullptr, b);
-            b->SetValue(true);
-            wxCommandEvent event(wxEVT_TOGGLEBUTTON, b->GetId()); event.SetEventObject(b); event.SetInt(1);
-            b->GetEventHandler()->ProcessEvent(event);
+            Press(dialog, name);
+            EXPECT_TRUE(Named<FlatButton>(dialog, name)->IsAccent()) << name; // the chosen category
         };
         auto check = [&](char const* name, bool value) {
-            auto b = Named<wxCheckBox>(dialog, name); ASSERT_NE(nullptr, b);
-            b->SetValue(value);
-            wxCommandEvent event(wxEVT_CHECKBOX, b->GetId()); event.SetEventObject(b); event.SetInt(value);
-            b->GetEventHandler()->ProcessEvent(event);
+            auto b = Named<FlatCheck>(dialog, name); ASSERT_NE(nullptr, b);
+            if (b->GetValue() != value) b->Toggle();
         };
         all_counter = Label(dialog, "compare-counter");
-        EXPECT_EQ("Time only 1", Named<wxToggleButton>(dialog, "compare-category-Time")->GetLabel());
-        EXPECT_FALSE(Named<wxToggleButton>(dialog, "compare-category-Text")->IsShown()); // nothing of that kind
+        EXPECT_EQ("Time only 1", Named<FlatButton>(dialog, "compare-category-Time")->GetLabel());
+        EXPECT_FALSE(Named<FlatButton>(dialog, "compare-category-Text")->IsShown()); // nothing of that kind
         // Only the time change: Reject All covers just what is shown.
         toggle("compare-category-Time");
         time_counter = Label(dialog, "compare-counter");
@@ -5443,7 +5441,7 @@ TEST_F(ordinary_edit, compare_window_filters_by_category_and_leaves_ignored_fiel
         toggle("compare-category-all");
         check("compare-ignore-Time", true);
         ignored_counter = Label(dialog, "compare-counter");
-        time_hidden = !Named<wxToggleButton>(dialog, "compare-category-Time")->IsShown();
+        time_hidden = !Named<FlatButton>(dialog, "compare-category-Time")->IsShown();
         Press(dialog, "compare-reject-all");
         ignored_stats = Label(dialog, "compare-stats");
         button(dialog->FindWindow(wxID_OK), wxID_OK);
@@ -5502,10 +5500,8 @@ TEST_F(ordinary_edit, compare_window_with_the_project_on_the_left_accepts_the_fi
     CompareHook hook([&](wxWindow* dialog) {
         Press(dialog, "compare-swap");
         EXPECT_NE(wxNOT_FOUND, Label(dialog, "compare-left-title").Find("target project"));
-        auto all = Named<wxCheckBox>(dialog, "compare-check-all"); ASSERT_NE(nullptr, all);
-        all->SetValue(true);
-        wxCommandEvent event(wxEVT_CHECKBOX, all->GetId()); event.SetEventObject(all);
-        all->GetEventHandler()->ProcessEvent(event);
+        auto all = Named<FlatCheck>(dialog, "compare-check-all"); ASSERT_NE(nullptr, all);
+        all->Toggle();
         EXPECT_EQ("2 selected", Label(dialog, "compare-checked-count"));
         Press(dialog, "compare-accept-checked");
         button(dialog->FindWindow(wxID_OK), wxID_OK);
@@ -5514,6 +5510,33 @@ TEST_F(ordinary_edit, compare_window_with_the_project_on_the_left_accepts_the_fi
     ASSERT_EQ(1u, hook.messages.size());
     EXPECT_NE(wxNOT_FOUND, hook.messages[0].Find("the 2 selected differences")) << hook.messages[0];
     EXPECT_EQ((std::vector<std::string>{"revised", "new line"}), LiveTexts(*c));
+}
+TEST_F(ordinary_edit, compare_page_is_drawn_flat_buttons_checks_and_a_view_switch) {
+    Input("current");
+    auto path = WriteBaseline(*c, "compare-flat.ass", [](AssFile& f) { f.Events.front().Text = "baseline text"; });
+    bool system_controls = true, finish_accent = false, sync_off = false, everything = false;
+    wxString stats;
+    window->Show(); // Alt shortcuts take only what is on screen
+    CompareHook hook([&](wxWindow* dialog) {
+        system_controls = false;
+        for (auto child : descendants(dialog))
+            if (dynamic_cast<wxButton*>(child) || dynamic_cast<wxCheckBox*>(child) || dynamic_cast<wxRadioButton*>(child)) system_controls = true;
+        auto finish = dynamic_cast<FlatButton*>(dialog->FindWindow(wxID_OK));
+        finish_accent = finish && finish->IsAccent();
+        auto view = Named<FlatSwitch>(dialog, "compare-view"); ASSERT_NE(nullptr, view);
+        EXPECT_EQ(0, view->GetSelection());               // differences only
+        view->Choose(1); everything = view->GetSelection() == 1;
+        auto sync = Named<FlatCheck>(dialog, "compare-sync"); ASSERT_NE(nullptr, sync);
+        sync->Toggle(); sync_off = !sync->GetValue();
+        // Alt with a button's underlined letter presses it, as in a dialog.
+        wxKeyEvent alt(wxEVT_CHAR_HOOK); alt.m_keyCode = 'A'; alt.SetAltDown(true);
+        dialog->GetEventHandler()->ProcessEvent(alt);
+        stats = Label(dialog, "compare-stats");
+    });
+    EXPECT_FALSE(RunCompare(c.get(), path));
+    EXPECT_FALSE(system_controls); EXPECT_TRUE(finish_accent);
+    EXPECT_TRUE(everything); EXPECT_TRUE(sync_off);
+    EXPECT_EQ("0 pending, 1 accepted, 0 rejected, 0 partial", stats);
 }
 TEST_F(ordinary_edit, compare_command_refuses_while_editing_and_reports_unreadable_files) {
     CompareHook hook(nullptr);

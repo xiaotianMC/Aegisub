@@ -11,6 +11,8 @@
 
 #include "charset_detect.h"
 #include "compat.h"
+#include "flat_controls.h"
+#include "flat_dialog.h"
 #include "format.h"
 #include "include/aegisub/context.h"
 #include "project.h"
@@ -24,20 +26,15 @@
 #include <libaegisub/charset.h>
 #include <libaegisub/exception.h>
 
-#include <wx/button.h>
-#include <wx/checkbox.h>
 #include <wx/dcbuffer.h>
 #include <wx/menu.h>
 #include <wx/msgdlg.h>
 #include <wx/panel.h>
-#include <wx/radiobut.h>
 #include <wx/renderer.h>
 #include <wx/scrolbar.h>
-#include <wx/settings.h>
 #include <wx/sizer.h>
 #include <wx/stattext.h>
 #include <wx/textctrl.h>
-#include <wx/tglbtn.h>
 #include <wx/utils.h>
 
 #include <algorithm>
@@ -313,11 +310,11 @@ class ComparePanel final : public ComparisonPage {
     DiffPane *left, *right;
     DiffGutter *gutter;
     wxStaticText *left_title, *right_title, *counter, *stats, *checked_count;
-    wxButton *prev, *next, *accept_current, *reject_current, *undo, *redo;
-    wxButton *accept_checked, *reject_checked, *accept_all, *reject_all, *finish;
-    wxCheckBox *check_all, *sync_box;
-    wxRadioButton *diffs_only, *everything;
-    std::vector<std::pair<std::optional<view::Category>, wxToggleButton*>> category_buttons;
+    FlatButton *prev, *next, *accept_current, *reject_current, *undo, *redo;
+    FlatButton *accept_checked, *reject_checked, *accept_all, *reject_all, *finish;
+    FlatCheck *check_all, *sync_box;
+    FlatSwitch *view_switch;
+    std::vector<std::pair<std::optional<view::Category>, FlatButton*>> category_buttons;
     wxBoxSizer *filter_bar;
     wxTextCtrl *report;
     wxStaticText *hint;
@@ -1246,54 +1243,58 @@ ComparePanel::ComparePanel(wxWindow* parent, agi::Context *c, SubtitleComparison
 
     // Toolbar: navigation, actions on the current difference, view options, undo.
     auto bar = new wxBoxSizer(wxHORIZONTAL);
-    auto add = [&](wxButton* b, wxString const& tip, char const* id) {
-        b->SetToolTip(tip); b->SetName(id);
-        bar->Add(b, wxSizerFlags().Center().Border(wxRIGHT, 4));
+    theme::UseSurface(this);
+    int gap = FromDIP(4);
+    auto make = [&](int id, wxString const& label, wxString const& tip, char const* name) {
+        auto b = new FlatButton(this, label, id);
+        if (!tip.empty()) b->SetToolTip(tip);
+        b->SetName(name);
+        b->SetLeastSize(wxSize(-1, FromDIP(26)));
         return b;
     };
-    prev = add(new wxButton(this, ID_PREV, wxString::FromUTF8("↑ ") + _("Previous"), wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT), _("Previous difference (Shift+F7)"), "compare-prev");
-    next = add(new wxButton(this, ID_NEXT, wxString::FromUTF8("↓ ") + _("Next"), wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT), _("Next difference (F7)"), "compare-next");
+    auto add = [&](int id, wxString const& label, wxString const& tip, char const* name) {
+        auto b = make(id, label, tip, name);
+        bar->Add(b, wxSizerFlags().Center().Border(wxRIGHT, gap));
+        return b;
+    };
+    prev = add(ID_PREV, wxString::FromUTF8("↑ ") + _("Previous"), _("Previous difference (Shift+F7)"), "compare-prev");
+    next = add(ID_NEXT, wxString::FromUTF8("↓ ") + _("Next"), _("Next difference (F7)"), "compare-next");
     counter = new wxStaticText(this, -1, "", wxDefaultPosition, wxDefaultSize, wxST_NO_AUTORESIZE);
     counter->SetName("compare-counter");
     counter->SetMinSize(wxSize(GetTextExtent(_("Difference 9999 of 9999") + fmt_tl(" (%d in total)", 9999)).GetWidth() + 16, -1));
     bar->Add(counter, wxSizerFlags().Center().Border(wxLEFT | wxRIGHT, 6));
-    accept_current = add(new wxButton(this, ID_ACCEPT_CURRENT, wxString::FromUTF8("✓ ") + _("&Accept Change"), wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT), _("Keep the right side of the current difference"), "compare-accept-current");
-    reject_current = add(new wxButton(this, ID_REJECT_CURRENT, wxString::FromUTF8("✕ ") + _("&Reject Change"), wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT), _("Restore the left side of the current difference"), "compare-reject-current");
+    accept_current = add(ID_ACCEPT_CURRENT, wxString::FromUTF8("✓ ") + _("&Accept Change"), _("Keep the right side of the current difference"), "compare-accept-current");
+    reject_current = add(ID_REJECT_CURRENT, wxString::FromUTF8("✕ ") + _("&Reject Change"), _("Restore the left side of the current difference"), "compare-reject-current");
     bar->AddStretchSpacer();
-    diffs_only = new wxRadioButton(this, -1, _("Differences only"), wxDefaultPosition, wxDefaultSize, wxRB_GROUP);
-    everything = new wxRadioButton(this, -1, _("Everything"));
-    diffs_only->SetName("compare-diffs-only"); everything->SetName("compare-everything");
-    diffs_only->SetToolTip(_("Fold long runs of identical lines, keeping context around each difference"));
-    everything->SetToolTip(_("Show every line"));
-    diffs_only->SetValue(true);
-    bar->Add(diffs_only, wxSizerFlags().Center().Border(wxRIGHT, 4));
-    bar->Add(everything, wxSizerFlags().Center().Border(wxRIGHT, 12));
-    sync_box = new wxCheckBox(this, -1, _("Sync scrolling"));
+    view_switch = new FlatSwitch(this, {_("Differences only"), _("Everything")});
+    view_switch->SetName("compare-view");
+    view_switch->SetItemToolTip(0, _("Fold long runs of identical lines, keeping context around each difference"));
+    view_switch->SetItemToolTip(1, _("Show every line"));
+    sync_box = new FlatCheck(this, _("Sync scrolling"));
     sync_box->SetName("compare-sync"); sync_box->SetValue(true);
     sync_box->SetToolTip(_("Scroll both sides together. When off, each side scrolls on its own and selecting a line locates it on the other side."));
-    bar->Add(sync_box, wxSizerFlags().Center().Border(wxRIGHT, 12));
-    auto swap = add(new wxButton(this, -1, wxString::FromUTF8("⇄ ") + _("Swap Sides"), wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT),
+    auto swap = add(wxID_ANY, wxString::FromUTF8("⇄ ") + _("Swap Sides"),
         _("Show the open subtitles on the other side. Decisions keep their effect on the open subtitles."), "compare-swap");
-    undo = add(new wxButton(this, ID_UNDO, wxString::FromUTF8("↶ ") + _("Undo"), wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT), _("Undo the last decision (Ctrl+Z)"), "compare-undo");
-    redo = add(new wxButton(this, ID_REDO, wxString::FromUTF8("↷ ") + _("Redo"), wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT), _("Redo (Ctrl+Y)"), "compare-redo");
+    undo = add(ID_UNDO, wxString::FromUTF8("↶ ") + _("Undo"), _("Undo the last decision (Ctrl+Z)"), "compare-undo");
+    redo = add(ID_REDO, wxString::FromUTF8("↷ ") + _("Redo"), _("Redo (Ctrl+Y)"), "compare-redo");
 
-    // Filter bar: one category at a time, and field groups to leave out.
+    // Filter bar: one category at a time, the chosen one in the accent
+    // colour, and field groups to leave out.
     filter_bar = new wxBoxSizer(wxHORIZONTAL);
-    filter_bar->Add(new wxStaticText(this, -1, _("Show:")), wxSizerFlags().Center().Border(wxRIGHT, 6));
+    filter_bar->Add(flat::DimLabel(this, flat::WithoutColon(_("Show:"))), wxSizerFlags().Center().Border(wxRIGHT, 2 * gap));
     auto add_category = [&](std::optional<view::Category> category) {
-        auto b = new wxToggleButton(this, -1, "", wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT);
-        b->SetName(wxString("compare-category-") + (category ? view::CategoryName(*category) : "all"));
-        b->SetToolTip(category ? _("Show only this kind of difference; Accept All and Reject All then apply to these") : _("Show every kind of difference"));
-        b->Bind(wxEVT_TOGGLEBUTTON, [this, category](wxCommandEvent&) { filter.category = category; ApplyFilter(); });
-        filter_bar->Add(b, wxSizerFlags().Center().Border(wxRIGHT, 4));
+        auto b = make(wxID_ANY, "", category ? _("Show only this kind of difference; Accept All and Reject All then apply to these") : _("Show every kind of difference"),
+            (wxString("compare-category-") + (category ? view::CategoryName(*category) : "all")).c_str());
+        b->Bind(wxEVT_BUTTON, [this, category](wxCommandEvent&) { filter.category = category; ApplyFilter(); });
+        filter_bar->Add(b, wxSizerFlags().Center().Border(wxRIGHT, gap));
         category_buttons.emplace_back(category, b);
     };
     add_category(std::nullopt);
     for (auto category : view::CategoryOrder()) add_category(category);
-    filter_bar->AddSpacer(16);
-    filter_bar->Add(new wxStaticText(this, -1, _("Ignore:")), wxSizerFlags().Center().Border(wxRIGHT, 6));
+    filter_bar->AddSpacer(4 * gap);
+    filter_bar->Add(flat::DimLabel(this, flat::WithoutColon(_("Ignore:"))), wxSizerFlags().Center().Border(wxRIGHT, 2 * gap));
     for (auto group : {view::Category::Time, view::Category::Text, view::Category::StyleActor, view::Category::OtherFields}) {
-        auto box = new wxCheckBox(this, -1, group_label(group));
+        auto box = new FlatCheck(this, group_label(group));
         box->SetName(wxString("compare-ignore-") + view::CategoryName(group));
         box->SetToolTip(_("Leave these fields out: they are not highlighted, not counted, and decisions here leave them as they are"));
         box->Bind(wxEVT_CHECKBOX, [this, group, box](wxCommandEvent&) {
@@ -1301,8 +1302,16 @@ ComparePanel::ComparePanel(wxWindow* parent, agi::Context *c, SubtitleComparison
             else filter.ignored &= ~view::CategoryFields(group);
             ApplyFilter();
         });
-        filter_bar->Add(box, wxSizerFlags().Center().Border(wxRIGHT, 8));
+        filter_bar->Add(box, wxSizerFlags().Center().Border(wxRIGHT, 3 * gap));
     }
+    // How much of the files to show, at the right of the filters.
+    filter_bar->AddStretchSpacer();
+    filter_bar->Add(sync_box, wxSizerFlags().Center().Border(wxRIGHT, 3 * gap));
+    filter_bar->Add(view_switch, wxSizerFlags().Center());
+    // The arrows of some labels come from a taller font: one height for all.
+    int button_h = 0;
+    for (auto w : GetChildren()) if (auto b = dynamic_cast<FlatButton*>(w)) button_h = std::max(button_h, b->GetBestSize().GetHeight());
+    for (auto w : GetChildren()) if (auto b = dynamic_cast<FlatButton*>(w)) b->SetLeastSize(wxSize(-1, button_h));
 
     // Pane titles and panes.
     left_title = new wxStaticText(this, -1, "");
@@ -1315,38 +1324,44 @@ ComparePanel::ComparePanel(wxWindow* parent, agi::Context *c, SubtitleComparison
     gutter = new DiffGutter(this, *this);
 
     // Batch actions.
-    check_all = new wxCheckBox(this, -1, _("Select all differences"));
+    check_all = new FlatCheck(this, _("Select all differences"));
     check_all->SetName("compare-check-all");
-    checked_count = new wxStaticText(this, -1, "");
+    checked_count = flat::DimLabel(this, "");
     checked_count->SetName("compare-checked-count");
-    accept_checked = new wxButton(this, -1, _("Accept Selected"));
-    reject_checked = new wxButton(this, -1, _("Reject Selected"));
-    accept_all = new wxButton(this, -1, _("Accept All Changes"));
-    reject_all = new wxButton(this, -1, _("Reject All Changes"));
-    accept_checked->SetName("compare-accept-checked"); reject_checked->SetName("compare-reject-checked");
-    accept_all->SetName("compare-accept-all"); reject_all->SetName("compare-reject-all");
+    accept_checked = make(wxID_ANY, _("Accept Selected"), {}, "compare-accept-checked");
+    reject_checked = make(wxID_ANY, _("Reject Selected"), {}, "compare-reject-checked");
+    accept_all = make(wxID_ANY, _("Accept All Changes"), {}, "compare-accept-all");
+    reject_all = make(wxID_ANY, _("Reject All Changes"), {}, "compare-reject-all");
     auto batch = new wxBoxSizer(wxHORIZONTAL);
-    batch->Add(check_all, wxSizerFlags().Center().Border(wxRIGHT, 8));
-    batch->Add(checked_count, wxSizerFlags().Center().Border(wxRIGHT, 12));
-    batch->Add(accept_checked, wxSizerFlags().Center().Border(wxRIGHT, 4));
+    batch->Add(check_all, wxSizerFlags().Center().Border(wxRIGHT, 2 * gap));
+    batch->Add(checked_count, wxSizerFlags().Center().Border(wxRIGHT, 3 * gap));
+    batch->Add(accept_checked, wxSizerFlags().Center().Border(wxRIGHT, gap));
     batch->Add(reject_checked, wxSizerFlags().Center());
     batch->AddStretchSpacer();
-    stats = new wxStaticText(this, -1, "");
+    stats = flat::DimLabel(this, "");
     stats->SetName("compare-stats");
-    batch->Add(stats, wxSizerFlags().Center().Border(wxRIGHT, 12));
-    batch->Add(accept_all, wxSizerFlags().Center().Border(wxRIGHT, 4));
+    batch->Add(stats, wxSizerFlags().Center().Border(wxRIGHT, 3 * gap));
+    batch->Add(accept_all, wxSizerFlags().Center().Border(wxRIGHT, gap));
     batch->Add(reject_all, wxSizerFlags().Center());
 
     report = new wxTextCtrl(this, -1, "", wxDefaultPosition, wxSize(-1, GetCharHeight() * 4), wxTE_MULTILINE | wxTE_READONLY);
     report->SetName("compare-report");
 
-    auto buttons = new wxStdDialogButtonSizer;
-    finish = new wxButton(this, wxID_OK);
-    auto cancel = new wxButton(this, wxID_CANCEL);
+    // The foot, as flat::DialogButtons lays out a dialog's: Cancel, then the
+    // button the page is for in the accent colour (first on Windows).
+    finish = new FlatButton(this, "", wxID_OK, true);
+    auto cancel = new FlatButton(this, "", wxID_CANCEL);
+    for (auto b : {finish, cancel}) b->SetLeastSize(wxSize(FromDIP(76), FromDIP(28)));
     cancel->SetToolTip(_("End the comparison without writing to the subtitles"));
-    buttons->AddButton(finish);
-    buttons->AddButton(cancel);
-    buttons->Realize();
+    auto buttons = new wxBoxSizer(wxHORIZONTAL);
+    buttons->AddStretchSpacer();
+#ifdef __WXMSW__
+    buttons->Add(finish, wxSizerFlags().Border(wxRIGHT, FromDIP(6)));
+    buttons->Add(cancel);
+#else
+    buttons->Add(cancel, wxSizerFlags().Border(wxRIGHT, FromDIP(6)));
+    buttons->Add(finish);
+#endif
     finish->SetToolTip(_("Write the decisions to the open subtitles as one undoable change and end the comparison"));
 
     auto left_column = new wxBoxSizer(wxVERTICAL);
@@ -1369,7 +1384,7 @@ ComparePanel::ComparePanel(wxWindow* parent, agi::Context *c, SubtitleComparison
     hint = new wxStaticText(this, -1, default_hint, wxDefaultPosition, wxDefaultSize, wxST_NO_AUTORESIZE | wxST_ELLIPSIZE_END);
     hint->SetName("compare-hint");
     detail_hint = _("This line changed several fields, listed under it: Ctrl+Up/Down picks a field, Ctrl+Left takes the left side, Ctrl+Right keeps the right side.");
-    hint->SetForegroundColour(wxSystemSettings::GetColour(wxSYS_COLOUR_GRAYTEXT));
+    hint->SetForegroundColour(flat::Colours(this).dim);
 
     auto main = new wxBoxSizer(wxVERTICAL);
     main->Add(bar, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxTOP, 8));
@@ -1407,8 +1422,11 @@ ComparePanel::ComparePanel(wxWindow* parent, agi::Context *c, SubtitleComparison
     Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { if (state.Undo()) Changed(); }, ID_UNDO);
     Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { if (state.Redo()) Changed(); }, ID_REDO);
 
-    diffs_only->Bind(wxEVT_RADIOBUTTON, [this](wxCommandEvent&) { show_all = false; expanded.clear(); Relayout(current); });
-    everything->Bind(wxEVT_RADIOBUTTON, [this](wxCommandEvent&) { show_all = true; Relayout(current); });
+    view_switch->on_choose = [this](int index) {
+        show_all = index == 1;
+        if (!show_all) expanded.clear();
+        Relayout(current);
+    };
     sync_box->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent&) {
         sync = sync_box->GetValue();
         if (sync) left->SetView(right->Top(), right->XOffset());
@@ -1442,6 +1460,8 @@ ComparePanel::ComparePanel(wxWindow* parent, agi::Context *c, SubtitleComparison
     // Follow the appearance while open.
     theme_changed = theme::AddChangeListener([this] {
         pal = make_palette();
+        hint->SetForegroundColour(field_cursor || hot >= 0 ? pal.accent : flat::Colours(this).dim);
+        UpdateTitles();
         for (auto w : {static_cast<wxWindow*>(left), static_cast<wxWindow*>(right), static_cast<wxWindow*>(gutter)}) w->Refresh(false);
     });
 
@@ -1453,6 +1473,7 @@ bool ComparePanel::OnKey(wxKeyEvent& event) {
     if (key == WXK_ESCAPE && mods == wxMOD_NONE && field_cursor) { SetFieldCursor(std::nullopt); return true; }
     if ((key == WXK_F7 && mods == wxMOD_NONE) || (key == WXK_DOWN && mods == wxMOD_ALT)) { Go(1); return true; }
     if ((key == WXK_F7 && mods == wxMOD_SHIFT) || (key == WXK_UP && mods == wxMOD_ALT)) { Go(-1); return true; }
+    if (mods == wxMOD_ALT && flat::PressMnemonic(this, key)) return true;
     if (key == 'Z' && mods == wxMOD_CONTROL) { if (state.Undo()) Changed(); return true; }
     if ((key == 'Y' && mods == wxMOD_CONTROL) || (key == 'Z' && mods == (wxMOD_CONTROL | wxMOD_SHIFT))) {
         if (state.Redo()) Changed();
@@ -1654,7 +1675,7 @@ void ComparePanel::ShowHelp(Part part, bool in_gutter, int row) {
     bool resting = text.empty();
     if (resting) text = DetailFields().empty() ? default_hint : detail_hint;
     if (hint->GetLabelText() == text) return;
-    hint->SetForegroundColour(resting ? wxSystemSettings::GetColour(wxSYS_COLOUR_GRAYTEXT) : pal.accent);
+    hint->SetForegroundColour(resting ? flat::Colours(this).dim : pal.accent);
     hint->SetLabelText(text);
 }
 
@@ -1693,7 +1714,7 @@ void ComparePanel::UpdateFilterBar() {
         int n = category ? counts[*category] : all;
         auto label = (category ? category_label(*category) : _("All")) + wxString::Format(" %d", n);
         if (button->GetLabel() != label) { button->SetLabel(label); changed = true; }
-        button->SetValue(filter.category == category);
+        button->SetAccent(filter.category == category);
         bool show = !category || n > 0 || filter.category == category;
         if (button->IsShown() != show) { button->Show(show); changed = true; }
     }

@@ -89,4 +89,9 @@ wxString FormatNumber(double v, int precision);
 /// for a dialog laying its buttons out itself
 void UseFlatButtonKeys(wxDialog *dialog);
 
+/// Alt with @p key in @p window, a page laying out flat controls rather than
+/// a dialog: press the button, tick the check box or choose the switch's
+/// option underlining it. False if none does.
+bool PressMnemonic(wxWindow *window, int key);
+
 }

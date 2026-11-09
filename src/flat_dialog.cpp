@@ -115,6 +115,13 @@ void UseFlatButtonKeys(wxDialog *dialog) {
 	});
 }
 
+bool PressMnemonic(wxWindow *window, int key) {
+	if (key >= 128 || !wxIsalnum(key)) return false;
+	auto action = MnemonicAction(window, key);
+	if (action) action();
+	return bool(action);
+}
+
 DialogButtons::DialogButtons(wxDialog *dialog, long flags, const char *help_page)
 : wxBoxSizer(wxHORIZONTAL)
 , dialog(dialog)
