@@ -476,7 +476,7 @@ TEST_F(ordinary_edit, real_style_import_and_delete_preserve_unrelated_data_and_h
                 for(int i=0;i<200 && file->GetPath().empty();++i){wxYield();wxMilliSleep(10);}
                 return wxID_OK;
             }
-            if(auto choices=dynamic_cast<wxMultiChoiceDialog*>(dialog)) { wxArrayInt selected;selected.Add(0);selected.Add(1);choices->SetSelections(selected);choices->TransferDataFromWindow(); return wxID_OK; }
+            if(dialog->GetTitle()=="Import Styles") { for(auto child:descendants(dialog))if(auto list=dynamic_cast<FlatList*>(child)){list->Check(0);list->Check(1);} return wxID_OK; }
             if(dynamic_cast<wxMessageDialog*>(dialog)) return wxID_YES;
             return wxID_NONE;
         }
@@ -6566,4 +6566,30 @@ TEST_F(ordinary_edit, kanji_timer_is_drawn_choices_checks_and_flat_buttons) {
     }
     EXPECT_TRUE(ran);
     EXPECT_EQ(text,LiveRead(*c).Events.back().Text.get()) << "Escape leaves without applying";
+}
+TEST_F(ordinary_edit, selected_choices_are_ticked_in_a_flat_list) {
+    wxArrayString choices; choices.Add("One"); choices.Add("Two"); choices.Add("Three");
+    wxArrayInt selections; selections.Add(1);
+    bool ran=false; int count=0;
+    {
+        RunModal hook("Pick",[&](wxDialog *dialog){
+            FlatList *list=nullptr; for(auto child:descendants(dialog))if(auto l=dynamic_cast<FlatList*>(child))list=l;
+            ASSERT_NE(nullptr,list); ASSERT_EQ(3u,list->GetCount());
+            EXPECT_FALSE(list->IsChecked(0)); EXPECT_TRUE(list->IsChecked(1)) << "the selections given ticked";
+            button_labelled(dialog,_("Select &All"))->Press();
+            EXPECT_TRUE(list->IsChecked(0)); EXPECT_TRUE(list->IsChecked(2));
+            button_labelled(dialog,_("Select &None"))->Press();
+            EXPECT_FALSE(list->IsChecked(1));
+            list->Check(2);
+            ran=true;
+            button(dialog,wxID_OK);
+        });
+        count=GetSelectedChoices(window,selections,"Choose","Pick",choices);
+    }
+    EXPECT_TRUE(ran); EXPECT_EQ(1,count);
+    ASSERT_EQ(1u,selections.size()); EXPECT_EQ(2,selections[0]);
+    {
+        RunModal hook("Pick",[&](wxDialog *dialog){ button(dialog,wxID_CANCEL); });
+        EXPECT_EQ(-1,GetSelectedChoices(window,selections,"Choose","Pick",choices));
+    }
 }

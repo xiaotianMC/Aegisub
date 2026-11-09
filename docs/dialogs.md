@@ -58,6 +58,7 @@
 - **卡拉OK 时间复制**（`dialog_kara_timing_copy.cpp`，汉字计时器）：中间自绘的音节匹配显示不变；去掉四个静态框，改成“文本”“样式”“快捷键”“命令”四个小节标题。源样式、目标样式是下拉框，插值是勾选框，快捷键说明是灰字。右侧一列命令按钮，“接受此行”是强调色；底部帮助和关闭（关闭会应用已接受的行，不用强调色）。Esc 和标题栏关闭按钮一样是不应用直接离开，不会按“关闭”。
 - **关于**（`dialog_about.cpp`）：启动图下是致谢文字（对话框底色上的只读文字，可以复制），去掉两条分隔线；底部确定。
 - **日志窗口**（`dialog_log.cpp`）：日志文本框不变，对话框底色和四周边距同其他对话框；底部确定。
+- **多项选择**（`dialog_selected_choices.cpp`，`GetSelectedChoices`，导入样式时选样式用）：不再借用 `wxMultiChoiceDialog`；说明文字下是可勾选的 `FlatList`，勾上传入的选择；全选、全不选在底部左侧，右侧取消、确定。返回勾选的项。
 
 ## 测试
 
@@ -87,3 +88,4 @@
 - `ordinary_edit.ebu_export_is_drawn_choices_a_switch_and_a_time_code`：载入设置、错误的时间码不被接受、确定后写回每一项。
 - `ordinary_edit.ebu_export_keeps_level_2_teletext_unless_another_is_chosen`：二级图文电视不改选时保留。
 - `ordinary_edit.kanji_timer_is_drawn_choices_checks_and_flat_buttons`：两个样式下拉框列出样式、没有系统按钮、“接受此行”是强调色、Esc 离开且不应用。
+- `ordinary_edit.selected_choices_are_ticked_in_a_flat_list`：传入的选择已勾、全选、全不选、确定返回勾选的项、取消返回 -1。

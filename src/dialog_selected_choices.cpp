@@ -14,37 +14,46 @@
 //
 // Aegisub Project http://www.aegisub.org/
 
-#include <numeric>
-#include <wx/button.h>
-#include <wx/choicdlg.h>
-#include <wx/listbox.h>
+#include "flat_controls.h"
+#include "flat_dialog.h"
+#include "flat_list.h"
+#include "theme.h"
+
+#include <wx/dialog.h>
 #include <wx/sizer.h>
+#include <wx/stattext.h>
 
 int GetSelectedChoices(wxWindow *parent, wxArrayInt& selections, wxString const& message, wxString const& caption, wxArrayString const& choices) {
-	wxMultiChoiceDialog dialog(parent, message, caption, choices);
+	wxDialog dialog(parent, -1, caption, wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER);
+	theme::UseSurface(&dialog);
+	int gap = dialog.FromDIP(10), row = dialog.FromDIP(6);
 
-	auto selAll = new wxButton(&dialog, -1, _("Select &All"));
-	selAll->Bind(wxEVT_BUTTON, [&](wxCommandEvent&) {
-		wxArrayInt sel(choices.size(), 0);
-		std::iota(sel.begin(), sel.end(), 0);
-		dialog.SetSelections(sel);
-	});
+	// The choices ticked, as wxMultiChoiceDialog has them
+	auto list = new FlatList(&dialog, true, true);
+	list->Set(choices);
+	list->SetMinSize(dialog.FromDIP(wxSize(300, 240)));
+	for (int i : selections)
+		if (i >= 0 && i < static_cast<int>(choices.size())) list->Check(i);
 
-	auto selNone = new wxButton(&dialog, -1, _("Select &None"));
-	selNone->Bind(wxEVT_BUTTON, [&](wxCommandEvent&) { dialog.SetSelections(wxArrayInt()); });
+	auto tick_all = [&](bool tick) {
+		for (unsigned i = 0; i < list->GetCount(); ++i) list->Check(i, tick);
+	};
+	auto buttons = new flat::DialogButtons(&dialog, wxOK | wxCANCEL);
+	buttons->AddLeft(_("Select &All"))->Bind(wxEVT_BUTTON, [&](wxCommandEvent&) { tick_all(true); });
+	buttons->AddLeft(_("Select &None"))->Bind(wxEVT_BUTTON, [&](wxCommandEvent&) { tick_all(false); });
 
-	auto buttonSizer = new wxBoxSizer(wxHORIZONTAL);
-	buttonSizer->Add(selAll);
-	buttonSizer->Add(selNone);
-
-	auto sizer = dialog.GetSizer();
-	sizer->Insert(2, buttonSizer, wxSizerFlags(0).Center());
-	sizer->Fit(&dialog);
-
-	dialog.SetSelections(selections);
+	auto sizer = new wxBoxSizer(wxVERTICAL);
+	sizer->Add(new wxStaticText(&dialog, -1, message), wxSizerFlags().Border(wxLEFT | wxRIGHT | wxTOP, gap));
+	sizer->Add(list, wxSizerFlags(1).Expand().Border(wxLEFT | wxRIGHT | wxTOP, row + gap / 2));
+	sizer->Add(buttons, wxSizerFlags().Expand().Border(wxALL, gap));
+	dialog.SetSizerAndFit(sizer);
+	dialog.CenterOnParent();
+	list->SetFocus();
 
 	if (dialog.ShowModal() != wxID_OK) return -1;
 
-	selections = dialog.GetSelections();
+	selections.clear();
+	for (unsigned i = 0; i < list->GetCount(); ++i)
+		if (list->IsChecked(i)) selections.push_back(i);
 	return selections.GetCount();
 }
