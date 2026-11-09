@@ -6453,3 +6453,35 @@ struct AutomationScripts {
     }
     ~AutomationScripts() { wxTheApp->ProcessIdle(); delete config::global_scripts; config::global_scripts=nullptr; }
 };
+TEST_F(ordinary_edit, automation_manager_lists_scripts_with_their_state) {
+    AcceptMessages messages;
+    AutomationScripts scripts;
+    c->local_scripts->Add(std::make_unique<ListedScript>("Mine",""));
+    ShowAutomationDialog(c.get());
+    wxDialog *dialog=nullptr; for(auto w:wxTopLevelWindows)if(auto d=dynamic_cast<wxDialog*>(w);d && d->GetTitle()==_("Automation Manager") && d->IsShown())dialog=d;
+    ASSERT_NE(nullptr,dialog);
+    FlatList *list=nullptr; for(auto child:descendants(dialog))if(auto l=dynamic_cast<FlatList*>(child))list=l;
+    ASSERT_NE(nullptr,list);
+    ASSERT_EQ(4u,list->GetCount());
+    EXPECT_EQ("Mine",list->GetString(0)) << "the local scripts first";
+    EXPECT_EQ(wxGETTEXT_IN_CONTEXT("automation script","Local"),list->GetRow(0).note); EXPECT_FALSE(list->GetRow(0).warn);
+    int good=1, careful=2, broken=3;
+    EXPECT_EQ("Good",list->GetString(good)); EXPECT_FALSE(list->GetRow(good).warn);
+    EXPECT_EQ(_("Loaded with warnings"),list->GetRow(careful).note); EXPECT_TRUE(list->GetRow(careful).warn);
+    EXPECT_TRUE(list->GetRow(broken).warn);
+    EXPECT_EQ(wxGETTEXT_IN_CONTEXT("automation script","Global"),list->GetRow(good).note);
+    EXPECT_TRUE(list->GetRow(good).detail.EndsWith(L"— Does good over two lines")) << list->GetRow(good).detail;
+    EXPECT_EQ(_("Failed to load"),list->GetRow(broken).note);
+    auto remove=button_labelled(dialog,_("&Remove")), reload=button_labelled(dialog,_("Re&load"));
+    ASSERT_NE(nullptr,remove); ASSERT_NE(nullptr,reload);
+    EXPECT_FALSE(reload->IsEnabled());
+    list->Click(good);
+    EXPECT_TRUE(reload->IsEnabled()); EXPECT_FALSE(remove->IsEnabled()) << "a global script is not removed here";
+    list->Click(0);
+    EXPECT_TRUE(remove->IsEnabled());
+    remove->Press();
+    EXPECT_EQ(3u,list->GetCount()); EXPECT_TRUE(c->local_scripts->GetScripts().empty());
+    EXPECT_EQ(_("&Close"),dynamic_cast<FlatButton*>(dialog->FindWindow(wxID_CANCEL))->GetLabel());
+    dialog->Close();
+    EXPECT_FALSE(dialog->IsShown());
+}

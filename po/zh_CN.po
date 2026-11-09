@@ -9766,3 +9766,17 @@ msgstr "没有自动保存的文件"
 #: ../src/dialog_attachments.cpp
 msgid "No attachments"
 msgstr "没有附件"
+
+#: ../src/dialog_automation.cpp
+msgid "No scripts loaded"
+msgstr "没有已载入的脚本"
+
+#: ../src/dialog_automation.cpp
+msgctxt "automation script"
+msgid "Global"
+msgstr "全局"
+
+#: ../src/dialog_automation.cpp
+msgctxt "automation script"
+msgid "Local"
+msgstr "本地"
