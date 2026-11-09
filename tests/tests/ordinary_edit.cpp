@@ -6229,3 +6229,27 @@ TEST_F(audio_edit, level_tracks_set_zoom_and_volume_with_link_and_reset) {
     EXPECT_EQ("+18dB",AudioLevels::VolumeText(100));
     EXPECT_EQ("-18dB",AudioLevels::VolumeText(25));
 }
+TEST_F(ordinary_edit, text_import_names_its_fields_and_saves_them) {
+    OPT_SET("Tool/Import/Text/Actor Separator")->SetString(":");
+    OPT_SET("Tool/Import/Text/Comment Starter")->SetString("#");
+    OPT_SET("Tool/Import/Text/Include Blank")->SetBool(false);
+    bool ran=false, accepted=false;
+    {
+        RunModal hook(_("Text import options"),[&](wxDialog *dialog){
+            auto separator=fields_named(dialog,_("Actor separator")), comment=fields_named(dialog,_("Comment starter"));
+            ASSERT_EQ(1u,separator.size()); ASSERT_EQ(1u,comment.size());
+            EXPECT_EQ(":",separator[0]->GetValue()); EXPECT_EQ("#",comment[0]->GetValue());
+            FlatCheck *blank=nullptr; for(auto child:descendants(dialog))if(auto k=dynamic_cast<FlatCheck*>(child))blank=k;
+            ASSERT_NE(nullptr,blank); EXPECT_FALSE(blank->GetValue());
+            separator[0]->SetValue("|"); blank->Toggle();
+            EXPECT_EQ(nullptr,dynamic_cast<wxButton*>(dialog->FindWindow(wxID_OK))) << "the foot buttons are flat";
+            ran=true;
+            button(dialog,wxID_OK);
+        });
+        accepted=ShowPlainTextImportDialog();
+    }
+    EXPECT_TRUE(ran); EXPECT_TRUE(accepted);
+    EXPECT_EQ("|",OPT_GET("Tool/Import/Text/Actor Separator")->GetString());
+    EXPECT_EQ("#",OPT_GET("Tool/Import/Text/Comment Starter")->GetString());
+    EXPECT_TRUE(OPT_GET("Tool/Import/Text/Include Blank")->GetBool());
+}

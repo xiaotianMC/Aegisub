@@ -27,51 +27,52 @@
 //
 // Aegisub Project http://www.aegisub.org/
 
+#include "compat.h"
+#include "flat_controls.h"
+#include "flat_dialog.h"
 #include "options.h"
-#include "validators.h"
+#include "theme.h"
 
-#include <wx/checkbox.h>
 #include <wx/dialog.h>
 #include <wx/sizer.h>
-#include <wx/stattext.h>
 #include <wx/textctrl.h>
-#include <wx/valgen.h>
 
 /// A simple dialog to let the user select the format of a plain text file
 /// being imported into Aegisub
 bool ShowPlainTextImportDialog() {
-	auto seperator = OPT_GET("Tool/Import/Text/Actor Separator")->GetString();
-	auto comment = OPT_GET("Tool/Import/Text/Comment Starter")->GetString();
-	auto include_blank = OPT_GET("Tool/Import/Text/Include Blank")->GetBool();
-
 	wxDialog d(nullptr, -1, _("Text import options"));
+	theme::UseSurface(&d);
 
-	auto make_text_ctrl = [&](std::string *var) {
-		return new wxTextCtrl(&d, -1, "", wxDefaultPosition, wxDefaultSize, 0, StringBinder(var));
+	// Each mark named in its field
+	auto make_field = [&](wxString const& name, std::string const& value) {
+		auto frame = new FlatFrame(&d, flat::WithoutColon(name));
+		auto text = new wxTextCtrl(frame, -1, to_wx(value), wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+		frame->SetContent(text, 60);
+		return std::make_pair(frame, text);
 	};
+	auto [separator_frame, separator] = make_field(_("Actor separator:"), OPT_GET("Tool/Import/Text/Actor Separator")->GetString());
+	auto [comment_frame, comment] = make_field(_("Comment starter:"), OPT_GET("Tool/Import/Text/Comment Starter")->GetString());
+	auto include_blank = new FlatCheck(&d, _("Include blank lines"));
+	include_blank->SetValue(OPT_GET("Tool/Import/Text/Include Blank")->GetBool());
 
-	auto fg = new wxFlexGridSizer(2, 5, 5);
-	fg->Add(new wxStaticText(&d, -1, _("Actor separator:")), 0, wxALIGN_CENTRE_VERTICAL);
-	fg->Add(make_text_ctrl(&seperator), 0, wxEXPAND);
-	fg->Add(new wxStaticText(&d, -1, _("Comment starter:")), 0, wxALIGN_CENTRE_VERTICAL);
-	fg->Add(make_text_ctrl(&comment), 0, wxEXPAND);
+	int gap = d.FromDIP(10), row = d.FromDIP(6);
+	auto fields = new wxBoxSizer(wxHORIZONTAL);
+	fields->Add(separator_frame, wxSizerFlags(1).Expand());
+	fields->Add(comment_frame, wxSizerFlags(1).Expand().Border(wxLEFT, row));
 
 	auto main_sizer = new wxBoxSizer(wxVERTICAL);
-	main_sizer->Add(fg, 1, wxALL|wxEXPAND, 5);
-	main_sizer->Add(new wxCheckBox(&d, -1, _("Include blank lines"), wxDefaultPosition, wxDefaultSize, 0, wxGenericValidator(&include_blank)), 0, wxLEFT|wxRIGHT|wxALIGN_RIGHT, 5);
-	main_sizer->Add(d.CreateSeparatedButtonSizer(wxOK|wxCANCEL), 0, wxALL|wxEXPAND, 5);
+	main_sizer->Add(fields, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxTOP, gap));
+	main_sizer->Add(include_blank, wxSizerFlags().Border(wxLEFT | wxRIGHT | wxTOP, gap));
+	main_sizer->Add(new flat::DialogButtons(&d, wxOK | wxCANCEL), wxSizerFlags().Expand().Border(wxALL, gap));
 	d.SetSizerAndFit(main_sizer);
+	d.CenterOnParent();
 
 	d.Bind(wxEVT_BUTTON, [&](wxCommandEvent&) {
-		d.TransferDataFromWindow();
-
-		OPT_SET("Tool/Import/Text/Actor Separator")->SetString(seperator);
-		OPT_SET("Tool/Import/Text/Comment Starter")->SetString(comment);
-		OPT_SET("Tool/Import/Text/Include Blank")->SetBool(include_blank);
-
+		OPT_SET("Tool/Import/Text/Actor Separator")->SetString(from_wx(separator->GetValue()));
+		OPT_SET("Tool/Import/Text/Comment Starter")->SetString(from_wx(comment->GetValue()));
+		OPT_SET("Tool/Import/Text/Include Blank")->SetBool(include_blank->GetValue());
 		d.EndModal(wxID_OK);
 	}, wxID_OK);
-
 
 	return d.ShowModal() == wxID_OK;
 }
