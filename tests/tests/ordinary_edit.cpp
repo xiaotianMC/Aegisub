@@ -1154,8 +1154,13 @@ TEST_F(ordinary_edit, visual_tools_sit_to_the_right_of_the_video) {
         video_box->SetSize(0, 0, 600, 400);
         video_box->Layout();
         auto x_in_box = [&](wxWindow *w) { int x = 0; for (; w && w != video_box; w = w->GetParent()) x += w->GetPosition().x; return x; };
-        for (auto bar : bars)
+        for (auto bar : bars) {
             EXPECT_GE(x_in_box(bar), x_in_box(display) + display->GetSize().x) << "detached: " << detached;
+            // No spare width on one side of the tools only
+            if (!bar->IsShown()) continue;
+            int left = bar->GetPosition().x, right = bar->GetParent()->GetClientSize().x - left - bar->GetSize().x;
+            EXPECT_LE(std::abs(left - right), 1) << left << " / " << right;
+        }
         if (!detached) {
             // Narrower than the controls below: in the middle of its block,
             // not leaving the whole gap between it and the tools

@@ -159,8 +159,10 @@ VideoBox::VideoBox(wxWindow *parent, bool isDetached, agi::Context *context)
 	videoDisplay->MoveBeforeInTabOrder(videoSlider);
 
 	auto toolbarSizer = new wxBoxSizer(wxVERTICAL);
-	toolbarSizer->Add(visualToolBar, wxSizerFlags(1));
-	toolbarSizer->Add(visualSubToolBar, wxSizerFlags());
+	// The column is as wide as the wider of the two: the other sits in its
+	// middle, not at its left with the spare width to its right
+	toolbarSizer->Add(visualToolBar, wxSizerFlags(1).CenterHorizontal());
+	toolbarSizer->Add(visualSubToolBar, wxSizerFlags().CenterHorizontal());
 	toolsArea->SetSizer(toolbarSizer);
 	// Toolbars have a colour of their own in some themes: the block's instead
 	for (wxWindow *bar : {static_cast<wxWindow*>(mainToolbar), static_cast<wxWindow*>(optionsToolbar), static_cast<wxWindow*>(visualToolBar), static_cast<wxWindow*>(visualSubToolBar)})

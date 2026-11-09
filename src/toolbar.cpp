@@ -321,6 +321,13 @@ namespace {
 			}
 
 			Realize();
+#ifdef __WXMSW__
+			// A vertical bar on Windows is a little wider than its buttons,
+			// which sit at its left, leaving a gap to their right: it is
+			// made as wide as they are
+			if (HasFlag(wxTB_VERTICAL) && GetToolsCount())
+				SetMinSize(wxSize(GetToolSize().x, -1));
+#endif
 		}
 
 		void Connect() {
