@@ -18,6 +18,7 @@
 #include "time_unit_toggle.h"
 #include "flat_controls.h"
 #include "base_grid.h"
+#include "auto4_base.h"
 #include "options.h"
 #include "command/command.h"
 #include "include/aegisub/hotkey.h"
@@ -6426,3 +6427,29 @@ TEST_F(ordinary_edit, attachments_list_names_groups_and_sizes) {
     EXPECT_TRUE(ran);
     EXPECT_TRUE(LiveRead(*c).Attachments.empty());
 }
+/// A script as the automation manager sees one, loaded with no engine
+struct ListedScript final : Automation4::Script {
+    std::string name, description; bool loaded; std::vector<std::string> warnings;
+    ListedScript(std::string name, std::string description, bool loaded=true, std::vector<std::string> warnings={})
+    : Script(agi::fs::path(name+".lua")), name(std::move(name)), description(std::move(description)), loaded(loaded), warnings(std::move(warnings)) { }
+    void Reload() override { }
+    std::string GetName() const override { return name; }
+    std::string GetDescription() const override { return description; }
+    std::string GetAuthor() const override { return ""; }
+    std::string GetVersion() const override { return ""; }
+    bool GetLoadedState() const override { return loaded; }
+    std::vector<std::string> GetWarnings() const override { return warnings; }
+    std::vector<cmd::Command*> GetMacros() const override { return {}; }
+    std::vector<Automation4::ExportFilter*> GetFilters() const override { return {}; }
+};
+/// The global manager while it lives: a script that loads, one that loaded
+/// with warnings and one that did not
+struct AutomationScripts {
+    AutomationScripts() {
+        config::global_scripts=new Automation4::AutoloadScriptManager("?user/no-autoload-here");
+        config::global_scripts->Add(std::make_unique<ListedScript>("Good","Does good\nover two lines"));
+        config::global_scripts->Add(std::make_unique<ListedScript>("Careful","",true,std::vector<std::string>{"careful"}));
+        config::global_scripts->Add(std::make_unique<ListedScript>("Broken","",false));
+    }
+    ~AutomationScripts() { wxTheApp->ProcessIdle(); delete config::global_scripts; config::global_scripts=nullptr; }
+};

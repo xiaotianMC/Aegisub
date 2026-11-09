@@ -354,10 +354,24 @@ void FlatList::OnPaint(wxPaintEvent &) {
 		int right = box.GetRight() - FromDIP(8);
 		if (!row.note.empty()) {
 			dc.SetFont(font);
-			dc.SetTextForeground(p.dim);
 			wxSize extent = dc.GetTextExtent(row.note);
-			dc.DrawText(row.note, right - extent.x, box.y + (box.height - extent.y) / 2);
-			right -= extent.x + FromDIP(10);
+			if (row.warn) {
+				// As FlatBadge has a warning: a pill in the error colour
+				wxColour error = theme::Colour("Colour/Subtitle/Syntax/Background/Error");
+				int pad = FromDIP(6);
+				wxRect pill(right - extent.x - pad, box.y + (box.height - extent.y) / 2 - FromDIP(2), extent.x + 2 * pad, extent.y + FromDIP(4));
+				dc.SetPen(*wxTRANSPARENT_PEN);
+				dc.SetBrush(wxBrush(error));
+				dc.DrawRoundedRectangle(pill, pill.height / 2.);
+				dc.SetTextForeground(theme::Mix(error, p.text, 0.9));
+				dc.DrawText(row.note, right - extent.x, box.y + (box.height - extent.y) / 2);
+				right -= extent.x + pad + FromDIP(10);
+			}
+			else {
+				dc.SetTextForeground(p.dim);
+				dc.DrawText(row.note, right - extent.x, box.y + (box.height - extent.y) / 2);
+				right -= extent.x + FromDIP(10);
+			}
 		}
 		int top = two ? box.y + (box.height - line * 2 - FromDIP(2)) / 2 : box.y + (box.height - line) / 2;
 		dc.SetFont(font);

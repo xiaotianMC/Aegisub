@@ -25,6 +25,7 @@ public:
 		wxString text;
 		wxString detail; ///< The dim line under the text
 		wxString note;   ///< The dim words at the right
+		bool warn = false; ///< The note a warning, drawn as a warning badge is
 	};
 
 private:
