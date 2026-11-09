@@ -61,6 +61,7 @@
 - **多项选择**（`dialog_selected_choices.cpp`，`GetSelectedChoices`，导入样式时选样式用）：不再借用 `wxMultiChoiceDialog`；说明文字下是可勾选的 `FlatList`，勾上传入的选择；全选、全不选在底部左侧，右侧取消、确定。返回勾选的项。
 - **进度**（`dialog_progress.cpp`）：对话框底色，标题、进度条、灰色的说明、取消按钮（`FlatButton`，Esc 按它）；取消后按钮显示“正在取消...”并停用；任务写了日志时不自动关闭，按钮改为“关闭”，下面显示日志。进度条仍是系统的 `wxGauge`。
 - **版本检查结果**（`dialog_version_check.cpp`）：每个更新用小节标题写名称，下面是说明（对话框底色上的只读文字）和链接，去掉分隔线；“自动检查更新”是勾选框；底部“一周后再提醒”（有更新时）和“关闭”。只能通过联网检查打开，没有自动测试。
+- **选择颜色**（`dialog_colorpicker.cpp`）：去掉四个静态框。左边“色谱”小节：模式是五段开关（RGB/R、RGB/G、RGB/B、HSL/L、HSV/H，选中的模式照旧记住），右侧是颜色预览；下面色谱和两个滑条不变。右边“RGB 颜色”“HSL 颜色”“HSV 颜色”三个小节，每个值是 0–255 的数字框（名称在框内，可以输入、滚轮、拖动）；ASS 和 HTML 代码是带名称的输入框，和透明度一行。吸管和最近用过的颜色在下面；底部帮助、取消、确定。
 
 ## 测试
 
@@ -92,3 +93,4 @@
 - `ordinary_edit.kanji_timer_is_drawn_choices_checks_and_flat_buttons`：两个样式下拉框列出样式、没有系统按钮、“接受此行”是强调色、Esc 离开且不应用。
 - `ordinary_edit.selected_choices_are_ticked_in_a_flat_list`：传入的选择已勾、全选、全不选、确定返回勾选的项、取消返回 -1。
 - `ordinary_edit.progress_cancels_with_a_flat_button_and_stays_for_its_log`：Esc 按取消、任务看到取消后对话框自己结束并抛出取消；写了日志时留着、按钮变“关闭”。
+- `ordinary_edit.color_picker_is_drawn_number_fields_a_mode_switch_and_code_fields`：模式开关、输入数字更新代码、输入代码更新数字、选模式后保存、确定返回颜色。

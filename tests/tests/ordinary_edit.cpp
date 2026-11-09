@@ -6626,3 +6626,31 @@ TEST_F(ordinary_edit, progress_cancels_with_a_flat_button_and_stays_for_its_log)
     }
     EXPECT_TRUE(ran);
 }
+TEST_F(ordinary_edit, color_picker_is_drawn_number_fields_a_mode_switch_and_code_fields) {
+    OPT_SET("Tool/Colour Picker/Mode")->SetInt(0);
+    bool ran=false;
+    agi::Color chosen;
+    {
+        RunModal hook("Select Color",[&](wxDialog *dialog){
+            FlatSwitch *mode=nullptr; for(auto child:descendants(dialog))if(auto sw=dynamic_cast<FlatSwitch*>(child))mode=sw;
+            ASSERT_NE(nullptr,mode); EXPECT_EQ(5u,mode->GetCount()); EXPECT_EQ(0,mode->GetSelection());
+            auto red=fields_named(dialog,flat::WithoutColon(_("Red:"))), ass=fields_named(dialog,"ASS"), html=fields_named(dialog,"HTML");
+            ASSERT_EQ(1u,red.size()); ASSERT_EQ(1u,ass.size()); ASSERT_EQ(1u,html.size());
+            EXPECT_EQ(2u,fields_named(dialog,flat::WithoutColon(_("Hue:"))).size()) << "HSL's and HSV's";
+            EXPECT_EQ(L"&H0000FF&",ass[0]->GetValue());
+            red[0]->SetValue("128");
+            EXPECT_EQ(L"#800000",html[0]->GetValue().Upper()) << "a number typed updates the codes";
+            ass[0]->SetValue("&H00FF00&");
+            EXPECT_EQ("0",red[0]->GetValue()) << "a code typed updates the numbers";
+            EXPECT_EQ("255",fields_named(dialog,flat::WithoutColon(_("Green:")))[0]->GetValue());
+            mode->Choose(3);
+            EXPECT_EQ(3,OPT_GET("Tool/Colour Picker/Mode")->GetInt()) << "the mode chosen kept";
+            EXPECT_NE(nullptr,dynamic_cast<FlatButton*>(dialog->FindWindow(wxID_HELP)));
+            ran=true;
+            button(dialog,wxID_OK);
+        });
+        GetColorFromUser(window,agi::Color(255,0,0),false,[&](agi::Color colour){ chosen=colour; });
+    }
+    EXPECT_TRUE(ran);
+    EXPECT_EQ(agi::Color(0,255,0),chosen);
+}
