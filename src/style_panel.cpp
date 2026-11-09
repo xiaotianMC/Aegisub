@@ -29,6 +29,7 @@
 #include "libresrc/libresrc.h"
 
 #include <algorithm>
+#include <boost/scope_exit.hpp>
 #include <cmath>
 #include <functional>
 #include <optional>
@@ -147,7 +148,9 @@ StylePanel::StylePanel(wxWindow *parent, agi::Context *c)
 	auto &shape = AddSection(outer, "shape", _("Shape"));
 	row = new wxBoxSizer(wxHORIZONTAL);
 	row->Add(Add<Field>("shape_width", _("W"), "", false, _("Width of the shape: its points are scaled, so no \\fscx is needed")), 1, wxEXPAND);
-	row->Add(Add<Field>("shape_height", _("H"), "", false, _("Height of the shape: its points are scaled, so no \\fscy is needed")), 1, wxEXPAND | wxLEFT, gap);
+	row->Add(Add<Toggle>("shape_lock", own_icon("toggle_audio_link"),
+		_("Keep the shape's proportions: changing its width changes its height with it, and the other way round")), 0, wxALIGN_CENTER_VERTICAL | wxLEFT, gap / 3);
+	row->Add(Add<Field>("shape_height", _("H"), "", false, _("Height of the shape: its points are scaled, so no \\fscy is needed")), 1, wxEXPAND | wxLEFT, gap / 3);
 	shape.body->Add(row, 0, wxEXPAND);
 
 	auto &text = AddSection(outer, "text", _("Text"));
@@ -365,9 +368,25 @@ void StylePanel::BindEditing() {
 
 	auto shape_number = [this](std::string const& name, bool width) {
 		static_cast<Field*>(parts[name])->SetNumberHandler({0.1, 100000, 1}, [this, width](double v, bool final) {
-			drag_commit = width ? ResizeShape(c, v, std::nullopt, drag_commit) : ResizeShape(c, std::nullopt, v, drag_commit);
+			std::optional<double> w, h;
+			(width ? w : h) = v;
+			// Locked: the other side follows, at the proportions it had
+			// before the change began
+			if (OPT_GET("App/Style Panel/Lock Shape Proportions")->GetBool() && shape_aspect > 0) {
+				if (width) h = v / shape_aspect;
+				else w = v * shape_aspect;
+			}
+			resizing_shape = true;
+			BOOST_SCOPE_EXIT_ALL(this) { resizing_shape = false; };
+			drag_commit = ResizeShape(c, w, h, drag_commit);
 			if (final) drag_commit = -1;
 		});
+	};
+	toggle("shape_lock")->SetState(OPT_GET("App/Style Panel/Lock Shape Proportions")->GetBool() ? State::On : State::Off);
+	toggle("shape_lock")->on_click = [this, toggle] {
+		bool on = !OPT_GET("App/Style Panel/Lock Shape Proportions")->GetBool();
+		OPT_SET("App/Style Panel/Lock Shape Proportions")->SetBool(on);
+		toggle("shape_lock")->SetState(on ? State::On : State::Off);
 	};
 	shape_number("shape_width", true);
 	shape_number("shape_height", false);
@@ -823,6 +842,10 @@ void StylePanel::UpdateNow() {
 	SetSectionVisible("shape", size.has_value());
 	static_cast<Field*>(parts["shape_width"])->SetNumber(size ? size->first : 0, size.has_value());
 	static_cast<Field*>(parts["shape_height"])->SetNumber(size ? size->second : 0, size.has_value());
+	// The proportions a locked resize keeps: the shape's own, not those its
+	// rounded sizes come to while it is being resized
+	if (!resizing_shape && drag_commit < 0)
+		shape_aspect = size && size->first > 0 && size->second > 0 ? size->first / size->second : 0;
 }
 
 void StylePanel::Display(std::vector<StyleLook> const& looks, wxString const& scope) {

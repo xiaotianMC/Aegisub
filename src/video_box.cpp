@@ -181,7 +181,9 @@ VideoBox::VideoBox(wxWindow *parent, bool isDetached, agi::Context *context)
 	videoBottomSizer->Add(options);
 
 	auto VideoSizer = new wxBoxSizer(wxVERTICAL);
-	VideoSizer->Add(videoDisplay, 1, isDetached ? wxEXPAND : 0, 0);
+	// A video narrower than the controls below sits in the middle of its
+	// block, not at the left with a gap between it and the visual tools
+	VideoSizer->Add(videoDisplay, 1, isDetached ? wxEXPAND : wxALIGN_CENTER_HORIZONTAL, 0);
 	VideoSizer->Add(videoSlider, 0, wxEXPAND | wxTOP, gap);
 	VideoSizer->Add(videoBottomSizer, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, gap);
 	videoArea->SetSizer(VideoSizer);

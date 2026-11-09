@@ -23,6 +23,7 @@
 		"Save UI State" : true,
 		"Show Toolbar" : true,
 		"Style Panel" : {
+			"Lock Shape Proportions" : false,
 			"Show" : true,
 			"Width" : 280
 		},

@@ -116,6 +116,10 @@ private:
 	int wheel_commit = -1; ///< The undo step wheel turns close together amend
 	wxLongLong last_wheel = 0;
 	bool box_style = false; ///< The lines' styles draw a box: no outline
+	/// The shape's width over its height, kept while its proportions are
+	/// locked; taken again when the shape changes other than by its size
+	double shape_aspect = 0;
+	bool resizing_shape = false;
 
 	struct Section {
 		Header *header;

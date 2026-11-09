@@ -8,6 +8,7 @@
 #include "ass_attachment.h"
 #include "ass_info.h"
 #include "ass_style.h"
+#include "subs_preview.h"
 #include "subtitle_project_access.h"
 #include "subtitle_row_list_edit.h"
 #include "selection_controller.h"
@@ -1149,6 +1150,14 @@ TEST_F(ordinary_edit, visual_tools_sit_to_the_right_of_the_video) {
         auto x_in_box = [&](wxWindow *w) { int x = 0; for (; w && w != video_box; w = w->GetParent()) x += w->GetPosition().x; return x; };
         for (auto bar : bars)
             EXPECT_GE(x_in_box(bar), x_in_box(display) + display->GetSize().x) << "detached: " << detached;
+        if (!detached) {
+            // Narrower than the controls below: in the middle of its block,
+            // not leaving the whole gap between it and the tools
+            auto area = display->GetParent();
+            ASSERT_LT(display->GetSize().x, area->GetSize().x);
+            int left = display->GetPosition().x, right = area->GetSize().x - left - display->GetSize().x;
+            EXPECT_LE(std::abs(left - right), 1) << left << " / " << right;
+        }
         video_box->Destroy();
     }
 }
@@ -3287,6 +3296,27 @@ TEST_F(ordinary_edit, style_panel_resizes_shapes) {
     c->subsController->Undo();EXPECT_NEAR(size->first+20,ShapeSize(c.get())->first,0.01);EXPECT_NEAR(size->second,ShapeSize(c.get())->second,0.01);
     c->subsController->Undo();EXPECT_EQ(text,Text()) << "the whole drag in one step";
     c->subsController->Redo();c->subsController->Redo();EXPECT_EQ(changed,Text());
+    // Locked, the other side follows at the shape's proportions, the drag
+    // still one step; the rounded sizes shown during it do not drift them
+    c->subsController->Undo();c->subsController->Undo();ASSERT_EQ(text,Text());
+    BOOST_SCOPE_EXIT_ALL(&){OPT_SET("App/Style Panel/Lock Shape Proportions")->SetBool(false);};
+    panel->UpdateNow();
+    panel->Press("shape_lock");
+    EXPECT_TRUE(OPT_GET("App/Style Panel/Lock Shape Proportions")->GetBool());
+    for(int step=1;step<=6;++step){panel->EnterNumber("shape_width",size->first+step*7.3,false);panel->UpdateNow();}
+    panel->EnterNumber("shape_width",size->first*3,true);panel->UpdateNow();
+    EXPECT_NEAR(size->first*3,ShapeSize(c.get())->first,0.01);
+    EXPECT_NEAR(size->second*3,ShapeSize(c.get())->second,0.01) << "the height follows";
+    panel->EnterNumber("shape_height",size->second,true);panel->UpdateNow();
+    EXPECT_NEAR(size->first,ShapeSize(c.get())->first,0.01) << "and the width follows the height";
+    EXPECT_NEAR(size->second,ShapeSize(c.get())->second,0.01);
+    c->subsController->Undo();c->subsController->Undo();EXPECT_EQ(text,Text()) << "each drag one step";
+    panel->UpdateNow();
+    panel->Press("shape_lock");
+    EXPECT_FALSE(OPT_GET("App/Style Panel/Lock Shape Proportions")->GetBool());
+    panel->EnterNumber("shape_width",size->first*2,true);
+    EXPECT_NEAR(size->second,ShapeSize(c.get())->second,0.01) << "unlocked, the height stays";
+    c->subsController->Undo();ASSERT_EQ(text,Text());
     // Scale tags are baked into the points
     {auto write=c->subtitleAccess->TryWrite();auto& row=LiveWriteForTest(*c).Events.front();
      row.Text="{\\an7\\pos(10,10)\\fscx200\\p1}m 0 0 l 50 0 50 20 0 20{\\p0}";
@@ -6808,4 +6838,31 @@ TEST_F(ordinary_edit, color_picker_is_drawn_number_fields_a_mode_switch_and_code
     }
     EXPECT_TRUE(ran);
     EXPECT_EQ(agi::Color(0,255,0),chosen);
+}
+
+TEST(style_preview, backdrop_keeps_the_text_visible) {
+    agi::Color const blue_grey(125,153,176); // the default preview colour
+    AssStyle s;
+    // White text with a black outline shows on anything: the chosen colour
+    s.primary=agi::Color(255,255,255);s.outline=agi::Color(0,0,0);s.outline_w=2;
+    EXPECT_EQ(blue_grey,PreviewBackdrop(s,blue_grey));
+    // Black text, black outline: a light background instead
+    s.primary=agi::Color(0,0,0);
+    auto light=PreviewBackdrop(s,blue_grey);
+    EXPECT_NE(blue_grey,light);
+    EXPECT_GT(light.r+light.g+light.b,600);
+    // ... but a light colour chosen is kept
+    EXPECT_EQ(agi::Color(250,250,250),PreviewBackdrop(s,agi::Color(250,250,250)));
+    // Black text without an outline, the same
+    s.outline_w=0;
+    EXPECT_EQ(light,PreviewBackdrop(s,blue_grey));
+    // A transparent fill: the outline is the text's colour
+    s.primary=agi::Color(0,0,0,255);s.outline=agi::Color(255,255,255);s.outline_w=2;
+    EXPECT_EQ(agi::Color(0,0,0),PreviewBackdrop(s,agi::Color(0,0,0))) << "a white outline shows on black";
+    s.outline=agi::Color(0,0,0);
+    EXPECT_NE(agi::Color(0,0,0),PreviewBackdrop(s,agi::Color(0,0,0))) << "a black one does not";
+    // White text alone on white: a dark background
+    s.primary=agi::Color(255,255,255);s.outline_w=0;
+    auto dark=PreviewBackdrop(s,agi::Color(255,255,255));
+    EXPECT_LT(dark.r+dark.g+dark.b,200);
 }

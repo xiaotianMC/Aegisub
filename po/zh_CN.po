@@ -9059,6 +9059,10 @@ msgid "H"
 msgstr "高"
 
 #: src/style_panel.cpp
+msgid "Keep the shape's proportions: changing its width changes its height with it, and the other way round"
+msgstr "保持图形比例：改宽度时高度随之等比变化，改高度时宽度也一样"
+
+#: src/style_panel.cpp
 msgid "Width of the shape: its points are scaled, so no \\fscx is needed"
 msgstr "图形的宽度：直接缩放图形的各个点，不需要 \\fscx"
 
