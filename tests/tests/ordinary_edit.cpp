@@ -6253,3 +6253,46 @@ TEST_F(ordinary_edit, text_import_names_its_fields_and_saves_them) {
     EXPECT_EQ("#",OPT_GET("Tool/Import/Text/Comment Starter")->GetString());
     EXPECT_TRUE(OPT_GET("Tool/Import/Text/Include Blank")->GetBool());
 }
+TEST_F(ordinary_edit, dummy_video_follows_its_size_shortcuts_and_frame_rate) {
+    OPT_SET("Video/Dummy/Last/Width")->SetInt(1280);
+    OPT_SET("Video/Dummy/Last/Height")->SetInt(720);
+    OPT_SET("Video/Dummy/FPS String")->SetString("25");
+    OPT_SET("Video/Dummy/Last/Length")->SetInt(250);
+    OPT_SET("Video/Dummy/Pattern")->SetBool(false);
+    bool ran=false;
+    std::string made;
+    {
+        RunModal hook(_("Dummy video options"),[&](wxDialog *dialog){
+            FlatChoice *shortcuts=nullptr; FlatCheck *pattern=nullptr; wxTextCtrl *fps=nullptr;
+            for(auto child:descendants(dialog)){
+                if(auto ch=dynamic_cast<FlatChoice*>(child))shortcuts=ch;
+                if(auto k=dynamic_cast<FlatCheck*>(child))pattern=k;
+                if(auto t=dynamic_cast<wxTextCtrl*>(child);t && t->GetValue()=="25")fps=t;
+            }
+            ASSERT_NE(nullptr,shortcuts); ASSERT_NE(nullptr,pattern); ASSERT_NE(nullptr,fps);
+            auto width=fields_named(dialog,wxGETTEXT_IN_CONTEXT("resolution","Width")), height=fields_named(dialog,wxGETTEXT_IN_CONTEXT("resolution","Height"));
+            ASSERT_EQ(1u,width.size()); ASSERT_EQ(1u,height.size());
+            EXPECT_TRUE(shortcuts->GetStringSelection().StartsWith(L"1280×720"));
+            width[0]->SetValue("640"); height[0]->SetValue("480");
+            EXPECT_TRUE(shortcuts->GetStringSelection().StartsWith(L"640×480")) << "typing a size shows its shortcut";
+            width[0]->SetValue("641");
+            EXPECT_EQ(-1,shortcuts->GetSelection()) << "a size with no shortcut shows none";
+            shortcuts->Choose(7);
+            EXPECT_EQ("1280",width[0]->GetValue()); EXPECT_EQ("720",height[0]->GetValue());
+            auto ok=dynamic_cast<FlatButton*>(dialog->FindWindow(wxID_OK)); ASSERT_NE(nullptr,ok);
+            fps->SetValue("");
+            EXPECT_FALSE(ok->IsEnabled()) << "no frame rate, nothing to make";
+            fps->SetValue("30");
+            EXPECT_TRUE(ok->IsEnabled());
+            pattern->Toggle();
+            ran=true;
+            button(dialog,wxID_OK);
+        });
+        made=CreateDummyVideo(window);
+    }
+    EXPECT_TRUE(ran);
+    EXPECT_TRUE(made.starts_with("?dummy:30:250:1280:720:")) << made;
+    EXPECT_TRUE(made.ends_with(":c")) << made;
+    EXPECT_EQ(1280,OPT_GET("Video/Dummy/Last/Width")->GetInt());
+    EXPECT_TRUE(OPT_GET("Video/Dummy/Pattern")->GetBool());
+}

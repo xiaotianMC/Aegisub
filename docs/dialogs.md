@@ -47,6 +47,7 @@
 - **字体收集**（`dialog_fonts_collector.cpp`）：动作是下拉框；字幕文件没有所在文件夹时不列出“复制到字幕文件所在文件夹”（下拉框不能单项停用）。目标是带名称的框加“浏览”，下面一行灰色说明；日志在小节标题下；底部“开始！”是强调色，取消改名“关闭”。
 - **导出**（`dialog_export.cpp`、`ass_exporter.cpp`、`export_framerate.cpp`）：滤镜是可勾选的 `FlatList`，每个滤镜的说明作为副文字写在名称下（不再有单独的说明框），上移 / 下移连同勾选一起移动；文本编码是下拉框。勾选的滤镜的设置在右侧，标题是小节标题；帧率转换的设置是输入帧率框加“从视频”、输出用“可变 / 固定”开关加帧率框（可变时帧率框停用）、反向转换勾选框。
 - **文本导入**（`dialog_text_import.cpp`）：说话人分隔符和注释前缀两个带名称的框并排，下面是“包括空白行”勾选框。
+- **虚拟视频**（`dialog_dummy_video.cpp`）：灰色名称在左；分辨率预设是下拉框，下面“宽 × 高”两个数字框，改数字时预设跟着显示对应的一项（没有对应的就空着）；颜色按钮和棋盘格勾选框一行；帧率框；时长是帧数框，后面灰字写出换算的时长。帧率无法解析时确定不可用。
 
 ## 测试
 
@@ -66,3 +67,4 @@
 - `flat_text.labels_lose_their_colon_however_translated`：半角、全角、没有冒号、带 `&` 的标签；多行合成一行。
 - `ordinary_edit.export_lists_filters_with_their_descriptions`：每个滤镜有说明、勾选后显示它的设置、鼠标停在行上提示全文、移动时勾选跟着走。
 - `ordinary_edit.text_import_names_its_fields_and_saves_them`：两个框和勾选框载入设置，确定后保存。
+- `ordinary_edit.dummy_video_follows_its_size_shortcuts_and_frame_rate`：输入尺寸时预设跟着变、没有对应预设时空着、选预设填入尺寸、帧率为空时确定不可用、确定后生成的文件名和保存的设置。
