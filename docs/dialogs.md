@@ -22,6 +22,8 @@
   - 有副文字的行，鼠标停在上面时提示里是这一行的全文（文字和副文字），副文字太长被截断时可以看全；离开后恢复列表自己的提示。
 - **分段开关** `FlatSwitch`（`src/flat_controls.{h,cpp}`）：代替单选按钮和 `wxRadioBox`。一排等宽的段，选中的一段用强调色填充；方向键逐段移动，点击不抢焦点；单段可以停用（变暗、点不动）、带提示；Alt + 段标签的下划线字母选中它。`Choose` 像用户那样选（调 `on_choose`），`SetSelection` 不调。
 - 勾选框 `FlatCheck` 的标签和按钮一样可以带 `&`，Alt + 该字母勾选；标签里的 `&` 画的时候去掉（中文的“延后(&W)”画成“延后(W)”）。
+- 文字小工具（`flat_controls.h`）：`flat::DimLabel` 是灰色标签，换主题时跟着变色；`flat::WithoutColon` 去掉翻译后标签末尾的冒号（半角或全角）和空格，用于把旧的“名称：”标签放进框内；`flat::OneLine` 把多行说明合成一行，作为列表的副文字。
+- 底部按钮的最小尺寸用 `FlatButton::SetLeastSize`，标签变长（如改名）时按钮跟着变宽。
 - 其余沿用已有的：`FlatFrame`（框内带名称的输入框；名称为空时不画）、`FlatChoice`、`FlatButton`、`flat::SectionTitle`。
 
 ## 规则
@@ -60,4 +62,5 @@
 - `ordinary_edit.resample_is_drawn_number_fields_a_switch_and_even_margins`：宽高比不变时开关停用、改目标宽度后可用、手动时边距可用且对称、取消不改动。
 - `ordinary_edit.spell_checker_is_drawn_fields_a_list_and_buttons`：拼错的词、单击建议填入替换框、Esc 关闭（没有词典时跳过）。
 - `ordinary_edit.fonts_collector_chooses_an_action_from_a_list`：没有字幕文件夹时不列出对应动作、选择动作保存并启用目标框。
+- `flat_text.labels_lose_their_colon_however_translated`：半角、全角、没有冒号、带 `&` 的标签；多行合成一行。
 - `ordinary_edit.export_lists_filters_with_their_descriptions`：每个滤镜有说明、勾选后显示它的设置、鼠标停在行上提示全文、移动时勾选跟着走。
