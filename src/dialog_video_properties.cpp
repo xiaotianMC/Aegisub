@@ -22,14 +22,15 @@
 #include "async_video_provider.h"
 #include "include/aegisub/context.h"
 #include "format.h"
-#include "help_button.h"
+#include "flat_dialog.h"
+#include "flat_list.h"
 #include "options.h"
 #include "resolution_resampler.h"
+#include "theme.h"
 
 #include <wx/choicdlg.h>
 #include <wx/dialog.h>
 #include <wx/intl.h>
-#include <wx/listbox.h>
 #include <wx/msgdlg.h>
 #include <wx/radiobox.h>
 #include <wx/sizer.h>
@@ -134,24 +135,24 @@ bool check_ar_changed(int sx, int sy, int vx, int vy) {
 // Basically a wxGetSingleChoiceIndex that also shows a Help button
 int prompt_choice_dialog(const wxString& message, const wxString& caption, const wxArrayString& choices, int initialSelection, wxWindow *parent) {
 	wxDialog d(parent, -1, caption);
+	theme::UseSurface(&d);
+	int gap = d.FromDIP(10);
+
+	auto lb = new FlatList(&d);
+	lb->Set(choices);
+	lb->SetSelection(initialSelection);
 
 	auto sizer = new wxBoxSizer(wxVERTICAL);
-	sizer->Add(new wxStaticText(&d, -1, message), wxSizerFlags().TripleBorder().Expand());
-
-	auto lb = new wxListBox(&d, -1, wxDefaultPosition, wxDefaultSize, choices, wxLB_ALWAYS_SB);
-
-	sizer->Add(lb, wxSizerFlags().TripleBorder(wxLEFT | wxRIGHT).Proportion(1).Expand());
-	sizer->Add(d.CreateSeparatedSizer(d.CreateStdDialogButtonSizer(wxOK | wxCANCEL | wxHELP)), wxSizerFlags().DoubleBorder().Expand());
-
+	sizer->Add(new wxStaticText(&d, -1, message), wxSizerFlags().Expand().Border(wxALL, gap));
+	sizer->Add(lb, wxSizerFlags(1).Expand().Border(wxLEFT | wxRIGHT, gap));
+	sizer->Add(new flat::DialogButtons(&d, wxOK | wxCANCEL | wxHELP, "Resolution and Matrix"), wxSizerFlags().Expand().Border(wxALL, gap));
 	d.SetSizerAndFit(sizer);
 	d.CenterOnParent();
-
-	lb->SetSelection(initialSelection);
+	lb->SetFocus();
 
 	d.Bind(wxEVT_LISTBOX_DCLICK, [&](wxCommandEvent&) { d.EndModal(lb->GetSelection()); });
 	d.Bind(wxEVT_BUTTON, [&](wxCommandEvent&) { d.EndModal(lb->GetSelection()); }, wxID_OK);
 	d.Bind(wxEVT_BUTTON, [&](wxCommandEvent&) { d.EndModal(-1); }, wxID_CANCEL);
-	d.Bind(wxEVT_BUTTON, [&](wxCommandEvent&) { HelpButton::OpenPage("Resolution and Matrix"); }, wxID_HELP);
 
 	return d.ShowModal();
 }

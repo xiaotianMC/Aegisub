@@ -3269,7 +3269,7 @@ TEST_F(visual_edit, video_properties_prompt_is_detached_and_preserves_resample_u
     auto id=LiveRead(*c).Events.front().Id;auto pointer=&LiveRead(*c).Events.front();auto text=LiveRead(*c).Events.front().Text.get();auto size=LiveRead(*c).Styles.front().fontsize;
     OPT_SET("Video/PlayRes Mismatch")->SetInt(1);
     {RunModal choose("Resolution mismatch",[&](wxDialog* dialog){EXPECT_EQ(text,LiveRead(*c).Events.front().Text.get());EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
-        for(auto child:descendants(dialog))if(auto list=dynamic_cast<wxListBox*>(child))list->SetSelection(1);button(dialog,wxID_OK);
+        for(auto child:descendants(dialog))if(auto list=dynamic_cast<FlatList*>(child))list->SetSelection(1);button(dialog,wxID_OK);
     });UpdateVideoProperties(c.get(),c->project->VideoProvider());}
     EXPECT_EQ(32,LiveRead(*c).GetScriptInfoAsInt("PlayResX"));EXPECT_NE(text,LiveRead(*c).Events.front().Text.get());EXPECT_DOUBLE_EQ(std::round(size*0.4),LiveRead(*c).Styles.front().fontsize);EXPECT_EQ(id,LiveRead(*c).Events.front().Id);EXPECT_EQ(pointer,&LiveRead(*c).Events.front());
     auto changed=LiveRead(*c).Events.front().Text.get();c->subsController->Undo();EXPECT_EQ(changed,LiveRead(*c).Events.front().Text.get());c->subsController->Undo();EXPECT_EQ(text,LiveRead(*c).Events.front().Text.get());EXPECT_EQ(80,LiveRead(*c).GetScriptInfoAsInt("PlayResX"));c->subsController->Redo();EXPECT_EQ(changed,LiveRead(*c).Events.front().Text.get());
@@ -6295,4 +6295,51 @@ TEST_F(ordinary_edit, dummy_video_follows_its_size_shortcuts_and_frame_rate) {
     EXPECT_TRUE(made.ends_with(":c")) << made;
     EXPECT_EQ(1280,OPT_GET("Video/Dummy/Last/Width")->GetInt());
     EXPECT_TRUE(OPT_GET("Video/Dummy/Pattern")->GetBool());
+}
+TEST_F(ordinary_edit, video_details_names_each_detail_in_grey) {
+    c->project->LoadVideo("?dummy:25:250:640:480:64:64:64:");
+    ASSERT_NE(nullptr,c->project->VideoProvider());
+    bool ran=false;
+    {
+        RunModal hook(_("Video Details"),[&](wxDialog *dialog){
+            std::vector<wxTextCtrl*> values; std::vector<wxString> names;
+            for(auto child:descendants(dialog)){
+                if(auto t=dynamic_cast<wxTextCtrl*>(child);t && dynamic_cast<FlatFrame*>(t->GetParent()))values.push_back(t);
+                else if(auto l=dynamic_cast<wxStaticText*>(child))names.push_back(l->GetLabel());
+            }
+            ASSERT_EQ(9u,values.size());
+            for(auto v:values)EXPECT_FALSE(v->IsEditable());
+            EXPECT_EQ(L"640x480 (4:3)",values[2]->GetValue());
+            EXPECT_NE(names.end(),std::find(names.begin(),names.end(),flat::WithoutColon(_("Resolution:")))) << "named without the colon";
+            auto ok=dynamic_cast<FlatButton*>(dialog->FindWindow(wxID_OK)); ASSERT_NE(nullptr,ok); EXPECT_TRUE(ok->IsAccent());
+            ran=true;
+            ok->Press();
+        });
+        ShowVideoDetailsDialog(c.get());
+    }
+    EXPECT_TRUE(ran);
+}
+TEST_F(visual_edit, video_properties_prompt_chooses_from_a_flat_list) {
+    {std::ofstream video("properties.y4m",std::ios::binary);video<<"YUV4MPEG2 W32 H24 F25:1 Ip A1:1 C420jpeg\nFRAME\n";std::string pixels(32*24*3/2,'\x80');video.write(pixels.data(),pixels.size());}
+    OPT_SET("Video/No YCbCr Matrix in Script")->SetInt(0);OPT_SET("Video/PlayRes Mismatch")->SetInt(0);OPT_SET("Video/No LayoutRes in Script")->SetInt(0);OPT_SET("Video/LayoutRes Mismatch")->SetInt(0);
+    AcceptMessages messages;c->project->LoadVideo("properties.y4m");ASSERT_NE(nullptr,c->project->VideoProvider());
+    {auto write=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).SetScriptInfo("PlayResX","80");LiveWriteForTest(*c).SetScriptInfo("PlayResY","60");LiveWriteForTest(*c).Commit("fixture",AssFile::COMMIT_SCRIPTINFO);}
+    OPT_SET("Video/PlayRes Mismatch")->SetInt(1);
+    OPT_SET("Video/Last PlayRes Mismatch Choice")->SetInt(1);
+    bool ran=false;
+    {RunModal choose(_("Resolution mismatch"),[&](wxDialog* dialog){
+        FlatList *list=nullptr; for(auto child:descendants(dialog))if(auto l=dynamic_cast<FlatList*>(child))list=l;
+        ASSERT_NE(nullptr,list); EXPECT_EQ(1,list->GetSelection()) << "the last choice chosen";
+        EXPECT_NE(nullptr,dynamic_cast<FlatButton*>(dialog->FindWindow(wxID_HELP)));
+        wxKeyEvent esc(wxEVT_CHAR_HOOK);esc.m_keyCode=WXK_ESCAPE;esc.SetEventObject(dialog);dialog->GetEventHandler()->ProcessEvent(esc);
+        ran=true;
+    });UpdateVideoProperties(c.get(),c->project->VideoProvider());}
+    EXPECT_TRUE(ran);
+    EXPECT_EQ(80,LiveRead(*c).GetScriptInfoAsInt("PlayResX")) << "cancelled, left as it is";
+    EXPECT_EQ(1,OPT_GET("Video/Last PlayRes Mismatch Choice")->GetInt()) << "cancelling chooses nothing";
+    {RunModal choose(_("Resolution mismatch"),[&](wxDialog* dialog){
+        for(auto child:descendants(dialog))if(auto l=dynamic_cast<FlatList*>(child))l->DoubleClick(0);
+    });UpdateVideoProperties(c.get(),c->project->VideoProvider());}
+    EXPECT_EQ(80,LiveRead(*c).GetScriptInfoAsInt("PlayResX"));
+    EXPECT_EQ(0,OPT_GET("Video/Last PlayRes Mismatch Choice")->GetInt()) << "a double click chooses";
 }
