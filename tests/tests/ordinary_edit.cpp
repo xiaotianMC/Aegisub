@@ -6343,3 +6343,56 @@ TEST_F(visual_edit, video_properties_prompt_chooses_from_a_flat_list) {
     EXPECT_EQ(80,LiveRead(*c).GetScriptInfoAsInt("PlayResX"));
     EXPECT_EQ(0,OPT_GET("Video/Last PlayRes Mismatch Choice")->GetInt()) << "a double click chooses";
 }
+/// Autosave folders holding @p names, for the autosave dialog
+static void make_autosaves(std::vector<std::string> const& names) {
+    static int made=0;
+    auto here=std::filesystem::current_path()/("autosaves"+std::to_string(++made));
+    std::filesystem::create_directories(here/"autosave"); std::filesystem::create_directories(here/"backup");
+    for(auto const& name:names)std::ofstream(here/"autosave"/name)<<"[Script Info]\n";
+    OPT_SET("Path/Auto/Save")->SetString((here/"autosave").string());
+    OPT_SET("Path/Auto/Backup")->SetString((here/"backup").string());
+}
+TEST_F(ordinary_edit, autosave_lists_files_then_their_versions) {
+    make_autosaves({"episode.2026-01-02-03-04-05.AUTOSAVE.ass","episode.2026-01-03-03-04-05.AUTOSAVE.ass","movie.2025-12-01-00-00-00.AUTOSAVE.ass"});
+    bool ran=false; std::string chosen;
+    {
+        RunModal hook(_("Open autosave file"),[&](wxDialog *dialog){
+            std::vector<FlatList*> lists; for(auto child:descendants(dialog))if(auto l=dynamic_cast<FlatList*>(child))lists.push_back(l);
+            ASSERT_EQ(2u,lists.size());
+            auto files=lists[0], versions=lists[1];
+            ASSERT_EQ(2u,files->GetCount());
+            EXPECT_EQ("episode",files->GetString(0)) << "the newest first";
+            EXPECT_FALSE(files->GetRow(0).note.empty()) << "with the date of its newest version";
+            EXPECT_EQ(2u,versions->GetCount()); EXPECT_EQ(0,versions->GetSelection());
+            files->Click(1);
+            EXPECT_EQ(1u,versions->GetCount()) << "the versions of the file chosen";
+            files->Click(0); versions->Click(1);
+            auto open=dynamic_cast<FlatButton*>(dialog->FindWindow(wxID_OK)); ASSERT_NE(nullptr,open);
+            EXPECT_EQ(_("Open"),open->GetLabel()); EXPECT_TRUE(open->IsEnabled());
+            ran=true;
+            versions->DoubleClick(1);
+        });
+        chosen=PickAutosaveFile(window);
+    }
+    EXPECT_TRUE(ran);
+    EXPECT_TRUE(chosen.ends_with("episode.2026-01-02-03-04-05.AUTOSAVE.ass")) << chosen;
+}
+TEST_F(ordinary_edit, autosave_with_nothing_to_open_says_so) {
+    make_autosaves({});
+    // Files other tests recovered set aside while this one looks
+    auto recovered=config::path->Decode("?user/recovered"), aside=recovered.parent_path()/"recovered.aside";
+    bool moved=std::filesystem::exists(recovered);
+    if(moved)std::filesystem::rename(recovered,aside);
+    bool ran=false;
+    {
+        RunModal hook(_("Open autosave file"),[&](wxDialog *dialog){
+            FlatList *files=nullptr; for(auto child:descendants(dialog))if(auto l=dynamic_cast<FlatList*>(child)){files=l;break;}
+            ASSERT_NE(nullptr,files); EXPECT_TRUE(files->IsEmpty());
+            EXPECT_FALSE(dialog->FindWindow(wxID_OK)->IsEnabled());
+            ran=true;
+        });
+        EXPECT_EQ("",PickAutosaveFile(window));
+    }
+    if(moved)std::filesystem::rename(aside,recovered);
+    EXPECT_TRUE(ran);
+}

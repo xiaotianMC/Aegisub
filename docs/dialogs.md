@@ -50,6 +50,7 @@
 - **虚拟视频**（`dialog_dummy_video.cpp`）：灰色名称在左；分辨率预设是下拉框，下面“宽 × 高”两个数字框，改数字时预设跟着显示对应的一项（没有对应的就空着）；颜色按钮和棋盘格勾选框一行；帧率框；时长是帧数框，后面灰字写出换算的时长。帧率无法解析时确定不可用。
 - **视频详情**（`dialog_video_details.cpp`）：去掉静态框；每项名称灰色在左，值在右侧只读框里（可以选中复制）；底部确定。
 - **视频属性提示**（`dialog_video_properties.cpp`，分辨率、布局分辨率、YCbCr 矩阵不一致时问怎么处理）：说明文字下是 `FlatList`，选中上次的选择；双击一项或确定选它，取消或 Esc 不选（按“不改”处理，也不记住）；底部帮助、取消、确定。
+- **打开自动保存文件**（`dialog_autosave.cpp`）：文件和版本两个 `FlatList` 并排，各有小节标题；文件按最新版本排序，右侧灰字是最新版本的时间；选中文件后右边列出它的版本，双击版本直接打开。没有文件时列表写“没有自动保存的文件”，打开不可用。
 
 ## 测试
 
@@ -72,3 +73,5 @@
 - `ordinary_edit.dummy_video_follows_its_size_shortcuts_and_frame_rate`：输入尺寸时预设跟着变、没有对应预设时空着、选预设填入尺寸、帧率为空时确定不可用、确定后生成的文件名和保存的设置。
 - `ordinary_edit.video_details_names_each_detail_in_grey`：九个只读值、名称不带冒号、确定是强调色。
 - `visual_edit.video_properties_prompt_chooses_from_a_flat_list`：选中上次的选择、Esc 不改也不记住、双击选择并记住。
+- `ordinary_edit.autosave_lists_files_then_their_versions`：文件按新旧排、带最新时间，选文件换版本列表，双击版本打开它。
+- `ordinary_edit.autosave_with_nothing_to_open_says_so`：没有文件时列表为空、打开不可用。

@@ -15,6 +15,10 @@
 // Aegisub Project http://www.aegisub.org/
 
 #include "compat.h"
+#include "flat_controls.h"
+#include "flat_dialog.h"
+#include "flat_list.h"
+#include "theme.h"
 #include "utils.h"
 #include "format.h"
 #include "libresrc/libresrc.h"
@@ -26,13 +30,10 @@
 #include <map>
 #include <string>
 #include <vector>
-#include <wx/button.h>
 #include <wx/dialog.h>
 #include <wx/dir.h>
 #include <wx/filename.h>
-#include <wx/listbox.h>
 #include <wx/sizer.h>
-#include <wx/statbox.h>
 #include <wx/string.h>
 
 namespace {
@@ -51,8 +52,8 @@ class DialogAutosave {
 	wxDialog d;
 	std::vector<AutosaveFile> files;
 
-	wxListBox *file_list;
-	wxListBox *version_list;
+	FlatList *file_list;
+	FlatList *version_list;
 
 	void Populate(std::map<wxString, AutosaveFile> &files_map, std::string const& path, wxString const& filter, wxString const& name_fmt);
 	void OnSelectFile(wxCommandEvent&);
@@ -68,27 +69,33 @@ DialogAutosave::DialogAutosave(wxWindow *parent)
 : d(parent, -1, _("Open autosave file"), wxDefaultPosition, DipSize(800, 350), wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
 {
 	d.SetIcons(GETICONS(open_toolbutton));
+	theme::UseSurface(&d);
+	int gap = d.FromDIP(10), row = d.FromDIP(6);
 
-	wxStaticBoxSizer *files_box = new wxStaticBoxSizer(wxVERTICAL, &d, _("Files"));
-	file_list = new wxListBox(files_box->GetStaticBox(), -1);
+	// The files at the left, the newest first, and the versions of the
+	// one chosen at the right
+	file_list = new FlatList(&d, false, false, _("No autosave files"));
 	file_list->Bind(wxEVT_LISTBOX, &DialogAutosave::OnSelectFile, this);
-	files_box->Add(file_list, wxSizerFlags(1).Expand().Border());
-
-	wxStaticBoxSizer *versions_box = new wxStaticBoxSizer(wxVERTICAL, &d, _("Versions"));
-	version_list = new wxListBox(versions_box->GetStaticBox(), -1);
+	version_list = new FlatList(&d);
 	version_list->Bind(wxEVT_LISTBOX_DCLICK, [this](wxCommandEvent&) { d.EndModal(wxID_OK); });
-	versions_box->Add(version_list, wxSizerFlags(1).Expand().Border());
 
+	auto column = [&](wxString const& title, wxWindow *list) {
+		auto sizer = new wxBoxSizer(wxVERTICAL);
+		sizer->Add(flat::SectionTitle(&d, title), wxSizerFlags().Expand());
+		sizer->Add(list, wxSizerFlags(1).Expand().Border(wxTOP, row));
+		return sizer;
+	};
 	wxSizer *boxes_sizer = new wxBoxSizer(wxHORIZONTAL);
-	boxes_sizer->Add(files_box, wxSizerFlags(1).Expand().Border());
-	boxes_sizer->Add(versions_box, wxSizerFlags(1).Expand().Border());
+	boxes_sizer->Add(column(_("Files"), file_list), wxSizerFlags(1).Expand());
+	boxes_sizer->Add(column(_("Versions"), version_list), wxSizerFlags(1).Expand().Border(wxLEFT, gap));
 
-	auto *btn_sizer = d.CreateStdDialogButtonSizer(wxOK | wxCANCEL);
-	btn_sizer->GetAffirmativeButton()->SetLabelText(_("Open"));
+	auto buttons = new flat::DialogButtons(&d, wxOK | wxCANCEL);
+	auto open = buttons->Get(wxID_OK);
+	open->SetLabel(_("Open"));
 
 	wxSizer *main_sizer = new wxBoxSizer(wxVERTICAL);
-	main_sizer->Add(boxes_sizer, wxSizerFlags(1).Expand().Border());
-	main_sizer->Add(btn_sizer, wxSizerFlags().Expand().Border(wxALL & ~wxTOP));
+	main_sizer->Add(boxes_sizer, wxSizerFlags(1).Expand().Border(wxALL, gap));
+	main_sizer->Add(buttons, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxBOTTOM, gap));
 	d.SetSizer(main_sizer);
 
 	std::map<wxString, AutosaveFile> files_map;
@@ -107,11 +114,14 @@ DialogAutosave::DialogAutosave(wxWindow *parent)
 	sort(begin(files), end(files),
 		[](AutosaveFile const& a, AutosaveFile const& b) { return a.versions[0].date > b.versions[0].date; });
 
+	// Each file with the date of its newest version at the right
+	std::vector<FlatList::Row> rows;
 	for (auto const& file : files)
-		file_list->Append(file.name);
+		rows.push_back({file.name, wxString(), file.versions[0].date.Format()});
+	file_list->Set(std::move(rows));
 
 	if (file_list->IsEmpty())
-		btn_sizer->GetAffirmativeButton()->Disable();
+		open->Disable();
 	else {
 		file_list->SetSelection(0);
 		wxCommandEvent evt;
@@ -151,12 +161,16 @@ void DialogAutosave::Populate(std::map<wxString, AutosaveFile> &files_map, std::
 }
 
 void DialogAutosave::OnSelectFile(wxCommandEvent&) {
-	version_list->Clear();
 	int sel_file = file_list->GetSelection();
-	if (sel_file < 0) return;
+	if (sel_file < 0) {
+		version_list->Set(std::vector<FlatList::Row>());
+		return;
+	}
 
+	wxArrayString versions;
 	for (auto const& version : files[sel_file].versions)
-		version_list->Append(version.display);
+		versions.push_back(version.display);
+	version_list->Set(versions);
 	version_list->SetSelection(0);
 }
 
