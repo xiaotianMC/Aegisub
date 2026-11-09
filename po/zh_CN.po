@@ -9876,3 +9876,70 @@ msgstr "区域"
 #: ../src/dialog_scroll_effect.cpp
 msgid "Speed"
 msgstr "速度"
+
+#: ../src/command/keyframe.cpp
+msgid "&Detect Scene Changes..."
+msgstr "检测画面切换(&D)..."
+
+#: ../src/command/keyframe.cpp ../src/dialog_timing_processor.cpp
+msgid "Detect Scene Changes"
+msgstr "检测画面切换"
+
+#: ../src/command/keyframe.cpp ../src/dialog_timing_processor.cpp
+msgid "Find the frames where the picture cuts to another shot and use them as the keyframes, to snap the lines' times to"
+msgstr "找出画面切到另一个镜头的帧，用作关键帧，供字幕时间吸附"
+
+#: ../src/command/keyframe.cpp
+msgid "Reading every frame of the video..."
+msgstr "正在逐帧读取视频..."
+
+#: ../src/command/keyframe.cpp
+#, c-format
+msgid "Found %d scene change"
+msgid_plural "Found %d scene changes"
+msgstr[0] "找到 %d 处画面切换"
+
+#: ../src/command/time.cpp
+msgid "Snap to &Nearby Scene Changes"
+msgstr "吸附到附近的画面切换(&N)"
+
+#: ../src/command/time.cpp
+msgid "Snap to Nearby Scene Changes"
+msgstr "吸附到附近的画面切换"
+
+#: ../src/command/time.cpp
+msgid "Move the selected lines' starts and ends onto the keyframes near them, within the timing post-processor's thresholds"
+msgstr "把选中行的开始和结束时间移到附近的关键帧上，距离限制沿用时间后处理器的设置"
+
+#: ../src/command/time.cpp
+msgid "snap to scene changes"
+msgstr "吸附到画面切换"
+
+#: ../src/dialog_timing_processor.cpp
+msgid "&Detect Scene Changes"
+msgstr "检测画面切换(&D)"
+
+#: ../src/dialog_timing_processor.cpp
+msgid "The video's own keyframes are not always scene changes"
+msgstr "视频自带的关键帧不一定是画面切换"
+
+#: ../src/preferences.cpp
+msgid "Low: only clear cuts"
+msgstr "低：只认明显的切换"
+
+#: ../src/preferences.cpp
+msgctxt "scene detection"
+msgid "Medium"
+msgstr "中"
+
+#: ../src/preferences.cpp
+msgid "High: also cuts between similar shots"
+msgstr "高：相似镜头之间的切换也认"
+
+#: ../src/preferences.cpp
+msgid "Scene change detection"
+msgstr "画面切换检测"
+
+#: ../src/preferences.cpp
+msgid "How readily Detect Scene Changes takes a change of picture for a cut. Higher finds more cuts, and more that are not."
+msgstr "“检测画面切换”把画面变化当作切换的灵敏度。越高找到的切换越多，误判也越多。"

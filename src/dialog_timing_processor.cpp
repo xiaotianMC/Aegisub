@@ -32,12 +32,14 @@
 #include "subtitle_project_access.h"
 #include "subtitle_row_edit.h"
 #include "async_video_provider.h"
+#include "command/command.h"
 #include "compat.h"
 #include "format.h"
 #include "flat_controls.h"
 #include "flat_dialog.h"
 #include "flat_list.h"
 #include "include/aegisub/context.h"
+#include "keyframe_snap.h"
 #include "libresrc/libresrc.h"
 #include "options.h"
 #include "project.h"
@@ -211,6 +213,37 @@ DialogTimingProcessor::DialogTimingProcessor(agi::Context *c)
 		keysEnable->Enable(false);
 		keysEnable->SetToolTip(_("Keyframe snapping needs keyframes and timecodes"));
 	}
+	// The video's own keyframes are where its encoder put them, not always
+	// where the picture cuts: the cuts can be found and used instead
+	auto detect = new FlatButton(parent, _("&Detect Scene Changes"));
+	detect->SetToolTip(_("Find the frames where the picture cuts to another shot and use them as the keyframes, to snap the lines' times to"));
+	detect->Enable(!!c->project->VideoProvider());
+	auto keys_note = flat::DimLabel(parent, _("The video's own keyframes are not always scene changes"));
+	keys_note->Show(c->project->VideoProvider() && !c->project->CanCloseKeyframes());
+	detect->Bind(wxEVT_BUTTON, [this, c, keys_note](wxCommandEvent &) {
+		cmd::call("keyframe/detect", c);
+		bool available = !c->project->Keyframes().empty() && c->project->Timecodes().IsLoaded();
+		if (available && !keysEnable->IsEnabled()) {
+			keysEnable->Enable();
+			keysEnable->SetToolTip(_("Enable snapping of subtitles to nearest keyframe, if distance is within threshold"));
+		}
+		if (available && !keysEnable->IsChecked()) {
+			// As a click does, so the thresholds and OK follow
+			keysEnable->SetValue(true);
+			wxCommandEvent evt(wxEVT_CHECKBOX, keysEnable->GetId());
+			evt.SetEventObject(keysEnable);
+			evt.SetInt(1);
+			keysEnable->GetEventHandler()->ProcessEvent(evt);
+		}
+		keys_note->Show(!c->project->CanCloseKeyframes());
+		d.Layout();
+		UpdateControls();
+	});
+	auto keys_top = new wxBoxSizer(wxHORIZONTAL);
+	keys_top->Add(keysEnable, wxSizerFlags().CenterVertical());
+	keys_top->AddStretchSpacer();
+	keys_top->Add(detect, wxSizerFlags().CenterVertical());
+
 	auto keys = new wxGridSizer(2, row, gap);
 	keys->Add(make_ctrl(parent, _("Starts before"), &beforeStart, keysEnable,
 		_("Threshold for 'before start' distance, that is, how many milliseconds a subtitle must start before a keyframe to snap to it")), wxSizerFlags().Expand());
@@ -230,7 +263,8 @@ DialogTimingProcessor::DialogTimingProcessor(agi::Context *c)
 	right->Add(adjacent, wxSizerFlags().Expand().Border(wxTOP, row));
 	right->Add(bias, wxSizerFlags().Border(wxTOP, row));
 	right->Add(flat::SectionTitle(parent, _("Keyframe snapping")), wxSizerFlags().Expand().Border(wxTOP, gap));
-	right->Add(keysEnable, wxSizerFlags().Border(wxTOP, row));
+	right->Add(keys_top, wxSizerFlags().Expand().Border(wxTOP, row));
+	right->Add(keys_note, wxSizerFlags().Border(wxTOP, row / 2));
 	right->Add(keys, wxSizerFlags().Expand().Border(wxTOP, row));
 
 	auto top = new wxBoxSizer(wxHORIZONTAL);
@@ -325,14 +359,6 @@ std::vector<AssDialogue*> DialogTimingProcessor::SortDialogues(SubtitleRowEdit c
 	return sorted;
 }
 
-static int get_closest_kf(std::vector<int> const& kf, int frame) {
-	const auto pos = boost::upper_bound(kf, frame);
-	// Return last keyframe if this is after the last one
-	if (pos == end(kf)) return kf.back();
-	// *pos is greater than frame, and *(pos - 1) is less than or equal to frame
-	return (pos == begin(kf) || *pos - frame < frame - *(pos - 1)) ? *pos : *(pos - 1);
-}
-
 template<class Iter, class Field>
 static int safe_time(Iter begin, Iter end, AssDialogue *comp, int initial, Field field, int const& (*cmp)(int const&, int const&)) {
 	// Compare to every previous line (yay for O(n^2)!) to see if it's OK to add lead-in
@@ -385,28 +411,9 @@ void DialogTimingProcessor::Process() {
 
 	// Keyframe snapping
 	if (keysEnable->IsChecked()) {
-		std::vector<int> kf = c->project->Keyframes();
-		auto fps = c->project->Timecodes();
-		if (auto provider = c->project->VideoProvider())
-			kf.push_back(provider->GetFrameCount() - 1);
-
-		for (AssDialogue *cur : sorted) {
-			// Get start/end frames
-			int startF = fps.FrameAtTime(cur->Start, agi::vfr::START);
-			int endF = fps.FrameAtTime(cur->End, agi::vfr::END);
-
-			// Get closest for start
-			int closest = get_closest_kf(kf, startF);
-			int time = fps.TimeAtFrame(closest, agi::vfr::START);
-			if ((closest > startF && time - cur->Start <= beforeStart) || (closest < startF && cur->Start - time <= afterStart))
-				cur->Start = time;
-
-			// Get closest for end
-			closest = get_closest_kf(kf, endF) - 1;
-			time = fps.TimeAtFrame(closest, agi::vfr::END);
-			if ((closest > endF && time - cur->End <= beforeEnd) || (closest < endF && cur->End - time <= afterEnd))
-				cur->End = time;
-		}
+		auto provider = c->project->VideoProvider();
+		SnapToKeyframes({sorted.begin(), sorted.end()}, c->project->Keyframes(), provider ? provider->GetFrameCount() : 0,
+			c->project->Timecodes(), {beforeStart, afterStart, beforeEnd, afterEnd});
 	}
 
 	std::vector<AssDialogueBase> updates;for(auto row:sorted)updates.push_back(*row);

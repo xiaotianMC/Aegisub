@@ -40,6 +40,7 @@
 #include "../audio_timing.h"
 #include "../dialogs.h"
 #include "../include/aegisub/context.h"
+#include "../keyframe_snap.h"
 #include "../libresrc/libresrc.h"
 #include "../options.h"
 #include "../project.h"
@@ -224,6 +225,33 @@ struct time_snap_end_video final : public validate_video_loaded {
         auto edit_scope = c->subtitleAccess->TryWrite();
         if (!edit_scope) return;
 		snap_subs_video(c, false);
+	}
+};
+
+struct time_snap_scene_nearby final : public Command {
+	CMD_NAME("time/snap/scene_nearby")
+	STR_MENU("Snap to &Nearby Scene Changes")
+	STR_DISP("Snap to Nearby Scene Changes")
+	STR_HELP("Move the selected lines' starts and ends onto the keyframes near them, within the timing post-processor's thresholds")
+	CMD_TYPE(COMMAND_VALIDATE)
+
+	bool Validate(const agi::Context *c) override {
+		return !c->project->Keyframes().empty() && c->project->Timecodes().IsLoaded()
+			&& !c->selectionController->ReadSelectedSet().empty();
+	}
+
+	void operator()(agi::Context *c) override {
+		auto edit_scope = c->subtitleAccess->TryWrite();
+		if (!edit_scope) return;
+		if (c->project->Keyframes().empty() || !c->project->Timecodes().IsLoaded()) return;
+		SubtitleRowEdit staged(c);
+		if (staged.rows.empty()) return;
+		auto provider = c->project->VideoProvider();
+		SnapToKeyframes({staged.rows.begin(), staged.rows.end()}, c->project->Keyframes(),
+			provider ? provider->GetFrameCount() : 0, c->project->Timecodes(), KeyframeSnapThresholds::FromOptions());
+		auto edit = c->subtitleAccess->Edit(edit_scope->Lease());
+		edit.UpdateRows(staged.Values());
+		edit.Commit(_("snap to scene changes"), AssFile::COMMIT_DIAG_TIME);
 	}
 };
 
@@ -457,6 +485,7 @@ namespace cmd {
 		reg(std::make_unique<time_shift>());
 		reg(std::make_unique<time_snap_end_video>());
 		reg(std::make_unique<time_snap_scene>());
+		reg(std::make_unique<time_snap_scene_nearby>());
 		reg(std::make_unique<time_snap_start_video>());
 		reg(std::make_unique<time_start_decrease>());
 		reg(std::make_unique<time_start_increase>());

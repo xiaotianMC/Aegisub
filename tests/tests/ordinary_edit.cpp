@@ -80,6 +80,9 @@
 #include "video_controller.h"
 #include "async_video_provider.h"
 #include "video_frame.h"
+#include "include/aegisub/video_provider.h"
+#include "keyframe_snap.h"
+#include "scene_detect.h"
 #include "visual_tool_drag.h"
 #include "visual_tool_cross.h"
 #include "visual_tool_scale.h"
@@ -104,6 +107,7 @@
 #include <fstream>
 #include <chrono>
 #include <libaegisub/ass/karaoke.h>
+#include <libaegisub/keyframe.h>
 #include <libaegisub/path.h>
 #include <libaegisub/mru.h>
 #include <wx/app.h>
@@ -134,6 +138,7 @@
 #include <gtk/gtk.h>
 #endif
 #include <boost/scope_exit.hpp>
+#include <cmath>
 
 namespace {
 class AcceptMessages : public wxModalDialogHook {
@@ -608,6 +613,7 @@ TEST_F(ordinary_edit, all_migrated_command_operators_reject_comparison_before_an
         "time/start/increase",
         "time/start/decrease",
         "time/snap/start_video",
+        "time/snap/scene_nearby",
         "time/next",
         "time/prev",
     };
@@ -3776,6 +3782,8 @@ TEST_F(ordinary_edit, timing_processor_is_drawn_ticks_and_millisecond_fields) {
             ASSERT_NE(nullptr,styles); ASSERT_NE(nullptr,lead_out); ASSERT_NE(nullptr,keys);
             for(unsigned i=0;i<styles->GetCount();++i)EXPECT_TRUE(styles->IsChecked(i)) << "every style to begin with";
             EXPECT_FALSE(keys->IsEnabled()) << "no keyframes";
+            auto detect=button_labelled(dialog,_("&Detect Scene Changes")); ASSERT_NE(nullptr,detect);
+            EXPECT_FALSE(detect->IsEnabled()) << "no video to find scene changes in";
             auto leads=fields_named(dialog,_("Lead")); ASSERT_EQ(2u,leads.size());
             EXPECT_EQ("100",leads[0]->GetValue()); EXPECT_FALSE(leads[1]->IsEnabled());
             lead_out->Toggle(); EXPECT_TRUE(leads[1]->IsEnabled()) << "a field is used while its box is ticked";
@@ -6865,4 +6873,156 @@ TEST(style_preview, backdrop_keeps_the_text_visible) {
     s.primary=agi::Color(255,255,255);s.outline_w=0;
     auto dark=PreviewBackdrop(s,agi::Color(255,255,255));
     EXPECT_LT(dark.r+dark.g+dark.b,200);
+}
+
+namespace {
+/// Frames drawn from a function of the frame number, 25 fps
+class DrawnVideo final : public VideoProvider {
+public:
+    int frames, w, h;
+    std::function<void(int n, int x, int y, unsigned char *bgr)> draw;
+    int reads=0;
+    DrawnVideo(int frames,int w,int h):frames(frames),w(w),h(h){}
+    void GetFrame(int n, VideoFrame &frame) override {
+        ++reads;
+        frame.width=w;frame.height=h;frame.pitch=w*4;frame.flipped=false;
+        frame.data.assign(size_t(w)*h*4,255);
+        for(int y=0;y<h;++y)for(int x=0;x<w;++x)draw(n,x,y,&frame.data[(size_t(y)*w+x)*4]);
+    }
+    void SetColorSpace(agi::ycbcr::Header) override {}
+    int GetFrameCount() const override { return frames; }
+    int GetWidth() const override { return w; }
+    int GetHeight() const override { return h; }
+    double GetDAR() const override { return double(w)/h; }
+    agi::vfr::Framerate GetFPS() const override { return agi::vfr::Framerate(25,1); }
+    std::vector<int> GetKeyFrames() const override { return {}; }
+    agi::ycbcr::header_colorspace GetColorSpace() const override { return agi::ycbcr::header_colorspace::unspecified(); }
+    std::string GetDecoderName() const override { return "drawn"; }
+};
+/// A shot: a textured picture in its own colours, panning 2 px a frame
+void Shot(int shot, int offset, int x, int y, unsigned char *bgr) {
+    static const int base[][3]={{40,40,200},{60,160,30},{200,60,40},{90,220,230},{25,25,25}};
+    double texture=60*std::sin((x+2*offset)/15.0)*std::cos(y/12.0);
+    for(int c=0;c<3;++c)bgr[c]=static_cast<unsigned char>(std::clamp(base[shot][c]+texture,0.,255.));
+}
+struct CancelledSink final : agi::ProgressSink {
+    void SetIndeterminate() override {}
+    void SetTitle(std::string const&) override {}
+    void SetMessage(std::string const&) override {}
+    void SetProgress(int64_t,int64_t) override {}
+    void Log(std::string const&) override {}
+    bool IsCancelled() override { return true; }
+};
+}
+
+TEST(scene_detect, finds_cuts_but_not_motion_flashes_or_fades) {
+    DrawnVideo video(180,320,180);
+    video.draw=[](int n,int x,int y,unsigned char *bgr){
+        if(n<40)return Shot(0,n,x,y,bgr);              // A, panning
+        if(n==60){bgr[0]=bgr[1]=bgr[2]=255;return;}    // a one-frame flash in B
+        if(n<80)return Shot(1,n,x,y,bgr);              // cut to B
+        if(n<100){                                     // B fades into C over 20 frames
+            unsigned char b[3],c[3];Shot(1,n,x,y,b);Shot(2,n,x,y,c);
+            double t=(n-79)/21.;
+            for(int i=0;i<3;++i)bgr[i]=static_cast<unsigned char>(b[i]*(1-t)+c[i]*t);
+            return;
+        }
+        if(n<140)return Shot(2,n,x,y,bgr);
+        if(n<143)return Shot(3,n,x,y,bgr);             // cut to D, then to E 3 frames on
+        Shot(4,n,x,y,bgr);
+    };
+    auto cuts=scene_detect::Detect(video,nullptr,scene_detect::Params{});
+    ASSERT_EQ(3u,cuts.size()) << ::testing::PrintToString(cuts);
+    EXPECT_EQ(0,cuts[0]);
+    EXPECT_EQ(40,cuts[1]);
+    EXPECT_TRUE(cuts[2]==140||cuts[2]==143) << "cuts 3 frames apart are one: " << cuts[2];
+    EXPECT_EQ(180,video.reads) << "each frame read once";
+
+    CancelledSink cancelled;
+    EXPECT_TRUE(scene_detect::Detect(video,&cancelled,scene_detect::Params{}).empty());
+}
+
+TEST(scene_detect, signature_reads_any_pitch_and_flipped_frames) {
+    VideoFrame plain{{},50,30,200,false},padded{{},50,30,232,false},flipped{{},50,30,200,true};
+    plain.data.resize(200*30);padded.data.resize(232*30);flipped.data.resize(200*30);
+    for(int y=0;y<30;++y)for(int x=0;x<50;++x)for(int c=0;c<4;++c){
+        unsigned char v=static_cast<unsigned char>((x*5+y*7+c*40)%256);
+        plain.data[y*200+x*4+c]=v;padded.data[y*232+x*4+c]=v;flipped.data[(29-y)*200+x*4+c]=v;
+    }
+    auto a=scene_detect::Sign(plain);
+    EXPECT_EQ(0.,scene_detect::Difference(a,scene_detect::Sign(padded)));
+    EXPECT_EQ(0.,scene_detect::Difference(a,scene_detect::Sign(flipped)));
+    VideoFrame black{std::vector<unsigned char>(200*30,0),50,30,200,false};
+    EXPECT_GT(scene_detect::Difference(a,scene_detect::Sign(black)),0.3);
+}
+
+TEST(scene_detect, close_cuts_keep_the_strongest_and_the_start_is_not_one) {
+    scene_detect::Params p;
+    std::vector<double> diffs(60,0.01),across(60,1.);
+    diffs[3]=0.9;                  // too near the start
+    diffs[20]=0.5;diffs[23]=0.8;   // three frames apart: the stronger
+    diffs[40]=0.6;across[40]=0.05; // the picture came back: a flash
+    diffs[50]=0.3;
+    EXPECT_EQ((std::vector<int>{23,50}),scene_detect::FindCuts(diffs,across,p));
+    EXPECT_EQ((std::vector<int>{23}),scene_detect::FindCuts(diffs,across,scene_detect::ForSensitivity(0))) << "low sensitivity misses the weak cut";
+}
+
+TEST(keyframe_snap, moves_near_ends_onto_scene_changes) {
+    agi::vfr::Framerate fps(25,1);
+    AssDialogue near_both,far_start,across;
+    near_both.Start=1950;near_both.End=5950;  // 50 ms before frame 50; ends 50 ms before 150
+    far_start.Start=1500;far_start.End=3000;  // 500 ms from any
+    across.Start=fps.TimeAtFrame(50,agi::vfr::START);across.End=fps.TimeAtFrame(149,agi::vfr::END); // on them, frame 100 in between
+    KeyframeSnapThresholds limits{100,100,100,100};
+    SnapToKeyframes({&near_both,&far_start,&across},{0,50,100,150},0,fps,limits);
+    EXPECT_EQ(fps.TimeAtFrame(50,agi::vfr::START),int(near_both.Start));
+    EXPECT_EQ(fps.TimeAtFrame(149,agi::vfr::END),int(near_both.End)) << "ends with the frame before the cut";
+    EXPECT_EQ(1500,int(far_start.Start));EXPECT_EQ(3000,int(far_start.End));
+    EXPECT_EQ(fps.TimeAtFrame(50,agi::vfr::START),int(across.Start));
+    EXPECT_EQ(fps.TimeAtFrame(149,agi::vfr::END),int(across.End)) << "not split at frame 100";
+}
+
+TEST_F(ordinary_edit, detect_scene_changes_loads_them_as_keyframes_and_keeps_them) {
+    c->project->LoadVideo("?dummy:25:250:64:48:64:64:64:");
+    ASSERT_NE(nullptr,c->project->VideoProvider());
+    PumpFirstFrame(c.get(),window);
+    BOOST_SCOPE_EXIT_ALL(&){ c->project->CloseKeyframes(); c->project->CloseVideo(); };
+    EXPECT_FALSE(c->project->CanCloseKeyframes());
+    std::filesystem::remove_all(std::filesystem::path(config::path->Decode("?user/scenes").wstring()));
+    cmd::call("keyframe/detect",c.get());
+    EXPECT_EQ((std::vector<int>{0}),c->project->Keyframes()) << "one plain shot";
+    EXPECT_TRUE(c->project->CanCloseKeyframes());
+    std::vector<agi::fs::path> cached;
+    for(auto const& f:std::filesystem::directory_iterator(std::filesystem::path(config::path->Decode("?user/scenes").wstring())))cached.push_back(agi::fs::path(f.path().wstring()));
+    ASSERT_EQ(1u,cached.size());
+    // Found once: the next time is the kept list
+    agi::keyframe::Save(cached[0],{0,10,20});
+    cmd::call("keyframe/detect",c.get());
+    EXPECT_EQ((std::vector<int>{0,10,20}),c->project->Keyframes());
+    c->project->CloseKeyframes();
+    EXPECT_FALSE(c->project->CanCloseKeyframes());
+}
+
+TEST_F(ordinary_edit, snap_to_nearby_scene_changes_moves_the_selected_lines_in_one_step) {
+    c->project->LoadVideo("?dummy:25:250:64:48:64:64:64:");
+    ASSERT_NE(nullptr,c->project->VideoProvider());
+    PumpFirstFrame(c.get(),window);
+    agi::fs::path kf((std::filesystem::current_path()/"snap-keyframes.txt").wstring());
+    agi::keyframe::Save(kf,{0,50,150});
+    c->project->LoadKeyframes(kf);
+    BOOST_SCOPE_EXIT_ALL(&){ c->project->CloseKeyframes(); c->project->CloseVideo(); };
+    OPT_SET("Tool/Timing Post Processor/Threshold/Key Start Before")->SetInt(100);
+    OPT_SET("Tool/Timing Post Processor/Threshold/Key End Before")->SetInt(100);
+    {auto write=c->subtitleAccess->TryWrite();auto& row=LiveWriteForTest(*c).Events.front();
+     row.Start=1950;row.End=5950;LiveWriteForTest(*c).Commit("times",AssFile::COMMIT_DIAG_TIME);}
+    {auto id=LiveRead(*c).Events.front().Id;c->selectionController->SetSelectionAndActiveIDs({id},id);}
+    auto description=c->subsController->GetUndoDescription();
+    ASSERT_TRUE(cmd::get("time/snap/scene_nearby")->Validate(c.get()));
+    cmd::call("time/snap/scene_nearby",c.get());
+    auto const& row=LiveRead(*c).Events.front();
+    EXPECT_EQ(c->project->Timecodes().TimeAtFrame(50,agi::vfr::START),int(row.Start));
+    EXPECT_EQ(c->project->Timecodes().TimeAtFrame(149,agi::vfr::END),int(row.End));
+    c->subsController->Undo();
+    EXPECT_EQ(1950,int(LiveRead(*c).Events.front().Start));EXPECT_EQ(5950,int(LiveRead(*c).Events.front().End));
+    EXPECT_EQ(description,c->subsController->GetUndoDescription());
 }

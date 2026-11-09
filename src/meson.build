@@ -123,6 +123,8 @@ aegisub_src = files(
     'project.cpp',
     'provider_file_formats.cpp',
     'resolution_resampler.cpp',
+    'keyframe_snap.cpp',
+    'scene_detect.cpp',
     'scroll_effect.cpp',
     'search_replace_engine.cpp',
     'selection_controller.cpp',

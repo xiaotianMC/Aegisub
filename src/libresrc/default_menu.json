@@ -22,6 +22,7 @@
         { "command" : "time/continuous/start", "text" : "&Make times continuous (change start)" },
         { "command" : "time/continuous/end", "text" : "&Make times continuous (change end)" },
         { "command" : "edit/line/recombine" },
+        { "command" : "time/snap/scene_nearby" },
         {},
         { "command" : "audio/save/clip" },
         {},
@@ -71,6 +72,7 @@
         { "command" : "time/snap/start_video" },
         { "command" : "time/snap/end_video" },
         { "command" : "time/snap/scene" },
+        { "command" : "time/snap/scene_nearby" },
         { "command" : "time/frame/current" },
         {},
         { "submenu" : "main/timing/make times continuous", "text" : "Make Times Continuous" }
@@ -96,6 +98,7 @@
         { "command" : "keyframe/save" },
         { "command" : "keyframe/close" },
         { "recent" : "Keyframes" },
+        { "command" : "keyframe/detect" },
         {},
         { "command" : "video/detach" },
         { "submenu" : "main/video/set zoom", "text" : "Set &Zoom" },

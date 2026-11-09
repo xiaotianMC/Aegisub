@@ -273,6 +273,10 @@ void Video(PreferencesBook *book, Preferences *parent) {
 	p->OptionAdd(playback, _("Automatically open audio when opening video"), "Video/Open Audio");
 	p->OptionAdd(playback, _("Show keyframes in slider"), "Video/Slider/Show Keyframes");
 	p->OptionAdd(playback, _("Fast jump step in frames"), "Video/Slider/Fast Jump Step");
+	const wxString csens_arr[] = {_("Low: only clear cuts"), wxGETTEXT_IN_CONTEXT("scene detection", "Medium"), _("High: also cuts between similar shots")};
+	wxArrayString choice_sens(3, csens_arr);
+	p->OptionChoice(playback, _("Scene change detection"), choice_sens, "Tool/Scene Detection/Sensitivity", false,
+		_("How readily Detect Scene Changes takes a change of picture for a cut. Higher finds more cuts, and more that are not."));
 
 	auto video_display = p->PageSizer(_("Video Display"));
 	p->OptionAdd(video_display, _("Only show visual tools when mouse is over video"), "Tool/Visual/Autohide");

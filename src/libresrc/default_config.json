@@ -610,6 +610,9 @@
 			},
 			"Maximized" : false
 		},
+		"Scene Detection" : {
+			"Sensitivity" : 1
+		},
 		"Thesaurus" : {
 			"Language" : "en_US"
 		},
