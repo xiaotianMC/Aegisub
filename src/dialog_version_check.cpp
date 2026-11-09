@@ -30,8 +30,11 @@
 #ifdef WITH_UPDATE_CHECKER
 
 #include "compat.h"
+#include "flat_controls.h"
+#include "flat_dialog.h"
 #include "format.h"
 #include "options.h"
+#include "theme.h"
 #include "version.h"
 
 #include <libaegisub/ass/string_codec.h>
@@ -47,15 +50,12 @@
 #include <mutex>
 #include <sstream>
 #include <vector>
-#include <wx/button.h>
-#include <wx/checkbox.h>
 #include <wx/dialog.h>
 #include <wx/event.h>
 #include <wx/hyperlink.h>
 #include <wx/intl.h>
 #include <wx/platinfo.h>
 #include <wx/sizer.h>
-#include <wx/statline.h>
 #include <wx/stattext.h>
 #include <wx/string.h>
 #include <wx/textctrl.h>
@@ -78,7 +78,7 @@ class VersionCheckerResultDialog final : public wxDialog {
 	void OnRemindMeLater(wxCommandEvent &evt);
 	void OnClose(wxCloseEvent &evt);
 
-	wxCheckBox *automatic_check_checkbox;
+	FlatCheck *automatic_check_checkbox;
 
 public:
 	VersionCheckerResultDialog(wxString const& main_text, const std::vector<AegisubUpdateDescription> &updates);
@@ -89,53 +89,42 @@ public:
 VersionCheckerResultDialog::VersionCheckerResultDialog(wxString const& main_text, const std::vector<AegisubUpdateDescription> &updates)
 : wxDialog(nullptr, -1, _("Version Checker"))
 {
-	const int controls_width = 500;
+	theme::UseSurface(this);
+	const int controls_width = FromDIP(500);
+	int gap = FromDIP(10), row = FromDIP(6);
 
 	wxSizer *main_sizer = new wxBoxSizer(wxVERTICAL);
 
 	wxStaticText *text = new wxStaticText(this, -1, main_text);
 	text->Wrap(controls_width);
-	main_sizer->Add(text, 0, wxBOTTOM|wxEXPAND, 6);
+	main_sizer->Add(text, wxSizerFlags().Expand());
 
+	// Each update under its name, what it brings, and where to get it
 	for (auto const& update : updates) {
-		main_sizer->Add(new wxStaticLine(this), 0, wxEXPAND|wxALL, 6);
+		main_sizer->Add(flat::SectionTitle(this, to_wx(update.friendly_name)), wxSizerFlags().Expand().Border(wxTOP, gap));
 
-		text = new wxStaticText(this, -1, to_wx(update.friendly_name));
-		wxFont boldfont = text->GetFont();
-		boldfont.SetWeight(wxFONTWEIGHT_BOLD);
-		text->SetFont(boldfont);
-		main_sizer->Add(text, 0, wxEXPAND|wxBOTTOM, 6);
+		wxTextCtrl *descbox = new wxTextCtrl(this, -1, to_wx(update.description), wxDefaultPosition, wxSize(controls_width, FromDIP(60)), wxTE_MULTILINE | wxTE_READONLY | wxBORDER_NONE);
+		descbox->SetBackgroundColour(flat::Colours(this).surface);
+		descbox->SetForegroundColour(flat::Colours(this).text);
+		main_sizer->Add(descbox, wxSizerFlags().Expand().Border(wxTOP, row));
 
-		wxTextCtrl *descbox = new wxTextCtrl(this, -1, to_wx(update.description), wxDefaultPosition, wxSize(controls_width,60), wxTE_MULTILINE|wxTE_READONLY);
-		main_sizer->Add(descbox, 0, wxEXPAND|wxBOTTOM, 6);
-
-		main_sizer->Add(new wxHyperlinkCtrl(this, -1, to_wx(update.url), to_wx(update.url)), 0, wxALIGN_LEFT|wxBOTTOM, 6);
+		main_sizer->Add(new wxHyperlinkCtrl(this, -1, to_wx(update.url), to_wx(update.url)), wxSizerFlags().Left().Border(wxTOP, row));
 	}
 
-	automatic_check_checkbox = new wxCheckBox(this, -1, _("&Auto Check for Updates"));
+	automatic_check_checkbox = new FlatCheck(this, _("&Auto Check for Updates"));
 	automatic_check_checkbox->SetValue(OPT_GET("App/Auto/Check For Updates")->GetBool());
+	main_sizer->Add(automatic_check_checkbox, wxSizerFlags().Border(wxTOP, gap));
 
-	wxButton *remind_later_button = nullptr;
+	// Close, and with updates to remind of them in a week
+	auto buttons = new flat::DialogButtons(this, wxOK);
+	buttons->Get(wxID_OK)->SetLabel(_("&Close"));
 	if (updates.size() > 0)
-		remind_later_button = new wxButton(this, wxID_NO, _("Remind me again in a &week"));
-
-	wxButton *close_button = new wxButton(this, wxID_OK, _("&Close"));
-	SetAffirmativeId(wxID_OK);
+		buttons->AddRight(_("Remind me again in a &week"), wxID_NO);
 	SetEscapeId(wxID_OK);
-
-	if (updates.size())
-		main_sizer->Add(new wxStaticLine(this), 0, wxEXPAND|wxALL, 6);
-	main_sizer->Add(automatic_check_checkbox, 0, wxEXPAND|wxBOTTOM, 6);
-
-	auto button_sizer = new wxStdDialogButtonSizer();
-	button_sizer->AddButton(close_button);
-	if (remind_later_button)
-		button_sizer->AddButton(remind_later_button);
-	button_sizer->Realize();
-	main_sizer->Add(button_sizer, 0, wxEXPAND, 0);
+	main_sizer->Add(buttons, wxSizerFlags().Expand().Border(wxTOP, gap));
 
 	wxSizer *outer_sizer = new wxBoxSizer(wxVERTICAL);
-	outer_sizer->Add(main_sizer, 0, wxALL|wxEXPAND, 12);
+	outer_sizer->Add(main_sizer, wxSizerFlags().Expand().Border(wxALL, gap));
 
 	SetSizerAndFit(outer_sizer);
 	Centre();
@@ -384,3 +373,4 @@ void PerformVersionCheck(bool interactive) {
 }
 
 #endif
+
