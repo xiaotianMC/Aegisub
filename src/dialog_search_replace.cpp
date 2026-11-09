@@ -84,12 +84,12 @@ DialogSearchReplace<has_replace>::DialogSearchReplace(agi::Context* c)
 		});
 		return std::make_pair(frame, edit);
 	};
-	auto [find_frame, find] = text_field(_("Find what:").BeforeLast(':'), &settings->find, "Find");
+	auto [find_frame, find] = text_field(flat::WithoutColon(_("Find what:")), &settings->find, "Find");
 	find_edit = find;
 	auto fields = new wxBoxSizer(wxVERTICAL);
 	fields->Add(find_frame, wxSizerFlags().Expand());
 	if (has_replace) {
-		auto [replace_frame, replace] = text_field(_("Replace with:").BeforeLast(':'), &settings->replace_with, "Replace");
+		auto [replace_frame, replace] = text_field(flat::WithoutColon(_("Replace with:")), &settings->replace_with, "Replace");
 		replace_edit = replace;
 		fields->Add(replace_frame, wxSizerFlags().Expand().Border(wxTOP, FromDIP(6)));
 	}

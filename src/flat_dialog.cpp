@@ -159,7 +159,7 @@ DialogButtons::DialogButtons(wxDialog *dialog, long flags, const char *help_page
 
 FlatButton *DialogButtons::Make(int id, wxString const& label, bool accent) {
 	auto button = new FlatButton(dialog, label, id, accent);
-	button->SetMinSize(wxSize(std::max(dialog->FromDIP(76), button->GetBestSize().x), dialog->FromDIP(28)));
+	button->SetLeastSize(wxSize(dialog->FromDIP(76), dialog->FromDIP(28)));
 	buttons.push_back(button);
 	return button;
 }

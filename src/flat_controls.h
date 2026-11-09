@@ -15,6 +15,7 @@
 
 class wxMouseEvent;
 class wxSizer;
+class wxStaticText;
 class wxTextCtrl;
 
 namespace flat {
@@ -51,6 +52,14 @@ void AddWheelTarget(wxWindow *target);
 /// A section's title in a dialog: bold words over a thin line, as the
 /// preferences and the style editor have them
 wxSizer *SectionTitle(wxWindow *parent, wxString const& title);
+
+/// A label in the dim colour, kept so as the theme changes
+wxStaticText *DimLabel(wxWindow *parent, wxString const& text);
+/// @p label without the colon it ends with, as it is translated (":" or
+/// the full-width "\uFF1A"), if it ends with one, and the space around it
+wxString WithoutColon(wxString label);
+/// @p text on one line: its line breaks spaces, as a list row shows it
+wxString OneLine(wxString text);
 }
 
 /// A rounded field holding one borderless control (text, a time), with a
@@ -278,6 +287,7 @@ class FlatButton final : public wxWindow {
 	wxString label;
 	bool accent = false;
 	bool hover = false, pressed = false;
+	wxSize least;
 	agi::signal::Connection theme_changed;
 
 	void OnPaint(wxPaintEvent &);
@@ -288,6 +298,9 @@ public:
 
 	void SetAccent(bool new_accent);
 	bool IsAccent() const { return accent; }
+	/// The size the button is at least, however short its label: unlike a
+	/// min size, a longer label set later still widens it
+	void SetLeastSize(wxSize size);
 
 	/// Send wxEVT_BUTTON, as a click does
 	void Press();

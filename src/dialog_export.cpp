@@ -109,7 +109,7 @@ DialogExport::DialogExport(agi::Context *c)
 	filter_list = new FlatList(&d, false, true);
 	std::vector<FlatList::Row> rows;
 	for (auto const& name : filters)
-		rows.push_back({to_wx(name), to_wx(exporter.GetDescription(name)), wxString()});
+		rows.push_back({to_wx(name), flat::OneLine(to_wx(exporter.GetDescription(name))), wxString()});
 	filter_list->Set(std::move(rows));
 	filter_list->SetMinSize(DipSize(340, 220));
 	filter_list->Bind(wxEVT_CHECKLISTBOX, [this](wxCommandEvent&) { RefreshOptions(); });
@@ -139,9 +139,9 @@ DialogExport::DialogExport(agi::Context *c)
 	top_buttons->Add(btn_none, wxSizerFlags(1).Expand().Border(wxLEFT, row));
 
 	// The text encoding written
-	auto charset_label = new wxStaticText(&d, -1, wxString(_("Text encoding:")).BeforeLast(':'));
-	charset_label->SetForegroundColour(flat::Colours(&d).dim);
-	charset_list = new FlatChoice(&d, wxString(_("Text encoding:")).BeforeLast(':'));
+	wxString const charset_name = flat::WithoutColon(_("Text encoding:"));
+	auto charset_label = flat::DimLabel(&d, charset_name);
+	charset_list = new FlatChoice(&d, charset_name);
 	auto encodings = agi::charset::GetEncodingsList<wxArrayString>();
 	charset_list->Set(std::vector<wxString>(encodings.begin(), encodings.end()));
 	charset_list->SetStringSelection(to_wx(c->subtitleAccess->Read().Properties.export_encoding));

@@ -171,9 +171,9 @@ DialogTimingProcessor::DialogTimingProcessor(agi::Context *c)
 	onlySelection->SetValue(OPT_GET("Tool/Timing Post Processor/Only Selection")->GetBool());
 
 	// Lead-in and lead-out: each a tick and its length
-	hasLeadIn = make_check(parent, _("Add lead &in:").BeforeLast(':'), "Tool/Timing Post Processor/Enable/Lead/IN",
+	hasLeadIn = make_check(parent, flat::WithoutColon(_("Add lead &in:")), "Tool/Timing Post Processor/Enable/Lead/IN",
 		_("Enable adding of lead-ins to lines"));
-	hasLeadOut = make_check(parent, _("Add lead &out:").BeforeLast(':'), "Tool/Timing Post Processor/Enable/Lead/OUT",
+	hasLeadOut = make_check(parent, flat::WithoutColon(_("Add lead &out:")), "Tool/Timing Post Processor/Enable/Lead/OUT",
 		_("Enable adding of lead-outs to lines"));
 	auto lead = new wxFlexGridSizer(2, row, gap);
 	lead->AddGrowableCol(1, 1);
@@ -186,9 +186,9 @@ DialogTimingProcessor::DialogTimingProcessor(agi::Context *c)
 	adjsEnable = make_check(parent, _("&Enable"), "Tool/Timing Post Processor/Enable/Adjacent",
 		_("Enable snapping of subtitles together if they are within a certain distance of each other"));
 	auto adjacent = new wxGridSizer(2, row, gap);
-	adjacent->Add(make_ctrl(parent, _("Max gap:").BeforeLast(':'), &adjGap, adjsEnable,
+	adjacent->Add(make_ctrl(parent, flat::WithoutColon(_("Max gap:")), &adjGap, adjsEnable,
 		_("Maximum difference between start and end time for two subtitles to be made continuous, in milliseconds")), wxSizerFlags().Expand());
-	adjacent->Add(make_ctrl(parent, _("Max overlap:").BeforeLast(':'), &adjOverlap, adjsEnable,
+	adjacent->Add(make_ctrl(parent, flat::WithoutColon(_("Max overlap:")), &adjOverlap, adjsEnable,
 		_("Maximum overlap between the end and start time for two subtitles to be made continuous, in milliseconds")), wxSizerFlags().Expand());
 	adjacentBias = flat::NumberField::Create(parent, _("Bias"), mid<int>(0, OPT_GET("Tool/Timing Post Processor/Adjacent Bias")->GetDouble() * 100, 100), 0, 100, 5, 0, 36);
 	adjacentBias->SetToolTip(_("Sets how to set the adjoining of lines. If set totally to left, it will extend or shrink start time of the second line; if totally to right, it will extend or shrink the end time of the first line."));

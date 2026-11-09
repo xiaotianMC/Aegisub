@@ -61,11 +61,6 @@ wxWindow *AssTransformFramerateFilter::GetConfigDialogWindow(wxWindow *parent, a
 	LoadSettings(true, c);
 
 	wxWindow *base = new wxPanel(parent, -1);
-	auto dim = [base](wxString const& text) {
-		auto label = new wxStaticText(base, -1, text);
-		label->SetForegroundColour(flat::Colours(base).dim);
-		return label;
-	};
 	auto field = [base](wxTextCtrl *&text, wxString const& value) {
 		auto frame = new FlatFrame(base, wxString());
 		text = new wxTextCtrl(frame, -1, value, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
@@ -91,18 +86,15 @@ wxWindow *AssTransformFramerateFilter::GetConfigDialogWindow(wxWindow *parent, a
 	InputSizer->Add(FromVideo, wxSizerFlags().Border(wxLEFT, base->FromDIP(6)));
 
 	// Output: the timecodes as they vary, or a constant frame rate
-	OutputMode = new FlatSwitch(base, {_("V&ariable"), wxString(_("&Constant: ")).Trim().BeforeLast(':')});
+	OutputMode = new FlatSwitch(base, {_("Var&iable"), flat::WithoutColon(_("&Constant: "))});
 	auto output_frame = field(OutputFramerate, initialInput);
 	if (!Output.IsVFR()) {
 		OutputMode->EnableItem(0, false);
 		OutputMode->SetSelection(1);
 	}
+	// Disabling the frame disables the field in it
 	output_frame->Enable(OutputMode->GetSelection() == 1);
-	OutputFramerate->Enable(OutputMode->GetSelection() == 1);
-	OutputMode->on_choose = [=, this](int mode) {
-		output_frame->Enable(mode == 1);
-		OutputFramerate->Enable(mode == 1);
-	};
+	OutputMode->on_choose = [output_frame](int mode) { output_frame->Enable(mode == 1); };
 	auto OutputSizer = new wxBoxSizer(wxHORIZONTAL);
 	OutputSizer->Add(OutputMode, wxSizerFlags().Expand());
 	OutputSizer->Add(output_frame, wxSizerFlags().Expand().Border(wxLEFT, base->FromDIP(6)));
@@ -110,9 +102,9 @@ wxWindow *AssTransformFramerateFilter::GetConfigDialogWindow(wxWindow *parent, a
 	Reverse = new FlatCheck(base, _("&Reverse transformation"));
 
 	auto MainSizer = new wxFlexGridSizer(2, base->FromDIP(6), base->FromDIP(10));
-	MainSizer->Add(dim(wxString(_("Input framerate: ")).Trim().BeforeLast(':')), wxSizerFlags().CenterVertical());
+	MainSizer->Add(flat::DimLabel(base, flat::WithoutColon(_("Input framerate: "))), wxSizerFlags().CenterVertical());
 	MainSizer->Add(InputSizer);
-	MainSizer->Add(dim(wxString(_("Output: ")).Trim().BeforeLast(':')), wxSizerFlags().CenterVertical());
+	MainSizer->Add(flat::DimLabel(base, flat::WithoutColon(_("Output: "))), wxSizerFlags().CenterVertical());
 	MainSizer->Add(OutputSizer);
 	MainSizer->AddSpacer(0);
 	MainSizer->Add(Reverse);

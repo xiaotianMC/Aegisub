@@ -3697,8 +3697,22 @@ TEST_F(ordinary_edit, fonts_collector_chooses_an_action_from_a_list) {
     d->Close();
     EXPECT_FALSE(d->IsShown());
 }
+TEST(flat_text, labels_lose_their_colon_however_translated) {
+    EXPECT_EQ(wxString("Input framerate"),flat::WithoutColon("Input framerate: "));
+    EXPECT_EQ(wxString(L"\u8f38\u5165\u5f71\u683c\u7387"),flat::WithoutColon(L"\u8f38\u5165\u5f71\u683c\u7387\uff1a")) << "full-width colon";
+    EXPECT_EQ(wxString("Invoer-beeldsnelheid"),flat::WithoutColon("Invoer-beeldsnelheid")) << "no colon at all";
+    EXPECT_EQ(wxString("&Constant"),flat::WithoutColon("&Constant: "));
+    EXPECT_EQ(wxString("One two. Three"),flat::OneLine("One two.\n\nThree\r\n"));
+}
 TEST_F(ordinary_edit, export_lists_filters_with_their_descriptions) {
-    if(!AssExportFilterChain::GetFilter(from_wx(_("Fix Styles")))){AssExportFilterChain::Register(std::make_unique<AssFixStylesFilter>());AssExportFilterChain::Register(std::make_unique<AssTransformFramerateFilter>());}
+    // Each filter registered here, if it is not already, is gone again after
+    std::vector<AssExportFilter*> registered;
+    auto need=[&](wxString const& name,auto make){if(!AssExportFilterChain::GetFilter(from_wx(name))){AssExportFilterChain::Register(make());registered.push_back(AssExportFilterChain::GetFilter(from_wx(name)));}};
+    need(_("Fix Styles"),[]{return std::make_unique<AssFixStylesFilter>();});
+    need(_("Transform Framerate"),[]{return std::make_unique<AssTransformFramerateFilter>();});
+    BOOST_SCOPE_EXIT_ALL(&){for(auto filter:registered)delete filter;};
+    // None ticked to begin with, whatever was remembered
+    c->subtitleAccess->SetMetadata(SubtitleProjectAccess::MetadataField::ExportFilters,"");
     bool ran=false;
     RunModal hook("Export",[&](wxDialog* dialog){
         FlatList *filters=nullptr; for(auto child:descendants(dialog))if(auto l=dynamic_cast<FlatList*>(child))filters=l;
@@ -3708,6 +3722,7 @@ TEST_F(ordinary_edit, export_lists_filters_with_their_descriptions) {
         ASSERT_LE(0,framerate);
         FlatSwitch *output=nullptr; for(auto child:descendants(dialog))if(auto s=dynamic_cast<FlatSwitch*>(child))output=s;
         ASSERT_NE(nullptr,output); EXPECT_FALSE(output->GetParent()->IsShown()) << "settings shown while ticked";
+        ASSERT_FALSE(filters->IsChecked(framerate));
         filters->Click(framerate,false,false,true);
         EXPECT_TRUE(filters->IsChecked(framerate)); EXPECT_TRUE(output->GetParent()->IsShown());
         // A row's words are whole in the tip, its description cut short as it may be

@@ -132,11 +132,7 @@ DialogResample::DialogResample(agi::Context *c, ResampleSettings &settings)
 	theme::UseSurface(&d);
 	wxWindow *parent = &d;
 	int gap = d.FromDIP(10), row = d.FromDIP(6);
-	auto dim = [&](wxString const& text) {
-		auto label = new wxStaticText(parent, -1, text);
-		label->SetForegroundColour(flat::Colours(parent).dim);
-		return label;
-	};
+	auto dim = [&](wxString const& text) { return flat::DimLabel(parent, text); };
 	// The matrices by name; the first, no name, leaves the colours alone
 	std::vector<wxString> matrices;
 	for (auto name : MatrixOptions) matrices.push_back(name.empty() ? wxString(L"\u2014") : to_wx(name));
@@ -149,10 +145,10 @@ DialogResample::DialogResample(agi::Context *c, ResampleSettings &settings)
 		x->on_change = [this, &value_x](double v) { value_x = static_cast<int>(v); UpdateButtons(); };
 		y->on_change = [this, &value_y](double v) { value_y = static_cast<int>(v); UpdateButtons(); };
 		reset = new FlatButton(parent, reset_label);
-		matrix = new FlatChoice(parent, _("YCbCr Matrix:").BeforeLast(':'));
+		matrix = new FlatChoice(parent, flat::WithoutColon(_("YCbCr Matrix:")));
 		matrix->Set(matrices);
 		matrix->SetStringSelection(matrices[0]);
-		matrix->SetToolTip(_("YCbCr Matrix:").BeforeLast(':'));
+		matrix->SetToolTip(flat::WithoutColon(_("YCbCr Matrix:")));
 		matrix->on_choose = [this](int) { OnMatrixChange(); };
 
 		auto line = new wxBoxSizer(wxHORIZONTAL);
@@ -161,7 +157,7 @@ DialogResample::DialogResample(agi::Context *c, ResampleSettings &settings)
 		line->Add(y->Frame(), wxSizerFlags(1).Expand());
 		line->Add(reset, wxSizerFlags().Border(wxLEFT, row));
 		auto matrix_line = new wxBoxSizer(wxHORIZONTAL);
-		matrix_line->Add(dim(_("YCbCr Matrix:").BeforeLast(':')), wxSizerFlags().CenterVertical());
+		matrix_line->Add(dim(flat::WithoutColon(_("YCbCr Matrix:"))), wxSizerFlags().CenterVertical());
 		matrix_line->Add(matrix, wxSizerFlags(1).Expand().Border(wxLEFT, gap));
 		auto group = new wxBoxSizer(wxVERTICAL);
 		group->Add(flat::SectionTitle(parent, title), wxSizerFlags().Expand());

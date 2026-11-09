@@ -72,6 +72,36 @@ public:
 };
 }
 
+namespace {
+class DimText final : public wxStaticText {
+	agi::signal::Connection theme_changed;
+public:
+	DimText(wxWindow *parent, wxString const& text) : wxStaticText(parent, -1, text) {
+		SetForegroundColour(Colours(parent).dim);
+		theme_changed = theme::AddChangeListener([this] { SetForegroundColour(Colours(GetParent()).dim); Refresh(); });
+	}
+};
+}
+
+wxStaticText *DimLabel(wxWindow *parent, wxString const& text) {
+	return new DimText(parent, text);
+}
+
+wxString WithoutColon(wxString label) {
+	label.Trim();
+	if (label.EndsWith(":") || label.EndsWith(L"\uFF1A"))
+		label.RemoveLast().Trim();
+	return label;
+}
+
+wxString OneLine(wxString text) {
+	text.Replace("\r", "");
+	text.Trim().Trim(false);
+	while (text.Replace("\n\n", "\n")) { }
+	text.Replace("\n", " ");
+	return text;
+}
+
 wxSizer *SectionTitle(wxWindow *parent, wxString const& title) {
 	auto sizer = new wxBoxSizer(wxVERTICAL);
 	auto text = new wxStaticText(parent, -1, title);
@@ -1005,6 +1035,11 @@ void FlatButton::SetAccent(bool new_accent) {
 	Refresh(false);
 }
 
+void FlatButton::SetLeastSize(wxSize size) {
+	least = size;
+	InvalidateBestSize();
+}
+
 void FlatButton::SetLabel(wxString const& new_label) {
 	if (label == new_label) return;
 	label = new_label;
@@ -1020,7 +1055,7 @@ bool FlatButton::Enable(bool enable) {
 
 wxSize FlatButton::DoGetBestClientSize() const {
 	wxSize extent = GetTextExtent(wxStripMenuCodes(label, wxStrip_Menu));
-	return wxSize(extent.x + FromDIP(20), std::max(FromDIP(24), extent.y + FromDIP(8)));
+	return wxSize(std::max(least.x, extent.x + FromDIP(20)), std::max({least.y, FromDIP(24), extent.y + FromDIP(8)}));
 }
 
 void FlatButton::OnPaint(wxPaintEvent &) {

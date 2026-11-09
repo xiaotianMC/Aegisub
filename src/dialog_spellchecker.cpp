@@ -121,11 +121,11 @@ DialogSpellChecker::DialogSpellChecker(agi::Context *context)
 	}
 
 	// The misspelled word and what replaces it, each named in its field
-	auto orig_frame = new FlatFrame(this, _("Misspelled word:").BeforeLast(':'));
+	auto orig_frame = new FlatFrame(this, flat::WithoutColon(_("Misspelled word:")));
 	orig_word = new wxTextCtrl(orig_frame, -1, "", wxDefaultPosition, wxDefaultSize, wxTE_READONLY | wxBORDER_NONE);
 	orig_frame->SetContent(orig_word, 200);
 	orig_frame->SetDimContent(true);
-	auto replace_frame = new FlatFrame(this, _("Replace with:").BeforeLast(':'));
+	auto replace_frame = new FlatFrame(this, flat::WithoutColon(_("Replace with:")));
 	replace_word = new wxTextCtrl(replace_frame, -1, "", wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
 	replace_frame->SetContent(replace_word, 200);
 	replace_word->Bind(wxEVT_TEXT, [this](wxCommandEvent&) {
