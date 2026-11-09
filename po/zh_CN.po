@@ -9762,3 +9762,7 @@ msgstr "没有建议"
 #: ../src/dialog_autosave.cpp
 msgid "No autosave files"
 msgstr "没有自动保存的文件"
+
+#: ../src/dialog_attachments.cpp
+msgid "No attachments"
+msgstr "没有附件"

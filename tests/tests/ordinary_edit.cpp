@@ -448,12 +448,12 @@ TEST_F(ordinary_edit, attachment_delete_event_is_gated_and_undo_restores_content
     { auto write=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).InsertAttachment(agi::fs::path("attachment.ttf"));LiveWriteForTest(*c).Commit("attachment",AssFile::COMMIT_ATTACHMENT); }
     auto original=LiveRead(*c).Attachments.front().GetEntryData();
     RunModal hook("Attachment List",[&](wxDialog* dialog) {
-        wxListView* list=nullptr;wxButton* remove=nullptr;
+        FlatList* list=nullptr;FlatButton* remove=nullptr;
         for(auto child:descendants(dialog)) {
-            if(auto view=dynamic_cast<wxListView*>(child))list=view;
-            if(auto b=dynamic_cast<wxButton*>(child);b && b->GetLabel()=="&Delete")remove=b;
+            if(auto view=dynamic_cast<FlatList*>(child))list=view;
+            if(auto b=dynamic_cast<FlatButton*>(child);b && b->GetLabel()=="&Delete")remove=b;
         }
-        ASSERT_NE(nullptr,list);ASSERT_NE(nullptr,remove);list->Select(0);
+        ASSERT_NE(nullptr,list);ASSERT_NE(nullptr,remove);list->SetSelection(0);
         wxCommandEvent event(wxEVT_BUTTON,remove->GetId());event.SetEventObject(remove);remove->GetEventHandler()->ProcessEvent(event);
     });
     auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);
@@ -6395,4 +6395,34 @@ TEST_F(ordinary_edit, autosave_with_nothing_to_open_says_so) {
     }
     if(moved)std::filesystem::rename(aside,recovered);
     EXPECT_TRUE(ran);
+}
+TEST_F(ordinary_edit, attachments_list_names_groups_and_sizes) {
+    for(auto name:{"one.ttf","two.ttf"}){std::ofstream data(name,std::ios::binary);data<<"attachment "<<name;}
+    { auto write=c->subtitleAccess->TryWrite();for(auto name:{"one.ttf","two.ttf"})LiveWriteForTest(*c).InsertAttachment(agi::fs::path(name));LiveWriteForTest(*c).Commit("attachment",AssFile::COMMIT_ATTACHMENT); }
+    bool ran=false;
+    {
+        RunModal hook(_("Attachment List"),[&](wxDialog *dialog){
+            FlatList *list=nullptr; for(auto child:descendants(dialog))if(auto l=dynamic_cast<FlatList*>(child))list=l;
+            ASSERT_NE(nullptr,list); ASSERT_EQ(2u,list->GetCount());
+            EXPECT_TRUE(list->GetString(0).StartsWith("one")) << list->GetString(0);
+            EXPECT_EQ("Fonts",list->GetRow(0).detail) << "the group without its brackets";
+            EXPECT_EQ(PrettySize(LiveRead(*c).Attachments.front().GetSize()),list->GetRow(0).note);
+            auto extract=button_labelled(dialog,_("E&xtract")), remove=button_labelled(dialog,_("&Delete"));
+            ASSERT_NE(nullptr,extract); ASSERT_NE(nullptr,remove);
+            EXPECT_FALSE(extract->IsEnabled()); EXPECT_FALSE(remove->IsEnabled());
+            list->Click(0); list->Click(1,true);
+            EXPECT_TRUE(extract->IsEnabled()); EXPECT_TRUE(remove->IsEnabled());
+            remove->Press();
+            EXPECT_TRUE(list->IsEmpty()) << "both chosen deleted";
+            EXPECT_FALSE(remove->IsEnabled());
+            auto close=dynamic_cast<FlatButton*>(dialog->FindWindow(wxID_CANCEL)); ASSERT_NE(nullptr,close);
+            EXPECT_EQ(_("&Close"),close->GetLabel());
+            ran=true;
+            close->Press();
+            EXPECT_FALSE(dialog->IsShown());
+        });
+        ShowAttachmentsDialog(c.get());
+    }
+    EXPECT_TRUE(ran);
+    EXPECT_TRUE(LiveRead(*c).Attachments.empty());
 }
