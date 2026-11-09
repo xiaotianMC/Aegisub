@@ -110,6 +110,7 @@
         "video/tool/rotate/xy",
         "video/tool/scale",
         "video/tool/rectangle",
+        "video/tool/scroll",
         "video/tool/clip",
         "video/tool/vector_clip",
         "video/tool/pan",

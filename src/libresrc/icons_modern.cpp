@@ -139,6 +139,7 @@ const ModernIcon icons[] = {
 	{"visual_rotatexy", "<ellipse cx='12' cy='13.5' rx='9.5' ry='4'/><path d='M12 2V22'/><path d='M17.5 6.5L21.5 9.2L17 11Z' fill='@'/>"},
 	{"visual_rotatez", "<path d='M21 12A9 9 0 1 1 12 3C14.52 3 16.93 4 18.74 5.74L21 8'/><path d='M21 3V8H16'/>"}, // Lucide: rotate-cw
 	{"visual_scale", "<rect x='2' y='12' width='10' height='10' rx='2'/><path d='M12 12L21 3M14.5 3H21V9.5'/>"},
+	{"visual_scroll", "<path d='M2 3H22M2 21H22'/><path d='M12 17.5V7'/><path d='M8 11L12 7L16 11'/>"},
 	{"visual_standard", "<circle cx='12' cy='12' r='10'/><path d='M22 12L18 12'/><path d='M6 12L2 12'/><path d='M12 6L12 2'/><path d='M12 22L12 18'/>"}, // Lucide: crosshair
 	{"visual_vector_clip", "<path d='M4.5 17C6 7 18 17 19.5 7'/><rect x='2.0' y='17.0' width='5' height='5' rx='1'/><rect x='17.0' y='2.0' width='5' height='5' rx='1'/>"},
 	{"visual_vector_clip_bicubic", "<rect x='2.0' y='17.0' width='5' height='5' rx='1'/><rect x='17.0' y='2.0' width='5' height='5' rx='1'/><path d='M7 19.5C17 19.5 7 4.5 17 4.5'/><path d='M7 19.5H13M17 4.5H11'/><circle cx='13.5' cy='19.5' r='1.5' fill='@' stroke='none'/><circle cx='10.5' cy='4.5' r='1.5' fill='@' stroke='none'/>"},

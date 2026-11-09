@@ -264,6 +264,8 @@ CUSTOM = {
  # visual typesetting tools
  'visual_rotatexy': "<ellipse cx='12' cy='13.5' rx='9.5' ry='4'/>" + p('M12 2V22') + fill('M17.5 6.5L21.5 9.2L17 11Z'),
  'visual_scale': rect(2, 12, 10, 10) + p('M12 12L21 3M14.5 3H21V9.5'),
+ # scroll effect: the area's two edges, the text going up between them
+ 'visual_scroll': p('M2 3H22M2 21H22') + p('M12 17.5V7') + p('M8 11L12 7L16 11'),
  'visual_vector_clip': p('M4.5 17C6 7 18 17 19.5 7') + node(4.5, 19.5) + node(19.5, 4.5),
  'visual_vector_clip_drag': node(12, 12) + p('M12 2V7M12 17V22M2 12H7M17 12H22')
     + p('M9.5 4.5L12 2L14.5 4.5M9.5 19.5L12 22L14.5 19.5M4.5 9.5L2 12L4.5 14.5M19.5 9.5L22 12L19.5 14.5'),

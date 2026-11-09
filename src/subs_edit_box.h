@@ -156,7 +156,8 @@ private:
 	// Constructor helpers
 	TimeEdit *MakeTimeCtrl(wxString const& label, wxString const& tooltip, TimeField field);
 	/// A text field in a flat frame whose chevron lists @p values
-	wxTextCtrl *MakeTextField(FlatFrame *&frame, wxString const& hint, wxString const& tooltip, int width, wxArrayString &values);
+	/// @p scroll_effects: the list also offers the Banner / Scroll form
+	wxTextCtrl *MakeTextField(FlatFrame *&frame, wxString const& hint, wxString const& tooltip, int width, wxArrayString &values, bool scroll_effects = false);
 	FlatButton *MakeBottomButton(const char *cmd_name);
 
 	void OnChange(wxStyledTextEvent &event);
@@ -244,4 +245,7 @@ public:
 	/// Put the keyboard in the style box, where typing a style's first
 	/// letters chooses it for the selected lines
 	void FocusStyle();
+	/// Ask for the active line's Banner or Scroll effect, as the Effect
+	/// field's list offers, and set it for the selected lines
+	void EditScrollEffect();
 };

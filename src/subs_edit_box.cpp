@@ -41,6 +41,7 @@
 #include "base_grid.h"
 #include "command/command.h"
 #include "compat.h"
+#include "dialog_scroll_effect.h"
 #include "dialogs.h"
 #include "flat_controls.h"
 #include "flyweight_hash.h"
@@ -126,7 +127,7 @@ SubsEditBox::SubsEditBox(wxWindow *parent, agi::Context *context)
 	Bind(wxEVT_TEXT, &SubsEditBox::OnActorChange, this, actor_box->GetId());
 	top_sizer->Add(actor_frame, wxSizerFlags(3).Center().Border(wxRIGHT, gap));
 
-	effect_box = MakeTextField(effect_frame, _("Effect"), _("Effect for this line. This can be used to store extra information for karaoke scripts, or for the effects supported by the renderer."), 50, effect_values);
+	effect_box = MakeTextField(effect_frame, _("Effect"), _("Effect for this line. This can be used to store extra information for karaoke scripts, or for the effects supported by the renderer."), 50, effect_values, true);
 	Bind(wxEVT_TEXT, &SubsEditBox::OnEffectChange, this, effect_box->GetId());
 	top_sizer->Add(effect_frame, wxSizerFlags(2).Center().Border(wxRIGHT, gap));
 
@@ -275,7 +276,7 @@ TimeEdit *SubsEditBox::MakeTimeCtrl(wxString const& label, wxString const& toolt
 	return ctrl;
 }
 
-wxTextCtrl *SubsEditBox::MakeTextField(FlatFrame *&frame, wxString const& hint, wxString const& tooltip, int width, wxArrayString &values) {
+wxTextCtrl *SubsEditBox::MakeTextField(FlatFrame *&frame, wxString const& hint, wxString const& tooltip, int width, wxArrayString &values, bool scroll_effects) {
 	frame = new FlatFrame(this, "");
 	auto ctrl = new wxTextCtrl(frame, -1, "", wxDefaultPosition, wxDefaultSize, wxTE_PROCESS_ENTER | wxBORDER_NONE);
 	ctrl->SetHint(hint);
@@ -293,12 +294,18 @@ wxTextCtrl *SubsEditBox::MakeTextField(FlatFrame *&frame, wxString const& hint, 
 		else e.Skip();
 	});
 	// The values the file already has, to choose from
-	frame->SetChevron([this, ctrl, frame, &values] {
-		if (values.empty()) return;
+	frame->SetChevron([this, ctrl, frame, &values, scroll_effects] {
+		if (values.empty() && !scroll_effects) return;
 		wxMenu menu;
+		// The moving effects, set in a form, before the values the file has
+		if (scroll_effects) {
+			menu.Append(wxID_HIGHEST, _("Banner / Scroll Effect..."));
+			if (!values.empty()) menu.AppendSeparator();
+		}
 		for (size_t i = 0; i < values.size(); ++i)
 			menu.AppendCheckItem(wxID_HIGHEST + 1 + i, values[i])->Check(values[i] == ctrl->GetValue());
 		int chosen = frame->GetPopupMenuSelectionFromUser(menu, 0, frame->GetSize().y);
+		if (scroll_effects && chosen == wxID_HIGHEST) { EditScrollEffect(); return; }
 		size_t index = chosen - wxID_HIGHEST - 1;
 		if (chosen <= wxID_HIGHEST || index >= values.size()) return;
 		// One undo step of its own, as typing makes one
@@ -658,6 +665,19 @@ void SubsEditBox::OnStyleChange() {
 void SubsEditBox::OnActorChange(wxCommandEvent &) {
 	SetSelectedRows(AssDialogue_Actor, actor_box->GetValue(), _("actor change"), AssFile::COMMIT_DIAG_META, true);
 	PopulateList(actor_box, actor_values, AssDialogue_Actor);
+}
+
+void SubsEditBox::EditScrollEffect() {
+	auto line = c->selectionController->ReadActiveLine();
+	if (!line) return;
+	int script_w, script_h;
+	c->subtitleAccess->Read().GetResolution(script_w, script_h);
+	auto chosen = ShowScrollEffectDialog(this, effect_box->GetValue().utf8_string(), line->End - line->Start, script_w, script_h);
+	if (!chosen || to_wx(*chosen) == effect_box->GetValue()) return;
+	// One undo step of its own, as typing makes one; set as typing sets it
+	last_commit_type.clear();
+	effect_box->SetValue(to_wx(*chosen));
+	effect_box->SetInsertionPointEnd();
 }
 
 void SubsEditBox::OnEffectChange(wxCommandEvent &) {

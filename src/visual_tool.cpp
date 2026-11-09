@@ -31,6 +31,7 @@
 #include "video_display.h"
 #include "visual_tool_clip.h"
 #include "visual_tool_drag.h"
+#include "visual_tool_scroll.h"
 #include "visual_tool_vector_clip.h"
 
 #include <libaegisub/ass/time.h>
@@ -199,17 +200,23 @@ void VisualToolBase::EndEdit(bool apply) {
 		return;
 	}
 	std::vector<AssDialogueBase> updates;
+	int type = 0;
 	ValidateOriginals();
 	for (auto const& row : c->subtitleAccess->Read().Events) if (dirty.contains(row.Id)) {
 		auto update = AssDialogueBase(row);
-		update.Text = Snapshot(row.Id)->Text;
+		auto snapshot = Snapshot(row.Id);
+		if (snapshot->Text != row.Text) type |= AssFile::COMMIT_DIAG_TEXT;
+		if (snapshot->Effect != row.Effect) type |= AssFile::COMMIT_DIAG_META;
+		update.Text = snapshot->Text;
+		update.Effect = snapshot->Effect;
 		updates.push_back(std::move(update));
 	}
 	if (!updates.empty()) {
+		if (!type) type = AssFile::COMMIT_DIAG_TEXT; // as before: back where it was
 		file_changed_connection.Block();
 		BOOST_SCOPE_EXIT_ALL(this) { file_changed_connection.Unblock(); };
 		interaction->UpdateRows(updates);
-		interaction->Commit(edit_message.empty() ? _("visual typesetting") : edit_message, AssFile::COMMIT_DIAG_TEXT);
+		interaction->Commit(edit_message.empty() ? _("visual typesetting") : edit_message, type);
 	}
 	previewing = false;
 }
@@ -727,8 +734,17 @@ void VisualToolBase::SetOverride(AssDialogue* line, std::string const& tag, std:
 	if (line->Text != original) dirty.insert(line->Id);
 }
 
+void VisualToolBase::SetEffect(AssDialogue* line, std::string const& value) {
+	if (!EditCurrent() || !line || Snapshot(line->Id) != line || !std::binary_search(targets.begin(), targets.end(), line->Id))
+		throw std::logic_error("Unauthorized visual snapshot");
+	if (line->Effect.get() == value) return;
+	line->Effect = value;
+	dirty.insert(line->Id);
+}
+
 // If only export worked
 template class VisualTool<VisualDraggableFeature>;
 template class VisualTool<ClipCorner>;
 template class VisualTool<VisualToolDragDraggableFeature>;
 template class VisualTool<VisualToolVectorClipDraggableFeature>;
+template class VisualTool<ScrollHandle>;

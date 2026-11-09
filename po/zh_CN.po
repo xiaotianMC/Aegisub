@@ -9780,3 +9780,95 @@ msgstr "全局"
 msgctxt "automation script"
 msgid "Local"
 msgstr "本地"
+
+#: ../src/command/vis_tool.cpp
+msgid "Scroll Effect"
+msgstr "滚动特效"
+
+#: ../src/command/vis_tool.cpp
+msgid "Set where a line with a Banner or Scroll effect moves, and how fast: drag out an area, drag its edges or the dashed end, double-click to turn it round"
+msgstr "设置横幅或滚动特效的移动范围和速度：拖出区域，拖动上下边或虚线结束位置，双击翻转方向"
+
+#: ../src/visual_tool_scroll.cpp
+msgid "scroll effect"
+msgstr "滚动特效"
+
+#: ../src/visual_tool_scroll.cpp
+msgid "This line's Effect holds something else, which is left as it is"
+msgstr "该行特效栏已有其他内容，保持不变"
+
+#: ../src/visual_tool_scroll.cpp
+msgid "Drag up or down to make the line scroll in that area"
+msgstr "上下拖动，让该行在拖出的区域内滚动"
+
+#: ../src/visual_tool_scroll.cpp
+msgid "%s px/s, %d px by the line's end"
+msgstr "%s 像素/秒，行结束时移动 %d 像素"
+
+#: ../src/subs_edit_box.cpp
+msgid "Banner / Scroll Effect..."
+msgstr "横幅 / 滚动特效…"
+
+#: ../src/dialog_scroll_effect.cpp
+msgctxt "scroll effect"
+msgid "&None"
+msgstr "无(&N)"
+
+#: ../src/dialog_scroll_effect.cpp
+msgid "&Banner"
+msgstr "横幅(&B)"
+
+#: ../src/dialog_scroll_effect.cpp
+msgid "Scroll &up"
+msgstr "向上滚动(&U)"
+
+#: ../src/dialog_scroll_effect.cpp
+msgid "Scroll &down"
+msgstr "向下滚动(&D)"
+
+#: ../src/dialog_scroll_effect.cpp
+msgid "Right to &left"
+msgstr "从右往左(&L)"
+
+#: ../src/dialog_scroll_effect.cpp
+msgid "Left to &right"
+msgstr "从左往右(&R)"
+
+#: ../src/dialog_scroll_effect.cpp
+msgctxt "scroll effect"
+msgid "Top"
+msgstr "上边"
+
+#: ../src/dialog_scroll_effect.cpp
+msgctxt "scroll effect"
+msgid "Bottom"
+msgstr "下边"
+
+#: ../src/dialog_scroll_effect.cpp
+msgid "Delay"
+msgstr "延迟"
+
+#: ../src/dialog_scroll_effect.cpp
+msgid "Milliseconds the text takes to move one pixel of the script's resolution"
+msgstr "文字移动一个脚本像素所用的毫秒数"
+
+#: ../src/dialog_scroll_effect.cpp
+msgid "&Fade at the edges (VSFilter only)"
+msgstr "边缘淡出（仅 VSFilter）(&F)"
+
+#: ../src/dialog_scroll_effect.cpp
+msgctxt "scroll effect"
+msgid "Fade"
+msgstr "淡出"
+
+#: ../src/dialog_scroll_effect.cpp
+msgid "The Effect field holds something else, which this replaces"
+msgstr "特效栏已有其他内容，确定后会被替换"
+
+#: ../src/dialog_scroll_effect.cpp
+msgid "Area"
+msgstr "区域"
+
+#: ../src/dialog_scroll_effect.cpp
+msgid "Speed"
+msgstr "速度"

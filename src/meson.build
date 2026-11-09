@@ -83,6 +83,7 @@ aegisub_src = files(
     'dialog_properties.cpp',
     'dialog_resample.cpp',
     'dialog_rectangle.cpp',
+    'dialog_scroll_effect.cpp',
     'dialog_search_replace.cpp',
     'dialog_selected_choices.cpp',
     'dialog_selection.cpp',
@@ -122,6 +123,7 @@ aegisub_src = files(
     'project.cpp',
     'provider_file_formats.cpp',
     'resolution_resampler.cpp',
+    'scroll_effect.cpp',
     'search_replace_engine.cpp',
     'selection_controller.cpp',
     'spellchecker.cpp',
@@ -185,6 +187,7 @@ aegisub_src = files(
     'visual_tool_rotatexy.cpp',
     'visual_tool_rotatez.cpp',
     'visual_tool_scale.cpp',
+    'visual_tool_scroll.cpp',
     'visual_tool_vector_clip.cpp',
 )
 

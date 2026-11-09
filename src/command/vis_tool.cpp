@@ -28,6 +28,7 @@
 #include "../visual_tool_rotatexy.h"
 #include "../visual_tool_rotatez.h"
 #include "../visual_tool_scale.h"
+#include "../visual_tool_scroll.h"
 #include "../visual_tool_vector_clip.h"
 
 
@@ -140,6 +141,14 @@ namespace {
 		void operator()(agi::Context *c) override { c->videoDisplay->TogglePanMode(); }
 	};
 
+	struct visual_mode_scroll final : public visual_tool_command<VisualToolScroll> {
+		CMD_NAME("video/tool/scroll")
+		CMD_ICON(visual_scroll)
+		STR_MENU("Scroll Effect")
+		STR_DISP("Scroll Effect")
+		STR_HELP("Set where a line with a Banner or Scroll effect moves, and how fast: drag out an area, drag its edges or the dashed end, double-click to turn it round")
+	};
+
 	struct visual_mode_clip final : public visual_tool_command<VisualToolClip> {
 		CMD_NAME("video/tool/clip")
 		CMD_ICON(visual_clip)
@@ -227,6 +236,7 @@ namespace cmd {
 		reg(std::make_unique<visual_mode_rectangle>());
 		reg(std::make_unique<edit_shape>());
 		reg(std::make_unique<video_pan_mode>());
+		reg(std::make_unique<visual_mode_scroll>());
 		reg(std::make_unique<visual_mode_clip>());
 		reg(std::make_unique<visual_mode_vector_clip>());
 

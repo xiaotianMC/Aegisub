@@ -166,6 +166,9 @@ protected:
 
 	void SetOverride(AssDialogue* line, std::string const& tag, std::string const& value);
 	void SetSelectedOverride(std::string const& tag, std::string const& value);
+	/// Set a line's Effect field, as SetOverride sets a tag: previewed, then
+	/// written with the text when the edit ends
+	void SetEffect(AssDialogue* line, std::string const& value);
 
 	VisualToolBase(VideoDisplay *parent, agi::Context *context);
 

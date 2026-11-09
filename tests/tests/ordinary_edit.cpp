@@ -86,6 +86,9 @@
 #include "visual_tool_rotatez.h"
 #include "visual_tool_clip.h"
 #include "visual_tool_vector_clip.h"
+#include "visual_tool_scroll.h"
+#include "scroll_effect.h"
+#include "dialog_scroll_effect.h"
 #include "visual_tool_rectangle.h"
 #include "subtitle_format.h"
 #include "subtitle_dialog_edit.h"
@@ -2810,6 +2813,11 @@ protected:
         Mouse(wxEVT_LEFT_DOWN,x,y,true);Mouse(wxEVT_MOTION,x2,y2,true);Mouse(wxEVT_LEFT_UP,x2,y2);
     }
     std::string Text() { return LiveRead(*c).Events.front().Text.get(); }
+    std::string Effect() { return LiveRead(*c).Events.front().Effect.get(); }
+    void SetEffect(std::string const& effect) {
+        auto scope=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).Events.front().Effect=effect;
+        LiveWriteForTest(*c).Commit("effect fixture",AssFile::COMMIT_DIAG_META);
+    }
     std::vector<unsigned char> FrameData() {
         // Libass font setup may need the main dispatch queue. Keep the normal
         // wx loop responsive rather than synchronously waiting on that worker.
@@ -2868,7 +2876,97 @@ TEST_F(visual_edit, all_standard_tools_reject_comparison_writes) {
     Install<VisualToolScale>();blocked();Install<VisualToolRotateXY>();blocked();
     Install<VisualToolRotateZ>();blocked();Install<VisualToolClip>();blocked();
     Install<VisualToolVectorClip>();blocked();Install<VisualToolRectangle>();blocked();
+    Install<VisualToolScroll>();blocked();
     EXPECT_EQ(1u,LiveRead(*c).Events.size());
+}
+TEST(scroll_effect, reads_and_writes_the_fields_as_the_renderers_do) {
+    auto up=ParseScrollEffect("Scroll up;100;300;10");ASSERT_TRUE(up);
+    EXPECT_EQ(ScrollEffect::Kind::ScrollUp,up->kind);EXPECT_EQ(100,up->y1);EXPECT_EQ(300,up->y2);EXPECT_EQ(10,up->delay);EXPECT_FALSE(up->fade);
+    EXPECT_EQ("Scroll up;100;300;10",FormatScrollEffect(*up));
+    auto down=ParseScrollEffect("Scroll down;400;50;0;20");ASSERT_TRUE(down);
+    EXPECT_EQ(50,down->Top());EXPECT_EQ(400,down->Bottom());EXPECT_EQ(20,*down->fade);
+    EXPECT_EQ("Scroll down;400;50;0;20",FormatScrollEffect(*down)) << "the order written is kept";
+    auto banner=ParseScrollEffect("Banner;20");ASSERT_TRUE(banner);
+    EXPECT_EQ(ScrollEffect::Kind::Banner,banner->kind);EXPECT_FALSE(banner->left_to_right);EXPECT_EQ("Banner;20",FormatScrollEffect(*banner));
+    auto ltr=ParseScrollEffect("Banner;5;1;30");ASSERT_TRUE(ltr);
+    EXPECT_TRUE(ltr->left_to_right);EXPECT_EQ(30,*ltr->fade);EXPECT_EQ("Banner;5;1;30",FormatScrollEffect(*ltr));
+    banner->left_to_right=true;EXPECT_EQ("Banner;20;1",FormatScrollEffect(*banner));
+    // Anything else is not one of them, and is left alone
+    for(auto other:{"","template line","karaoke","Banner","Scroll up;10;20","scroll up;1;2;3","Banner 5","code once"})
+        EXPECT_FALSE(ParseScrollEffect(other)) << other;
+    // The delay is whole milliseconds per pixel, at least one
+    EXPECT_EQ(1,EffectiveDelay(0));EXPECT_EQ(1,EffectiveDelay(-4));EXPECT_EQ(7,EffectiveDelay(7));
+    EXPECT_DOUBLE_EQ(500.,ScrollShift(*up,5000));EXPECT_DOUBLE_EQ(5000.,ScrollShift(*down,5000)) << "a delay of 0 moves as 1";
+    EXPECT_EQ(25,DelayForShift(5000,200));EXPECT_EQ(1,DelayForShift(100,5000));
+    EXPECT_LT(100000,DelayForShift(5000,0)) << "not moving at all";
+}
+TEST_F(visual_edit, scroll_area_edges_are_dragged_previewed_then_committed_once) {
+    SetEffect("Scroll up;100;300;10");Install<VisualToolScroll>();auto text=Text();
+    Mouse(wxEVT_LEFT_DOWN,320,100,true);ASSERT_TRUE(display->HasCapture());
+    Mouse(wxEVT_MOTION,320,150,true);EXPECT_EQ("Scroll up;100;300;10",Effect()) << "previewed, not written";
+    Mouse(wxEVT_LEFT_UP,320,150);
+    EXPECT_EQ("Scroll up;150;300;10",Effect());EXPECT_EQ(text,Text());
+    EXPECT_EQ(_("scroll effect"),c->subsController->GetUndoDescription());
+    c->subsController->Undo();EXPECT_EQ("Scroll up;100;300;10",Effect());
+    // The other edge
+    Install<VisualToolScroll>();Drag(320,300,320,420);EXPECT_EQ("Scroll up;100;420;10",Effect());
+}
+TEST_F(visual_edit, scroll_end_handle_sets_the_speed) {
+    // 5 s at 20 ms a pixel: 250 px, the text's top from 400 up to 150
+    SetEffect("Scroll up;100;400;20");Install<VisualToolScroll>();
+    Drag(480,150,480,200);
+    EXPECT_EQ("Scroll up;100;400;25",Effect()) << "200 px in 5 s";
+    // A banner's end is across, at the line's height (\pos(100,100)): its
+    // left edge from the right, 640 - 5000 / 20 = 390
+    SetEffect("Banner;20");Install<VisualToolScroll>();
+    Drag(390,100,140,100);EXPECT_EQ("Banner;10",Effect()) << "500 px in 5 s";
+}
+TEST_F(visual_edit, scroll_double_click_turns_it_round) {
+    SetEffect("Scroll up;100;400;20");Install<VisualToolScroll>();
+    Mouse(wxEVT_LEFT_DCLICK,50,50,true);Mouse(wxEVT_LEFT_UP,50,50);
+    EXPECT_EQ("Scroll down;100;400;20",Effect());
+    SetEffect("Banner;20");Install<VisualToolScroll>();
+    Mouse(wxEVT_LEFT_DCLICK,50,50,true);Mouse(wxEVT_LEFT_UP,50,50);
+    EXPECT_EQ("Banner;20;1",Effect());
+}
+TEST_F(visual_edit, scroll_area_is_dragged_out_only_where_the_field_allows) {
+    // Nothing yet: an area is made, crossed by the line's end
+    SetEffect("");Install<VisualToolScroll>();
+    Mouse(wxEVT_LEFT_DOWN,300,250,true);Mouse(wxEVT_LEFT_UP,300,250);
+    EXPECT_EQ("",Effect()) << "a click makes nothing";EXPECT_EQ("effect fixture",c->subsController->GetUndoDescription());
+    Drag(300,300,300,100);EXPECT_EQ("Scroll up;100;300;25",Effect());
+    // Anything else in the field, and a banner, are left alone
+    for(auto other:{"template line","Banner;20"}) {
+        SetEffect(other);Install<VisualToolScroll>();auto text=Text();
+        Drag(300,300,300,100);EXPECT_EQ(other,Effect());EXPECT_EQ(text,Text());
+    }
+}
+TEST_F(visual_edit, scroll_escape_cancels_without_a_record) {
+    SetEffect("Scroll up;100;300;10");Install<VisualToolScroll>();
+    Mouse(wxEVT_LEFT_DOWN,320,100,true);Mouse(wxEVT_MOTION,320,180,true);
+    {wxKeyEvent esc(wxEVT_CHAR_HOOK);esc.m_keyCode=WXK_ESCAPE;esc.SetEventObject(display);display->GetEventHandler()->ProcessEvent(esc);}
+    EXPECT_FALSE(display->HasCapture());
+    Mouse(wxEVT_LEFT_UP,320,180);
+    EXPECT_EQ("Scroll up;100;300;10",Effect());EXPECT_EQ("effect fixture",c->subsController->GetUndoDescription());
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
+}
+TEST_F(visual_edit, scroll_edits_the_selected_lines_with_a_scroll_too) {
+    int scroll_id,other_id;
+    {auto write=c->subtitleAccess->TryWrite();
+     LiveWriteForTest(*c).Events.front().Effect="Scroll up;100;300;10";
+     auto scroll=new AssDialogue(LiveRead(*c).Events.front());scroll->Effect="Scroll down;0;50;5";LiveWriteForTest(*c).Events.push_back(*scroll);
+     auto other=new AssDialogue(LiveRead(*c).Events.front());other->Effect="template line";LiveWriteForTest(*c).Events.push_back(*other);
+     scroll_id=scroll->Id;other_id=other->Id;
+     LiveWriteForTest(*c).Commit("effect fixture",AssFile::COMMIT_DIAG_ADDREM);
+     auto first=LiveRead(*c).Events.front().Id;
+     c->selectionController->SetSelectionAndActiveIDs({first,scroll_id,other_id},first);}
+    Install<VisualToolScroll>();Drag(320,100,320,150);
+    std::map<int,std::string> effects;for(auto const& row:LiveRead(*c).Events)effects[row.Id]=row.Effect.get();
+    EXPECT_EQ("Scroll up;150;300;10",Effect());
+    EXPECT_EQ("Scroll down;150;50;5",effects[scroll_id]) << "the edge dragged is set for it too";
+    EXPECT_EQ("template line",effects[other_id]);
+    c->subsController->Undo();
+    for(auto const& row:LiveRead(*c).Events)if(row.Id==scroll_id)EXPECT_EQ("Scroll down;0;50;5",row.Effect.get()) << "one step";
 }
 TEST_F(visual_edit, scale_rotation_and_rectangular_clip_preserve_unedited_tags) {
     auto text=Text();Install<VisualToolScale>();Drag(200,200,240,160);
@@ -3730,6 +3828,40 @@ TEST(flat_text, labels_lose_their_colon_however_translated) {
     EXPECT_EQ(wxString("Invoer-beeldsnelheid"),flat::WithoutColon("Invoer-beeldsnelheid")) << "no colon at all";
     EXPECT_EQ(wxString("&Constant"),flat::WithoutColon("&Constant: "));
     EXPECT_EQ(wxString("One two. Three"),flat::OneLine("One two.\n\nThree\r\n"));
+}
+TEST_F(ordinary_edit, scroll_effect_form_sets_the_effect_field_in_one_step) {
+    int w,h;LiveRead(*c).GetResolution(w,h);
+    auto effect=[&]{return LiveRead(*c).Events.front().Effect.get();};
+    auto kind_switch=[](wxDialog* d){FlatSwitch* found=nullptr;for(auto child:descendants(d))if(auto s=dynamic_cast<FlatSwitch*>(child);s && s->GetLabel(0)==wxGETTEXT_IN_CONTEXT("scroll effect","&None"))found=s;return found;};
+    bool ran=false;
+    {
+        RunModal hook("Scroll Effect",[&](wxDialog* d){
+            auto kind=kind_switch(d);ASSERT_NE(nullptr,kind);EXPECT_EQ(0,kind->GetSelection()) << "none yet";
+            kind->Choose(2);
+            auto delay=fields_named(d,_("Delay"));ASSERT_EQ(1u,delay.size());delay[0]->SetValue("40");
+            ran=true;button(d,wxID_OK);
+        });
+        box->EditScrollEffect();
+    }
+    EXPECT_TRUE(ran);
+    ScrollEffect expected;expected.y1=h/2;expected.y2=h;expected.delay=40;
+    EXPECT_EQ(FormatScrollEffect(expected),effect());
+    EXPECT_EQ(_("effect change"),c->subsController->GetUndoDescription());
+    c->subsController->Undo();EXPECT_EQ("",effect()) << "one step";
+    // Cancelled, nothing changes
+    {RunModal hook("Scroll Effect",[&](wxDialog* d){kind_switch(d)->Choose(1);button(d,wxID_CANCEL);});box->EditScrollEffect();}
+    EXPECT_EQ("",effect());
+    // Accepted as it was, the field is left as written; None clears it
+    {auto write=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).Events.front().Effect="Banner;20";LiveWriteForTest(*c).Commit("banner",AssFile::COMMIT_DIAG_META);}
+    box->SetFocus();wxTheApp->ProcessPendingEvents();
+    {RunModal hook("Scroll Effect",[&](wxDialog* d){EXPECT_EQ(1,kind_switch(d)->GetSelection());button(d,wxID_OK);});box->EditScrollEffect();}
+    EXPECT_EQ("Banner;20",effect());EXPECT_EQ("banner",c->subsController->GetUndoDescription());
+    {RunModal hook("Scroll Effect",[&](wxDialog* d){kind_switch(d)->Choose(0);button(d,wxID_OK);});box->EditScrollEffect();}
+    EXPECT_EQ("",effect());
+    // Anything else stays unless an effect is chosen
+    {auto write=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).Events.front().Effect="template line";LiveWriteForTest(*c).Commit("template",AssFile::COMMIT_DIAG_META);}
+    {RunModal hook("Scroll Effect",[&](wxDialog* d){EXPECT_EQ(0,kind_switch(d)->GetSelection());button(d,wxID_OK);});box->EditScrollEffect();}
+    EXPECT_EQ("template line",effect());
 }
 TEST_F(ordinary_edit, export_lists_filters_with_their_descriptions) {
     // Each filter registered here, if it is not already, is gone again after
