@@ -140,8 +140,8 @@ DialogResample::DialogResample(agi::Context *c, ResampleSettings &settings)
 	// A resolution: width × height, the button setting it back, and the matrix
 	auto resolution = [&](wxString const& title, flat::NumberField *&x, flat::NumberField *&y, int &value_x, int &value_y,
 	                      FlatButton *&reset, wxString const& reset_label, FlatChoice *&matrix) {
-		x = flat::NumberField::Create(parent, _("Width"), value_x, 1, 999999, 1, 0, 56);
-		y = flat::NumberField::Create(parent, _("Height"), value_y, 1, 999999, 1, 0, 56);
+		x = flat::NumberField::Create(parent, wxGETTEXT_IN_CONTEXT("resolution", "Width"), value_x, 1, 999999, 1, 0, 56);
+		y = flat::NumberField::Create(parent, wxGETTEXT_IN_CONTEXT("resolution", "Height"), value_y, 1, 999999, 1, 0, 56);
 		x->on_change = [this, &value_x](double v) { value_x = static_cast<int>(v); UpdateButtons(); };
 		y->on_change = [this, &value_y](double v) { value_y = static_cast<int>(v); UpdateButtons(); };
 		reset = new FlatButton(parent, reset_label);

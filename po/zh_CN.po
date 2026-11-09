@@ -9748,10 +9748,6 @@ msgid "Ends after"
 msgstr "结束后阈"
 
 #: ../src/dialog_resample.cpp
-msgid "Height"
-msgstr "高"
-
-#: ../src/dialog_resample.cpp
 msgid "Top"
 msgstr "上边距"
 

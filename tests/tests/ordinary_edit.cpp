@@ -3668,7 +3668,7 @@ TEST_F(ordinary_edit, resample_is_drawn_number_fields_a_switch_and_even_margins)
         FlatSwitch *ar=nullptr; for(auto child:descendants(dialog))if(auto s=dynamic_cast<FlatSwitch*>(child))ar=s;
         ASSERT_NE(nullptr,ar); EXPECT_EQ(4u,ar->GetCount());
         EXPECT_FALSE(ar->IsEnabled()) << "the same aspect ratio";
-        auto widths=fields_named(dialog,_("Width")); ASSERT_EQ(2u,widths.size());
+        auto widths=fields_named(dialog,wxGETTEXT_IN_CONTEXT("resolution","Width")); ASSERT_EQ(2u,widths.size());
         EXPECT_EQ(wxString::Format("%d",width),widths[0]->GetValue());
         widths[1]->SetValue(wxString::Format("%d",width*2));
         EXPECT_TRUE(ar->IsEnabled());
