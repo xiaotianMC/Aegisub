@@ -85,6 +85,8 @@
 #include "include/aegisub/video_provider.h"
 #include "keyframe_snap.h"
 #include "scene_detect.h"
+#include "magia_timeline.h"
+#include <signal.h>
 #include <libaegisub/io.h>
 #include <limits>
 #include "visual_tool_drag.h"
@@ -7480,4 +7482,200 @@ TEST_F(ordinary_edit, snap_to_nearby_scene_changes_moves_the_selected_lines_in_o
     cmd::call("time/snap/scene_nearby",c.get());
     EXPECT_EQ(1600,int(LiveRead(*c).Events.front().Start));EXPECT_EQ(5600,int(LiveRead(*c).Events.front().End));
     EXPECT_EQ(description,c->subsController->GetUndoDescription());
+}
+
+namespace {
+std::string MagiaConfig() {
+    // The shape of MagiaTimeline 1.1's config.yml, cut short
+    return "# MagiaTimeline config\n"
+           "source:\n- src.mp4\n# - src2.mp4\n"
+           "destination:\n- ...\n# - MagiaTimelineOutput2\n"
+           "outputSrt: false\n"
+           "assTemplate: template.asst\n"
+           "strategy: dtd\n"
+           "preset: default\n"
+           "bcs:\n  default:\n    dialogRect: [0.00, 1.00, 0.75, 1.00]\n";
+}
+agi::fs::path MagiaFolder(std::string const& name) {
+    auto dir=std::filesystem::current_path()/name;
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    return agi::fs::path(dir.wstring());
+}
+void WriteText(agi::fs::path const& p,std::string const& text,bool executable=false) {
+    std::filesystem::create_directories(std::filesystem::path(p.parent_path().wstring()));
+    {std::ofstream out(std::filesystem::path(p.wstring()),std::ios::binary);out<<text;}
+    if(executable)std::filesystem::permissions(std::filesystem::path(p.wstring()),std::filesystem::perms::owner_all|std::filesystem::perms::group_read|std::filesystem::perms::group_exec,std::filesystem::perm_options::replace);
+}
+std::string ReadText(agi::fs::path const& p) {
+    std::ifstream in(std::filesystem::path(p.wstring()),std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(in),std::istreambuf_iterator<char>());
+}
+}
+
+TEST(magia_timeline, config_is_given_the_video_and_where_to_write_and_keeps_the_rest) {
+    auto out=magia_timeline::WriteConfig(MagiaConfig(),"/videos/ep 01's.mkv","/tmp/out","");
+    ASSERT_TRUE(out);
+    EXPECT_NE(std::string::npos,out->find("source:\n- '/videos/ep 01''s.mkv'\n")) << *out;
+    EXPECT_NE(std::string::npos,out->find("destination:\n- '/tmp/out'\n")) << *out;
+    EXPECT_EQ(std::string::npos,out->find("src.mp4")) << "the old list and its commented items are gone";
+    EXPECT_EQ(std::string::npos,out->find("MagiaTimelineOutput2"));
+    EXPECT_NE(std::string::npos,out->find("strategy: dtd\n")) << "its own strategy, none being chosen";
+    EXPECT_NE(std::string::npos,out->find("outputSrt: false\n"));
+    EXPECT_NE(std::string::npos,out->find("    dialogRect: [0.00, 1.00, 0.75, 1.00]\n")) << "the strategies' settings untouched";
+    auto chosen=magia_timeline::WriteConfig(MagiaConfig(),"v.mkv","o","bcs");
+    ASSERT_TRUE(chosen);
+    EXPECT_NE(std::string::npos,chosen->find("strategy: bcs\n"));
+    EXPECT_EQ(std::string::npos,chosen->find("strategy: dtd"));
+    EXPECT_FALSE(magia_timeline::WriteConfig("strategy: bcs\n","v","o",""));
+}
+
+TEST(magia_timeline, found_by_its_folder_its_script_or_its_program) {
+    auto none=MagiaFolder("magia-none");
+    EXPECT_FALSE(magia_timeline::FindLaunch(none));
+    EXPECT_FALSE(magia_timeline::FindLaunch(agi::fs::path()));
+
+    auto source=MagiaFolder("magia-source");
+    WriteText(source/"MagiaTimeline.py","print()\n");
+    auto bare=magia_timeline::FindLaunch(source);
+    ASSERT_TRUE(bare);
+    EXPECT_EQ("python3",bare->program.string()) << "no venv: the Python on the path";
+    WriteText(source/"venv/bin/python3","",true);
+    auto launch=magia_timeline::FindLaunch(source);
+    ASSERT_TRUE(launch);
+    EXPECT_EQ((source/"venv/bin/python3").string(),launch->program.string());
+    EXPECT_EQ(source.string(),launch->folder.string()) << "run in its folder, where its config's paths start";
+    EXPECT_EQ((std::vector<std::string>{"-u",(source/"MagiaTimeline.py").string(),"--config","/c.yml"}),magia_timeline::Arguments(*launch,"/c.yml"));
+    auto by_script=magia_timeline::FindLaunch(source/"MagiaTimeline.py");
+    ASSERT_TRUE(by_script);
+    EXPECT_EQ(launch->program.string(),by_script->program.string());
+
+    auto packaged=MagiaFolder("magia-packaged");
+    WriteText(packaged/"MagiaTimeline.exe","",true);
+    auto exe=magia_timeline::FindLaunch(packaged);
+    ASSERT_TRUE(exe);
+    EXPECT_EQ((packaged/"MagiaTimeline.exe").string(),exe->program.string());
+    EXPECT_EQ((std::vector<std::string>{"--config","c.yml"}),magia_timeline::Arguments(*exe,"c.yml"));
+}
+
+TEST(magia_timeline, its_errors_are_read_from_what_it_prints) {
+    EXPECT_FALSE(magia_timeline::ReportsError("Task 0: a -> b\nOverall Elapsed 3 s\n"));
+    EXPECT_TRUE(magia_timeline::ReportsError("Exception caught:  bad config\n"));
+    EXPECT_TRUE(magia_timeline::ReportsError("Traceback (most recent call last):\n  File x\n"));
+    EXPECT_EQ("50%\nd\n",magia_timeline::LastLines("a\nb\r\nc\r50%\rd\n",2)) << "a progress bar redrawn with \\r: each drawing a line";
+}
+
+namespace {
+/// Stands in for MagiaTimeline's virtual environment's Python: checks it is
+/// run as it would be, says what it was given, and writes what it writes
+std::string const fake_magia=R"SH(#!/bin/sh
+cfg=""
+while [ $# -gt 0 ]; do if [ "$1" = "--config" ]; then cfg="$2"; shift; fi; shift; done
+if [ ! -f config.yml ]; then echo "Exception caught:  not run in its own folder"; exit 0; fi
+dest=$(sed -n "/^destination:/{n;s/^- '\(.*\)'$/\1/p}" "$cfg")
+src=$(sed -n "/^source:/{n;s/^- '\(.*\)'$/\1/p}" "$cfg")
+echo "src=$src" > seen.txt
+sed -n 's/^strategy: /strategy=/p' "$cfg" >> seen.txt
+echo "Task 0: $src -> $dest"
+if [ "$(cat mode.txt 2>/dev/null)" = "hang" ]; then sleep 30 & echo $! > pid.txt; wait; fi
+if [ "$(cat mode.txt 2>/dev/null)" = "fail" ]; then echo "Exception caught:  the video could not be opened"; read x; exit 0; fi
+cat > "$dest.ass" <<'ASS'
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1280
+PlayResY: 720
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Microsoft YaHei,40,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,2,2,10,10,100,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:03.00,0:00:05.50,Default,,0,0,0,,Subtitle_Dialog_1
+Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,Subtitle_Dialog_0
+ASS
+echo "==== IIR to ASS ===="
+read x
+echo "Overall Elapsed 1 s"
+)SH";
+}
+
+TEST_F(ordinary_edit, magiatimeline_adds_an_empty_line_for_each_subtitle_it_finds_in_one_step) {
+    c->project->LoadVideo("?dummy:25:250:64:48:64:64:64:");
+    ASSERT_NE(nullptr,c->project->VideoProvider());
+    PumpFirstFrame(c.get(),window);
+    BOOST_SCOPE_EXIT_ALL(&){ c->project->CloseVideo(); OPT_SET("Tool/MagiaTimeline/Path")->SetString(""); OPT_SET("Tool/MagiaTimeline/Strategy")->SetString(""); };
+    auto folder=MagiaFolder("magia-fake");
+    WriteText(folder/"MagiaTimeline.py","");
+    WriteText(folder/"config.yml",MagiaConfig());
+    WriteText(folder/"venv/bin/python3",fake_magia,true);
+    OPT_SET("Tool/MagiaTimeline/Path")->SetString(folder.string());
+    OPT_SET("Tool/MagiaTimeline/Strategy")->SetString("bcs");
+    ASSERT_TRUE(cmd::get("tool/magiatimeline")->Validate(c.get()));
+
+    size_t const before=LiveRead(*c).Events.size();
+    std::string const style=LiveRead(*c).Events.front().Style;
+    auto description=c->subsController->GetUndoDescription();
+    cmd::call("tool/magiatimeline",c.get());
+    auto seen=ReadText(folder/"seen.txt");
+    EXPECT_NE(std::string::npos,seen.find("src="+c->project->VideoName().string())) << seen;
+    EXPECT_NE(std::string::npos,seen.find("strategy=bcs")) << seen;
+    auto const& events=LiveRead(*c).Events;
+    ASSERT_EQ(before+2,events.size());
+    auto it=events.begin();std::advance(it,before);
+    EXPECT_EQ(1000,int(it->Start));EXPECT_EQ(2000,int(it->End)) << "in order of time";
+    EXPECT_TRUE(it->Text.get().empty()) << "its names for the lines are not text";
+    EXPECT_EQ(style,it->Style.get());
+    ++it;
+    EXPECT_EQ(3000,int(it->Start));EXPECT_EQ(5500,int(it->End));
+    EXPECT_EQ(2u,c->selectionController->SelectedIDs().size()) << "the new lines selected";
+    c->subsController->Undo();
+    EXPECT_EQ(before,LiveRead(*c).Events.size()) << "one step";
+    EXPECT_EQ(description,c->subsController->GetUndoDescription());
+
+    // It says it failed: nothing added, and what it said is shown
+    WriteText(folder/"mode.txt","fail");
+    RecordMessages messages;
+    cmd::call("tool/magiatimeline",c.get());
+    EXPECT_EQ(before,LiveRead(*c).Events.size());
+    ASSERT_EQ(1u,messages.messages.size());
+    EXPECT_NE(wxString::npos,messages.messages[0].find("the video could not be opened")) << messages.messages[0];
+}
+
+TEST_F(ordinary_edit, magiatimeline_cancelled_stops_it_and_what_it_started_and_adds_nothing) {
+    c->project->LoadVideo("?dummy:25:250:64:48:64:64:64:");
+    ASSERT_NE(nullptr,c->project->VideoProvider());
+    PumpFirstFrame(c.get(),window);
+    BOOST_SCOPE_EXIT_ALL(&){ c->project->CloseVideo(); OPT_SET("Tool/MagiaTimeline/Path")->SetString(""); };
+    auto folder=MagiaFolder("magia-hang");
+    WriteText(folder/"MagiaTimeline.py","");
+    WriteText(folder/"config.yml",MagiaConfig());
+    WriteText(folder/"venv/bin/python3",fake_magia,true);
+    WriteText(folder/"mode.txt","hang");
+    OPT_SET("Tool/MagiaTimeline/Path")->SetString(folder.string());
+    // Cancel once what it started is running
+    struct Cancel : wxModalDialogHook {
+        agi::fs::path pid_file;
+        explicit Cancel(agi::fs::path p):pid_file(std::move(p)){Register();}
+        int Enter(wxDialog* dialog) override {
+            if(dialog->GetTitle()!="MagiaTimeline")return wxID_NONE;
+            auto press=std::make_shared<std::function<void()>>();
+            *press=[this,dialog,press]{
+                if(!std::filesystem::exists(std::filesystem::path(pid_file.wstring()))){dialog->CallAfter(*press);wxMilliSleep(10);return;}
+                wxCommandEvent e(wxEVT_BUTTON,wxID_CANCEL);e.SetEventObject(dialog);dialog->GetEventHandler()->ProcessEvent(e);
+            };
+            dialog->CallAfter(*press);
+            return wxID_NONE;
+        }
+        void Exit(wxDialog*) override {}
+    } cancel(folder/"pid.txt");
+    size_t const before=LiveRead(*c).Events.size();
+    auto started=std::chrono::steady_clock::now();
+    cmd::call("tool/magiatimeline",c.get());
+    EXPECT_LT(std::chrono::steady_clock::now()-started,std::chrono::seconds(10)) << "not waited out";
+    EXPECT_EQ(before,LiveRead(*c).Events.size());
+    int const pid=std::stoi(ReadText(folder/"pid.txt"));
+    bool gone=false;
+    for(int i=0;i<50&&!gone;++i){gone=::kill(pid,0)!=0;if(!gone)wxMilliSleep(50);}
+    EXPECT_TRUE(gone) << "what it started is killed with it";
 }

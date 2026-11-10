@@ -68,6 +68,7 @@
         { "command" : "time/shift" },
         { "command" : "tool/time/postprocess" },
         { "command" : "tool/time/kanji" },
+        { "command" : "tool/magiatimeline" },
         {},
         { "command" : "time/snap/start_video" },
         { "command" : "time/snap/end_video" },

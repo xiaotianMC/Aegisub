@@ -10205,6 +10205,65 @@ msgid "&Refresh"
 msgstr "刷新(&R)"
 
 
+#: ../src/command/tool.cpp
+msgid "Time &Hardsubs with MagiaTimeline..."
+msgstr "用 MagiaTimeline 给硬字幕打轴(&H)..."
+
+#: ../src/command/tool.cpp
+msgid "Time Hardsubs with MagiaTimeline"
+msgstr "用 MagiaTimeline 给硬字幕打轴"
+
+#: ../src/command/tool.cpp
+msgid "Run MagiaTimeline on the video to find when the subtitles burnt into it show, and add an empty line for each, to be filled in"
+msgstr "用 MagiaTimeline 找出视频里硬字幕出现的时间段，为每一段添加一行空字幕，留待填写"
+
+#: ../src/command/tool.cpp
+msgid "Choose the folder MagiaTimeline is installed in"
+msgstr "选择 MagiaTimeline 的安装文件夹"
+
+#: ../src/command/tool.cpp
+msgid "There is no MagiaTimeline in that folder: it should hold MagiaTimeline.py (set up with its install script) or MagiaTimeline.exe."
+msgstr "这个文件夹里没有 MagiaTimeline：里面应该有 MagiaTimeline.py（并已用它的安装脚本装好环境），或者 MagiaTimeline.exe。"
+
+#: ../src/command/tool.cpp
+#, c-format
+msgid "MagiaTimeline's config.yml could not be read in %s."
+msgstr "无法读取 %s 里 MagiaTimeline 的 config.yml。"
+
+#: ../src/command/tool.cpp
+msgid "MagiaTimeline's config.yml has no source and destination to fill in."
+msgstr "MagiaTimeline 的 config.yml 里没有可以填写的 source 和 destination。"
+
+#: ../src/command/tool.cpp
+msgid "MagiaTimeline did not finish. The last of what it said:"
+msgstr "MagiaTimeline 没有运行完。它最后输出的内容："
+
+#: ../src/command/tool.cpp
+msgid "MagiaTimeline found no subtitles in the video."
+msgstr "MagiaTimeline 在视频里没有找到字幕。"
+
+#: ../src/command/tool.cpp ../src/preferences.cpp
+msgid "MagiaTimeline"
+msgstr "MagiaTimeline"
+
+#: ../src/command/tool.cpp
+#, c-format
+msgid "Added %d line timed by MagiaTimeline"
+msgid_plural "Added %d lines timed by MagiaTimeline"
+msgstr[0] "已添加 %d 行由 MagiaTimeline 打轴的字幕"
+
+#: ../src/magia_timeline.cpp
+msgid "Starting MagiaTimeline..."
+msgstr "正在启动 MagiaTimeline..."
+
+#: ../src/preferences.cpp
+msgid "Installed in"
+msgstr "安装位置"
+
+#: ../src/preferences.cpp
+msgid "Strategy (empty: as its config.yml says)"
+msgstr "策略（留空则按它的 config.yml）"
+
 msgctxt "page"
 msgid "Timing"
 msgstr "时间"

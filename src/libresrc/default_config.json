@@ -612,6 +612,10 @@
 			},
 			"Maximized" : false
 		},
+		"MagiaTimeline" : {
+			"Path" : "",
+			"Strategy" : ""
+		},
 		"Scene Detection" : {
 			"Sensitivity" : 1
 		},

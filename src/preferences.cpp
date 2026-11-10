@@ -279,6 +279,10 @@ void Video(PreferencesBook *book, Preferences *parent) {
 	p->OptionChoice(playback, _("Scene change detection"), choice_sens, "Tool/Scene Detection/Sensitivity", false,
 		_("How readily Detect Scene Changes takes a change of picture for a cut. Higher finds more cuts, and more that are not."));
 
+	auto magia = p->PageSizer(_("MagiaTimeline"));
+	p->OptionBrowse(magia, _("Installed in"), "Tool/MagiaTimeline/Path");
+	p->OptionAdd(magia, _("Strategy (empty: as its config.yml says)"), "Tool/MagiaTimeline/Strategy");
+
 	auto video_display = p->PageSizer(_("Video Display"));
 	p->OptionAdd(video_display, _("Only show visual tools when mouse is over video"), "Tool/Visual/Autohide");
 	const wxString czoom_arr[24] = { "12.5%", "25%", "37.5%", "50%", "62.5%", "75%", "87.5%", "100%", "112.5%", "125%", "137.5%", "150%", "162.5%", "175%", "187.5%", "200%", "212.5%", "225%", "237.5%", "250%", "262.5%", "275%", "287.5%", "300%" };
