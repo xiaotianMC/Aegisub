@@ -717,6 +717,19 @@ void StylePanel::ApplySection(Section const& section) {
 	GetSizer()->Show(section.body, on_page && section.visible && section.header->expanded, true);
 }
 
+bool StylePanel::ShowScrollEffect() {
+	if (!IsShownOnScreen()) return false;
+	ShowPage(Page::Animation);
+	animation->UpdateNow();
+	if (animation->CanAdd(AnimationPage::Effect::Scroll)) {
+		animation->AddEffect(AnimationPage::Effect::Scroll);
+		animation->UpdateNow();
+	}
+	// Its card is the first
+	Scroll(0, 0);
+	return true;
+}
+
 void StylePanel::ShowPage(Page new_page) {
 	if (page == new_page) return;
 	page = new_page;

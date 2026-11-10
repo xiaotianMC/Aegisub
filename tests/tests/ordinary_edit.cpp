@@ -5891,6 +5891,126 @@ TEST(animation_tags, read_and_write_move_fade_transform_and_origin) {
     EXPECT_EQ((Origin{3,4}), *Read("{\\org(3,4)}x", 1).origin);
     EXPECT_EQ("{\\b1\\org(7,8)}x", WriteOrigin("{\\org(1,2)\\b1}x", Origin{7,8}));
 }
+TEST_F(ordinary_edit, animation_page_edits_scroll_and_banner_effects) {
+    int w,h; LiveRead(*c).GetResolution(w,h);
+    int first, second, third;
+    {auto write=c->subtitleAccess->TryWrite();auto &file=LiveWriteForTest(*c);
+     auto &row=file.Events.front();row.Text="Hello";row.Start=0;row.End=4000;row.Effect="";
+     auto other=new AssDialogue(row);other->End=2000;file.Events.push_back(*other);
+     auto taken=new AssDialogue(row);taken->Effect="template line";file.Events.push_back(*taken);
+     file.Commit("fixture",AssFile::COMMIT_NEW);
+     auto it=file.Events.begin();first=it->Id;second=(++it)->Id;third=(++it)->Id;}
+    auto row=[&](int which)->AssDialogue const&{auto it=LiveRead(*c).Events.begin();std::advance(it,which);return *it;};
+    auto effect=[&](int which){return std::string(row(which).Effect.get());};
+    auto set_effect=[&](int which,std::string const& e){auto write=c->subtitleAccess->TryWrite();auto it=LiveWriteForTest(*c).Events.begin();std::advance(it,which);it->Effect=e;LiveWriteForTest(*c).Commit("effect",AssFile::COMMIT_DIAG_META);};
+    c->selectionController->SetSelectionAndActiveIDs({first,second},first);
+    auto panel=new StylePanel(window,c.get());
+    panel->ShowPage(StylePanel::Page::Animation);
+    auto page=panel->Animation();
+    auto shown=[&]{page->UpdateNow();return page->Shown();};
+    shown();
+
+    // Added: up through the lower half by each line's end
+    ASSERT_TRUE(page->CanAdd(AnimationPage::Effect::Scroll));
+    page->AddEffect(AnimationPage::Effect::Scroll);
+    EXPECT_EQ(FormatScrollEffect(DefaultScrollEffect(ScrollEffect::Kind::ScrollUp,4000,w,h)),effect(0));
+    EXPECT_EQ(FormatScrollEffect(DefaultScrollEffect(ScrollEffect::Kind::ScrollUp,2000,w,h)),effect(1));
+    EXPECT_EQ("template line",effect(2));
+    EXPECT_EQ(_("add scroll effect"),c->subsController->GetUndoDescription());
+    EXPECT_EQ("scroll",shown()["cards"]);
+    EXPECT_EQ(wxGETTEXT_IN_CONTEXT("scroll effect","Up"),shown()["scroll.kind"]);
+    EXPECT_EQ(wxString::Format("%d",h/2),shown()["scroll.top"]);
+    EXPECT_EQ(wxString::Format("%d",h),shown()["scroll.bottom"]);
+    EXPECT_EQ(ScrollSpeedText(*ParseScrollEffect(effect(0)),4000),shown()["scroll.speed"]);
+    EXPECT_FALSE(page->CanAdd(AnimationPage::Effect::Scroll));
+    c->subsController->Undo();
+    EXPECT_EQ("",effect(0)); EXPECT_EQ("",effect(1)) << "one step";
+    EXPECT_EQ("",shown()["cards"]);
+    page->AddEffect(AnimationPage::Effect::Scroll); shown();
+
+    // A drag is one step, to every selected line
+    page->EnterNumber("scroll.top",100,false); page->EnterNumber("scroll.top",120,true);
+    EXPECT_EQ(120,ParseScrollEffect(effect(0))->Top()); EXPECT_EQ(120,ParseScrollEffect(effect(1))->Top());
+    EXPECT_EQ(_("set scroll effect"),c->subsController->GetUndoDescription());
+    c->subsController->Undo();
+    EXPECT_EQ(h/2,ParseScrollEffect(effect(0))->Top()) << "the drag undone in one step";
+    shown();
+    page->EnterNumber("scroll.top",120,true); shown();
+    page->EnterNumber("scroll.delay",40,true);
+    EXPECT_EQ(40,ParseScrollEffect(effect(0))->delay); EXPECT_EQ(40,ParseScrollEffect(effect(1))->delay);
+    shown();
+    // Through the area by each line's own end
+    page->Press("scroll.fit");
+    EXPECT_EQ(DelayForShift(4000,h-120),ParseScrollEffect(effect(0))->delay);
+    EXPECT_EQ(DelayForShift(2000,h-120),ParseScrollEffect(effect(1))->delay);
+    shown();
+
+    // Down keeps the area and speed; a banner starts anew
+    int delay=ParseScrollEffect(effect(0))->delay;
+    page->Choose("scroll.kind",2);
+    auto down=*ParseScrollEffect(effect(0));
+    EXPECT_EQ(ScrollEffect::Kind::ScrollDown,down.kind); EXPECT_EQ(120,down.Top()); EXPECT_EQ(delay,down.delay);
+    EXPECT_EQ(wxGETTEXT_IN_CONTEXT("scroll effect","Down"),shown()["scroll.kind"]);
+    page->Choose("scroll.kind",0);
+    EXPECT_EQ(FormatScrollEffect(DefaultScrollEffect(ScrollEffect::Kind::Banner,4000,w,h)),effect(0));
+    auto banner=shown();
+    EXPECT_EQ(0u,banner.count("scroll.top")) << "a banner has no area";
+    EXPECT_EQ(_("Right to left"),banner["scroll.direction"]);
+    page->Choose("scroll.direction",1);
+    EXPECT_TRUE(ParseScrollEffect(effect(0))->left_to_right); EXPECT_TRUE(ParseScrollEffect(effect(1))->left_to_right);
+    shown();
+
+    // VSFilter's fade: on, set, off
+    EXPECT_EQ(0u,shown().count("scroll.fade"));
+    page->Press("scroll.fade_on");
+    EXPECT_TRUE(ParseScrollEffect(effect(0))->fade.has_value());
+    shown(); page->EnterNumber("scroll.fade",30,true);
+    EXPECT_EQ(30,*ParseScrollEffect(effect(0))->fade);
+    shown(); page->Press("scroll.fade_off");
+    EXPECT_FALSE(ParseScrollEffect(effect(0))->fade.has_value());
+    EXPECT_EQ("Banner;"+std::to_string(ParseScrollEffect(effect(0))->delay)+";1",effect(0)) << "no fade written";
+
+    // Only the selected lines of the line's kind change; anything else stays
+    set_effect(1,"Scroll up;0;100;10");
+    c->selectionController->SetSelectionAndActiveIDs({first,second,third},first);
+    auto mixed=shown();
+    EXPECT_EQ(fmt_plural(1,"Changes the %d selected line with a banner","Changes the %d selected lines with a banner",1),mixed["scroll.lines"]);
+    page->EnterNumber("scroll.delay",77,true);
+    EXPECT_EQ(77,ParseScrollEffect(effect(0))->delay);
+    EXPECT_EQ("Scroll up;0;100;10",effect(1)); EXPECT_EQ("template line",effect(2));
+
+    // Where it stands: libass takes one axis from \pos
+    EXPECT_EQ(0u,shown().count("scroll.note"));
+    {auto write=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).Events.front().Text="{\\pos(10,20)}Hello";LiveWriteForTest(*c).Commit("pos",AssFile::COMMIT_DIAG_TEXT);}
+    EXPECT_FALSE(shown()["scroll.note"].empty());
+
+    // ✕ clears the Effect field of the lines of its kind, not the text
+    page->RemoveCard("scroll");
+    EXPECT_EQ("",effect(0)); EXPECT_EQ("{\\pos(10,20)}Hello",row(0).Text.get());
+    EXPECT_EQ("Scroll up;0;100;10",effect(1)); EXPECT_EQ("template line",effect(2));
+    EXPECT_EQ(_("remove effect"),c->subsController->GetUndoDescription());
+
+    // A field holding something else is not offered or changed
+    c->selectionController->SetSelectionAndActiveIDs({third},third); shown();
+    EXPECT_FALSE(page->CanAdd(AnimationPage::Effect::Scroll));
+    page->AddEffect(AnimationPage::Effect::Scroll);
+    EXPECT_EQ("template line",effect(2));
+    EXPECT_EQ(0u,shown().count("scroll.title"));
+
+    // The Effect field's list shows the card when the panel is out: added
+    // where the field is empty, without the form
+    c->selectionController->SetSelectionAndActiveIDs({first},first);
+    panel->ShowPage(StylePanel::Page::Style);
+    panel->Show(); window->Show(); wxTheApp->ProcessPendingEvents();
+    ASSERT_TRUE(panel->ShowScrollEffect());
+    EXPECT_EQ(StylePanel::Page::Animation,panel->ShownPage());
+    EXPECT_EQ(FormatScrollEffect(DefaultScrollEffect(ScrollEffect::Kind::ScrollUp,4000,w,h)),effect(0));
+    EXPECT_EQ("scroll",shown()["cards"]);
+    // Hidden, it leaves the form to the edit box
+    panel->Hide();
+    EXPECT_FALSE(panel->ShowScrollEffect());
+    panel->Destroy();
+}
 TEST_F(ordinary_edit, animation_page_edits_the_selected_lines_effects_in_times_of_the_video) {
     int first, second;
     {auto write=c->subtitleAccess->TryWrite();auto &file=LiveWriteForTest(*c);
@@ -6548,6 +6668,8 @@ TEST_F(visual_edit, video_properties_prompt_chooses_from_a_flat_list) {
 static void make_autosaves(std::vector<std::string> const& names) {
     static int made=0;
     auto here=std::filesystem::current_path()/("autosaves"+std::to_string(++made));
+    // The numbering starts again each run: what an earlier run left goes
+    std::filesystem::remove_all(here);
     std::filesystem::create_directories(here/"autosave"); std::filesystem::create_directories(here/"backup");
     for(auto const& name:names)std::ofstream(here/"autosave"/name)<<"[Script Info]\n";
     OPT_SET("Path/Auto/Save")->SetString((here/"autosave").string());

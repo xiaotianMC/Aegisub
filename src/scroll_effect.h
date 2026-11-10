@@ -42,3 +42,10 @@ int EffectiveDelay(int delay);
 double ScrollShift(ScrollEffect const& effect, int ms);
 /// The delay that moves the text @p shift script pixels in @p duration_ms
 int DelayForShift(int duration_ms, double shift);
+/// A new effect of @p kind for a line @p duration_ms long in a script
+/// @p script_w × @p script_h: a scroll over the lower half, or a banner
+/// right to left, crossing it by the line's end
+ScrollEffect DefaultScrollEffect(ScrollEffect::Kind kind, int duration_ms, int script_w, int script_h);
+/// The delay that crosses @p effect's area (a scroll) or the screen (a
+/// banner) in @p duration_ms
+int CrossingDelay(ScrollEffect const& effect, int duration_ms, int script_w);

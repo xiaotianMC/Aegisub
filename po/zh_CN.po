@@ -9368,8 +9368,8 @@ msgstr "还没有动画：添加一个效果"
 msgid "+ Add effect"
 msgstr "+ 添加效果"
 
-msgid "Make the selected lines move, fade in and out, change over time or turn about a point"
-msgstr "让选中的行移动、淡入淡出、随时间变化或绕某点旋转"
+msgid "Make the selected lines move, fade in and out, change over time, turn about a point or scroll"
+msgstr "让选中的行移动、淡入淡出、随时间变化、绕某点旋转或滚动"
 
 msgid "add move"
 msgstr "添加移动"
@@ -9961,3 +9961,108 @@ msgstr "选中行的开始和结束 %d 毫秒内都没有画面切换。最大�
 #, c-format
 msgid "Snapped %d starts and %d ends to scene changes"
 msgstr "已把 %d 处开始、%d 处结束对齐到画面切换"
+
+#: ../src/animation_page.cpp
+msgid "set scroll effect"
+msgstr "设置滚动特效"
+
+msgid "Scroll"
+msgstr "滚动"
+
+msgid "Banner"
+msgstr "横幅"
+
+msgid "Effect field"
+msgstr "特效栏"
+
+msgid "Changes here go to the selected lines with an effect of this kind, as the video's scroll tool's do"
+msgstr "这里的修改作用于选中行里同类特效的行，和视频上的滚动工具一样"
+
+msgid "Drag the area and the speed on the video, with the scroll tool"
+msgstr "用滚动工具在视频上拖动区域和速度"
+
+msgid "A banner crosses the screen; a scroll goes up or down through an area"
+msgstr "横幅横穿画面；滚动在区域内向上或向下移动"
+
+msgid "The area's top edge, in the script's pixels: the text shows only below it"
+msgstr "区域的上边，脚本像素：文字只在它下面显示"
+
+msgid "The area's bottom edge, in the script's pixels: the text shows only above it"
+msgstr "区域的下边，脚本像素：文字只在它上面显示"
+
+msgid "Right to left"
+msgstr "从右往左"
+
+msgid "Left to right"
+msgstr "从左往右"
+
+msgid "Milliseconds the text takes to move one pixel of the script's resolution: more is slower"
+msgstr "文字移动一个脚本像素所用的毫秒数：越大越慢"
+
+msgid "Through the area"
+msgstr "走完区域"
+
+msgid "Across the screen"
+msgstr "横穿画面"
+
+msgid "The speed that takes each selected line's text through the area by its end"
+msgstr "设成每个选中行结束时文字刚好走完区域的速度"
+
+msgid "The speed that takes each selected line's text across the screen by its end"
+msgstr "设成每个选中行结束时文字刚好横穿画面的速度"
+
+msgid "How far in from the edges the text fades, in the script's pixels; VSFilter only"
+msgstr "文字在离边缘多远的范围内淡出，脚本像素；仅 VSFilter"
+
+msgid "No fade"
+msgstr "去掉淡出"
+
+msgid "Take the fade at the edges away"
+msgstr "去掉边缘淡出"
+
+msgid "Fade at the edges (VSFilter only)"
+msgstr "边缘淡出（仅 VSFilter）"
+
+msgid "Fade the text in and out near the edges; libass and so most players ignore it"
+msgstr "文字在边缘附近淡入淡出；libass 以及大多数播放器不支持"
+
+msgid "Its \\pos or \\move sets only where it is across"
+msgstr "\\pos 或 \\move 只决定横向位置"
+
+msgid "Its \\pos or \\move sets only how high it is"
+msgstr "\\pos 或 \\move 只决定纵向位置"
+
+msgid "With a scroll, libass takes only the across position from \\pos or \\move: the scroll sets the height"
+msgstr "滚动时，libass 只从 \\pos 或 \\move 取横向位置，纵向由滚动决定"
+
+msgid "With a banner, libass takes only the height from \\pos or \\move: the banner sets where it is across"
+msgstr "横幅时，libass 只从 \\pos 或 \\move 取纵向位置，横向由横幅决定"
+
+msgid "add scroll effect"
+msgstr "添加滚动特效"
+
+msgid "Scroll or banner (the Effect field holds something else)"
+msgstr "滚动 / 横幅（特效栏已有其他内容）"
+
+msgid "Scroll or banner (Effect field)"
+msgstr "滚动 / 横幅（特效栏）"
+
+msgctxt "scroll effect"
+msgid "Banner"
+msgstr "横幅"
+
+msgctxt "scroll effect"
+msgid "Up"
+msgstr "向上"
+
+msgctxt "scroll effect"
+msgid "Down"
+msgstr "向下"
+
+msgid "Changes the %d selected line that scrolls"
+msgid_plural "Changes the %d selected lines that scroll"
+msgstr[0] "只改选中行里滚动的 %d 行"
+
+msgid "Changes the %d selected line with a banner"
+msgid_plural "Changes the %d selected lines with a banner"
+msgstr[0] "只改选中行里横幅的 %d 行"

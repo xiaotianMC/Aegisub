@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: ISC
 // The style panel's animation page (docs/style-panel.md): what makes the
 // current line move and change over time — \move, \fad and \fade, \t and
-// \org — as a card each, with its times on a bar over the line and as
+// \org, and the Banner or Scroll in its Effect field — as a card each, with its times on a bar over the line and as
 // times of the video. Changes go to every selected line.
 #pragma once
 
 #include "animation_tags.h"
+#include "scroll_effect.h"
 
 #include "style_look.h"
 
@@ -31,7 +32,7 @@ protected:
 
 public:
 	/// What can be added: a card each, Transform as many times as wanted
-	enum class Effect { Move, Fade, Transform, Origin };
+	enum class Effect { Move, Fade, Transform, Origin, Scroll };
 
 	AnimationPage(wxWindow *parent, agi::Context *c);
 	~AnimationPage();
@@ -48,6 +49,8 @@ public:
 	/// Add an effect to the selected lines, as the add menu does; a
 	/// transform changes @p target, to what the line has now
 	void AddEffect(Effect effect, std::string const& target = "\\fs");
+	/// Whether the add menu offers @p effect for the current line
+	bool CanAdd(Effect effect) const;
 	/// Take a card's tags away, as its ✕ does: "move", "fade", "t0"…
 	void RemoveCard(std::string const& card);
 	/// Act as dragging (@p final false) or typing a number into a field
@@ -55,6 +58,9 @@ public:
 	void EnterNumber(std::string const& name, double value, bool final);
 	/// Act as typing @p text into a field and pressing Enter does
 	bool TypeInto(std::string const& name, wxString const& text);
+	/// Act as choosing @p index of a switch does: "scroll.kind" (banner,
+	/// up, down), "scroll.direction" (right to left, left to right)
+	void Choose(std::string const& name, int index);
 	/// Act as clicking a button does: "move.in_now", "move.whole",
 	/// "move.first_half", "move.second_half", "move.pick", "t0.add"…
 	void Press(std::string const& name);
@@ -103,6 +109,13 @@ private:
 	animation::Animation current;
 	/// How many lines a change goes to
 	size_t line_count = 0;
+	/// The line's Banner or Scroll, and how many selected lines have one
+	/// of its kind, the lines a change to it goes to
+	std::optional<ScrollEffect> scroll;
+	size_t scroll_count = 0;
+	/// Whether the Effect field holds something else
+	bool effect_taken = false;
+	int script_w = 0, script_h = 0;
 
 	using Change = std::function<std::string(AssDialogue const&, animation::Animation const&, int duration)>;
 	/// Rewrite the selected lines' text with @p change, amending @p amend
@@ -110,6 +123,14 @@ private:
 	int Write(wxString const& undo_name, Change const& change, int amend = -1);
 	/// As Write, for a drag or a typed value: one undo step for a drag
 	void WriteNumber(wxString const& undo_name, Change const& change, bool final);
+	/// A line's new Effect field, or nothing to leave it
+	using EffectChange = std::function<std::optional<std::string>(AssDialogue const&, int duration)>;
+	/// As Write, for the selected lines' Effect field
+	int WriteEffect(wxString const& undo_name, EffectChange const& change, int amend = -1);
+	/// A change to the selected lines whose Effect is a scroll or a banner
+	/// as the line's is (@p scrolling), as the video's tool changes them
+	EffectChange ChangeScroll(std::function<void(ScrollEffect&, int duration)> change) const;
+	void WriteScrollNumber(wxString const& undo_name, std::function<void(ScrollEffect&, int)> change, bool final);
 
 	void Build();
 	void Display();
@@ -127,6 +148,7 @@ private:
 	void Seek(int ms);
 
 	template<class T, class... Args> T *Add(std::string const& name, Args&&... args);
+	void BuildScroll();
 	void BuildMove();
 	void BuildFade();
 	void BuildTransform(size_t index);

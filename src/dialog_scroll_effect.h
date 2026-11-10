@@ -6,7 +6,13 @@
 #include <optional>
 #include <string>
 
+class wxString;
 class wxWindow;
+struct ScrollEffect;
+
+/// "N px/s, M px by the line's end": @p effect's speed, and how far it goes
+/// in a line @p duration_ms long
+wxString ScrollSpeedText(ScrollEffect const& effect, int duration_ms);
 
 /// Ask for a line's Banner or Scroll effect (docs/scroll-effect.md), its
 /// Effect field being @p current, the line @p duration_ms long, in a script

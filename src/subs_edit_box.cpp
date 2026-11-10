@@ -42,6 +42,8 @@
 #include "command/command.h"
 #include "compat.h"
 #include "dialog_scroll_effect.h"
+#include "frame_main.h"
+#include "style_panel.h"
 #include "dialogs.h"
 #include "flat_controls.h"
 #include "flyweight_hash.h"
@@ -670,6 +672,9 @@ void SubsEditBox::OnActorChange(wxCommandEvent &) {
 void SubsEditBox::EditScrollEffect() {
 	auto line = c->selectionController->ReadActiveLine();
 	if (!line) return;
+	// The animation page's card, when the style panel is out; the form
+	// when it is folded away
+	if (c->frame && c->frame->GetStylePanel() && c->frame->GetStylePanel()->ShowScrollEffect()) return;
 	int script_w, script_h;
 	c->subtitleAccess->Read().GetResolution(script_w, script_h);
 	auto chosen = ShowScrollEffectDialog(this, effect_box->GetValue().utf8_string(), line->End - line->Start, script_w, script_h);

@@ -6,6 +6,7 @@
 #include "ass_dialogue.h"
 #include "ass_file.h"
 #include "ass_style.h"
+#include "dialog_scroll_effect.h"
 #include "dialogs.h"
 #include "format.h"
 #include "project.h"
@@ -32,6 +33,7 @@ using namespace animation;
 using Field = StylePanel::Field;
 using IconButton = StylePanel::IconButton;
 using Caption = StylePanel::Caption;
+using PageSwitch = StylePanel::PageSwitch;
 
 namespace {
 /// The number a target's value holds
@@ -513,6 +515,44 @@ void AnimationPage::WriteNumber(wxString const& undo_name, Change const& change,
 	if (final) drag_commit = -1;
 }
 
+int AnimationPage::WriteEffect(wxString const& undo_name, EffectChange const& change, int amend) {
+	auto scope = c->subtitleAccess->TryWrite();
+	if (!scope) return -1;
+	SubtitleRowEdit staged(c);
+	bool changed = false;
+	for (auto row : staged.rows) {
+		int length = std::max(0, static_cast<int>(row->End) - static_cast<int>(row->Start));
+		auto effect = change(*row, length);
+		if (!effect || *effect == row->Effect.get()) continue;
+		row->Effect = *effect;
+		changed = true;
+	}
+	if (!changed) return amend;
+	auto edit = c->subtitleAccess->Edit(scope->Lease());
+	edit.UpdateRows(staged.Values());
+	return edit.Commit(undo_name, AssFile::COMMIT_DIAG_META, amend, staged.rows.size() == 1 ? staged.rows.front()->Id : 0);
+}
+
+AnimationPage::EffectChange AnimationPage::ChangeScroll(std::function<void(ScrollEffect&, int)> change) const {
+	if (!scroll) return [](AssDialogue const&, int) { return std::optional<std::string>(); };
+	// The lines with an effect of the line's kind, as the video's tool has it
+	bool const scrolling = scroll->IsScroll();
+	return [scrolling, change](AssDialogue const& row, int duration) -> std::optional<std::string> {
+		auto e = ParseScrollEffect(row.Effect.get());
+		if (!e || e->IsScroll() != scrolling) return std::nullopt;
+		ScrollEffect const before = *e;
+		change(*e, duration);
+		// Unchanged, the field stays as it was written
+		if (*e == before) return std::nullopt;
+		return FormatScrollEffect(*e);
+	};
+}
+
+void AnimationPage::WriteScrollNumber(wxString const& undo_name, std::function<void(ScrollEffect&, int)> change, bool final) {
+	drag_commit = WriteEffect(undo_name, ChangeScroll(std::move(change)), drag_commit);
+	if (final) drag_commit = -1;
+}
+
 namespace {
 /// A change to the tags of @p card: @p edit changes a line's animation,
 /// false where the line has nothing for it to change
@@ -764,6 +804,136 @@ void AnimationPage::BuildMove() {
 	AddRange("move", undo);
 }
 
+void AnimationPage::BuildScroll() {
+	const wxString undo = _("set scroll effect");
+	bool const scrolling = scroll->IsScroll();
+	AddCardTitle("scroll", scrolling ? _("Scroll") : _("Banner"), _("Effect field"));
+
+	if (scroll_count < line_count) {
+		auto lines = Add<Caption>("scroll.lines");
+		lines->SetToolTip(_("Changes here go to the selected lines with an effect of this kind, as the video's scroll tool's do"));
+		card_body->Add(lines, 0, wxEXPAND);
+		refreshers.push_back([this, lines, scrolling] {
+			lines->SetText(scrolling
+				? fmt_plural(scroll_count, "Changes the %d selected line that scrolls", "Changes the %d selected lines that scroll", scroll_count)
+				: fmt_plural(scroll_count, "Changes the %d selected line with a banner", "Changes the %d selected lines with a banner", scroll_count));
+		});
+	}
+
+	auto pick = Add<IconButton>("scroll.pick", IconButton::Glyph::Pick,
+		_("Drag the area and the speed on the video, with the scroll tool"));
+	pick->on_click = [this] {
+		if (auto cmd = cmd::get("video/tool/scroll"); cmd && cmd->Validate(c)) cmd::call("video/tool/scroll", c);
+	};
+	refreshers.push_back([this, pick] { pick->Enable(VideoTime().has_value()); });
+
+	// Banner, up or down: turning a scroll about keeps its area and speed,
+	// a banner made a scroll or the other way starts anew
+	auto kind_row = new wxBoxSizer(wxHORIZONTAL);
+	auto kind = Add<PageSwitch>("scroll.kind", std::vector<wxString>{
+		wxGETTEXT_IN_CONTEXT("scroll effect", "Banner"), wxGETTEXT_IN_CONTEXT("scroll effect", "Up"), wxGETTEXT_IN_CONTEXT("scroll effect", "Down")});
+	kind->SetToolTip(_("A banner crosses the screen; a scroll goes up or down through an area"));
+	kind->on_choose = [this](int index) { Choose("scroll.kind", index); };
+	kind_row->Add(kind, 1, wxEXPAND);
+	if (scrolling) kind_row->Add(pick, 0, wxLEFT, FromDIP(2));
+	AddRow(kind_row, true);
+	refreshers.push_back([this, kind] {
+		kind->Select(scroll->kind == ScrollEffect::Kind::Banner ? 0 : scroll->kind == ScrollEffect::Kind::ScrollUp ? 1 : 2);
+	});
+
+	if (scrolling) {
+		auto row = new wxBoxSizer(wxHORIZONTAL);
+		auto field = [&](std::string const& name, wxString const& label, bool top) {
+			auto f = Add<Field>(name, label, "px", false,
+				top ? _("The area's top edge, in the script's pixels: the text shows only below it")
+				    : _("The area's bottom edge, in the script's pixels: the text shows only above it"));
+			f->SetNumberHandler({0, 100000, 1}, [this, undo, top](double v, bool final) {
+				int y = static_cast<int>(std::lround(v));
+				WriteScrollNumber(undo, [=](ScrollEffect &e, int) {
+					// y1 and y2 can be either way round
+					bool first_is_top = e.y1 <= e.y2;
+					(top == first_is_top ? e.y1 : e.y2) = y;
+				}, final);
+			});
+			row->Add(f, 1, wxEXPAND | (row->IsEmpty() ? 0 : wxLEFT), FromDIP(4));
+			refreshers.push_back([this, f, top] { f->SetNumber(top ? scroll->Top() : scroll->Bottom(), true); });
+		};
+		field("scroll.top", wxGETTEXT_IN_CONTEXT("scroll effect", "Top"), true);
+		field("scroll.bottom", wxGETTEXT_IN_CONTEXT("scroll effect", "Bottom"), false);
+		AddRow(row);
+	}
+	else {
+		auto row = new wxBoxSizer(wxHORIZONTAL);
+		auto direction = Add<PageSwitch>("scroll.direction", std::vector<wxString>{_("Right to left"), _("Left to right")});
+		direction->on_choose = [this](int index) { Choose("scroll.direction", index); };
+		row->Add(direction, 1, wxEXPAND);
+		row->Add(pick, 0, wxLEFT, FromDIP(2));
+		AddRow(row);
+		refreshers.push_back([this, direction] { direction->Select(scroll->left_to_right ? 1 : 0); });
+	}
+
+	// The speed, as the renderers have it: milliseconds to a pixel
+	auto speed_row = new wxBoxSizer(wxHORIZONTAL);
+	auto delay = Add<Field>("scroll.delay", _("Delay"), "ms/px", false,
+		_("Milliseconds the text takes to move one pixel of the script's resolution: more is slower"));
+	delay->SetNumberHandler({0, 1000000, 1}, [this, undo](double v, bool final) {
+		int ms = static_cast<int>(std::lround(v));
+		WriteScrollNumber(undo, [=](ScrollEffect &e, int) { e.delay = ms; }, final);
+	});
+	speed_row->Add(delay, 1, wxEXPAND);
+	refreshers.push_back([this, delay] { delay->SetNumber(scroll->delay, true); });
+	auto fit = Add<TextButton>("scroll.fit", scrolling ? _("Through the area") : _("Across the screen"),
+		scrolling ? _("The speed that takes each selected line's text through the area by its end")
+		          : _("The speed that takes each selected line's text across the screen by its end"));
+	fit->on_click = [this] {
+		WriteEffect(_("set scroll effect"), ChangeScroll([this](ScrollEffect &e, int d) { e.delay = CrossingDelay(e, d, script_w); }));
+	};
+	speed_row->Add(fit, 0, wxEXPAND | wxLEFT, FromDIP(4));
+	AddRow(speed_row);
+	auto speed = Add<Caption>("scroll.speed");
+	card_body->Add(speed, 0, wxEXPAND | wxTOP, FromDIP(2));
+	refreshers.push_back([this, speed] { speed->SetText(ScrollSpeedText(*scroll, duration)); });
+
+	// VSFilter's fade at the edges, which libass ignores
+	auto fade_row = new wxBoxSizer(wxHORIZONTAL);
+	if (scroll->fade) {
+		auto fade = Add<Field>("scroll.fade", wxGETTEXT_IN_CONTEXT("scroll effect", "Fade"), "px", false,
+			_("How far in from the edges the text fades, in the script's pixels; VSFilter only"));
+		fade->SetNumberHandler({0, 100000, 1}, [this, undo](double v, bool final) {
+			int px = static_cast<int>(std::lround(v));
+			WriteScrollNumber(undo, [=](ScrollEffect &e, int) { e.fade = px; }, final);
+		});
+		fade_row->Add(fade, 1, wxEXPAND);
+		refreshers.push_back([this, fade] { fade->SetNumber(scroll->fade.value_or(0), true); });
+		auto off = Add<TextButton>("scroll.fade_off", _("No fade"), _("Take the fade at the edges away"));
+		off->on_click = [this] {
+			WriteEffect(_("set scroll effect"), ChangeScroll([](ScrollEffect &e, int) { e.fade.reset(); }));
+		};
+		fade_row->Add(off, 0, wxEXPAND | wxLEFT, FromDIP(4));
+	}
+	else {
+		auto on = Add<TextButton>("scroll.fade_on", _("Fade at the edges (VSFilter only)"),
+			_("Fade the text in and out near the edges; libass and so most players ignore it"));
+		on->on_click = [this] {
+			WriteEffect(_("set scroll effect"), ChangeScroll([this](ScrollEffect &e, int) {
+				if (!e.fade) e.fade = std::max(1, (e.IsScroll() ? e.Bottom() - e.Top() : script_w) / 10);
+			}));
+		};
+		fade_row->Add(on, 1, wxEXPAND);
+	}
+	card_body->Add(fade_row, 0, wxEXPAND | wxTOP, FromDIP(6));
+
+	// libass: a scroll takes one axis from \pos or \move, a banner the other
+	if (current.move || current.position) {
+		auto note = Add<Caption>("scroll.note");
+		note->SetText(scrolling ? _("Its \\pos or \\move sets only where it is across") : _("Its \\pos or \\move sets only how high it is"));
+		note->SetToolTip(scrolling
+			? _("With a scroll, libass takes only the across position from \\pos or \\move: the scroll sets the height")
+			: _("With a banner, libass takes only the height from \\pos or \\move: the banner sets where it is across"));
+		card_body->Add(note, 0, wxEXPAND | wxTOP, FromDIP(4));
+	}
+}
+
 void AnimationPage::BuildFade() {
 	const wxString undo = _("set fade");
 	AddCardTitle("fade", _("Fade"), "\\fad");
@@ -954,6 +1124,7 @@ void AnimationPage::Build() {
 	});
 
 	if (line) {
+		if (scroll) BuildScroll();
 		if (current.move) BuildMove();
 		if (current.fade) BuildFade();
 		for (size_t i = 0; i < current.transforms.size(); ++i) BuildTransform(i);
@@ -965,7 +1136,7 @@ void AnimationPage::Build() {
 		body->Add(hint, 0, wxEXPAND | wxLEFT | wxRIGHT, pad);
 	}
 
-	auto add = Add<TextButton>("add", _("+ Add effect"), _("Make the selected lines move, fade in and out, change over time or turn about a point"));
+	auto add = Add<TextButton>("add", _("+ Add effect"), _("Make the selected lines move, fade in and out, change over time, turn about a point or scroll"));
 	add->on_click = [this] { ShowAddMenu(); };
 	add->Enable(line != nullptr);
 	body->Add(add, 0, wxEXPAND | wxALL, pad);
@@ -993,6 +1164,15 @@ void AnimationPage::UpdateNow() {
 	start = line ? static_cast<int>(line->Start) : 0;
 	duration = line ? std::max(0, static_cast<int>(line->End) - start) : 0;
 	current = line ? Read(line->Text, duration) : Animation{};
+	c->subtitleAccess->Read().GetResolution(script_w, script_h);
+	scroll = line ? ParseScrollEffect(line->Effect.get()) : std::nullopt;
+	effect_taken = line && !scroll && !line->Effect.get().empty();
+	scroll_count = 0;
+	if (scroll) {
+		for (auto row : selected)
+			if (auto e = ParseScrollEffect(row->Effect.get()); e && e->IsScroll() == scroll->IsScroll()) ++scroll_count;
+		scroll_count = std::max<size_t>(scroll_count, 1);
+	}
 
 	std::string key = line ? "L" : "-";
 	if (current.move) key += "M";
@@ -1002,6 +1182,12 @@ void AnimationPage::UpdateNow() {
 		for (auto const& target : t.targets) key += target.name + ",";
 	}
 	if (current.origin) key += "O";
+	if (scroll) {
+		key += scroll->IsScroll() ? "S" : "B";
+		if (scroll->fade) key += "f";
+		if (scroll_count < line_count) key += "n";
+		if (current.move || current.position) key += "p";
+	}
 	if (key != structure) {
 		structure = key;
 		Build();
@@ -1072,7 +1258,47 @@ void AnimationPage::AddEffect(Effect effect, std::string const& target) {
 				return true;
 			}));
 			break;
+		case Effect::Scroll:
+			// Up through the lower half, by the line's end; a field holding
+			// anything else is left alone
+			WriteEffect(_("add scroll effect"), [this](AssDialogue const& row, int d) -> std::optional<std::string> {
+				if (!row.Effect.get().empty()) return std::nullopt;
+				return FormatScrollEffect(DefaultScrollEffect(ScrollEffect::Kind::ScrollUp, d, script_w, script_h));
+			});
+			break;
 	}
+}
+
+bool AnimationPage::CanAdd(Effect effect) const {
+	if (!line) return false;
+	switch (effect) {
+		case Effect::Move: return !current.move;
+		case Effect::Fade: return !current.fade;
+		case Effect::Transform: return true;
+		case Effect::Origin: return !current.origin;
+		case Effect::Scroll: return !scroll && !effect_taken;
+	}
+	return false;
+}
+
+void AnimationPage::Choose(std::string const& name, int index) {
+	if (!scroll) return;
+	if (name == "scroll.kind") {
+		auto const kind = index == 0 ? ScrollEffect::Kind::Banner : index == 1 ? ScrollEffect::Kind::ScrollUp : ScrollEffect::Kind::ScrollDown;
+		WriteEffect(_("set scroll effect"), ChangeScroll([this, kind](ScrollEffect &e, int d) {
+			if (e.IsScroll() == (kind != ScrollEffect::Kind::Banner)) {
+				e.kind = kind;
+				return;
+			}
+			auto fade = e.fade;
+			e = DefaultScrollEffect(kind, d, script_w, script_h);
+			e.fade = fade;
+		}));
+	}
+	else if (name == "scroll.direction")
+		WriteEffect(_("set scroll effect"), ChangeScroll([index](ScrollEffect &e, int) {
+			if (!e.IsScroll()) e.left_to_right = index == 1;
+		}));
 }
 
 void AnimationPage::AddTarget(int index, std::string const& name) {
@@ -1087,6 +1313,16 @@ void AnimationPage::AddTarget(int index, std::string const& name) {
 }
 
 void AnimationPage::RemoveCard(std::string const& card) {
+	if (card == "scroll") {
+		if (!scroll) return;
+		bool const scrolling = scroll->IsScroll();
+		WriteEffect(_("remove effect"), [scrolling](AssDialogue const& row, int) -> std::optional<std::string> {
+			auto e = ParseScrollEffect(row.Effect.get());
+			if (!e || e->IsScroll() != scrolling) return std::nullopt;
+			return std::string();
+		});
+		return;
+	}
 	Write(_("remove effect"), Mutate(card, [card](Animation &a, AssDialogue const&, int) {
 		switch (KindOf(card)) {
 			case Kind::Move:
@@ -1116,19 +1352,23 @@ void AnimationPage::RemoveCard(std::string const& card) {
 
 void AnimationPage::ShowAddMenu() {
 	wxMenu menu;
-	enum { MoveId = 1, FadeId, OriginId, TargetBase = 100 };
-	menu.Append(MoveId, _("Move (\\move)"))->Enable(!current.move);
-	menu.Append(FadeId, _("Fade in and out (\\fad)"))->Enable(!current.fade);
+	enum { MoveId = 1, FadeId, OriginId, ScrollId, TargetBase = 100 };
+	menu.Append(MoveId, _("Move (\\move)"))->Enable(CanAdd(Effect::Move));
+	menu.Append(FadeId, _("Fade in and out (\\fad)"))->Enable(CanAdd(Effect::Fade));
 	auto transform = new wxMenu;
 	auto const& kinds = TargetKinds();
 	for (size_t i = 0; i < kinds.size(); ++i)
 		transform->Append(TargetBase + static_cast<int>(i), kinds[i].label + " (" + to_wx(kinds[i].name) + ")");
 	menu.AppendSubMenu(transform, _("Change over time (\\t)"));
-	menu.Append(OriginId, _("Rotation origin (\\org)"))->Enable(!current.origin);
+	menu.Append(OriginId, _("Rotation origin (\\org)"))->Enable(CanAdd(Effect::Origin));
+	menu.AppendSeparator();
+	menu.Append(ScrollId, effect_taken ? _("Scroll or banner (the Effect field holds something else)") : _("Scroll or banner (Effect field)"))
+		->Enable(CanAdd(Effect::Scroll));
 	int chosen = GetPopupMenuSelectionFromUser(menu, parts["add"]->GetPosition() + wxPoint(0, parts["add"]->GetSize().y));
 	if (chosen == MoveId) AddEffect(Effect::Move);
 	else if (chosen == FadeId) AddEffect(Effect::Fade);
 	else if (chosen == OriginId) AddEffect(Effect::Origin);
+	else if (chosen == ScrollId) AddEffect(Effect::Scroll);
 	else if (chosen >= TargetBase && chosen < TargetBase + static_cast<int>(kinds.size()))
 		AddEffect(Effect::Transform, kinds[chosen - TargetBase].name);
 }

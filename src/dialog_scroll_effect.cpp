@@ -16,19 +16,20 @@
 #include <wx/sizer.h>
 #include <wx/stattext.h>
 
+wxString ScrollSpeedText(ScrollEffect const& effect, int duration_ms) {
+	double px_s = 1000. / EffectiveDelay(effect.delay);
+	int travel = static_cast<int>(std::lround(ScrollShift(effect, duration_ms)));
+	return fmt_tl("%s px/s, %d px by the line's end",
+		px_s >= 10 ? wxString::Format("%.0f", px_s) : wxString::Format("%.1f", px_s), travel);
+}
+
 std::optional<std::string> ShowScrollEffectDialog(wxWindow *parent, std::string const& current, int duration_ms, int script_w, int script_h) {
 	wxDialog d(parent, -1, _("Scroll Effect"));
 	theme::UseSurface(&d);
 	int gap = d.FromDIP(10), row = d.FromDIP(6);
 
 	auto const parsed = ParseScrollEffect(current);
-	ScrollEffect e = parsed.value_or(ScrollEffect{});
-	if (!parsed) {
-		// The lower half, crossed by the line's end
-		e.y1 = script_h / 2;
-		e.y2 = script_h;
-		e.delay = DelayForShift(duration_ms, std::max(script_h / 2, 1));
-	}
+	ScrollEffect e = parsed.value_or(DefaultScrollEffect(ScrollEffect::Kind::ScrollUp, duration_ms, script_w, script_h));
 	// A banner chosen anew crosses the screen by the line's end
 	bool banner_delay_set = parsed && !parsed->IsScroll();
 	bool scroll_delay_set = parsed && parsed->IsScroll();
@@ -69,10 +70,7 @@ std::optional<std::string> ShowScrollEffectDialog(wxWindow *parent, std::string 
 		fade->Enable(k != 0 && fade_check->GetValue());
 		ScrollEffect shown;
 		shown.delay = delay->GetInt();
-		double px_s = 1000. / EffectiveDelay(shown.delay);
-		int travel = static_cast<int>(std::lround(ScrollShift(shown, duration_ms)));
-		speed->SetLabel(k == 0 ? wxString() : fmt_tl("%s px/s, %d px by the line's end",
-			px_s >= 10 ? wxString::Format("%.0f", px_s) : wxString::Format("%.1f", px_s), travel));
+		speed->SetLabel(k == 0 ? wxString() : ScrollSpeedText(shown, duration_ms));
 		d.Layout();
 	};
 	kind->on_choose = [&](int) { update(); };

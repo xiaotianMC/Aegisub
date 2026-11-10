@@ -71,3 +71,19 @@ int DelayForShift(int duration_ms, double shift) {
 	if (shift <= 0 || duration_ms <= 0) return max_delay;
 	return std::clamp(static_cast<int>(std::lround(duration_ms / shift)), 1, max_delay);
 }
+
+int CrossingDelay(ScrollEffect const& effect, int duration_ms, int script_w) {
+	if (effect.IsScroll()) return DelayForShift(duration_ms, std::max(effect.Bottom() - effect.Top(), 1));
+	return DelayForShift(duration_ms, std::max(script_w, 1));
+}
+
+ScrollEffect DefaultScrollEffect(ScrollEffect::Kind kind, int duration_ms, int script_w, int script_h) {
+	ScrollEffect e;
+	e.kind = kind;
+	if (e.IsScroll()) {
+		e.y1 = script_h / 2;
+		e.y2 = script_h;
+	}
+	e.delay = CrossingDelay(e, duration_ms, script_w);
+	return e;
+}

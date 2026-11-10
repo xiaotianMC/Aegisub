@@ -78,6 +78,10 @@ public:
 	void ShowPage(Page page);
 	Page ShownPage() const { return page; }
 	AnimationPage *Animation() const { return animation; }
+	/// Show the current line's Banner or Scroll on the animation page,
+	/// adding a scroll where its Effect field is empty, if the panel is on
+	/// the screen. @return Whether it is
+	bool ShowScrollEffect();
 
 	/// Collapse or expand a section: "style", "text" or "appearance"
 	void ShowSection(std::string const& name, bool show);
