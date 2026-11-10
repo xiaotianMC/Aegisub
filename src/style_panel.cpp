@@ -1030,19 +1030,23 @@ StylePanelEdge::StylePanelEdge(wxWindow *parent, StylePanel *panel)
 		}
 
 		// The pages' names, read from the top down as a folded side bar's
-		// name is: the one the panel shows in the accent colour and bold,
-		// the one under the pointer in the accent colour
+		// name is: the one the panel shows in the accent colour on a pale
+		// accent pill, the one under the pointer in the accent colour.
+		// Not bold: Windows draws turned bold CJK text smeared.
 		dc.SetFont(GetFont());
 		wxColour plain = theme::Mix(surface, text, 0.75);
 		int current = static_cast<int>(this->panel->ShownPage());
 		auto names = PageNames();
 		for (int i = 0; i < static_cast<int>(names.size()); ++i) {
 			auto const& [label, rect] = names[i];
-			wxFont font = GetFont();
-			if (i == current) font.MakeBold();
-			dc.SetFont(font);
-			dc.SetTextForeground(i == current || i == hover_page ? accent : plain);
 			int height = dc.GetTextExtent(label).y;
+			if (i == current) {
+				dc.SetPen(*wxTRANSPARENT_PEN);
+				dc.SetBrush(wxBrush(theme::Mix(surface, accent, 0.16)));
+				int half = std::min(height / 2 + FromDIP(2), block.width / 2 - FromDIP(1));
+				dc.DrawRoundedRectangle(cx - half, rect.y - FromDIP(5), 2 * half, rect.height + FromDIP(10), FromDIP(4));
+			}
+			dc.SetTextForeground(i == current || i == hover_page ? accent : plain);
 			dc.DrawRotatedText(label, cx + height / 2, rect.y, 270);
 		}
 	});
@@ -1085,9 +1089,7 @@ StylePanelEdge::StylePanelEdge(wxWindow *parent, StylePanel *panel)
 std::vector<std::pair<wxString, wxRect>> StylePanelEdge::PageNames() const {
 	std::vector<std::pair<wxString, wxRect>> names;
 	wxClientDC dc(const_cast<StylePanelEdge*>(this));
-	wxFont font = GetFont();
-	font.MakeBold(); // as long as the one shown is
-	dc.SetFont(font);
+	dc.SetFont(GetFont());
 	int gap = theme::BlockGap(GetParent());
 	int y = FromDIP(40); // below the «
 	for (wxString const& label : {_("Style"), _("Animation"), wxGETTEXT_IN_CONTEXT("page", "Timing")}) {

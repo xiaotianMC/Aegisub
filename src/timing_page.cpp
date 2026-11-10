@@ -570,7 +570,8 @@ void TimingPage::BuildShift() {
 		amount->SetNumberHandler(by_time ? Field::Range{0, max_time, 10} : Field::Range{0, 100000, 1}, [option](double v, bool) {
 			OPT_SET(option)->SetInt(static_cast<int>(std::lround(v)));
 		});
-		amount->SetUnit(by_time ? wxS("ms") : wxGETTEXT_IN_CONTEXT("shift", "frames"));
+		// Both sides a wxString: MSVC cannot choose between wchar_t* and wxString
+		amount->SetUnit(by_time ? wxString(wxS("ms")) : wxString(wxGETTEXT_IN_CONTEXT("shift", "frames")));
 		amount->SetNumber(OPT_GET(option)->GetInt(), true);
 		bool can = line_id != 0 && OPT_GET(option)->GetInt() != 0;
 		earlier->Enable(can);
