@@ -9,13 +9,25 @@
 			"Save on Every Change" : false
 		},
 		"Call Tips" : false,
+		"Classic Icons" : false,
+		"Classic Toolbar" : false,
+		"Command Palette" : {
+			"Recent" : [{"string": ""}]
+		},
 		"First Start" : true,
 		"Hotkey Migrations" : [{"string": "placeholder since empty arrays aren't supported"}],
 		"Language" : "",
+		"Theme" : 0,
 		"Maximized" : false,
 		"Save Charset" : "UTF-8",
 		"Save UI State" : true,
 		"Show Toolbar" : true,
+		"Style Panel" : {
+			"Lock Shape Proportions" : false,
+			"Page" : 0,
+			"Show" : true,
+			"Width" : 280
+		},
 		"Toolbar Icon Size" : 16
 	},
 
@@ -33,6 +45,7 @@
 			"Type" : 1
 		},
 		"Colour Schemes" : [
+			{ "string" : "Studio" },
 			{ "string" : "Green" },
 			{ "string" : "Icy Blue" }
 		],
@@ -44,7 +57,8 @@
 				"Keyframes in Dialogue Mode" : true,
 				"Keyframes in Karaoke Mode" : true,
 				"Seconds" : true,
-				"Video Position" : true
+				"Video Position" : true,
+				"dB Scale" : true
 			},
 			"Waveform Style" : 0
 		},
@@ -111,10 +125,56 @@
 			"Seconds Line" : "rgb(0,100,255)",
 			"Spectrum" : "Icy Blue",
 			"Syllable Boundaries" : "rgb(255,255,0)",
-			"Waveform" : "Green"
+			"Waveform" : "Studio"
 		},
 		"Schemes" : {
+			"Studio" : {
+				"Averages In Selection Only" : true,
+				"Normal" : {
+					"Hue Offset" : 109.0,
+					"Hue Scale" : 0.0,
+					"Saturation Offset" : 90.0,
+					"Saturation Scale" : 0.0,
+					"Lightness Offset" : 0.0,
+					"Lightness Scale" : 375.0
+				},
+				"Inactive" : {
+					"Hue Offset" : 109.0,
+					"Hue Scale" : 0.0,
+					"Saturation Offset" : 70.0,
+					"Saturation Scale" : 0.0,
+					"Lightness Offset" : 0.0,
+					"Lightness Scale" : 330.0
+				},
+				"Selection" : {
+					"Hue Offset" : 109.0,
+					"Hue Scale" : 0.0,
+					"Saturation Offset" : 176.0,
+					"Saturation Scale" : 0.0,
+					"Lightness Offset" : 0.0,
+					"Lightness Scale" : 290.0
+				},
+				"Primary" : {
+					"Hue Offset" : 109.0,
+					"Hue Scale" : 0.0,
+					"Saturation Offset" : 176.0,
+					"Saturation Scale" : 0.0,
+					"Lightness Offset" : 0.0,
+					"Lightness Scale" : 300.0
+				},
+				"UI" : {
+					"Light" : "rgb(150, 150, 150)",
+					"Dark" : "rgb(38, 38, 38)",
+					"Selection" : "rgb(28, 84, 58)"
+				},
+				"UI Focused" : {
+					"Light" : "rgb(196, 196, 196)",
+					"Dark" : "rgb(38, 38, 38)",
+					"Selection" : "rgb(28, 84, 58)"
+				}
+			},
 			"Green" : {
+				"Averages In Selection Only" : false,
 				"Normal" : {
 					"Hue Offset" : 85.0,
 					"Hue Scale" : 0.0,
@@ -159,6 +219,7 @@
 				}
 			},
 			"Icy Blue" : {
+				"Averages In Selection Only" : false,
 				"Normal" : {
 					"Hue Offset" : 191.0,
 					"Hue Scale" : -128.0,
@@ -209,21 +270,21 @@
 			}
 		},
 		"Subtitle Grid" : {
-			"Active Border" : "rgb(255, 91, 239)",
+			"Active Border" : "rgb(26, 99, 196)",
 			"Background" : {
 				"Background" : "rgb(255,255,255)",
-				"Comment" : "rgb(216, 222, 245)",
-				"Inframe" : "rgb(255, 253, 234)",
-				"Selected Comment" : "rgb(211, 238, 238)",
-				"Selection" : "rgb(206, 255, 231)"
+				"Comment" : "rgb(238, 240, 243)",
+				"Inframe" : "rgb(255, 242, 204)",
+				"Selected Comment" : "rgb(207, 218, 235)",
+				"Selection" : "rgb(212, 227, 250)"
 			},
-			"Collision" : "rgb(255,0,0)",
-			"CPS Error" : "rgb(255,0,0)",
-			"Header" : "rgb(165, 207, 231)",
-			"Left Column" : "rgb(196, 236, 201)",
-			"Lines" : "rgb(190,190,190)",
-			"Selection" : "rgb(0,0,0)",
-			"Standard" : "rgb(0,0,0)"
+			"Collision" : "rgb(214, 48, 49)",
+			"CPS Error" : "rgb(224, 64, 64)",
+			"Header" : "rgb(236, 239, 243)",
+			"Left Column" : "rgb(243, 245, 248)",
+			"Lines" : "rgb(216, 220, 226)",
+			"Selection" : "rgb(31, 35, 40)",
+			"Standard" : "rgb(31, 35, 40)"
 		},
 		"Subtitle" : {
 			"Background" : "rgb(255, 255, 255)",
@@ -383,11 +444,14 @@
 			"Width" : 1280
 		},
 		"Edit Box" : {
+			"Auto Completion" : true,
+			"Fields Below Text" : true,
 			"Soft Line Break": false,
 			"Font Face" : "",
 			"Font Size" : 10
 		},
 		"Grid" : {
+			"Alternate Rows" : true,
 			"Column" : [
 				{"bool" : true}
 			],
@@ -442,7 +506,10 @@
 	},
 
 	"Timing" : {
-		"Default Duration" : 3000
+		"Default Duration" : 3000,
+		"Link Adjacent Lines" : true,
+		"Adjacent Line Gap" : 0.3,
+		"Scene Snap Distance" : 500
 	},
 
 	"Tool" : {
@@ -545,12 +612,12 @@
 			},
 			"Maximized" : false
 		},
-		"Styling Assistant" : {
-			"Last" : {
-				"X" : -1,
-				"Y" : -1
-			},
-			"Maximized" : false
+		"MagiaTimeline" : {
+			"Path" : "",
+			"Strategy" : ""
+		},
+		"Scene Detection" : {
+			"Sensitivity" : 1
 		},
 		"Thesaurus" : {
 			"Language" : "en_US"

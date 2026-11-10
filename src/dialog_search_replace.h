@@ -26,20 +26,25 @@
 #include <wx/dialog.h>
 
 namespace agi { struct Context; }
+class FlatCheck;
+class FlatSwitch;
 class SearchReplaceEngine;
 struct SearchReplaceSettings;
-class wxComboBox;
+class wxTextCtrl;
 
 template<bool has_replace>
 class DialogSearchReplace final : public wxDialog {
 	agi::Context *c;
 	std::unique_ptr<SearchReplaceSettings> settings;
-	wxComboBox *replace_edit;
+	wxTextCtrl *replace_edit = nullptr;
+	FlatCheck *match_case, *use_regex, *skip_comments, *skip_tags;
+	FlatSwitch *field, *limit_to;
 
-	void UpdateDropDowns();
+	/// The choices shown into the settings
+	void ReadChoices();
 	void FindReplace(bool (SearchReplaceEngine::*func)());
 
 public:
-	wxComboBox *find_edit;
+	wxTextCtrl *find_edit;
 	DialogSearchReplace(agi::Context* c);
 };

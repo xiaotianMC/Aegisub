@@ -58,7 +58,7 @@ std::vector<std::string> TTXTSubtitleFormat::GetWriteWildcards() const {
 	return GetReadWildcards();
 }
 
-void TTXTSubtitleFormat::ReadFile(AssFile *target, agi::fs::path const& filename, agi::vfr::Framerate const&, const char *) const {
+void TTXTSubtitleFormat::ReadFile(AssFile *target, agi::fs::path const& filename, agi::vfr::Framerate const&, const char *, SubtitleReadOptions const& options) const {
 	target->LoadDefault(false, OPT_GET("Subtitle Format/TTXT/Default Style Catalog")->GetString());
 
 	// Load XML document
@@ -82,6 +82,7 @@ void TTXTSubtitleFormat::ReadFile(AssFile *target, agi::fs::path const& filename
 	AssDialogue *diag = nullptr;
 	int lines = 0;
 	for (wxXmlNode *child = doc.GetRoot()->GetChildren(); child; child = child->GetNext()) {
+		options.CheckCancelled();
 		// Line
 		if (child->GetName() == "TextSample") {
 			if ((diag = ProcessLine(child, diag, version))) {

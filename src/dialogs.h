@@ -17,6 +17,7 @@
 #pragma once
 
 #include <libaegisub/color.h>
+#include <libaegisub/fs.h>
 
 #include <functional>
 #include <string>
@@ -53,13 +54,18 @@ void PerformVersionCheck(bool interactive);
 bool PromptForResampleSettings(agi::Context *c, ResampleSettings &settings);
 
 /// Update the video properties for a newly opened video, possibly prompting the user about what to do
-void UpdateVideoProperties(AssFile *file, const AsyncVideoProvider *new_provider, wxWindow *parent);
+void UpdateVideoProperties(agi::Context *c, const AsyncVideoProvider *new_provider);
 
 int GetSelectedChoices(wxWindow *parent, wxArrayInt& selections, wxString const& message, wxString const& caption, wxArrayString const& choices);
 
 std::string CreateDummyVideo(wxWindow *parent);
 
 bool ShowPasteOverDialog(wxWindow *parent);
+/// C2-B: read @p baseline, compare it with the open subtitles and let the user
+/// apply chosen differences. Reports every refusal itself.
+/// Opens as a tab of the main window and returns at once.
+/// @return true if the comparison tab opened
+bool OpenCompareTab(agi::Context *c, agi::fs::path const& baseline);
 bool ShowPlainTextImportDialog();
 void ShowAboutDialog(wxWindow *parent);
 void ShowAttachmentsDialog(agi::Context *c);
@@ -69,7 +75,8 @@ void ShowFontsCollectorDialog(agi::Context *c);
 void ShowJumpToDialog(agi::Context *c);
 void ShowKanjiTimerDialog(agi::Context *c);
 void ShowLogWindow(agi::Context *c);
-void ShowPreferences(wxWindow *parent);
+/// Show the preferences, searching for @p search when it is not empty
+void ShowPreferences(wxWindow *parent, wxString const& search = wxString());
 void ShowPropertiesDialog(agi::Context *c);
 void ShowSearchReplaceDialog(agi::Context *c, bool replace);
 void ShowSelectLinesDialog(agi::Context *c);

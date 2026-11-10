@@ -85,7 +85,7 @@ public:
 		}
 
 		if (key.starts_with("Automation Settings ")) {
-			target->Properties.automation_settings[key.substr(strlen("Automation Settings"))] = value;
+			target->Properties.automation_settings[key.substr(strlen("Automation Settings "))] = value;
 			return true;
 		}
 
@@ -165,7 +165,7 @@ void AssParser::ParseScriptInfoLine(std::string const& data) {
 	boost::trim_left(value);
 
 	if (!property_handler->ProcessProperty(target, key, value))
-		target->Info.push_back(*new AssInfo(std::move(key), std::move(value)));
+		target->Info.emplace_back(std::move(key), std::move(value));
 }
 
 void AssParser::ParseMetadataLine(std::string const& rawdata) {

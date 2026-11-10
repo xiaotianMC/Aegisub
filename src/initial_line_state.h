@@ -13,6 +13,7 @@
 // OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 #pragma once
+#include <memory>
 
 #include <libaegisub/signal.h>
 
@@ -22,12 +23,17 @@ namespace agi { struct Context; }
 class AssDialogue;
 
 class InitialLineState {
+protected:
+    // Declared first: expires only after all owned bindings/cache members are destroyed.
+    std::shared_ptr<int> model_observer_lifetime = std::make_shared<int>(0);
+private:
 	agi::signal::Connection active_line_connection;
 	std::string initial_text;
-	int line_id;
+	int line_id = 0;
+    agi::Context *context;
 
 	agi::signal::Signal<std::string const&> InitialStateChanged;
-	void OnActiveLineChanged(AssDialogue *new_line);
+	void OnActiveLineChanged();
 
 public:
 	InitialLineState(agi::Context *c);

@@ -15,6 +15,8 @@
 // Aegisub Project http://www.aegisub.org/
 
 #pragma once
+#include "ass_dialogue.h"
+#include <optional>
 
 #include <libaegisub/signal.h>
 
@@ -69,7 +71,13 @@ struct StringHash {
 /// actually updated until the line is committed (which if auto-commit timing
 /// changes is on, will happen as soon as the user adjusts the timing of the
 /// new syllable).
+class AudioEditSession;
+
 class AudioKaraoke final : public wxWindow, private agi::signal::ConnectionScope {
+protected:
+    // Declared first: expires only after all owned bindings/cache members are destroyed.
+    std::shared_ptr<int> model_observer_lifetime = std::make_shared<int>(0);
+private:
 	agi::Context *c; ///< Project context
 	agi::signal::Connection file_changed; ///< File changed slot
 	agi::signal::Connection audio_opened; ///< Audio opened connection
@@ -77,7 +85,9 @@ class AudioKaraoke final : public wxWindow, private agi::signal::ConnectionScope
 	agi::signal::Connection active_line_changed;
 
 	/// Currently active dialogue line
-	AssDialogue *active_line = nullptr;
+	std::optional<AssDialogueBase> active_line;
+	std::shared_ptr<AudioEditSession> edit;
+	agi::signal::Connection cache_changed;
 	/// Karaoke data
 	std::unique_ptr<agi::ass::Karaoke> kara;
 
@@ -142,7 +152,7 @@ class AudioKaraoke final : public wxWindow, private agi::signal::ConnectionScope
 	/// Apply any pending split information to the syllable data and return to normal mode
 	void AcceptSplit();
 
-	void OnActiveLineChanged(AssDialogue *new_line);
+	void OnActiveLineChanged();
 	void OnContextMenu(wxContextMenuEvent&);
 	void OnEnableButton(wxCommandEvent &evt);
 	void OnFileChanged(int type, const AssDialogue *changed);

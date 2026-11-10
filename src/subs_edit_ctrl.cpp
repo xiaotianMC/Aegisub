@@ -28,8 +28,11 @@
 // Aegisub Project http://www.aegisub.org/
 
 #include "subs_edit_ctrl.h"
+#include "theme.h"
 
 #include "ass_dialogue.h"
+#include "ass_file.h"
+#include "subtitle_project_access.h"
 #include "command/command.h"
 #include "compat.h"
 #include "format.h"
@@ -51,6 +54,7 @@
 #include <functional>
 
 #include <wx/clipbrd.h>
+#include <wx/fontenum.h>
 #include <wx/intl.h>
 #include <wx/menu.h>
 #include <wx/settings.h>
@@ -94,6 +98,33 @@ SubsTextEditCtrl::SubsTextEditCtrl(wxWindow* parent, wxSize wsize, long style, a
 	SetMarginWidth(1,0);
 	UsePopUp(wxSTC_POPUP_NEVER);
 	SetStyles();
+	AutoCompSetSeparator('\n');
+	AutoCompSetTypeSeparator('\t');
+	AutoCompSetOrder(wxSTC_ORDER_CUSTOM);
+	AutoCompSetMaxHeight(9);
+	AutoCompSetMaxWidth(60);
+	AutoCompSetChooseSingle(false);
+	AutoCompSetFillUps("");
+	Bind(wxEVT_STC_CHARADDED, [this](wxStyledTextEvent&) { ShowCompletion(false); });
+	Bind(wxEVT_CHAR, &SubsTextEditCtrl::OnChar, this);
+	Bind(wxEVT_SET_FOCUS, [this](wxFocusEvent &event) {
+		CallAfter(&SubsTextEditCtrl::ResumeAssistance);
+		event.Skip();
+	});
+	Bind(wxEVT_LEFT_UP, [this](wxMouseEvent &event) {
+		CallAfter(&SubsTextEditCtrl::ResumeAssistance);
+		event.Skip();
+	});
+	Bind(wxEVT_STC_AUTOCOMP_SELECTION, &SubsTextEditCtrl::AcceptCompletion, this);
+	Bind(wxEVT_STC_AUTOCOMP_CHAR_DELETED, [this](wxStyledTextEvent&) {
+		CallAfter([this] { ShowCompletion(false); });
+	});
+	BindConnection(OPT_SUB("Subtitle/Edit Box/Auto Completion", [this] {
+		AutoCompCancel();
+		CallTipCancel();
+		completion_calltip = false;
+		cursor_pos = -1;
+	}));
 
 	// Set hotkeys
 	CmdKeyClear(wxSTC_KEY_RETURN,wxSTC_KEYMOD_CTRL);
@@ -154,6 +185,7 @@ SubsTextEditCtrl::SubsTextEditCtrl(wxWindow* parent, wxSize wsize, long style, a
 	Subscribe("Karaoke Variable");
 
 	BindConnection(OPT_SUB("Colour/Subtitle/Background", &SubsTextEditCtrl::SetStyles, this));
+	BindConnection(theme::AddChangeListener([this] { SetStyles(); }));
 	BindConnection(OPT_SUB("Subtitle/Highlight/Syntax", &SubsTextEditCtrl::UpdateStyle, this));
 	BindConnection(OPT_SUB("App/Call Tips", &SubsTextEditCtrl::UpdateCallTip, this));
 
@@ -189,13 +221,226 @@ BEGIN_EVENT_TABLE(SubsTextEditCtrl,wxStyledTextCtrl)
 END_EVENT_TABLE()
 
 void SubsTextEditCtrl::OnLoseFocus(wxFocusEvent &event) {
+	AutoCompCancel();
 	CallTipCancel();
+	cursor_pos = -1;
 	event.Skip();
+}
+
+void SubsTextEditCtrl::ResumeAssistance() {
+	if (!HasFocus() || IsComposing()) return;
+	cursor_pos = -1;
+	ShowCompletion(false);
+	UpdateCallTip();
+}
+
+void SubsTextEditCtrl::OnChar(wxKeyEvent &event) {
+	int key = event.GetUnicodeKey();
+	if ((key != '{' && key != '}') || !OPT_GET("Subtitle/Edit Box/Auto Completion")->GetBool()
+		|| !HasFocus() || IsComposing()) {
+		event.Skip();
+		return;
+	}
+	auto diag = context ? context->selectionController->ReadActiveLine() : nullptr;
+	if (diag && diag->Comment && boost::istarts_with(diag->Effect.get(), "code")) {
+		event.Skip();
+		return;
+	}
+	std::string text = GetTextRaw().data();
+	size_t start = GetSelectionStart(), end = GetSelectionEnd();
+	bool is_template = diag && diag->Comment && boost::istarts_with(diag->Effect.get(), "template");
+	if (is_template && std::count(text.begin(), text.begin() + start, '!') % 2) {
+		event.Skip();
+		return;
+	}
+	if (key == '}') {
+		auto before = std::string_view(text).substr(0, start);
+		auto open = before.rfind('{'), close = before.rfind('}');
+		if (start == end && start < text.size() && text[start] == '}' && open != before.npos
+			&& (close == before.npos || open > close)) {
+			AutoCompCancel();
+			SetSelection(start + 1, start + 1);
+			cursor_pos = -1;
+			UpdateCallTip();
+		}
+		else event.Skip();
+		return;
+	}
+	text.replace(start, end - start, "{");
+	auto suffix = agi::ass::GetOverrideBlockSuffix(text, start + 1, is_template);
+	if (!suffix) {
+		event.Skip();
+		return;
+	}
+	AutoCompCancel();
+	// Insert the typed brace and its structure together for a single undo step.
+	BeginUndoAction();
+	SetTargetStart(start);
+	SetTargetEnd(end);
+	ReplaceTarget(wxString::FromUTF8("{" + *suffix));
+	SetSelection(start + 2, start + 2);
+	EndUndoAction();
+	line_text = GetTextRaw().data();
+	UpdateStyle();
+	ShowCompletion(false);
+}
+
+#ifdef __WXMSW__
+WXLRESULT SubsTextEditCtrl::MSWWindowProc(WXUINT message, WXWPARAM wParam, WXLPARAM lParam) {
+	if (message == WM_IME_STARTCOMPOSITION) {
+		ime_composing = true;
+		AutoCompCancel();
+	}
+	else if (message == WM_IME_ENDCOMPOSITION) {
+		ime_composing = false;
+		CallAfter([this] { ShowCompletion(false); });
+	}
+	return wxStyledTextCtrl::MSWWindowProc(message, wParam, lParam);
+}
+#endif
+
+bool SubsTextEditCtrl::IsComposing() {
+	if (ime_composing) return true;
+	int pos = GetCurrentPos();
+	// Scintilla uses these indicators for inline IME preedit text.
+	for (int indicator = wxSTC_INDIC_IME; indicator <= wxSTC_INDIC_IME_MAX; ++indicator)
+		if (IndicatorValueAt(indicator, pos) || (pos && IndicatorValueAt(indicator, pos - 1))) return true;
+	return IndicatorValueAt(1, pos) || (pos && IndicatorValueAt(1, pos - 1));
+}
+
+void SubsTextEditCtrl::ShowCompletion(bool manual) {
+	if ((!manual && !OPT_GET("Subtitle/Edit Box/Auto Completion")->GetBool())
+		|| !HasFocus() || IsComposing() || GetSelectionStart() != GetSelectionEnd()) {
+		AutoCompCancel();
+		return;
+	}
+	std::string text = GetTextRaw().data();
+	auto diag = context ? context->selectionController->ReadActiveLine() : nullptr;
+	if (diag && diag->Comment && boost::istarts_with(diag->Effect.get(), "code")) {
+		AutoCompCancel();
+		return;
+	}
+	bool is_template = diag && diag->Comment && boost::istarts_with(diag->Effect.get(), "template");
+	auto styles = context ? context->subtitleAccess->Read().GetStyles() : std::vector<std::string>{};
+	completion = agi::ass::GetCompletion(text, GetCurrentPos(), is_template, styles, completion_fonts);
+	if (completion.font && !completion_fonts_loaded) {
+		for (auto const& name : wxFontEnumerator::GetFacenames()) completion_fonts.push_back(from_wx(name));
+		completion_fonts_loaded = true;
+		completion = agi::ass::GetCompletion(text, GetCurrentPos(), is_template, styles, completion_fonts);
+	}
+	if (completion.items.empty()) {
+		AutoCompCancel();
+		return;
+	}
+	completion_source = std::move(text);
+	completion_pos = GetCurrentPos();
+	wxString list;
+	std::vector<std::string> descriptions;
+	int description_column = 0;
+	for (auto& item : completion.items) {
+		// Font and style names are document data, not translatable signatures.
+		if (item.label != item.text) {
+			auto display = agi::TranslateCalltip({item.label.c_str(), 0, 0, 0}, [](std::string_view value) {
+				return from_wx(wxGetTranslation(wxString::FromUTF8(value.data(), value.size())));
+			});
+			item.label = std::move(display.text);
+		}
+		auto description = item.description.empty() ? std::string{} : from_wx(wxGetTranslation(wxString::FromUTF8(item.description)));
+		descriptions.push_back(std::move(description));
+		if (!descriptions.back().empty())
+			description_column = std::max(description_column, GetTextExtent(wxString::FromUTF8(item.label)).GetWidth());
+	}
+	int space_width = std::max(1, GetTextExtent(" ").GetWidth());
+	for (size_t i = 0; i < completion.items.size(); ++i) {
+		auto& item = completion.items[i];
+		if (!descriptions[i].empty()) {
+			int label_width = GetTextExtent(wxString::FromUTF8(item.label)).GetWidth();
+			int padding = (description_column + 3 * space_width - label_width + space_width - 1) / space_width;
+			item.label.append(std::max(1, padding), ' ');
+			item.label += "|  " + descriptions[i];
+		}
+		// wxSTC estimates popup width by character count. Pad wide glyphs so
+		// translated labels are not clipped by the ASCII-width estimate.
+		auto label = wxString::FromUTF8(item.label);
+		int average = std::max(1, GetTextExtent("n").GetWidth());
+		int columns = (GetTextExtent(label).GetWidth() + average - 1) / average;
+		item.label.append(std::max(0, columns - static_cast<int>(label.length())) + 2, ' ');
+		if (!list.empty()) list += '\n';
+		list += wxString::FromUTF8(item.label);
+	}
+	CallTipCancel();
+	cursor_pos = -1;
+	AutoCompSetIgnoreCase(completion.font);
+	AutoCompShow(completion_pos - completion.start, list);
+}
+
+void SubsTextEditCtrl::AcceptCompletion(wxStyledTextEvent &event) {
+	auto label = from_wx(event.GetText());
+	auto it = std::find_if(completion.items.begin(), completion.items.end(),
+		[&](auto const& item) { return item.label == label; });
+	if (it == completion.items.end() || completion_source != GetTextRaw().data()
+		|| completion_pos != GetCurrentPos() || IsComposing()) {
+		AutoCompCancel();
+		return;
+	}
+	auto item = *it;
+	AutoCompCancel(); // Prevent Scintilla from inserting the display label.
+	BeginUndoAction();
+	SetTargetStart(completion.start);
+	SetTargetEnd(completion.end);
+	ReplaceTarget(wxString::FromUTF8(item.text));
+	SetSelection(completion.start + item.caret, completion.start + item.caret);
+	EndUndoAction();
+	completion_calltip = true;
+	cursor_pos = -1;
+	line_text = GetTextRaw().data();
+	UpdateStyle();
+	if (!item.text.empty() && item.text.front() == '\\') {
+		CallAfter([this] {
+			auto next = agi::ass::GetCompletion(GetTextRaw().data(), GetCurrentPos());
+			if (next.start == static_cast<size_t>(GetCurrentPos())) ShowCompletion(false);
+		});
+	}
+}
+
+bool SubsTextEditCtrl::HandleCompletionKey(wxKeyEvent &event) {
+	if (!AutoCompActive()) return false;
+	if (IsComposing()) {
+		AutoCompCancel();
+		return false;
+	}
+	int key = event.GetKeyCode();
+	if (event.GetModifiers() == wxMOD_NONE) {
+		if (key == WXK_RETURN || key == WXK_NUMPAD_ENTER || key == WXK_TAB) {
+			AutoCompComplete();
+			event.Skip(false);
+			return true;
+		}
+		if (key == WXK_ESCAPE) {
+			AutoCompCancel();
+			CallTipCancel();
+			cursor_pos = GetCurrentPos();
+			event.Skip(false);
+			return true;
+		}
+		if (key == WXK_UP || key == WXK_DOWN || key == WXK_PAGEUP || key == WXK_PAGEDOWN) {
+			event.DoAllowNextEvent();
+			return true;
+		}
+	}
+	if (key == WXK_RETURN || key == WXK_TAB || key == WXK_LEFT || key == WXK_RIGHT
+		|| key == WXK_HOME || key == WXK_END) AutoCompCancel();
+	return false;
 }
 
 void SubsTextEditCtrl::OnKeyDown(wxKeyEvent &event) {
 	if (osx::ime::process_key_event(this, event)) return;
+	if (HandleCompletionKey(event)) return;
 	event.Skip();
+	int key = event.GetKeyCode();
+	if (key == WXK_LEFT || key == WXK_RIGHT || key == WXK_UP || key == WXK_DOWN
+		|| key == WXK_HOME || key == WXK_END)
+		CallAfter(&SubsTextEditCtrl::ResumeAssistance);
 
 	bool linebreak = event.GetKeyCode() == WXK_RETURN && event.GetModifiers() == wxMOD_SHIFT;
 #ifndef __WXMAC__
@@ -227,10 +472,10 @@ void SubsTextEditCtrl::OnKeyDown(wxKeyEvent &event) {
 void SubsTextEditCtrl::SetSyntaxStyle(int id, wxFont &font, std::string const& name, wxColor const& default_background) {
 	StyleSetFont(id, font);
 	StyleSetBold(id, OPT_GET("Colour/Subtitle/Syntax/Bold/" + name)->GetBool());
-	StyleSetForeground(id, to_wx(OPT_GET("Colour/Subtitle/Syntax/" + name)->GetColor()));
+	StyleSetForeground(id, theme::Colour("Colour/Subtitle/Syntax/" + name));
 	const agi::OptionValue *background = OPT_GET("Colour/Subtitle/Syntax/Background/" + name);
 	if (background->GetType() == agi::OptionType::Color)
-		StyleSetBackground(id, to_wx(background->GetColor()));
+		StyleSetBackground(id, theme::Colour("Colour/Subtitle/Syntax/Background/" + name));
 	else
 		StyleSetBackground(id, default_background);
 }
@@ -242,7 +487,7 @@ void SubsTextEditCtrl::SetStyles() {
 	if (!fontname.empty()) font.SetFaceName(fontname);
 	font.SetPointSize(OPT_GET("Subtitle/Edit Box/Font Size")->GetInt());
 
-	auto default_background = to_wx(OPT_GET("Colour/Subtitle/Background")->GetColor());
+	auto default_background = theme::Colour("Colour/Subtitle/Background");
 
 	namespace ss = agi::ass::SyntaxStyle;
 	SetSyntaxStyle(ss::NORMAL, font, "Normal", default_background);
@@ -265,6 +510,7 @@ void SubsTextEditCtrl::SetStyles() {
 
 	SetCaretForeground(StyleGetForeground(ss::NORMAL));
 	StyleSetBackground(wxSTC_STYLE_DEFAULT, default_background);
+	StyleSetFont(wxSTC_STYLE_DEFAULT, font);
 
 	// Misspelling indicator
 	IndicatorSetStyle(0,wxSTC_INDIC_SQUIGGLE);
@@ -276,7 +522,7 @@ void SubsTextEditCtrl::SetStyles() {
 }
 
 void SubsTextEditCtrl::UpdateStyle() {
-	AssDialogue *diag = context ? context->selectionController->GetActiveLine() : nullptr;
+	AssDialogue const* diag = context ? context->selectionController->ReadActiveLine() : nullptr;
 	bool template_line = diag && diag->Comment && boost::istarts_with(diag->Effect.get(), "template");
 
 	tokenized_line = agi::ass::TokenizeDialogueBody(line_text, template_line);
@@ -310,29 +556,45 @@ void SubsTextEditCtrl::UpdateStyle() {
 }
 
 void SubsTextEditCtrl::UpdateCallTip() {
-	if (!OPT_GET("App/Call Tips")->GetBool()) return;
+	if (!HasFocus() || AutoCompActive() || IsComposing()) return;
+	if (GetSelectionStart() != GetSelectionEnd()) {
+		CallTipCancel();
+		cursor_pos = -1;
+		return;
+	}
 
 	int pos = GetCurrentPos();
 	if (pos == cursor_pos) return;
+	auto diag = context ? context->selectionController->ReadActiveLine() : nullptr;
+	if (diag && diag->Comment && boost::istarts_with(diag->Effect.get(), "code")) return;
+	bool is_template = diag && diag->Comment && boost::istarts_with(diag->Effect.get(), "template");
+	if (!OPT_GET("App/Call Tips")->GetBool() && !completion_calltip
+		&& !OPT_GET("Subtitle/Edit Box/Auto Completion")->GetBool()) return;
 	cursor_pos = pos;
 
-	agi::Calltip new_calltip = agi::GetCalltip(tokenized_line, line_text, pos);
+	auto new_calltip = agi::ass::GetEditingCalltip(line_text, pos, is_template);
 
 	if (!new_calltip.text) {
+		completion_calltip = false;
 		CallTipCancel();
 		return;
 	}
 
-	if (!CallTipActive() || calltip_position != new_calltip.tag_position || calltip_text != new_calltip.text)
-		CallTipShow(new_calltip.tag_position, wxString::FromUTF8Unchecked(new_calltip.text));
+	auto translated = agi::TranslateCalltip(new_calltip, [](std::string_view value) {
+		return from_wx(wxGetTranslation(wxString::FromUTF8(value.data(), value.size())));
+	});
+	if (!CallTipActive() || calltip_position != new_calltip.tag_position || calltip_text != translated.text)
+		CallTipShow(new_calltip.tag_position, wxString::FromUTF8(translated.text));
 
 	calltip_position = new_calltip.tag_position;
-	calltip_text = new_calltip.text;
+	calltip_text = std::move(translated.text);
 
-	CallTipSetHighlight(new_calltip.highlight_start, new_calltip.highlight_end);
+	CallTipSetHighlight(translated.highlight_start, translated.highlight_end);
 }
 
 void SubsTextEditCtrl::SetTextTo(std::string const& text) {
+	AutoCompCancel();
+	completion_calltip = false;
 	osx::ime::invalidate(this);
 	SetEvtHandlerEnabled(false);
 	Freeze();
@@ -358,6 +620,12 @@ void SubsTextEditCtrl::SetTextTo(std::string const& text) {
 
 	SetEvtHandlerEnabled(true);
 	Thaw();
+
+	// The text was replaced with event handling disabled, so Scintilla may not
+	// have requested a restyle. Reparse explicitly to keep the syntax layer in
+	// step with the code shown in the box (shape property edits, undo, etc.).
+	line_text = text;
+	UpdateStyle();
 }
 
 void SubsTextEditCtrl::Paste() {

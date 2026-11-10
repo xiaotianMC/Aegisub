@@ -63,8 +63,11 @@ bool TXTSubtitleFormat::CanWriteFile(agi::fs::path const& filename) const {
 	return boost::iends_with(str, ".txt") && !(boost::iends_with(str, ".encore.txt") || boost::iends_with(str, ".transtation.txt"));
 }
 
-void TXTSubtitleFormat::ReadFile(AssFile *target, agi::fs::path const& filename, agi::vfr::Framerate const&, const char *encoding) const {
-	if (!ShowPlainTextImportDialog()) return;
+void TXTSubtitleFormat::ReadFile(AssFile *target, agi::fs::path const& filename, agi::vfr::Framerate const&, const char *encoding, SubtitleReadOptions const& options) const {
+	if (!ShowPlainTextImportDialog()) {
+		if (options.preserve_whitespace) throw agi::UserCancelException("Cancelled text import");
+		return;
+	}
 
 	TextFileReader file(filename, encoding, false);
 
@@ -76,6 +79,7 @@ void TXTSubtitleFormat::ReadFile(AssFile *target, agi::fs::path const& filename,
 
 	// Parse file
 	while (file.HasMoreLines()) {
+		options.CheckCancelled();
 		std::string value = file.ReadLineFromFile();
 		if (value.empty() && !OPT_GET("Tool/Import/Text/Include Blank")->GetBool()) continue;
 
@@ -103,7 +107,7 @@ void TXTSubtitleFormat::ReadFile(AssFile *target, agi::fs::path const& filename,
 		}
 
 		// Trim spaces at start
-		boost::trim_left(value);
+		if (!options.preserve_whitespace) boost::trim_left(value);
 
 		if (value.empty())
 			isComment = true;

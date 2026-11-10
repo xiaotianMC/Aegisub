@@ -50,6 +50,7 @@
 #include "../utils.h"
 #include "../video_controller.h"
 #include "../video_display.h"
+#include "../video_zoom_control.h"
 #include "../video_frame.h"
 
 #include <libaegisub/ass/time.h>
@@ -347,7 +348,7 @@ struct video_frame_next_boundary final : public validator_video_loaded {
 	STR_HELP("Seek to the next beginning or end of a subtitle")
 
 	void operator()(agi::Context *c) override {
-		AssDialogue *active_line = c->selectionController->GetActiveLine();
+		AssDialogue const* active_line = c->selectionController->ReadActiveLine();
 		if (!active_line) return;
 
 		int target = c->videoController->FrameAtTime(active_line->Start, agi::vfr::START);
@@ -363,8 +364,8 @@ struct video_frame_next_boundary final : public validator_video_loaded {
 		}
 
 		c->selectionController->NextLine();
-		AssDialogue *new_line = c->selectionController->GetActiveLine();
-		if (new_line != active_line)
+		AssDialogue const* new_line = c->selectionController->ReadActiveLine();
+		if (new_line && new_line != active_line) // C1-C1c-14 (audit C7)
 		c->videoController->JumpToTime(new_line->Start);
 	}
 };
@@ -414,7 +415,7 @@ struct video_frame_prev_boundary final : public validator_video_loaded {
 	STR_HELP("Seek to the previous beginning or end of a subtitle")
 
 	void operator()(agi::Context *c) override {
-		AssDialogue *active_line = c->selectionController->GetActiveLine();
+		AssDialogue const* active_line = c->selectionController->ReadActiveLine();
 		if (!active_line) return;
 
 		int target = c->videoController->FrameAtTime(active_line->End, agi::vfr::END);
@@ -430,8 +431,8 @@ struct video_frame_prev_boundary final : public validator_video_loaded {
 		}
 
 		c->selectionController->PrevLine();
-		AssDialogue *new_line = c->selectionController->GetActiveLine();
-		if (new_line != active_line)
+		AssDialogue const* new_line = c->selectionController->ReadActiveLine();
+		if (new_line && new_line != active_line) // C1-C1c-14 (audit C7)
 			c->videoController->JumpToTime(new_line->End, agi::vfr::END);
 	}
 };
@@ -564,7 +565,7 @@ struct video_jump_end final : public validator_video_loaded {
 	STR_HELP("Jump the video to the end frame of current subtitle")
 
 	void operator()(agi::Context *c) override {
-		if (auto active_line = c->selectionController->GetActiveLine())
+		if (auto active_line = c->selectionController->ReadActiveLine())
 			c->videoController->JumpToTime(active_line->End, agi::vfr::END);
 	}
 };
@@ -577,7 +578,7 @@ struct video_jump_start final : public validator_video_loaded {
 	STR_HELP("Jump the video to the start frame of current subtitle")
 
 	void operator()(agi::Context *c) override {
-		if (auto active_line = c->selectionController->GetActiveLine())
+		if (auto active_line = c->selectionController->ReadActiveLine())
 			c->videoController->JumpToTime(active_line->Start);
 	}
 };
@@ -633,9 +634,19 @@ struct video_opt_autoscroll final : public Command {
 struct video_play final : public validator_video_loaded {
 	CMD_NAME("video/play")
 	CMD_ICON(button_play)
-	STR_MENU("Play")
-	STR_DISP("Play")
-	STR_HELP("Play the video starting on this position")
+	CMD_TYPE(COMMAND_VALIDATE | COMMAND_DYNAMIC_NAME | COMMAND_DYNAMIC_ICON)
+	STR_HELP("Play the video from this position, or pause it while playing")
+
+	// One button for both: it shows pause while the video plays
+	wxString StrMenu(const agi::Context *c) const override {
+		return c && c->videoController->IsPlaying() ? _("Pause") : _("Play");
+	}
+	wxString StrDisplay(const agi::Context *c) const override { return StrMenu(c); }
+	bool IsActive(const agi::Context *c) override { return c->videoController->IsPlaying(); }
+	wxBitmapBundle IconFor(const agi::Context *c, int height, wxLayoutDirection dir) const override {
+		if (c && c->videoController->IsPlaying()) return GETBUNDLEDIR(button_pause, height, dir);
+		return Icon(height, dir);
+	}
 
 	void operator()(agi::Context *c) override {
 		c->videoController->Play();
@@ -757,7 +768,7 @@ struct video_zoom_in final : public validator_video_attached {
 	STR_HELP("Zoom video in")
 
 	void operator()(agi::Context *c) override {
-		c->videoDisplay->SetWindowZoom(c->videoDisplay->GetWindowZoom() + .125);
+		c->videoDisplay->SetWindowZoom(VideoZoomControl::StepIn(c->videoDisplay->GetWindowZoom()));
 	}
 };
 
@@ -769,7 +780,7 @@ struct video_zoom_out final : public validator_video_attached {
 	STR_HELP("Zoom video out")
 
 	void operator()(agi::Context *c) override {
-		c->videoDisplay->SetWindowZoom(c->videoDisplay->GetWindowZoom() - .125);
+		c->videoDisplay->SetWindowZoom(VideoZoomControl::StepOut(c->videoDisplay->GetWindowZoom()));
 	}
 };
 }

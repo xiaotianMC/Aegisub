@@ -29,21 +29,24 @@
 
 #include "async_video_provider.h"
 #include "compat.h"
+#include "flat_controls.h"
+#include "flat_dialog.h"
 #include "format.h"
 #include "include/aegisub/context.h"
 #include "project.h"
+#include "theme.h"
 
 #include <libaegisub/ass/time.h>
 
 #include <boost/rational.hpp>
 #include <wx/dialog.h>
 #include <wx/sizer.h>
-#include <wx/statbox.h>
-#include <wx/stattext.h>
 #include <wx/textctrl.h>
 
 void ShowVideoDetailsDialog(agi::Context *c) {
 	wxDialog d(c->parent, -1, _("Video Details"));
+	theme::UseSurface(&d);
+	int gap = d.FromDIP(10);
 
 	auto provider = c->project->VideoProvider();
 	auto width = provider->GetWidth();
@@ -52,13 +55,15 @@ void ShowVideoDetailsDialog(agi::Context *c) {
 	auto fps = provider->GetFPS();
 	boost::rational<int> ar(width, height);
 
-	auto video_sizer = new wxStaticBoxSizer(wxVERTICAL, &d, _("Video"));
-	wxWindow *video_sizer_box = video_sizer->GetStaticBox();
-
-	auto fg = new wxFlexGridSizer(2, 5, 10);
-	auto make_field = [&, video_sizer_box](wxString const& name, wxString const& value) {
-		fg->Add(new wxStaticText(video_sizer_box, -1, name), 0, wxALIGN_CENTRE_VERTICAL);
-		fg->Add(new wxTextCtrl(video_sizer_box, -1, value, wxDefaultPosition, wxSize(300,-1), wxTE_READONLY), 0, wxALIGN_CENTRE_VERTICAL | wxEXPAND);
+	// Each detail named in grey, its value in a field it can be copied from
+	auto fg = new wxFlexGridSizer(2, d.FromDIP(4), gap);
+	fg->AddGrowableCol(1, 1);
+	auto make_field = [&](wxString const& name, wxString const& value) {
+		auto frame = new FlatFrame(&d, wxString());
+		auto text = new wxTextCtrl(frame, -1, value, wxDefaultPosition, wxDefaultSize, wxTE_READONLY | wxBORDER_NONE);
+		frame->SetContent(text, 300);
+		fg->Add(flat::DimLabel(&d, flat::WithoutColon(name)), wxSizerFlags().CenterVertical());
+		fg->Add(frame, wxSizerFlags().Expand());
 	};
 	make_field(_("File name:"), c->project->VideoName().wstring());
 	make_field(_("FPS:"), fmt_wx("%.3f", fps.FPS()));
@@ -71,11 +76,9 @@ void ShowVideoDetailsDialog(agi::Context *c) {
 	make_field(_("Forced color range:"), agi::ycbcr::range_to_string(provider->GetColorSpace().range));
 	make_field(_("Decoder:"), to_wx(provider->GetDecoderName()));
 
-	video_sizer->Add(fg);
-
 	auto main_sizer = new wxBoxSizer(wxVERTICAL);
-	main_sizer->Add(video_sizer, 1, wxALL|wxEXPAND, 5);
-	main_sizer->Add(d.CreateSeparatedButtonSizer(wxOK), 0, wxALL|wxEXPAND, 5);
+	main_sizer->Add(fg, wxSizerFlags(1).Expand().Border(wxALL, gap));
+	main_sizer->Add(new flat::DialogButtons(&d, wxOK), wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxBOTTOM, gap));
 	d.SetSizerAndFit(main_sizer);
 
 	d.CenterOnParent();

@@ -37,6 +37,7 @@
 #include <wx/brush.h>
 #include <wx/scrolbar.h>
 #include <wx/window.h>
+#include <libaegisub/subtitle_edit_gate.h>
 
 namespace agi {
 	struct Context;
@@ -47,6 +48,10 @@ class GridColumn;
 class WidthHelper;
 
 class BaseGrid final : public wxWindow {
+protected:
+    // Declared first: expires only after all owned bindings/cache members are destroyed.
+    std::shared_ptr<int> model_observer_lifetime = std::make_shared<int>(0);
+private:
 	std::vector<agi::signal::Connection> connections;
 	int lineHeight = 1;     ///< Height of a line in pixels in the current font
 	bool holding = false;   ///< Is a drag selection in process?
@@ -57,7 +62,8 @@ class BaseGrid final : public wxWindow {
 
 	/// Row from which the selection shrinks/grows from when selecting via the
 	/// keyboard, shift-clicking or dragging
-	int extendRow = -1;
+	int extend_id = 0;
+    int ExtendRow() const;
 
 	/// First row that is visible at the current scroll position
 	int yPos = 0;
@@ -85,15 +91,16 @@ class BaseGrid final : public wxWindow {
 		wxBrush Visible;
 		wxBrush SelectedComment;
 		wxBrush LeftCol;
+		wxBrush Alternate;  ///< Every other plain row
 	} row_colors;
 
-	std::vector<AssDialogue*> index_line_map;  ///< Row number -> dialogue line
+	std::vector<AssDialogue const*> index_line_map;  ///< Read-only drawing cache
 
 	/// Connection for video seek event. Stored explicitly so that it can be
 	/// blocked if the relevant option is disabled
 	agi::signal::Connection seek_listener;
 
-	/// Cached grid body context menu
+	/// Grid body context menu, rebuilt for the target row's available actions.
 	std::unique_ptr<wxMenu> context_menu;
 
 	void OnDPIChanged(wxDPIChangedEvent &e);
@@ -103,11 +110,14 @@ class BaseGrid final : public wxWindow {
 	void OnCharHook(wxKeyEvent &event);
 	void OnMouseEvent(wxMouseEvent &event);
 	void OnPaint(wxPaintEvent &event);
+	/// Paint the grid on @p dc; only the text of the columns flagged in
+	/// @p paint_columns.
+	void Draw(wxDC &dc, std::vector<char> const& paint_columns);
 	void OnScroll(wxScrollEvent &event);
 	void OnShowColMenu(wxCommandEvent &event);
 	void OnSize(wxSizeEvent &event);
 	void OnSubtitlesCommit(int type);
-	void OnActiveLineChanged(AssDialogue *);
+	void OnActiveLineChanged();
 	void OnSeek();
 
 	void AdjustScrollbar();
@@ -126,7 +136,7 @@ class BaseGrid final : public wxWindow {
 	/// @brief Get dialogue by index
 	/// @param n Index to look up
 	/// @return Subtitle dialogue line for index, or 0 if invalid index
-	AssDialogue *GetDialogue(int n) const;
+	AssDialogue const* GetDialogue(int n) const;
 
 public:
 	BaseGrid(wxWindow* parent, agi::Context *context);
@@ -134,6 +144,8 @@ public:
 
 	void SetByFrame(bool state);
 	void ScrollTo(int y);
+	/// Height of a row (and of the header) in pixels
+	int LineHeight() const { return lineHeight; }
 
 	DECLARE_EVENT_TABLE()
 };

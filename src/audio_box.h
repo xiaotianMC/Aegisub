@@ -41,6 +41,7 @@ namespace agi {
 
 class AudioController;
 class AudioDisplay;
+class AudioLevels;
 class wxBitmapToggleButton;
 class wxButton;
 class wxCommandEvent;
@@ -67,23 +68,26 @@ class AudioBox final : public wxSashWindow, private agi::signal::ConnectionScope
 	/// The audio display in the box
 	AudioDisplay *audioDisplay;
 
-	wxSlider *HorizontalZoom;
-	wxSlider *VerticalZoom;
-	wxSlider *VolumeBar;
+	/// Vertical zoom, volume, link and reset, right of the waveform
+	AudioLevels *levels;
 
 	// Mouse wheel zoom accumulator
 	int mouse_zoom_accum = 0;
 
 	void SetHorizontalZoom(int new_zoom);
 	void OnAudioOpen();
-	void OnHorizontalZoom(wxScrollEvent &event);
 	void OnMouseWheel(wxMouseEvent &evt);
 	void OnSashDrag(wxSashEvent &event);
 	void OnVerticalLink(agi::OptionValue const& opt);
-	void OnVerticalZoom(wxScrollEvent &event);
-	void OnVolume(wxScrollEvent &event);
 
 public:
+	/// Vertical zoom and volume positions, 1 to 100 (50 is neutral)
+	void SetVerticalZoom(int pos);
+	void SetVolume(int pos);
+	/// Both back to neutral (the reset button)
+	void ResetLevels();
+	AudioLevels *Levels() const { return levels; }
+
 	AudioBox(wxWindow *parent, agi::Context *context);
 
 	void ShowKaraokeBar(bool show);
@@ -107,5 +111,4 @@ public:
 	/// @param mode What part of the line shoud be made visible
 	void ScrollToActiveLine(ScrollMode mode = ScrollMode::Range);
 
-	DECLARE_EVENT_TABLE()
 };

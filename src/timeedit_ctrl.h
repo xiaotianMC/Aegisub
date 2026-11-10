@@ -95,5 +95,6 @@ public:
 	/// @param value Initial value. Must be a valid time string or empty
 	/// @param size Initial control size
 	/// @param asEnd Treat the time as a line end time (rather than start) for time <-> frame number conversions
-	TimeEdit(wxWindow* parent, wxWindowID id, agi::Context *c, const std::string& value = std::string(), const wxSize& size = wxDefaultSize, bool asEnd = false);
+	/// @param border Border style, such as wxBORDER_NONE for a flat field
+	TimeEdit(wxWindow* parent, wxWindowID id, agi::Context *c, const std::string& value = std::string(), const wxSize& size = wxDefaultSize, bool asEnd = false, long border = 0);
 };

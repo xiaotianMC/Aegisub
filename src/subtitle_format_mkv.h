@@ -40,7 +40,9 @@ public:
 		return {"mkv", "mka", "mks"};
 	}
 
-	void ReadFile(AssFile *target, agi::fs::path const& filename, agi::vfr::Framerate const&, const char *) const override {
-		MatroskaWrapper::GetSubtitles(filename, target);
+	void ReadFile(AssFile *target, agi::fs::path const& filename, agi::vfr::Framerate const&, const char *, SubtitleReadOptions const& options = {}) const override {
+		options.CheckCancelled();
+		MatroskaWrapper::GetSubtitles(filename, target, options.cancelled, options.fields, options.preserve_whitespace);
+		options.CheckCancelled();
 	}
 };

@@ -16,26 +16,22 @@
 
 #include "colour_button.h"
 #include "compat.h"
+#include "flat_controls.h"
+#include "flat_dialog.h"
 #include "format.h"
-#include "help_button.h"
 #include "libresrc/libresrc.h"
 #include "options.h"
-#include "validators.h"
+#include "theme.h"
 #include "video_provider_dummy.h"
 
 #include <libaegisub/ass/time.h>
 #include <libaegisub/color.h>
 
-#include <wx/checkbox.h>
-#include <wx/combobox.h>
 #include <wx/dialog.h>
 #include <wx/sizer.h>
-#include <wx/spinctrl.h>
-#include <wx/statline.h>
 #include <wx/stattext.h>
 #include <wx/string.h>
 #include <wx/textctrl.h>
-#include <wx/valgen.h>
 #include <wx/valtext.h>
 
 namespace {
@@ -49,14 +45,16 @@ struct DialogDummyVideo {
 	agi::Color color = OPT_GET("Colour/Video Dummy/Last Colour")->GetColor();
 	bool pattern     = OPT_GET("Video/Dummy/Pattern")->GetBool();
 
+	FlatChoice *shortcuts;
+	flat::NumberField *width_field, *height_field;
 	wxStaticText *length_display;
-	wxFlexGridSizer *sizer;
+	wxWindow *ok;
 
-	template<typename T>
-	void AddCtrl(wxString const& label, T *ctrl);
-
-	void OnResolutionShortcut(wxCommandEvent &evt);
-	bool UpdateLengthDisplay();
+	/// Show the shortcut for the size chosen, if there is one
+	void ShowShortcut();
+	void OnResolutionShortcut(int index);
+	/// Show the duration; the OK button only with a frame rate to make it
+	void UpdateLengthDisplay();
 
 	DialogDummyVideo(wxWindow *parent);
 };
@@ -68,117 +66,126 @@ struct ResolutionShortcut {
 };
 
 static ResolutionShortcut resolutions[] = {
-	{wxTRANSLATE(L"640\u00D7480 (SD fullscreen)"), 640, 480},        // U+00D7 multiplication sign
-	{wxTRANSLATE(L"704\u00D7480 (SD anamorphic)"), 704, 480},
-	{wxTRANSLATE(L"640\u00D7360 (SD widescreen)"), 640, 360},
-	{wxTRANSLATE(L"704\u00D7396 (SD widescreen)"), 704, 396},
-	{wxTRANSLATE(L"640\u00D7352 (SD widescreen MOD16)"), 640, 352},
-	{wxTRANSLATE(L"704\u00D7400 (SD widescreen MOD16)"), 704, 400},
-	{wxTRANSLATE(L"1024\u00D7576 (SuperPAL widescreen)"), 1024, 576},
-	{wxTRANSLATE(L"1280\u00D7720 (HD 720p)"), 1280, 720},
-	{wxTRANSLATE(L"1920\u00D71080 (FHD 1080p)"), 1920, 1080},
-	{wxTRANSLATE(L"2560\u00D71440 (QHD 1440p)"), 2560, 1440},
-	{wxTRANSLATE(L"3840\u00D72160 (4K UHD 2160p)"), 3840, 2160},
-	{wxTRANSLATE(L"1080\u00D71920 (FHD vertical)"), 1080, 1920},
+	{wxTRANSLATE(L"640×480 (SD fullscreen)"), 640, 480},        // U+00D7 multiplication sign
+	{wxTRANSLATE(L"704×480 (SD anamorphic)"), 704, 480},
+	{wxTRANSLATE(L"640×360 (SD widescreen)"), 640, 360},
+	{wxTRANSLATE(L"704×396 (SD widescreen)"), 704, 396},
+	{wxTRANSLATE(L"640×352 (SD widescreen MOD16)"), 640, 352},
+	{wxTRANSLATE(L"704×400 (SD widescreen MOD16)"), 704, 400},
+	{wxTRANSLATE(L"1024×576 (SuperPAL widescreen)"), 1024, 576},
+	{wxTRANSLATE(L"1280×720 (HD 720p)"), 1280, 720},
+	{wxTRANSLATE(L"1920×1080 (FHD 1080p)"), 1920, 1080},
+	{wxTRANSLATE(L"2560×1440 (QHD 1440p)"), 2560, 1440},
+	{wxTRANSLATE(L"3840×2160 (4K UHD 2160p)"), 3840, 2160},
+	{wxTRANSLATE(L"1080×1920 (FHD vertical)"), 1080, 1920},
 };
-
-wxSpinCtrl *spin_ctrl(wxWindow *parent, int min, int max, int *value) {
-	auto ctrl = new wxSpinCtrl(parent, -1, "", wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS, min, max, *value);
-	ctrl->SetValidator(wxGenericValidator(value));
-	return ctrl;
-}
-
-wxComboBox *resolution_shortcuts(wxWindow *parent, int width, int height) {
-	wxComboBox *ctrl = new wxComboBox(parent, -1, "", wxDefaultPosition, wxDefaultSize, 0, nullptr, wxCB_READONLY);
-
-	for (auto const& res : resolutions) {
-		ctrl->Append(wxGetTranslation(res.name));
-		if (res.width == width && res.height == height)
-			ctrl->SetSelection(ctrl->GetCount() - 1);
-	}
-
-	return ctrl;
-}
 
 DialogDummyVideo::DialogDummyVideo(wxWindow *parent)
 : d(parent, -1, _("Dummy video options"))
 {
 	d.SetIcons(GETICONS(use_dummy_video_menu));
+	theme::UseSurface(&d);
+	int gap = d.FromDIP(10), row = d.FromDIP(6);
 
-	auto res_sizer = new wxBoxSizer(wxHORIZONTAL);
-	res_sizer->Add(spin_ctrl(&d, 1, 10000, &width), wxSizerFlags(1).Expand());
-	res_sizer->Add(new wxStaticText(&d, -1, _(L"\u00D7")), wxSizerFlags().Center().HorzBorder());   // U+00D7 multiplication sign
-	res_sizer->Add(spin_ctrl(&d, 1, 10000, &height), wxSizerFlags(1).Expand());
+	// The size: a shortcut, or the width and the height
+	wxString const resolution_name = flat::WithoutColon(_("Video resolution:"));
+	shortcuts = new FlatChoice(&d, resolution_name);
+	std::vector<wxString> names;
+	for (auto const& res : resolutions) names.push_back(wxGetTranslation(res.name));
+	shortcuts->Set(std::move(names));
+	shortcuts->on_choose = [this](int index) { OnResolutionShortcut(index); };
+	width_field = flat::NumberField::Create(&d, wxGETTEXT_IN_CONTEXT("resolution", "Width"), width, 1, 10000, 1, 0, 52);
+	height_field = flat::NumberField::Create(&d, wxGETTEXT_IN_CONTEXT("resolution", "Height"), height, 1, 10000, 1, 0, 52);
+	width_field->on_change = [this](double v) { width = static_cast<int>(v); ShowShortcut(); };
+	height_field->on_change = [this](double v) { height = static_cast<int>(v); ShowShortcut(); };
+	ShowShortcut();
+	auto size_sizer = new wxBoxSizer(wxHORIZONTAL);
+	size_sizer->Add(width_field->Frame(), wxSizerFlags(1).Expand());
+	size_sizer->Add(flat::DimLabel(&d, L"×"), wxSizerFlags().CenterVertical().Border(wxLEFT | wxRIGHT, row));
+	size_sizer->Add(height_field->Frame(), wxSizerFlags(1).Expand());
 
+	// The colour, plain or a checkerboard
+	auto color_btn = new ColourButton(&d, wxSize(30, 14), false, color);
+	color_btn->Bind(EVT_COLOR, [this](ValueEvent<agi::Color>& e) { color = e.Get(); });
+	auto pattern_check = new FlatCheck(&d, _("Checkerboard &pattern"));
+	pattern_check->SetValue(pattern);
+	pattern_check->Bind(wxEVT_CHECKBOX, [this, pattern_check](wxCommandEvent&) { pattern = pattern_check->GetValue(); });
 	auto color_sizer = new wxBoxSizer(wxHORIZONTAL);
-	auto color_btn = new ColourButton(&d, wxSize(30, 17), false, color);
-	color_sizer->Add(color_btn, wxSizerFlags().DoubleBorder(wxRIGHT));
-	color_sizer->Add(new wxCheckBox(&d, -1, _("Checkerboard &pattern"), wxDefaultPosition, wxDefaultSize, 0, wxGenericValidator(&pattern)), wxSizerFlags(1).Center());
+	color_sizer->Add(color_btn, wxSizerFlags().CenterVertical());
+	color_sizer->Add(pattern_check, wxSizerFlags().CenterVertical().Border(wxLEFT, gap));
 
-	sizer = new wxFlexGridSizer(2, 5, 5);
-	AddCtrl(_("Video resolution:"), resolution_shortcuts(&d, width, height));
-	AddCtrl("", res_sizer);
-	AddCtrl(_("Color:"), color_sizer);
-	wxTextValidator fpsVal(wxFILTER_INCLUDE_CHAR_LIST, &fps);
-	fpsVal.SetCharIncludes("0123456789./");
-	AddCtrl(_("Frame rate (fps):"), new wxTextCtrl(&d, -1, "", wxDefaultPosition, wxDefaultSize, 0, fpsVal));
-	AddCtrl(_("Duration (frames):"), spin_ctrl(&d, 2, 36000000, &length)); // Ten hours of 1k FPS
-	AddCtrl("", length_display = new wxStaticText(&d, -1, ""));
+	// The frame rate as typed: a number or a fraction
+	auto fps_frame = new FlatFrame(&d, wxString());
+	wxTextValidator fps_chars(wxFILTER_INCLUDE_CHAR_LIST);
+	fps_chars.SetCharIncludes("0123456789./");
+	auto fps_text = new wxTextCtrl(fps_frame, -1, fps, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE, fps_chars);
+	fps_frame->SetContent(fps_text, 80);
+	fps_text->Bind(wxEVT_TEXT, [this, fps_text](wxCommandEvent&) { fps = fps_text->GetValue(); UpdateLengthDisplay(); });
 
-	auto btn_sizer = d.CreateStdDialogButtonSizer(wxOK | wxCANCEL | wxHELP);
-	btn_sizer->GetHelpButton()->Bind(wxEVT_BUTTON, std::bind(&HelpButton::OpenPage, "Dummy Video"));
+	// The length in frames, and how long that is at the frame rate
+	auto length_field = flat::NumberField::Create(&d, wxString(), length, 2, 36000000, 1, 0, 80); // Ten hours of 1k FPS
+	length_field->on_change = [this](double v) { length = static_cast<int>(v); UpdateLengthDisplay(); };
+	length_display = flat::DimLabel(&d, "");
+	auto length_sizer = new wxBoxSizer(wxHORIZONTAL);
+	length_sizer->Add(length_field->Frame(), wxSizerFlags().Expand());
+	length_sizer->Add(length_display, wxSizerFlags(1).CenterVertical().Border(wxLEFT, gap));
+
+	auto grid = new wxFlexGridSizer(2, row, gap);
+	grid->AddGrowableCol(1, 1);
+	auto add = [&](wxString const& label, wxSizer *ctrl) {
+		grid->Add(flat::DimLabel(&d, flat::WithoutColon(label)), wxSizerFlags().CenterVertical());
+		grid->Add(ctrl, wxSizerFlags().Expand());
+	};
+	auto shortcut_sizer = new wxBoxSizer(wxHORIZONTAL);
+	shortcut_sizer->Add(shortcuts, wxSizerFlags(1).Expand());
+	add(_("Video resolution:"), shortcut_sizer);
+	grid->AddSpacer(0);
+	grid->Add(size_sizer, wxSizerFlags().Expand());
+	add(_("Color:"), color_sizer);
+	auto fps_sizer = new wxBoxSizer(wxHORIZONTAL);
+	fps_sizer->Add(fps_frame, wxSizerFlags().Expand());
+	add(_("Frame rate (fps):"), fps_sizer);
+	add(_("Duration (frames):"), length_sizer);
+
+	auto buttons = new flat::DialogButtons(&d, wxOK | wxCANCEL | wxHELP, "Dummy Video");
+	ok = buttons->Get(wxID_OK);
 
 	auto main_sizer = new wxBoxSizer(wxVERTICAL);
-	main_sizer->Add(sizer, wxSizerFlags(1).Border().Expand());
-	main_sizer->Add(new wxStaticLine(&d, wxHORIZONTAL), wxSizerFlags().HorzBorder().Expand());
-	main_sizer->Add(btn_sizer, wxSizerFlags().Expand().Border());
+	main_sizer->Add(grid, wxSizerFlags(1).Expand().Border(wxALL, gap));
+	main_sizer->Add(buttons, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxBOTTOM, gap));
 
-	btn_sizer->GetAffirmativeButton()->Enable(UpdateLengthDisplay());
-
+	UpdateLengthDisplay();
+	// Room for the longest duration shown
+	length_display->SetMinSize(wxSize(length_display->GetTextExtent(fmt_tl("Resulting duration: %s", "0:00:00.000")).x, -1));
 	d.SetSizerAndFit(main_sizer);
 	d.CenterOnParent();
-
-	d.Bind(wxEVT_COMBOBOX, &DialogDummyVideo::OnResolutionShortcut, this);
-	color_btn->Bind(EVT_COLOR, [this](ValueEvent<agi::Color>& e) { color = e.Get(); });
-	auto on_update = [&, btn_sizer](wxCommandEvent&) {
-		d.TransferDataFromWindow();
-		btn_sizer->GetAffirmativeButton()->Enable(UpdateLengthDisplay());
-	};
-	d.Bind(wxEVT_SPINCTRL, on_update);
-	d.Bind(wxEVT_TEXT, on_update);
 }
 
-static void add_label(wxWindow *parent, wxSizer *sizer, wxString const& label) {
-	if (!label)
-		sizer->AddStretchSpacer();
-	else
-		sizer->Add(new wxStaticText(parent, -1, label), wxSizerFlags().Center().Left());
-}
-
-template<typename T>
-void DialogDummyVideo::AddCtrl(wxString const& label, T *ctrl) {
-	add_label(&d, sizer, label);
-	sizer->Add(ctrl, wxSizerFlags().Expand().Center().Left());
-}
-
-void DialogDummyVideo::OnResolutionShortcut(wxCommandEvent &e) {
-	d.TransferDataFromWindow();
-	int rs = e.GetSelection();
-	width = resolutions[rs].width;
-	height = resolutions[rs].height;
-	d.TransferDataToWindow();
-}
-
-bool DialogDummyVideo::UpdateLengthDisplay() {
-	std::string dur = "-";
-	bool valid = false;
-	auto fr = DummyVideoProvider::TryParseFramerate(from_wx(fps));
-	if (fr.has_value()) {
-		dur = agi::Time(fr.value().TimeAtFrame(length)).GetAssFormatted(true);
-		valid = true;
+void DialogDummyVideo::ShowShortcut() {
+	for (size_t i = 0; i < std::size(resolutions); ++i) {
+		if (resolutions[i].width == width && resolutions[i].height == height) {
+			shortcuts->SetStringSelection(shortcuts->GetItems()[i]);
+			return;
+		}
 	}
+	shortcuts->SetStringSelection(wxString());
+}
+
+void DialogDummyVideo::OnResolutionShortcut(int index) {
+	if (index < 0) return;
+	width = resolutions[index].width;
+	height = resolutions[index].height;
+	width_field->SetValue(width);
+	height_field->SetValue(height);
+}
+
+void DialogDummyVideo::UpdateLengthDisplay() {
+	std::string dur = "-";
+	auto fr = DummyVideoProvider::TryParseFramerate(from_wx(fps));
+	if (fr.has_value())
+		dur = agi::Time(fr.value().TimeAtFrame(length)).GetAssFormatted(true);
 	length_display->SetLabel(fmt_tl("Resulting duration: %s", dur));
-	return valid;
+	ok->Enable(fr.has_value());
 }
 }
 

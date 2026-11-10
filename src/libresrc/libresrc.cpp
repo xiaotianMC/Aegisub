@@ -14,7 +14,14 @@
 
 #include "libresrc.h"
 
+#include <algorithm>
+#include <cctype>
+#include <cstdio>
+#include <cstring>
+#include <cmath>
 #include <map>
+#include <string>
+#include <vector>
 
 #include <wx/bitmap.h>
 #include <wx/bmpbndl.h>
@@ -38,19 +45,439 @@ wxIcon libresrc_geticon(const unsigned char *buff, size_t size) {
 	return icon;
 }
 
-wxBitmapBundle libresrc_getbitmapbundle(const LibresrcBlob *images, size_t count, int height, int dir) {
+namespace {
+bool dark_mode = false;
+bool classic_icons = false;
+
+struct Hsl { double h, s, l; };
+
+Hsl ToHsl(unsigned char r8, unsigned char g8, unsigned char b8) {
+	double r = r8 / 255.0, g = g8 / 255.0, b = b8 / 255.0;
+	double hi = std::max({r, g, b}), lo = std::min({r, g, b});
+	double l = (hi + lo) / 2, d = hi - lo;
+	if (d == 0) return {0, 0, l};
+	double s = l > 0.5 ? d / (2 - hi - lo) : d / (hi + lo);
+	double h = hi == r ? (g - b) / d + (g < b ? 6 : 0) : hi == g ? (b - r) / d + 2 : (r - g) / d + 4;
+	return {h / 6, s, l};
+}
+
+double HueToRgb(double p, double q, double t) {
+	if (t < 0) t += 1;
+	if (t > 1) t -= 1;
+	if (t < 1.0 / 6) return p + (q - p) * 6 * t;
+	if (t < 1.0 / 2) return q;
+	if (t < 2.0 / 3) return p + (q - p) * (2.0 / 3 - t) * 6;
+	return p;
+}
+
+void FromHsl(Hsl c, unsigned char *rgb) {
+	double r = c.l, g = c.l, b = c.l;
+	if (c.s > 0) {
+		double q = c.l < 0.5 ? c.l * (1 + c.s) : c.l + c.s - c.l * c.s, p = 2 * c.l - q;
+		r = HueToRgb(p, q, c.h + 1.0 / 3);
+		g = HueToRgb(p, q, c.h);
+		b = HueToRgb(p, q, c.h - 1.0 / 3);
+	}
+	rgb[0] = static_cast<unsigned char>(std::lround(r * 255));
+	rgb[1] = static_cast<unsigned char>(std::lround(g * 255));
+	rgb[2] = static_cast<unsigned char>(std::lround(b * 255));
+}
+
+// Dark on light becomes light on dark: 0 -> 0.86, 0.3 -> 0.62.
+void Lighten(unsigned char *rgb) {
+	auto c = ToHsl(rgb[0], rgb[1], rgb[2]);
+	c.l = 0.86 - 0.8 * c.l;
+	FromHsl(c, rgb);
+}
+
+void EnsureAlpha(wxImage& image) {
+	if (image.HasAlpha()) return;
+	if (image.HasMask()) image.InitAlpha();
+	else image.SetAlpha();
+}
+}
+
+void libresrc_set_dark(bool dark) { dark_mode = dark; }
+bool libresrc_dark() { return dark_mode; }
+void libresrc_set_classic(bool classic) { classic_icons = classic; }
+bool libresrc_classic() { return classic_icons; }
+
+namespace {
+// Pixel hinting for the monochrome icons (docs/icons.md). They are drawn on a
+// 24 grid with a stroke of 2; scaled as they are, a line would fall across
+// two columns of half-covered pixels at most sizes, soft and grey. So each
+// size gets a whole number of pixels for the stroke and the drawing's points
+// moved by under a pixel onto the pixel grid: line centres on pixel centres
+// for odd widths, on pixel edges for even ones. tools/icons/generate.py does
+// the same for its previews.
+struct Hinter {
+	double scale; // pixels per unit
+	int width;    // the stroke, in pixels
+	int cur;      // the element's own stroke, in pixels
+
+	explicit Hinter(int px)
+	: scale(px / 24.0)
+	, width(std::max(1, static_cast<int>(std::floor(px / 16.0 * 1.25 + 0.5))))
+	, cur(width)
+	{ }
+
+	// @p v on the grid of pixel centres (@p centres) or edges, rounded the
+	// same way on both sides of the icon's middle: a shape symmetric about
+	// it stays symmetric. Rounding each point down instead put the middle
+	// of a 16 px icon half a pixel right of where its sides came, and drew
+	// the eye's pupil, the gear's hub and the like off centre.
+	double Grid(double v, bool centres) const {
+		double middle = 12 * scale;
+		double grid_middle = centres ? std::floor(middle + 1e-6) + 0.5 : std::floor(middle + 0.5 + 1e-6);
+		double off = v * scale - middle;
+		double steps = off < 0 ? -std::floor(-off + 0.5 + 1e-6) : std::floor(off + 0.5 + 1e-6);
+		return (grid_middle + steps) / scale;
+	}
+	// A stroke's centre
+	double Line(double v) const { return Grid(v, cur % 2); }
+	// The edge of a filled area
+	double Whole(double v) const { return Grid(v, false); }
+	// A radius of whole pixels, so a circle centred on the grid has its
+	// outline on it all round; one under a pixel is left as drawn
+	double Radius(double r) const { return r * scale < 1 ? r : std::round(r * scale) / scale; }
+	double StrokeUnits() const { return width / scale; }
+
+	static std::string Format(double v) {
+		char buf[32];
+		snprintf(buf, sizeof buf, "%.4f", v);
+		std::string s = buf;
+		s.erase(s.find_last_not_of('0') + 1);
+		if (s.back() == '.') s.pop_back();
+		return s == "-0" ? "0" : s;
+	}
+
+	// Absolute commands only (the table is written so)
+	std::string Path(std::string_view d) const {
+		std::vector<std::string> tokens;
+		for (size_t i = 0; i < d.size(); ) {
+			char ch = d[i];
+			if (isalpha(static_cast<unsigned char>(ch)) && ch != 'e' && ch != 'E') { tokens.emplace_back(1, ch); ++i; }
+			else if (ch == '-' || ch == '+' || ch == '.' || isdigit(static_cast<unsigned char>(ch))) {
+				size_t j = i + 1;
+				bool dot = ch == '.';
+				while (j < d.size()) {
+					char c = d[j];
+					if (isdigit(static_cast<unsigned char>(c))) ++j;
+					else if (c == '.' && !dot) { dot = true; ++j; }
+					else if ((c == 'e' || c == 'E') && j + 1 < d.size()) j += (d[j + 1] == '-' || d[j + 1] == '+') ? 2 : 1;
+					else break;
+				}
+				tokens.emplace_back(d.substr(i, j - i));
+				i = j;
+			}
+			else ++i;
+		}
+
+		std::string out;
+		size_t i = 0;
+		char cmd = 0;
+		bool any = false;
+		double moved_x = 0, moved_y = 0; // how far the last point moved
+		double x = 0, y = 0;             // the last point as drawn
+		auto num = [&] { return i < tokens.size() ? std::stod(tokens[i++]) : 0.0; };
+		auto put = [&](double v) {
+			if (!out.empty() && !isalpha(static_cast<unsigned char>(out.back())) && v >= 0) out += ' ';
+			out += Format(v);
+		};
+		// A point very close to the last one (a tiny tick) moves with it, so
+		// it neither vanishes nor grows; others go on the grid.
+		auto snap = [&](double px, double py) {
+			std::pair<double, double> r;
+			if (any && std::abs(px - x) < 0.75 && std::abs(py - y) < 0.75)
+				r = {px + moved_x, py + moved_y};
+			else {
+				r = {Line(px), Line(py)};
+				moved_x = r.first - px;
+				moved_y = r.second - py;
+			}
+			x = px; y = py; any = true;
+			return r;
+		};
+		while (i < tokens.size()) {
+			if (isalpha(static_cast<unsigned char>(tokens[i][0]))) { cmd = tokens[i++][0]; out += cmd; }
+			switch (cmd) {
+			case 'Z': continue;
+			case 'M': case 'L': case 'T': {
+				double px = num(), py = num();
+				auto [nx, ny] = snap(px, py);
+				put(nx); put(ny);
+				if (cmd == 'M') cmd = 'L';
+				break;
+			}
+			case 'H': put(snap(num(), y).first); break;
+			case 'V': put(snap(x, num()).second); break;
+			case 'A': {
+				// The radii change as the distance between the ends did, so
+				// the arc keeps its shape: an eye stays an eye, not a circle
+				double rx = num(), ry = num(), rotation = num(), large = num(), sweep = num();
+				double px = num(), py = num();
+				double from_x = x + moved_x, from_y = y + moved_y, was_x = x, was_y = y;
+				auto [nx, ny] = snap(px, py);
+				double before = std::hypot(px - was_x, py - was_y), after = std::hypot(nx - from_x, ny - from_y);
+				if (before > 0.1) { rx *= after / before; ry *= after / before; }
+				put(rx); put(ry); put(rotation); put(large); put(sweep);
+				put(nx); put(ny);
+				break;
+			}
+			case 'C': {
+				// Control points move with the end they belong to
+				double x1 = num(), y1 = num(), x2 = num(), y2 = num(), px = num(), py = num();
+				double before_x = moved_x, before_y = moved_y;
+				auto [nx, ny] = snap(px, py);
+				put(x1 + before_x); put(y1 + before_y); put(x2 + moved_x); put(y2 + moved_y); put(nx); put(ny);
+				break;
+			}
+			case 'S': case 'Q': {
+				double x2 = num(), y2 = num(), px = num(), py = num();
+				auto [nx, ny] = snap(px, py);
+				put(x2 + moved_x); put(y2 + moved_y); put(nx); put(ny);
+				break;
+			}
+			default: // Not in the table: kept as drawn
+				put(num());
+			}
+		}
+		return out;
+	}
+
+	static bool Attr(std::string const& el, const char *name, std::string *value) {
+		std::string key = std::string(" ") + name + "='";
+		auto pos = el.find(key);
+		if (pos == std::string::npos) return false;
+		auto end = el.find('\'', pos + key.size());
+		if (value) *value = el.substr(pos + key.size(), end - pos - key.size());
+		return true;
+	}
+	static double Num(std::string const& el, const char *name) {
+		std::string v;
+		return Attr(el, name, &v) ? std::stod(v) : 0;
+	}
+	static void Set(std::string& el, const char *name, std::string const& v) {
+		std::string key = std::string(" ") + name + "='";
+		auto pos = el.find(key);
+		if (pos == std::string::npos) return;
+		pos += key.size();
+		el.replace(pos, el.find('\'', pos) - pos, v);
+	}
+
+	std::string Element(std::string el) {
+		cur = width;
+		std::string own;
+		if (Attr(el, "stroke-width", &own)) {
+			// Its own weight, in whole pixels too: a pixel more or less than the stroke
+			double px = std::stod(own) * scale;
+			int rounded = static_cast<int>(std::floor(px + 0.5));
+			cur = px < width ? std::max(1, rounded) : px > width * 1.2 ? std::max(width + 1, rounded) : width;
+			Set(el, "stroke-width", Format(cur / scale));
+		}
+		std::string stroke;
+		bool stroked = !(Attr(el, "stroke", &stroke) && stroke == "none");
+		if (el.starts_with("<path")) {
+			std::string d;
+			if (Attr(el, "d", &d)) Set(el, "d", Path(d));
+		}
+		else if (el.starts_with("<circle") && !stroked) {
+			// A dot: a whole number of pixels across, at least the stroke,
+			// centred on a pixel centre or edge to match
+			int dia = std::max(width, static_cast<int>(std::lround(2 * Num(el, "r") * scale)));
+			auto centre = [&](double v) { return Grid(v, dia % 2); };
+			double cx = centre(Num(el, "cx")), cy = centre(Num(el, "cy")), r = dia / 2.0 / scale;
+			if (dia <= 2) // Too small to antialias as a circle: a square of pixels
+				return "<rect x='" + Format(cx - r) + "' y='" + Format(cy - r) + "' width='" + Format(2 * r) +
+					"' height='" + Format(2 * r) + "' fill='@' stroke='none'/>";
+			Set(el, "cx", Format(cx)); Set(el, "cy", Format(cy)); Set(el, "r", Format(r));
+		}
+		else if (el.starts_with("<circle") || el.starts_with("<ellipse")) {
+			bool circle = el.starts_with("<circle");
+			// The centre on the grid and whole pixels across, so the outline
+			// is on the grid on every side, not only the left and top
+			Set(el, "cx", Format(Line(Num(el, "cx"))));
+			Set(el, "cy", Format(Line(Num(el, "cy"))));
+			if (circle) Set(el, "r", Format(Radius(Num(el, "r"))));
+			else {
+				Set(el, "rx", Format(Radius(Num(el, "rx"))));
+				Set(el, "ry", Format(Radius(Num(el, "ry"))));
+			}
+		}
+		else if (el.starts_with("<rect")) {
+			double x = Num(el, "x"), y = Num(el, "y"), w = Num(el, "width"), h = Num(el, "height");
+			auto snap = [&](double v) { return stroked ? Line(v) : Whole(v); };
+			double x0 = snap(x), y0 = snap(y), x1 = snap(x + w), y1 = snap(y + h);
+			Set(el, "x", Format(x0)); Set(el, "y", Format(y0));
+			Set(el, "width", Format(x1 - x0)); Set(el, "height", Format(y1 - y0));
+		}
+		return el;
+	}
+
+	std::string Body(std::string_view body) {
+		std::string out;
+		size_t pos = 0;
+		while (pos < body.size()) {
+			auto start = body.find('<', pos);
+			if (start == std::string_view::npos) { out += body.substr(pos); break; }
+			out += body.substr(pos, start - pos);
+			auto end = body.find('>', start);
+			std::string el(body.substr(start, end - start + 1));
+			for (auto tag : {"<path", "<circle", "<ellipse", "<rect"})
+				if (el.starts_with(tag) && isspace(static_cast<unsigned char>(el[strlen(tag)]))) { el = Element(el); break; }
+			out += el;
+			pos = end + 1;
+		}
+		return out;
+	}
+};
+
+std::string ModernSvg(std::string_view body, int px, int dir, bool flyout, bool dark) {
+	// Near the toolbar text colours: dark grey on light, light grey on dark
+	const std::string colour = dark ? "#d8d8d8" : "#2b2b2b";
+	Hinter hint(px);
+	std::string svg = "<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'>";
+	svg += dir == wxLayout_RightToLeft ? "<g transform='matrix(-1 0 0 1 24 0)'>" : "<g>";
+	svg += "<g fill='none' stroke='@' stroke-width='" + Hinter::Format(hint.StrokeUnits()) + "' stroke-linecap='round' stroke-linejoin='round'>";
+	svg += hint.Body(body);
+	svg += "</g>";
+	if (flyout) svg += "<path d='M23 19V23H19Z' fill='@'/>";
+	svg += "</g></svg>";
+	for (size_t pos; (pos = svg.find('@')) != std::string::npos; )
+		svg.replace(pos, 1, colour);
+	return svg;
+}
+
+// Drawn for each size asked for, hinted for that size
+class ModernBundle final : public wxBitmapBundleImpl {
+	std::string body;
+	wxSize size;
+	int dir;
+	bool flyout, dark;
+	std::map<std::pair<int, int>, wxBitmap> bitmaps;
+
+public:
+	ModernBundle(std::string body, int height, int dir, bool flyout, bool dark)
+	: body(std::move(body)), size(height, height), dir(dir), flyout(flyout), dark(dark) { }
+
+	wxSize GetDefaultSize() const override { return size; }
+	wxSize GetPreferredBitmapSizeAtScale(double scale) const override {
+		return wxSize(std::lround(size.x * scale), std::lround(size.y * scale));
+	}
+	wxBitmap GetBitmap(wxSize const& want) override {
+		auto& bitmap = bitmaps[{want.x, want.y}];
+		if (!bitmap.IsOk()) {
+			auto svg = ModernSvg(body, std::min(want.x, want.y), dir, flyout, dark);
+			bitmap = wxBitmapBundle::FromSVG(svg.c_str(), want).GetBitmap(want);
+		}
+		return bitmap;
+	}
+};
+}
+
+std::string libresrc_modern_svg(const char *body, int px, int dir) {
+	return ModernSvg(body, px, dir, false, dark_mode);
+}
+
+wxBitmapBundle libresrc_modern_bundle(const char *body, int height, int dir, bool flyout) {
+	return wxBitmapBundle::FromImpl(new ModernBundle(body, height, dir, flyout, dark_mode));
+}
+
+bool libresrc_is_glyph(wxImage const& image) {
+	if (!image.IsOk()) return false;
+	const unsigned char *rgb = image.GetData(), *alpha = image.HasAlpha() ? image.GetAlpha() : nullptr;
+	double total = 0, dark = 0;
+	for (int i = 0, n = image.GetWidth() * image.GetHeight(); i < n; ++i) {
+		int a = alpha ? alpha[i] : 255;
+		if (a < 32) continue;
+		total += a;
+		if (ToHsl(rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]).l < 0.3) dark += a;
+	}
+	return total > 0 && dark / total >= 0.85;
+}
+
+void libresrc_adapt_for_dark(wxImage& image, bool glyph) {
+	if (!image.IsOk()) return;
+	EnsureAlpha(image);
+	int w = image.GetWidth(), h = image.GetHeight();
+	unsigned char *rgb = image.GetData(), *alpha = image.GetAlpha();
+	auto lightness = [&](int i) { return ToHsl(rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]); };
+	// A glyph: every dark pixel. Otherwise only near-black, nearly grey ones
+	// (outlines and black parts; coloured outlines read well on dark).
+	auto dark = [&](int i) {
+		auto c = lightness(i);
+		return glyph ? c.l < 0.3 : c.l < 0.22 && c.s < 0.3;
+	};
+
+	// Of the others, only dark areas that reach the icon's edge: a black mark
+	// drawn on a light part of the icon (a plus on a lens) keeps its contrast.
+	std::vector<unsigned char> state(w * h, 0); // 1 candidate, 2 visited
+	for (int i = 0; i < w * h; ++i)
+		if (alpha[i] >= 128 && dark(i)) state[i] = 1;
+	std::vector<int> region, stack;
+	for (int start = 0; start < w * h; ++start) {
+		if (state[start] != 1) continue;
+		region.clear();
+		stack.assign(1, start);
+		state[start] = 2;
+		bool edge = glyph;
+		while (!stack.empty()) {
+			int i = stack.back();
+			stack.pop_back();
+			region.push_back(i);
+			int x = i % w, y = i / w;
+			for (int dy = -1; dy <= 1; ++dy) for (int dx = -1; dx <= 1; ++dx) {
+				int nx = x + dx, ny = y + dy;
+				if (nx < 0 || ny < 0 || nx >= w || ny >= h) { edge = true; continue; }
+				int j = ny * w + nx;
+				if (alpha[j] < 128) edge = true;
+				else if (state[j] == 1) { state[j] = 2; stack.push_back(j); }
+			}
+		}
+		if (edge)
+			for (int i : region) Lighten(rgb + i * 3);
+	}
+	// Antialiased edge pixels of the same colours.
+	for (int i = 0; i < w * h; ++i)
+		if (alpha[i] > 0 && alpha[i] < 128 && dark(i)) Lighten(rgb + i * 3);
+}
+
+wxBitmapBundle libresrc_getbitmapbundle(const char *name, const LibresrcBlob *images, size_t count, int height, int dir) {
 	// This function should only ever be called on the GUI thread but declaring this thread_local is the safe way
-	thread_local std::map<std::tuple<const LibresrcBlob *, int, int>, wxBitmapBundle> cache;
-	auto key = std::make_tuple(images, height, dir);
+	thread_local std::map<std::tuple<const LibresrcBlob *, int, int, bool, bool>, wxBitmapBundle> cache;
+	auto key = std::make_tuple(images, height, dir, dark_mode, classic_icons);
 
 	if (auto cached = cache.find(key); cached != cache.end()) {
 		return cached->second;
 	}
 
+	if (!classic_icons) {
+		if (auto body = libresrc_modern_icon(name)) {
+			auto bundle = libresrc_modern_bundle(body, height, dir);
+			cache[key] = bundle;
+			return bundle;
+		}
+	}
+
+	std::vector<wxImage> decoded;
+	decoded.reserve(count);
+	size_t largest = 0;
+	for (size_t i = 0; i < count; i++) {
+		wxMemoryInputStream mem(images[i].data, images[i].size);
+		decoded.emplace_back(mem);
+		if (dir == wxLayout_RightToLeft) decoded.back() = decoded.back().Mirror();
+		if (images[i].scale > images[largest].scale) largest = i;
+	}
+	if (dark_mode && count) {
+		// One decision for all sizes, from the most detailed one.
+		bool glyph = libresrc_is_glyph(decoded[largest]);
+		for (auto& image : decoded) libresrc_adapt_for_dark(image, glyph);
+	}
+
 	wxVector<wxBitmap> bitmaps;
 	bitmaps.reserve(count);
 	for (size_t i = 0; i < count; i++) {
-		bitmaps.push_back(libresrc_getimage(images[i].data, images[i].size, dir));
+		bitmaps.push_back(wxBitmap(decoded[i]));
 		bitmaps.back().SetScaleFactor(double(images[i].scale) / height);
 	}
 
@@ -60,19 +487,30 @@ wxBitmapBundle libresrc_getbitmapbundle(const LibresrcBlob *images, size_t count
 	return bundle;
 }
 
-wxIconBundle libresrc_geticonbundle(const LibresrcBlob *images, size_t count) {
-	thread_local std::map<const LibresrcBlob *, wxIconBundle> cache;
+wxIconBundle libresrc_geticonbundle(const char *name, const LibresrcBlob *images, size_t count) {
+	thread_local std::map<std::tuple<const LibresrcBlob *, bool, bool>, wxIconBundle> cache;
+	auto key = std::make_tuple(images, dark_mode, classic_icons);
 
-	if (auto cached = cache.find(images); cached != cache.end()) {
+	if (auto cached = cache.find(key); cached != cache.end()) {
 		return cached->second;
 	}
 
 	wxIconBundle bundle;
-	for (size_t i = 0; i < count; i++) {
-		bundle.AddIcon(libresrc_geticon(images[i].data, images[i].size));
+	if (auto body = classic_icons ? nullptr : libresrc_modern_icon(name)) {
+		// Each size drawn for itself, as the toolbars' are
+		for (int px : {16, 20, 24, 32, 48, 64}) {
+			wxIcon icon;
+			icon.CopyFromBitmap(libresrc_modern_bundle(body, px).GetBitmap(wxSize(px, px)));
+			bundle.AddIcon(icon);
+		}
+	}
+	else {
+		for (size_t i = 0; i < count; i++) {
+			bundle.AddIcon(libresrc_geticon(images[i].data, images[i].size));
+		}
 	}
 
-	cache[images] = bundle;
+	cache[key] = bundle;
 
 	return bundle;
 }

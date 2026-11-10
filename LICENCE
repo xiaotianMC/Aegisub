@@ -42,3 +42,7 @@ src/MatroskaParser.(c|h)
 universalchardet/
  - MPL 1.1
 
+
+src/libresrc/icons_modern.cpp
+ - Icons from Lucide (https://lucide.dev): ISC license, some derived from
+   Feather under the MIT license. See src/libresrc/LICENSE.lucide.

@@ -28,26 +28,42 @@
 // Aegisub Project http://www.aegisub.org/
 
 #pragma once
+#include <memory>
 
 #include <libaegisub/signal.h>
 
 #include <vector>
 #include <wx/panel.h>
+#include <wx/string.h>
 
 namespace agi { struct Context; }
-class wxTextCtrl;
+class wxSizerItem;
+class VideoSlider;
+class VideoTimeLabel;
 
 /// @class VideoBox
 /// @brief The box containing the video display and associated controls
 class VideoBox final : public wxPanel {
+protected:
+    // Declared first: expires only after all owned bindings/cache members are destroyed.
+    std::shared_ptr<int> model_observer_lifetime = std::make_shared<int>(0);
+private:
 	std::vector<agi::signal::Connection> connections;
 	agi::Context *context;     ///< Project context
-	wxTextCtrl *VideoPosition; ///< Current frame/time
-	wxTextCtrl *VideoSubsPos;  ///< Time relative to the active subtitle line
+	VideoSlider *slider;           ///< Seek bar, showing the active line's span
+	VideoTimeLabel *VideoPosition; ///< Current frame/time
+	VideoTimeLabel *VideoSubsPos;  ///< Time relative to the active subtitle line
 
-	/// Update VideoPosition and VideoSubsPos
+	/// Update VideoPosition, VideoSubsPos and the line's span on the slider
 	void UpdateTimeBoxes();
+	/// Seek to a typed frame number or time; false if @p text is neither
+	bool JumpTo(wxString text);
+
+	wxSizerItem *toolbar_item = nullptr;
 
 public:
 	VideoBox(wxWindow *parent, bool isDetached, agi::Context *context);
+
+	/// Put @p gap pixels between the video and the visual tools to their right
+	void SetToolbarGap(int gap);
 };

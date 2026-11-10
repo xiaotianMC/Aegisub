@@ -39,6 +39,7 @@
 #include "include/aegisub/hotkey.h"
 
 #include "ass_file.h"
+#include "subtitle_project_access.h"
 #include "async_video_provider.h"
 #include "audio_controller.h"
 #include "audio_box.h"
@@ -53,11 +54,16 @@
 #include "project.h"
 #include "subs_controller.h"
 #include "subs_edit_box.h"
+#include "status_info.h"
+#include "style_panel.h"
 #include "utils.h"
 #include "version.h"
 #include "video_box.h"
+#include "theme.h"
+#include "workspace_tabs.h"
 #include "video_controller.h"
 #include "video_display.h"
+#include "selection_controller.h"
 
 #include <libaegisub/dispatch.h>
 #include <libaegisub/log.h>
@@ -66,6 +72,7 @@
 #include <wx/msgdlg.h>
 #include <wx/sizer.h>
 #include <wx/statline.h>
+#include <wx/statusbr.h>
 #include <wx/sysopt.h>
 #include <wx/toolbar.h>
 
@@ -88,7 +95,7 @@ public:
 		std::vector<agi::fs::path> files;
 		for (wxString const& fn : filenames)
 			files.push_back(from_wx(fn));
-		agi::dispatch::Main().Async([=, this] { context->project->LoadList(files); });
+		agi::dispatch::Main().Async([=, this] { context->project->LoadList(files, true); });
 		return true;
 	}
 };
@@ -111,7 +118,8 @@ FrameMain::FrameMain()
 #endif
 
 	StartupLog("Initializing context controls");
-	BindConnection(context->ass->AddCommitListener(&FrameMain::UpdateTitle, this));
+	BindConnection(context->subtitleAccess->Read().AddCommitListener("frame_main.AddCommitListener", [this](int, AssDialogue const*, SubtitleModelRebindTicket ticket) { UpdateTitle(); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime)));
+    BindConnection(context->subtitleAccess->AddMetadataListener(&FrameMain::UpdateTitle, this));
 	BindConnection(context->subsController->AddFileOpenListener(&FrameMain::OnSubtitlesOpen, this));
 	BindConnection(context->subsController->AddFileSaveListener(&FrameMain::UpdateTitle, this));
 	BindConnection(context->project->AddAudioProviderListener(&FrameMain::OnAudioOpen, this));
@@ -133,7 +141,12 @@ FrameMain::FrameMain()
 	menu::GetMenuBar("main", this, (wxID_HIGHEST + 1) + 10000, context.get());
 
 	StartupLog("Create status bar");
-	CreateStatusBar(2);
+	// Menu help, timed messages, the current line, the file's state.
+	CreateStatusBar(4);
+	{
+		int widths[] = {-3, -2, -3, -1};
+		GetStatusBar()->SetStatusWidths(4, widths);
+	}
 
 	StartupLog("Set icon");
 #ifdef _WIN32
@@ -150,6 +163,7 @@ FrameMain::FrameMain()
 
 	StartupLog("Set up drag/drop target");
 	SetDropTarget(new AegisubFileDropTarget(context.get()));
+	Bind(wxEVT_SYS_COLOUR_CHANGED, [](wxSysColourChangedEvent& event) { theme::SystemColoursChanged(); event.Skip(); });
 
 	StartupLog("Load default file");
 	context->project->CloseSubtitles();
@@ -163,10 +177,18 @@ FrameMain::FrameMain()
 }
 
 FrameMain::~FrameMain () {
+    context->project->BeginHostShutdown();
 	context->project->CloseAudio();
 	context->project->CloseVideo();
 
 	DestroyChildren();
+}
+bool FrameMain::Destroy() {
+    if (context && context->subsController && context->subsController->IsInstalling()) {
+        context->subsController->CancelModelInstallation();
+        return false; // Also cover direct deferred Destroy, not just close events.
+    }
+    return wxFrame::Destroy();
 }
 
 void FrameMain::EnableToolBar(agi::OptionValue const& opt) {
@@ -185,7 +207,10 @@ void FrameMain::EnableToolBar(agi::OptionValue const& opt) {
 
 void FrameMain::InitContents() {
 	StartupLog("Create background panel");
-	auto Panel = new wxPanel(this, -1, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL | wxCLIP_CHILDREN);
+	// The editor is the first tab; a comparison opens beside it.
+	auto tabs = new WorkspaceTabs(this, context.get());
+	context->workspaceTabs = tabs;
+	auto Panel = new wxPanel(tabs->Book(), -1, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL | wxCLIP_CHILDREN);
 
 	StartupLog("Create subtitles grid");
 	context->subsGrid = new BaseGrid(Panel, context.get());
@@ -197,20 +222,40 @@ void FrameMain::InitContents() {
 	context->audioBox = audioBox = new AudioBox(Panel, context.get());
 
 	StartupLog("Create subtitle editing box");
-	auto EditBox = new SubsEditBox(Panel, context.get());
+	auto EditBox = editBox = new SubsEditBox(Panel, context.get());
 
 	StartupLog("Arrange main sizers");
+	// Blocks on a backdrop, the same gap everywhere and no borders
+	// (docs/theme.md). The audio box's resize strip is the gap below it.
+	theme::UseBackdrop(Panel);
+	const int gap = theme::BlockGap(Panel);
 	ToolsSizer = new wxBoxSizer(wxVERTICAL);
 	ToolsSizer->Add(audioBox, 0, wxEXPAND);
 	ToolsSizer->Add(EditBox, 1, wxEXPAND);
 	TopSizer = new wxBoxSizer(wxHORIZONTAL);
 	TopSizer->Add(videoBox, 0, wxEXPAND, 0);
-	TopSizer->Add(ToolsSizer, 1, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 5);
+	TopSizer->Add(ToolsSizer, 1, wxEXPAND | wxLEFT, gap);
+	// The visual tools sit in the middle between the video and the audio
+	videoBox->SetToolbarGap(gap);
 	MainSizer = new wxBoxSizer(wxVERTICAL);
-	MainSizer->Add(new wxStaticLine(Panel),0,wxEXPAND,0);
-	MainSizer->Add(TopSizer,0,wxEXPAND,0);
-	MainSizer->Add(context->subsGrid,1,wxEXPAND,0);
-	Panel->SetSizer(MainSizer);
+	MainSizer->Add(TopSizer, 0, wxEXPAND | wxLEFT | wxTOP, gap);
+	MainSizer->Add(context->subsGrid, 1, wxEXPAND | wxLEFT | wxTOP | wxBOTTOM, gap);
+	// The style panel takes the whole height at the right (docs/style-panel.md);
+	// the gap before it is its resize strip
+	stylePanel = new StylePanel(Panel, context.get());
+	auto edge = new StylePanelEdge(Panel, stylePanel);
+	OuterSizer = new wxBoxSizer(wxHORIZONTAL);
+	OuterSizer->Add(MainSizer, 1, wxEXPAND);
+	OuterSizer->Add(edge, 0, wxEXPAND);
+	OuterSizer->Add(stylePanel, 0, wxEXPAND | wxTOP | wxBOTTOM | wxRIGHT, gap);
+	Panel->SetSizer(OuterSizer);
+	edge->Update();
+	tabs->SetEditor(Panel);
+	// The comparison's tabs at the bottom left, in the status bar
+	if (GetStatusBar()) tabs->MoveStripTo(GetStatusBar());
+	BindConnection(tabs->AddChangeListener(&FrameMain::UpdateStatus, this));
+	BindConnection(context->selectionController->AddActiveLineListener("frame_main.AddActiveLineListener", [this](SubtitleModelRebindTicket ticket) { UpdateStatus(); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime)));
+	BindConnection(context->selectionController->AddSelectionListener("frame_main.AddSelectionListener", [this](SubtitleModelRebindTicket ticket) { UpdateStatus(); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime)));
 
 	StartupLog("Perform layout");
 	Layout();
@@ -248,7 +293,14 @@ void FrameMain::SetDisplayMode(int video, int audio) {
 	if (didFreeze) Thaw();
 }
 
+void FrameMain::UpdateStatus() {
+	if (!GetStatusBar() || GetStatusBar()->GetFieldsCount() < 4) return;
+	SetStatusText(status_info::Line(context.get()), 2);
+	SetStatusText(status_info::File(context.get()), 3);
+}
+
 void FrameMain::UpdateTitle() {
+	UpdateStatus();
 	wxString newTitle;
 	if (context->subsController->IsModified()) newTitle << "* ";
 	newTitle << context->subsController->Filename().filename().wstring();
@@ -310,10 +362,17 @@ BEGIN_EVENT_TABLE(FrameMain, wxFrame)
 END_EVENT_TABLE()
 
 void FrameMain::OnCloseWindow(wxCloseEvent &event) {
+    if (context->subsController->DeferHostClose(event)) return;
 	wxEventBlocker blocker(this, wxEVT_CLOSE_WINDOW);
 
 	context->videoController->Stop();
 	context->audioController->Stop();
+
+	// An open comparison ends first: it holds the subtitles.
+	if (context->workspaceTabs && !context->workspaceTabs->CloseComparison(event.CanVeto())) {
+		event.Veto();
+		return;
+	}
 
 	// Ask user if he wants to save first
 	if (context->subsController->TryToClose(event.CanVeto()) == wxCANCEL) {
@@ -352,3 +411,15 @@ void FrameMain::OnKeyDown(wxKeyEvent &event) {
 void FrameMain::OnMouseWheel(wxMouseEvent &evt) {
 	ForwardMouseWheelEvent(this, evt);
 }
+
+#ifdef __WXMSW__
+#include <wx/msw/wrapwin.h>
+
+WXLRESULT FrameMain::MSWWindowProc(WXUINT message, WXWPARAM wParam, WXLPARAM lParam) {
+	// Alt + wheel zooms the audio: releasing Alt afterwards must not select
+	// the menu bar, or the next wheel turns still count as Alt + wheel.
+	if (message == WM_SYSCOMMAND && (wParam & 0xFFF0) == SC_KEYMENU && lParam == 0 && TakeAltUsedForWheel())
+		return 0;
+	return wxFrame::MSWWindowProc(message, wParam, lParam);
+}
+#endif

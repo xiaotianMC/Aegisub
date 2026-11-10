@@ -30,6 +30,8 @@
 // Aegisub Project http://www.aegisub.org/
 
 #include "command.h"
+#include "../subtitle_project_access.h"
+#include "../subtitle_row_list_edit.h"
 
 #include "../ass_dialogue.h"
 #include "../ass_file.h"
@@ -40,6 +42,7 @@
 #include "../libresrc/libresrc.h"
 #include "../options.h"
 #include "../selection_controller.h"
+#include "../subs_edit_box.h"
 
 
 namespace {
@@ -56,6 +59,19 @@ struct grid_line_next final : public Command {
 	}
 };
 
+struct grid_line_next_style final : public Command {
+	CMD_NAME("grid/line/next/style")
+	STR_MENU("Next Line, Choosing Its Style")
+	STR_DISP("Next Line, Choosing Its Style")
+	STR_HELP("Move to the next subtitle line and put the keyboard in the style box, where typing a style's first letters chooses it")
+
+	void operator()(agi::Context *c) override {
+		c->selectionController->NextLine();
+		if (c->frame)
+			if (auto box = c->frame->GetEditBox()) box->FocusStyle();
+	}
+};
+
 struct grid_line_next_create final : public Command {
 	CMD_NAME("grid/line/next/create")
 	CMD_ICON(button_audio_commit)
@@ -64,21 +80,25 @@ struct grid_line_next_create final : public Command {
 	STR_HELP("Move to the next subtitle line, creating a new one if needed")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		AudioTimingController *tc = c->audioController->GetTimingController();
 		if (tc)
 			tc->Commit();
 
-		AssDialogue *cur = c->selectionController->GetActiveLine();
-		c->selectionController->NextLine();
-		if (cur == c->selectionController->GetActiveLine()) {
+		auto previous = c->selectionController->ActiveID();
+        c->selectionController->NextLine();
+        if (previous == c->selectionController->ActiveID()) {
+            SubtitleRowListEdit staged(c);
+            auto cur = staged.active;
 			auto newline = new AssDialogue;
 			newline->Start = cur->End;
 			newline->End = cur->End + OPT_GET("Timing/Default Duration")->GetInt();
 			newline->Style = cur->Style;
 
-			auto pos = c->ass->iterator_to(*cur);
-			c->ass->Events.insert(++pos, *newline);
-			c->ass->Commit(_("line insertion"), AssFile::COMMIT_DIAG_ADDREM);
+			auto pos = staged.file.iterator_to(*staged.active);
+			staged.file.Events.insert(++pos, *newline);
+			staged.Commit(_("line insertion"), AssFile::COMMIT_DIAG_ADDREM);
 			c->selectionController->NextLine();
 		}
 	}
@@ -102,8 +122,11 @@ struct grid_sort_actor final : public Command {
 	STR_HELP("Sort all subtitles by their actor names")
 
 	void operator()(agi::Context *c) override {
-		c->ass->Sort(AssFile::CompActor);
-		c->ass->Commit(_("sort"), AssFile::COMMIT_ORDER);
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
+        SubtitleRowListEdit staged(c);
+		staged.file.Sort(AssFile::CompActor);
+		staged.Commit(_("sort"), AssFile::COMMIT_ORDER);
 	}
 };
 
@@ -111,7 +134,7 @@ struct validate_sel_multiple : public Command {
 	CMD_TYPE(COMMAND_VALIDATE)
 
 	bool Validate(const agi::Context *c) override {
-		return c->selectionController->GetSelectedSet().size() > 1;
+		return c->selectionController->ReadSelectedSet().size() > 1;
 	}
 };
 
@@ -122,8 +145,11 @@ struct grid_sort_actor_selected final : public validate_sel_multiple {
 	STR_HELP("Sort selected subtitles by their actor names")
 
 	void operator()(agi::Context *c) override {
-		c->ass->Sort(AssFile::CompActor, c->selectionController->GetSelectedSet());
-		c->ass->Commit(_("sort"), AssFile::COMMIT_ORDER);
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
+        SubtitleRowListEdit staged(c);
+		staged.file.Sort(AssFile::CompActor, staged.selection);
+		staged.Commit(_("sort"), AssFile::COMMIT_ORDER);
 	}
 };
 
@@ -134,8 +160,11 @@ struct grid_sort_effect final : public Command {
 	STR_HELP("Sort all subtitles by their effects")
 
 	void operator()(agi::Context *c) override {
-		c->ass->Sort(AssFile::CompEffect);
-		c->ass->Commit(_("sort"), AssFile::COMMIT_ORDER);
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
+        SubtitleRowListEdit staged(c);
+		staged.file.Sort(AssFile::CompEffect);
+		staged.Commit(_("sort"), AssFile::COMMIT_ORDER);
 	}
 };
 
@@ -146,8 +175,11 @@ struct grid_sort_effect_selected final : public validate_sel_multiple {
 	STR_HELP("Sort selected subtitles by their effects")
 
 	void operator()(agi::Context *c) override {
-		c->ass->Sort(AssFile::CompEffect, c->selectionController->GetSelectedSet());
-		c->ass->Commit(_("sort"), AssFile::COMMIT_ORDER);
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
+        SubtitleRowListEdit staged(c);
+		staged.file.Sort(AssFile::CompEffect, staged.selection);
+		staged.Commit(_("sort"), AssFile::COMMIT_ORDER);
 	}
 };
 
@@ -158,8 +190,11 @@ struct grid_sort_end final : public Command {
 	STR_HELP("Sort all subtitles by their end times")
 
 	void operator()(agi::Context *c) override {
-		c->ass->Sort(AssFile::CompEnd);
-		c->ass->Commit(_("sort"), AssFile::COMMIT_ORDER);
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
+        SubtitleRowListEdit staged(c);
+		staged.file.Sort(AssFile::CompEnd);
+		staged.Commit(_("sort"), AssFile::COMMIT_ORDER);
 	}
 };
 
@@ -170,8 +205,11 @@ struct grid_sort_end_selected final : public validate_sel_multiple {
 	STR_HELP("Sort selected subtitles by their end times")
 
 	void operator()(agi::Context *c) override {
-		c->ass->Sort(AssFile::CompEnd, c->selectionController->GetSelectedSet());
-		c->ass->Commit(_("sort"), AssFile::COMMIT_ORDER);
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
+        SubtitleRowListEdit staged(c);
+		staged.file.Sort(AssFile::CompEnd, staged.selection);
+		staged.Commit(_("sort"), AssFile::COMMIT_ORDER);
 	}
 };
 
@@ -182,8 +220,11 @@ struct grid_sort_layer final : public Command {
 	STR_HELP("Sort all subtitles by their layer number")
 
 	void operator()(agi::Context *c) override {
-		c->ass->Sort(AssFile::CompLayer);
-		c->ass->Commit(_("sort"), AssFile::COMMIT_ORDER);
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
+        SubtitleRowListEdit staged(c);
+		staged.file.Sort(AssFile::CompLayer);
+		staged.Commit(_("sort"), AssFile::COMMIT_ORDER);
 	}
 };
 
@@ -194,8 +235,11 @@ struct grid_sort_layer_selected final : public validate_sel_multiple {
 	STR_HELP("Sort selected subtitles by their layer number")
 
 	void operator()(agi::Context *c) override {
-		c->ass->Sort(AssFile::CompLayer, c->selectionController->GetSelectedSet());
-		c->ass->Commit(_("sort"), AssFile::COMMIT_ORDER);
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
+        SubtitleRowListEdit staged(c);
+		staged.file.Sort(AssFile::CompLayer, staged.selection);
+		staged.Commit(_("sort"), AssFile::COMMIT_ORDER);
 	}
 };
 
@@ -206,8 +250,11 @@ struct grid_sort_start final : public Command {
 	STR_HELP("Sort all subtitles by their start times")
 
 	void operator()(agi::Context *c) override {
-		c->ass->Sort();
-		c->ass->Commit(_("sort"), AssFile::COMMIT_ORDER);
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
+        SubtitleRowListEdit staged(c);
+		staged.file.Sort();
+		staged.Commit(_("sort"), AssFile::COMMIT_ORDER);
 	}
 };
 
@@ -218,8 +265,11 @@ struct grid_sort_start_selected final : public validate_sel_multiple {
 	STR_HELP("Sort selected subtitles by their start times")
 
 	void operator()(agi::Context *c) override {
-		c->ass->Sort(AssFile::CompStart, c->selectionController->GetSelectedSet());
-		c->ass->Commit(_("sort"), AssFile::COMMIT_ORDER);
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
+        SubtitleRowListEdit staged(c);
+		staged.file.Sort(AssFile::CompStart, staged.selection);
+		staged.Commit(_("sort"), AssFile::COMMIT_ORDER);
 	}
 };
 
@@ -230,8 +280,11 @@ struct grid_sort_style final : public Command {
 	STR_HELP("Sort all subtitles by their style names")
 
 	void operator()(agi::Context *c) override {
-		c->ass->Sort(AssFile::CompStyle);
-		c->ass->Commit(_("sort"), AssFile::COMMIT_ORDER);
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
+        SubtitleRowListEdit staged(c);
+		staged.file.Sort(AssFile::CompStyle);
+		staged.Commit(_("sort"), AssFile::COMMIT_ORDER);
 	}
 };
 
@@ -242,8 +295,11 @@ struct grid_sort_style_selected final : public validate_sel_multiple {
 	STR_HELP("Sort selected subtitles by their style names")
 
 	void operator()(agi::Context *c) override {
-		c->ass->Sort(AssFile::CompStyle, c->selectionController->GetSelectedSet());
-		c->ass->Commit(_("sort"), AssFile::COMMIT_ORDER);
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
+        SubtitleRowListEdit staged(c);
+		staged.file.Sort(AssFile::CompStyle, staged.selection);
+		staged.Commit(_("sort"), AssFile::COMMIT_ORDER);
 	}
 };
 
@@ -350,12 +406,15 @@ struct grid_move_up final : public Command {
 	CMD_TYPE(COMMAND_VALIDATE)
 
 	bool Validate(const agi::Context *c) override {
-		return c->selectionController->GetSelectedSet().size() != 0;
+		return c->selectionController->ReadSelectedSet().size() != 0;
 	}
 
 	void operator()(agi::Context *c) override {
-		if (move_one(c->ass->Events.begin(), c->ass->Events.end(), c->selectionController->GetSelectedSet(), false))
-			c->ass->Commit(_("move lines"), AssFile::COMMIT_ORDER);
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
+        SubtitleRowListEdit staged(c);
+		if (move_one(staged.file.Events.begin(), staged.file.Events.end(), staged.selection, false))
+			staged.Commit(_("move lines"), AssFile::COMMIT_ORDER);
 	}
 };
 
@@ -367,12 +426,15 @@ struct grid_move_down final : public Command {
 	CMD_TYPE(COMMAND_VALIDATE)
 
 	bool Validate(const agi::Context *c) override {
-		return c->selectionController->GetSelectedSet().size() != 0;
+		return c->selectionController->ReadSelectedSet().size() != 0;
 	}
 
 	void operator()(agi::Context *c) override {
-		if (move_one(c->ass->Events.rbegin(), c->ass->Events.rend(), c->selectionController->GetSelectedSet(), true))
-			c->ass->Commit(_("move lines"), AssFile::COMMIT_ORDER);
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
+        SubtitleRowListEdit staged(c);
+		if (move_one(staged.file.Events.rbegin(), staged.file.Events.rend(), staged.selection, true))
+			staged.Commit(_("move lines"), AssFile::COMMIT_ORDER);
 	}
 };
 
@@ -385,14 +447,17 @@ struct grid_swap final : public Command {
 	CMD_TYPE(COMMAND_VALIDATE)
 
 	bool Validate(const agi::Context *c) override {
-		return c->selectionController->GetSelectedSet().size() == 2;
+		return c->selectionController->ReadSelectedSet().size() == 2;
 	}
 
 	void operator()(agi::Context *c) override {
-		auto const& sel = c->selectionController->GetSelectedSet();
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
+        SubtitleRowListEdit staged(c);
+		auto const& sel = staged.selection;
 		if (sel.size() == 2) {
 			(*sel.begin())->swap_nodes(**sel.rbegin());
-			c->ass->Commit(_("swap lines"), AssFile::COMMIT_ORDER);
+			staged.Commit(_("swap lines"), AssFile::COMMIT_ORDER);
 		}
 	}
 };
@@ -403,6 +468,7 @@ namespace cmd {
 	void init_grid() {
 		reg(std::make_unique<grid_line_next>());
 		reg(std::make_unique<grid_line_next_create>());
+		reg(std::make_unique<grid_line_next_style>());
 		reg(std::make_unique<grid_line_prev>());
 		reg(std::make_unique<grid_sort_actor>());
 		reg(std::make_unique<grid_sort_effect>());

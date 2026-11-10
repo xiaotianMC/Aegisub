@@ -16,6 +16,8 @@
 
 #include "ass_dialogue.h"
 #include "ass_file.h"
+#include "audio_edit_session.h"
+#include <boost/scope_exit.hpp>
 #include "ass_karaoke.h"
 #include "audio_controller.h"
 #include "audio_marker.h"
@@ -75,7 +77,9 @@ class AudioTimingControllerKaraoke final : public AudioTimingController, private
 	agi::signal::Connection& file_changed_slot;
 
 	agi::Context *c;          ///< Project context
-	AssDialogue *active_line; ///< Currently active line
+	std::optional<AssDialogueBase> active_line; ///< Independent row snapshot
+	std::shared_ptr<AudioEditSession> edit;
+	bool dragging=false;
 	agi::ass::Karaoke *kara;         ///< Parsed karaoke model provided by karaoke controller
 
 	int cur_syl = 0; ///< Index of currently selected syllable in the line
@@ -135,34 +139,39 @@ public:
 	std::vector<AudioMarker*> OnRightClick(int ms, bool, int, int) override;
 	void OnMarkerDrag(std::vector<AudioMarker*> const& marker, int new_position, int) override;
 
-	AudioTimingControllerKaraoke(agi::Context *c, agi::ass::Karaoke *kara, agi::signal::Connection& file_changed);
+	AudioTimingControllerKaraoke(agi::Context *c, agi::ass::Karaoke *kara, agi::signal::Connection& file_changed, std::shared_ptr<AudioEditSession> edit);
+	void RebuildMarkers();
+	bool BeginDrag() override {if(!edit->Begin())return false;dragging=true;return true;}
+	void EndDrag(bool cancelled) override {dragging=false;if(cancelled)Revert();else if(!pending_changes && !edit->split_pending)edit->End();}
 };
 
-std::unique_ptr<AudioTimingController> CreateKaraokeTimingController(agi::Context *c, agi::ass::Karaoke *kara, agi::signal::Connection& file_changed)
+std::unique_ptr<AudioTimingController> CreateKaraokeTimingController(agi::Context *c, agi::ass::Karaoke *kara, agi::signal::Connection& file_changed, std::shared_ptr<AudioEditSession> edit)
 {
-	return std::make_unique<AudioTimingControllerKaraoke>(c, kara, file_changed);
+	return std::make_unique<AudioTimingControllerKaraoke>(c, kara, file_changed, edit ? edit : std::make_shared<AudioEditSession>(c));
 }
 
-AudioTimingControllerKaraoke::AudioTimingControllerKaraoke(agi::Context *c, agi::ass::Karaoke *kara, agi::signal::Connection& file_changed)
+AudioTimingControllerKaraoke::AudioTimingControllerKaraoke(agi::Context *c, agi::ass::Karaoke *kara, agi::signal::Connection& file_changed, std::shared_ptr<AudioEditSession> edit)
 : file_changed_slot(file_changed)
 , c(c)
-, active_line(c->selectionController->GetActiveLine())
+, active_line(edit->Active())
+, edit(std::move(edit))
 , kara(kara)
-, start_marker(active_line->Start, &start_pen, AudioMarker::Feet_Right)
-, end_marker(active_line->End, &end_pen, AudioMarker::Feet_Left)
+, start_marker(active_line ? active_line->Start.GetMilliseconds() : 0, &start_pen, AudioMarker::Feet_Right)
+, end_marker(active_line ? active_line->End.GetMilliseconds() : 0, &end_pen, AudioMarker::Feet_Left)
 , keyframes_provider(c, "Audio/Display/Draw/Keyframes in Karaoke Mode")
 , video_position_provider(c)
 {
-	connections.push_back(kara->AddSyllablesChangedListener(&AudioTimingControllerKaraoke::Revert, this));
+	connections.push_back(kara->AddSyllablesChangedListener(&AudioTimingControllerKaraoke::RebuildMarkers, this));
 	connections.push_back(OPT_SUB("Audio/Auto/Commit", [this](agi::OptionValue const& opt) { auto_commit = opt.GetBool(); }));
 
 	BindConnection(keyframes_provider.AddMarkerMovedListener([this]{ AnnounceMarkerMoved(); }));
 	BindConnection(video_position_provider.AddMarkerMovedListener([this]{ AnnounceMarkerMoved(); }));
 
-	Revert();
+	RebuildMarkers();
 }
 
 void AudioTimingControllerKaraoke::Next(NextMode mode) {
+	if (!edit->Begin()) return;
 	// Don't create new lines since it's almost never useful to k-time a line
 	// before dialogue timing it
 	if (mode != TIMING_UNIT)
@@ -179,13 +188,15 @@ void AudioTimingControllerKaraoke::Next(NextMode mode) {
 	}
 
 	c->audioController->PlayPrimaryRange();
+	if (!pending_changes && !edit->split_pending) edit->End();
 }
 
 void AudioTimingControllerKaraoke::Prev() {
+	if (!edit->Begin()) return;
 	if (cur_syl == 0) {
-		AssDialogue *old_line = active_line;
+		int old_line = active_line ? active_line->Id : 0;
 		c->selectionController->PrevLine();
-		if (old_line != active_line) {
+		if (active_line && old_line != active_line->Id) {
 			cur_syl = std::ssize(markers);
 			AnnounceUpdatedPrimaryRange();
 			AnnounceUpdatedStyleRanges();
@@ -198,6 +209,7 @@ void AudioTimingControllerKaraoke::Prev() {
 	}
 
 	c->audioController->PlayPrimaryRange();
+	if (!pending_changes && !edit->split_pending) edit->End();
 }
 
 void AudioTimingControllerKaraoke::GetRenderingStyles(AudioRenderingStyleRanges &ranges) const
@@ -235,27 +247,54 @@ void AudioTimingControllerKaraoke::GetMarkers(TimeRange const& range, AudioMarke
 }
 
 void AudioTimingControllerKaraoke::DoCommit() {
-	active_line->Text = kara->GetText();
-	file_changed_slot.Block();
-	commit_id = c->ass->Commit(_("karaoke timing"), AssFile::COMMIT_DIAG_TEXT, commit_id, active_line);
-	file_changed_slot.Unblock();
+	if (!active_line || !edit->Begin()) return;
+	auto row = edit->Read(active_line->Id);
+	if (!row) { edit->End(); return; }
+	auto previous = *row;
+	row->Text = kara->GetText();
+	row->Start = start_marker.GetPosition();
+	row->End = end_marker.GetPosition();
+	bool time_changed = row->Start.GetMilliseconds() != previous.Start.GetMilliseconds() ||
+		row->End.GetMilliseconds() != previous.End.GetMilliseconds();
+	if (row->Text != previous.Text || time_changed) {
+		int type = AssFile::COMMIT_DIAG_TEXT;
+		if (time_changed) type |= AssFile::COMMIT_DIAG_TIME;
+		file_changed_slot.Block();
+		BOOST_SCOPE_EXIT_ALL(this) { file_changed_slot.Unblock(); };
+		edit->Update({*row});
+		commit_id = edit->Commit(_("karaoke timing"), type, commit_id, row->Id);
+		active_line = *row;
+	}
 	pending_changes = false;
+	if (!dragging && !edit->split_pending) edit->End();
 }
 
 void AudioTimingControllerKaraoke::Commit() {
 	if (!auto_commit && pending_changes)
 		DoCommit();
+	if (!edit->split_pending) edit->End();
 }
 
 void AudioTimingControllerKaraoke::Revert() {
-	active_line = c->selectionController->GetActiveLine();
+	dragging=false;
+	edit->Refresh();
+	auto live=edit->Active(active_line ? active_line->Id : 0);
+	if(live){AssDialogue snapshot(*live);SetKaraokeLine(*kara,&snapshot,true);}
+	else kara->SetLine({}, false, std::nullopt);
+	RebuildMarkers();
+}
+void AudioTimingControllerKaraoke::RebuildMarkers() {
+	InvalidateMarkers();
+	dragging=false;
+	active_line=edit->Active(active_line ? active_line->Id : 0);
+	if(!active_line){markers.clear();labels.clear();start_marker.Move(0);end_marker.Move(0);pending_changes=false;return;}
 
 	cur_syl = 0;
 	commit_id = -1;
 	pending_changes = false;
 
-	start_marker.Move(active_line->Start);
-	end_marker.Move(active_line->End);
+	start_marker.Move(edit->pending_times ? edit->pending_times->first : active_line->Start.GetMilliseconds());
+	end_marker.Move(edit->pending_times ? edit->pending_times->second : active_line->End.GetMilliseconds());
 
 	markers.clear();
 	labels.clear();
@@ -275,28 +314,34 @@ void AudioTimingControllerKaraoke::Revert() {
 }
 
 void AudioTimingControllerKaraoke::AddLeadIn() {
+	if(!active_line || labels.empty() || !edit->Begin())return;
 	start_marker.Move(start_marker - OPT_GET("Audio/Lead/IN")->GetInt());
 	labels.front().range = TimeRange(start_marker, labels.front().range.end());
 	ApplyLead(cur_syl == 0);
 }
 
 void AudioTimingControllerKaraoke::AddLeadOut() {
+	if(!active_line || labels.empty() || !edit->Begin())return;
 	end_marker.Move(end_marker + OPT_GET("Audio/Lead/OUT")->GetInt());
 	labels.back().range = TimeRange(labels.back().range.begin(), end_marker);
 	ApplyLead(cur_syl == std::ssize(markers));
 }
 
 void AudioTimingControllerKaraoke::ApplyLead(bool announce_primary) {
-	active_line->Start = (int)start_marker;
-	active_line->End = (int)end_marker;
+	if(!active_line || !edit->Begin())return;
 	kara->SetLineTimes(start_marker, end_marker);
+	edit->pending_times=std::pair<int,int>(start_marker,end_marker);
 	if (!announce_primary)
 		AnnounceUpdatedStyleRanges();
 	AnnounceChanges(announce_primary ? cur_syl : cur_syl + 2);
 }
 
 void AudioTimingControllerKaraoke::ModifyLength(int delta, bool shift_following) {
-	if (cur_syl == std::ssize(markers)) return;
+	if(!active_line || !edit->Begin())return;
+	if (cur_syl == std::ssize(markers)) {
+		if (!pending_changes && !edit->split_pending) edit->End();
+		return;
+	}
 
 	int cur, end, step;
 	if (delta < 0) {
@@ -317,7 +362,11 @@ void AudioTimingControllerKaraoke::ModifyLength(int delta, bool shift_following)
 }
 
 void AudioTimingControllerKaraoke::ModifyStart(int delta) {
-	if (cur_syl == 0) return;
+	if(!active_line || !edit->Begin())return;
+	if (cur_syl == 0) {
+		if (!pending_changes && !edit->split_pending) edit->End();
+		return;
+	}
 	MoveMarker(&markers[cur_syl - 1], markers[cur_syl - 1] + delta * 10);
 	AnnounceChanges(cur_syl);
 }
@@ -339,6 +388,7 @@ static std::vector<Out *> copy_ptrs(In &vec, size_t start, size_t end) {
 }
 
 std::vector<AudioMarker*> AudioTimingControllerKaraoke::OnLeftClick(int ms, bool ctrl_down, bool, int sensitivity, int) {
+	if(!active_line || !edit->Begin())return {};
 	TimeRange range(ms - sensitivity, ms + sensitivity);
 
 	size_t syl = distance(markers.begin(), lower_bound(markers.begin(), markers.end(), ms));
@@ -356,6 +406,7 @@ std::vector<AudioMarker*> AudioTimingControllerKaraoke::OnLeftClick(int ms, bool
 }
 
 std::vector<AudioMarker*> AudioTimingControllerKaraoke::OnRightClick(int ms, bool, int, int) {
+	if(!active_line || !edit->Begin())return {};
 	cur_syl = distance(markers.begin(), lower_bound(markers.begin(), markers.end(), ms));
 
 	AnnounceUpdatedPrimaryRange();
@@ -405,6 +456,8 @@ void AudioTimingControllerKaraoke::AnnounceChanges(int syl) {
 }
 
 void AudioTimingControllerKaraoke::OnMarkerDrag(std::vector<AudioMarker*> const& m, int new_position, int) {
+	if(m.empty() || !active_line || !edit->Begin())return;
+	for(auto marker:m)if(std::none_of(markers.begin(),markers.end(),[&](auto const& owned){return &owned==marker;}))return;
 	int old_position = m[0]->GetPosition();
 	int syl = MoveMarker(static_cast<KaraokeMarker *>(m[0]), new_position);
 	if (syl < 0) return;

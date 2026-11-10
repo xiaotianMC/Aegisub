@@ -57,6 +57,10 @@ std::string float_to_string(double val, int precision = 3);
 /// Algorithm from http://bob.allegronetwork.com/prog/tricks.html
 int SmallestPowerOf2(int x);
 
+/// A size given in device-independent pixels, in pixels of @p window's
+/// display (of the main display without one). -1 stays -1.
+wxSize DipSize(int width, int height, wxWindow const *window = nullptr);
+
 /// @brief Launch a new copy of Aegisub.
 ///
 /// Contrary to what the name suggests, this does not close the currently
@@ -73,6 +77,21 @@ void SetFloatOnParent(wxWindow *window);
 /// @param evt The event
 /// @return Should the calling code process the event?
 bool ForwardMouseWheelEvent(wxWindow *source, wxMouseEvent &evt);
+
+/// Whether a modifier is held right now, for a wheel event. On Windows the
+/// event's Alt can stay down after Alt is released (releasing it hands the
+/// key to the menu bar), so these read the keyboard itself there.
+bool WheelAltDown(wxMouseEvent const& evt);
+bool WheelCmdDown(wxMouseEvent const& evt);
+bool WheelShiftDown(wxMouseEvent const& evt);
+
+/// Alt was held for a wheel action: releasing it should not select the menu
+/// bar. The main window asks with TakeAltUsedForWheel() when Windows is about
+/// to: true once, within a moment of the last such wheel turn. A turn without
+/// Alt forgets it (ResetAltUsedForWheel).
+void NoteAltUsedForWheel();
+bool TakeAltUsedForWheel();
+void ResetAltUsedForWheel();
 
 /// Clean up the given cache directory, limiting the size to max_size
 /// @param directory Directory to clean

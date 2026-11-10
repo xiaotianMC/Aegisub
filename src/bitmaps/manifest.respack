@@ -411,11 +411,6 @@ button/style_toolbutton_24.png
 button/style_toolbutton_32.png
 button/style_toolbutton_48.png
 button/style_toolbutton_64.png
-button/styling_toolbutton_16.png
-button/styling_toolbutton_24.png
-button/styling_toolbutton_32.png
-button/styling_toolbutton_48.png
-button/styling_toolbutton_64.png
 button/subend_to_video_16.png
 button/subend_to_video_24.png
 button/subend_to_video_32.png
@@ -521,6 +516,11 @@ button/visual_move_conv_pos_24.png
 button/visual_move_conv_pos_32.png
 button/visual_move_conv_pos_48.png
 button/visual_move_conv_pos_64.png
+button/visual_pan_16.png
+button/visual_pan_24.png
+button/visual_pan_32.png
+button/visual_pan_48.png
+button/visual_pan_64.png
 button/visual_rotatexy_16.png
 button/visual_rotatexy_24.png
 button/visual_rotatexy_32.png
@@ -536,6 +536,11 @@ button/visual_scale_24.png
 button/visual_scale_32.png
 button/visual_scale_48.png
 button/visual_scale_64.png
+button/visual_scroll_16.png
+button/visual_scroll_24.png
+button/visual_scroll_32.png
+button/visual_scroll_48.png
+button/visual_scroll_64.png
 button/visual_standard_16.png
 button/visual_standard_24.png
 button/visual_standard_32.png
@@ -601,3 +606,8 @@ button/zoom_out_button_24.png
 button/zoom_out_button_32.png
 button/zoom_out_button_48.png
 button/zoom_out_button_64.png
+button/visual_rectangle_16.png
+button/visual_rectangle_24.png
+button/visual_rectangle_32.png
+button/visual_rectangle_48.png
+button/visual_rectangle_64.png

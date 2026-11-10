@@ -1,0 +1,92 @@
+// Copyright (c) 2026, Aegisub contributors
+// SPDX-License-Identifier: ISC
+// Light and dark appearance (docs/theme.md). "App/Theme" picks the
+// appearance: follow the system, or always light or dark. Interface colour
+// options keep their meaning: in the dark appearance an option the user never
+// changed reads as its dark default; a changed one is used as it is.
+#pragma once
+
+#include <libaegisub/signal.h>
+
+#include <functional>
+#include <string>
+#include <utility>
+
+#include <wx/colour.h>
+
+class wxFont;
+class wxString;
+class wxWindow;
+
+namespace theme {
+/// Values of "App/Theme".
+enum class Mode { System = 0, Light = 1, Dark = 2 };
+
+/// Apply "App/Theme" to the toolkit. Call once at startup, before the first
+/// window is created (Windows reads it only then); later changes of the
+/// option are applied as they happen where the toolkit allows it.
+void Init();
+
+/// Whether the dark appearance is in use.
+bool IsDark();
+
+/// Whether the toolkit itself draws its controls dark: Windows with
+/// wxWidgets 3.3, decided once at startup. Elsewhere the toolkit's theme
+/// draws borders and the like, and this is false.
+bool NativeDark();
+
+/// Whether the appearance was changed since startup in a way only a
+/// restart fully shows: Windows sets its controls light or dark at startup.
+bool RestartNeeded();
+
+/// @p border (a wxBORDER_* style), or a flat border when NativeDark():
+/// Windows draws sunken and raised borders light even in its dark mode.
+long Border(long border);
+
+/// The colour option @p option as the interface should show it: its dark
+/// default in the dark appearance when the user has not changed it.
+wxColour Colour(std::string const& option);
+
+/// The dark default of @p option, if it has one (for tests and the preferences).
+bool HasDarkDefault(std::string const& option);
+
+/// Report that the system's colours changed (wxEVT_SYS_COLOUR_CHANGED).
+void SystemColoursChanged();
+
+/// Called after the appearance changed: windows reread their colours.
+agi::signal::UnscopedConnection AddChangeListener(std::function<void()> listener);
+
+/// Colours shared by custom-drawn interface parts, for the current appearance.
+struct Ui {
+    wxColour accent;            ///< Selected tab, titles, focus marks
+    wxColour notice_back, notice_text; ///< Notice bars (e.g. a locked editor)
+    wxColour list_back, list_text;     ///< Custom-drawn lists (the command palette)
+    wxColour list_dim;                 ///< Secondary text in them: help, shortcuts
+    wxColour list_selected;            ///< The selected row's background
+};
+Ui UiColours();
+
+/// Main window layout (docs/theme.md): content blocks (video, visual tools,
+/// audio, editor, grid) on a darker backdrop, told apart by colour alone,
+/// with no borders between them.
+/// The colour of the blocks: the toolkit's own panel colour, so native
+/// controls on them match.
+wxColour Surface();
+/// The colour between the blocks.
+wxColour Backdrop();
+/// Space between two blocks, in pixels for @p window's display.
+int BlockGap(wxWindow const *window);
+/// Give @p window the block or backdrop colour now and after every change
+/// of appearance, for as long as it exists.
+void UseSurface(wxWindow *window);
+void UseBackdrop(wxWindow *window);
+
+/// @p from moved @p share (0–1) of the way towards @p to, for the shades
+/// custom-drawn controls derive from the block and text colours.
+wxColour Mix(wxColour const& from, wxColour const& to, double share);
+
+/// The rows of @p text drawn at y = 0 in @p font that hold ink, as
+/// [top, bottom). Glyph boxes leave room for descenders and accents, so
+/// text centred by its box sits off centre; centring the ink does not.
+std::pair<int, int> TextInk(wxFont const& font, wxString const& text);
+}

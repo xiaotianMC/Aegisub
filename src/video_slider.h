@@ -41,6 +41,10 @@ class AsyncVideoProvider;
 
 /// @class VideoSlider
 /// @brief Slider for displaying and adjusting the video position
+///
+/// A flat track (docs/main-window.md): played part in the accent colour, a
+/// round handle, keyframes as ticks above, and the active line's time as a
+/// tinted span behind the track.
 class VideoSlider: public wxWindow {
 	agi::Context *c; ///< Associated project context
 	std::vector<int> keyframes; ///< Currently loaded keyframes
@@ -48,13 +52,21 @@ class VideoSlider: public wxWindow {
 
 	int val = 0; ///< Current frame number
 	int max = 1; ///< Last frame number
+	int line_start = -1; ///< First frame of the active line, -1 for none
+	int line_end = -1;   ///< Last frame of the active line
+	bool hover = false;  ///< The mouse is over the slider
+	int hover_frame = -1; ///< Frame under the mouse, for the tool tip
 
+	/// Space at each end of the track, so the handle fits at both ends
+	int Margin() const;
 	/// Get the frame number for the given x coordinate
-	int GetValueAtX(int x);
+	int GetValueAtX(int x) const;
 	/// Get the x-coordinate for a frame number
-	int GetXAtValue(int value);
+	int GetXAtValue(int value) const;
 	/// Set the position of the slider
 	void SetValue(int value);
+	/// Tool tip naming the time and frame under the mouse
+	void UpdateToolTip(int x);
 
 	/// Video open event handler
 	void VideoOpened(AsyncVideoProvider *new_provider);
@@ -69,6 +81,13 @@ class VideoSlider: public wxWindow {
 
 public:
 	VideoSlider(wxWindow* parent, agi::Context *c);
+
+	/// Mark the active line's frames, @p start to @p end inclusive; -1 for no line
+	void SetLineRange(int start, int end);
+	int GetLineStart() const { return line_start; }
+	int GetLineEnd() const { return line_end; }
+	/// x-coordinate of @p frame on the track, for tests
+	int XAtFrame(int frame) const { return GetXAtValue(frame); }
 
 	DECLARE_EVENT_TABLE()
 };

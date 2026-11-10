@@ -48,6 +48,7 @@
 #include <libaegisub/audio/provider.h>
 
 #include <algorithm>
+#include <cmath>
 
 #include <wx/dcbuffer.h>
 #include <wx/dcgraph.h>
@@ -138,7 +139,15 @@ class AudioDisplayScrollbar final : public AudioDisplayInteractionObject {
 	wxRect bounds;
 	wxRect thumb;
 
-	bool dragging = false;   ///< user is dragging with the primary mouse button
+	/// What the primary button is dragging
+	enum class Drag { None, Move, Jump, Left, Right };
+	Drag drag = Drag::None;
+	/// Press position inside the thumb, kept while moving it
+	int grab_offset = 0;
+	/// Time in ms of the edge that stays put while the other one is dragged
+	double fixed_time = 0;
+	/// Width of the edge handles that resize the view
+	static const int handle_width = 6;
 
 	int data_length = 1; ///< total amount of data in control
 	int page_length = 1; ///< amount of data in one page
@@ -156,8 +165,11 @@ class AudioDisplayScrollbar final : public AudioDisplayInteractionObject {
 	void RecalculateThumb()
 	{
 		thumb.width = std::max<int>(min_width, (int64_t)bounds.width * page_length / data_length);
+		// Stays inside the bar so both of its edge handles can be reached
+		thumb.width = std::min(thumb.width, std::max(min_width, bounds.width));
 		thumb.height = height;
-		thumb.x = int((int64_t)bounds.width * position / data_length);
+		thumb.x = std::min(int((int64_t)bounds.width * position / data_length), bounds.width - thumb.width);
+		thumb.x = std::max(0, thumb.x);
 		thumb.y = bounds.y;
 	}
 
@@ -216,25 +228,81 @@ public:
 		RecalculateThumb();
 	}
 
+	/// What a press at @p x grabs
+	Drag HitTest(int x) const
+	{
+		// The handles reach a little outside the thumb, and never meet in a
+		// narrow thumb: the middle of it still moves it.
+		const int reach = std::min(handle_width, std::max(2, thumb.width / 3));
+		if (x >= thumb.x - 3 && x < thumb.x + reach) return Drag::Left;
+		if (x > thumb.GetRight() - reach && x <= thumb.GetRight() + 3) return Drag::Right;
+		if (x >= thumb.x && x <= thumb.GetRight()) return Drag::Move;
+		return Drag::Jump;
+	}
+
+	/// Time in ms at @p x on the bar, which stands for the whole audio
+	double TimeAt(int x) const
+	{
+		return std::clamp(x, 0, bounds.width) * double(display->GetDuration()) / std::max(1, bounds.width);
+	}
+
 	bool OnMouseEvent(wxMouseEvent &event) override
 	{
-		if (event.LeftIsDown())
+		const int x = event.GetPosition().x;
+		if (event.LeftDown())
 		{
-			const int thumb_left = event.GetPosition().x - thumb.width/2;
-			const int data_length_less_page = data_length - page_length;
-			const int shaft_length_less_thumb = bounds.width - thumb.width;
-
-			display->ScrollPixelToLeft((int64_t)data_length_less_page * thumb_left / shaft_length_less_thumb);
-
-			dragging = true;
-		}
-		else if (event.LeftUp())
-		{
-			dragging = false;
+			drag = HitTest(x);
+			grab_offset = drag == Drag::Move ? x - thumb.x : thumb.width / 2;
+			const double ms = display->GetMillisecondsPerPixel();
+			const double left = display->GetScrollLeft() * ms;
+			const double right = left + display->GetClientSize().GetWidth() * ms;
+			fixed_time = drag == Drag::Left ? right : left;
+			if (drag == Drag::Jump) drag = Drag::Move;
 		}
 
-		return dragging;
+		if (event.LeftIsDown() && drag != Drag::None)
+		{
+			if (drag == Drag::Move)
+			{
+				const int thumb_left = x - grab_offset;
+				const int data_length_less_page = data_length - page_length;
+				const int shaft_length_less_thumb = std::max(1, bounds.width - thumb.width);
+				display->ScrollPixelToLeft((int64_t)data_length_less_page * thumb_left / shaft_length_less_thumb);
+			}
+			else
+			{
+				// The other edge stays where it is; the span follows the mouse
+				const double min_span = display->MinVisibleDuration();
+				const double max_span = display->MaxVisibleDuration();
+				const double t = TimeAt(x);
+				double span = drag == Drag::Left ? fixed_time - t : t - fixed_time;
+				span = std::clamp(span, min_span, max_span);
+				if (drag == Drag::Left)
+					display->ZoomToTimeRange(fixed_time - span, fixed_time);
+				else
+					display->ZoomToTimeRange(fixed_time, fixed_time + span);
+			}
+			return true;
+		}
+
+		if (event.LeftUp())
+			drag = Drag::None;
+
+		if (drag == Drag::None)
+		{
+			const Drag hit = bounds.Contains(event.GetPosition()) ? HitTest(x) : Drag::Jump;
+			display->SetCursor(hit == Drag::Left || hit == Drag::Right ? wxCursor(wxCURSOR_SIZEWE) : wxNullCursor);
+		}
+		return false;
 	}
+
+	/// Where a press on the bar would resize the view, for tests
+	bool IsResizeHandle(int x) const
+	{
+		auto hit = HitTest(x);
+		return hit == Drag::Left || hit == Drag::Right;
+	}
+	const wxRect& GetThumb() const { return thumb; }
 
 	void Paint(wxDC &dc, bool has_focus, int load_progress)
 	{
@@ -266,10 +334,19 @@ public:
 		dc.SetPen(wxPen(colours.Light()));
 		dc.SetBrush(wxBrush(colours.Light()));
 		dc.DrawRectangle(thumb);
+
+		// Grips at both ends: drag them to zoom
+		if (thumb.width >= 3 * handle_width)
+		{
+			dc.SetPen(wxPen(colours.Dark()));
+			for (int x : {thumb.x + 3, thumb.x + 5, thumb.GetRight() - 3, thumb.GetRight() - 5})
+				dc.DrawLine(x, thumb.y + 4, x, thumb.GetBottom() - 3);
+		}
 	}
 };
 
 const int AudioDisplayScrollbar::min_width;
+const int AudioDisplayScrollbar::handle_width;
 
 class AudioDisplayTimeline final : public AudioDisplayInteractionObject {
 	int duration = 0;          ///< Total duration in ms
@@ -537,6 +614,7 @@ class AudioMarkerInteractionObject final : public AudioDisplayInteractionObject 
 	// Object-pair being interacted with
 	std::vector<AudioMarker*> markers;
 	AudioTimingController *timing_controller;
+	std::weak_ptr<void const> marker_lifetime;
 	// Audio display drag is happening on
 	AudioDisplay *display;
 	// Mouse button used to initiate the drag
@@ -550,13 +628,20 @@ public:
 	AudioMarkerInteractionObject(std::vector<AudioMarker*> markers, AudioTimingController *timing_controller, AudioDisplay *display, wxMouseButton button_used)
 	: markers(std::move(markers))
 	, timing_controller(timing_controller)
+	, marker_lifetime(timing_controller->MarkerLifetime())
 	, display(display)
 	, button_used(button_used)
 	{
 	}
+	~AudioMarkerInteractionObject() override {
+		if(!marker_lifetime.expired()) {
+			try { timing_controller->EndDrag(true); } catch (...) { }
+		}
+	}
 
 	bool OnMouseEvent(wxMouseEvent &event) override
 	{
+		if (marker_lifetime.expired()) return false;
 		if (event.Dragging())
 		{
 			timing_controller->OnMarkerDrag(
@@ -566,15 +651,21 @@ public:
 		}
 
 		// We lose the marker drag if the button used to initiate it goes up
-		return !event.ButtonUp(button_used);
+		if (event.ButtonUp(button_used)) {
+			timing_controller->EndDrag(false);
+			marker_lifetime.reset();
+			return false;
+		}
+		return true;
 	}
 
 	/// Get the position in milliseconds of this group of markers
-	int GetPosition() const { return markers.front()->GetPosition(); }
+	bool Current() const { return !marker_lifetime.expired(); }
+	int GetPosition() const { return marker_lifetime.expired() ? 0 : markers.front()->GetPosition(); }
 };
 
 AudioDisplay::AudioDisplay(wxWindow *parent, AudioController *controller, agi::Context *context)
-: wxWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxWANTS_CHARS|wxBORDER_SIMPLE)
+: wxWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxWANTS_CHARS|wxBORDER_NONE)
 , audio_open_connection(context->project->AddAudioProviderListener(&AudioDisplay::OnAudioOpen, this))
 , context(context)
 , audio_renderer(std::make_unique<AudioRenderer>())
@@ -602,6 +693,10 @@ AudioDisplay::AudioDisplay(wxWindow *parent, AudioController *controller, agi::C
 	Bind(wxEVT_PAINT, &AudioDisplay::OnPaint, this);
 	Bind(wxEVT_SIZE, &AudioDisplay::OnSize, this);
 	Bind(wxEVT_KILL_FOCUS, &AudioDisplay::OnFocus, this);
+	Bind(wxEVT_MOUSE_CAPTURE_LOST, [this](wxMouseCaptureLostEvent&) {
+		scroll_timer.Stop();
+		SetDraggedObject(nullptr);
+	});
 	Bind(wxEVT_SET_FOCUS, &AudioDisplay::OnFocus, this);
 	Bind(wxEVT_CHAR_HOOK, &AudioDisplay::OnKeyDown, this);
 	Bind(wxEVT_KEY_DOWN, &AudioDisplay::OnKeyDown, this);
@@ -611,6 +706,8 @@ AudioDisplay::AudioDisplay(wxWindow *parent, AudioController *controller, agi::C
 
 AudioDisplay::~AudioDisplay()
 {
+	// Cancel while our UI members and notification connections are still alive.
+	SetDraggedObject(nullptr);
 }
 
 void AudioDisplay::ScrollBy(int pixel_amount)
@@ -682,20 +779,54 @@ void AudioDisplay::ScrollTimeRangeInView(const TimeRange &range)
 	}
 }
 
+double AudioDisplay::ZoomLevelMsPerPixel(int level)
+{
+	const int base_pixels_per_second = 50; /// @todo Make this customisable
+	const double base_ms_per_pixel = 1000.0 / base_pixels_per_second;
+	return 100.0 * base_ms_per_pixel / GetZoomLevelFactor(level);
+}
+
+int AudioDisplay::NearestZoomLevel(double ms)
+{
+	int best = 0;
+	double best_distance = -1;
+	for (int level = -50; level <= 30; ++level)
+	{
+		double distance = std::abs(std::log(ZoomLevelMsPerPixel(level) / ms));
+		// Levels below -30 all share the widest scale: keep the one nearest 0
+		if (best_distance < 0 || distance <= best_distance + 1e-9)
+		{
+			best = level;
+			best_distance = distance;
+		}
+	}
+	return best;
+}
+
+double AudioDisplay::MinVisibleDuration() const
+{
+	return ZoomLevelMsPerPixel(30) * std::max(1, GetClientSize().GetWidth());
+}
+
+double AudioDisplay::MaxVisibleDuration() const
+{
+	return ZoomLevelMsPerPixel(-50) * std::max(1, GetClientSize().GetWidth());
+}
+
 void AudioDisplay::SetZoomLevel(int new_zoom_level)
 {
 	zoom_level = new_zoom_level;
-
-	const int factor = GetZoomLevelFactor(zoom_level);
-	const int base_pixels_per_second = 50; /// @todo Make this customisable
-	const double base_ms_per_pixel = 1000.0 / base_pixels_per_second;
-	const double new_ms_per_pixel = 100.0 * base_ms_per_pixel / factor;
-
+	const double new_ms_per_pixel = ZoomLevelMsPerPixel(zoom_level);
 	if (ms_per_pixel == new_ms_per_pixel) return;
 
 	int client_width = GetClientSize().GetWidth();
-	double cursor_pos = track_cursor_pos >= 0 ? track_cursor_pos - scroll_left : client_width / 2.0;
-	double cursor_time = (scroll_left + cursor_pos) * ms_per_pixel;
+	ApplyMsPerPixel(new_ms_per_pixel, track_cursor_pos >= 0 ? track_cursor_pos - scroll_left : client_width / 2.0);
+}
+
+void AudioDisplay::ApplyMsPerPixel(double new_ms_per_pixel, double anchor)
+{
+	int client_width = GetClientSize().GetWidth();
+	double anchor_time = (scroll_left + anchor) * ms_per_pixel;
 
 	ms_per_pixel = new_ms_per_pixel;
 	pixel_audio_width = std::max(1, int(GetDuration() / ms_per_pixel));
@@ -704,16 +835,33 @@ void AudioDisplay::SetZoomLevel(int new_zoom_level)
 	scrollbar->ChangeLengths(pixel_audio_width, client_width);
 	timeline->ChangeZoom(ms_per_pixel);
 
-	ScrollPixelToLeft(AbsoluteXFromTime(cursor_time) - cursor_pos);
+	ScrollPixelToLeft(int(std::lround(anchor_time / ms_per_pixel - anchor)));
 	if (track_cursor_pos >= 0)
-		track_cursor_pos = AbsoluteXFromTime(cursor_time);
+		track_cursor_pos = AbsoluteXFromTime(int(anchor_time));
 	Refresh();
+}
+
+void AudioDisplay::ZoomToTimeRange(double begin, double end)
+{
+	const int client_width = std::max(1, GetClientSize().GetWidth());
+	double span = std::clamp(end - begin, MinVisibleDuration(), MaxVisibleDuration());
+	const double new_ms_per_pixel = span / client_width;
+
+	zoom_level = NearestZoomLevel(new_ms_per_pixel);
+	OPT_SET("Audio/Zoom/Horizontal")->SetInt(zoom_level);
+
+	if (new_ms_per_pixel != ms_per_pixel)
+	{
+		// Anchor the left edge: the caller places it afterwards anyway
+		ApplyMsPerPixel(new_ms_per_pixel, 0);
+	}
+	ScrollPixelToLeft(int(std::lround(begin / ms_per_pixel)));
 }
 
 wxString AudioDisplay::GetZoomLevelDescription(int level) const
 {
 	const int factor = GetZoomLevelFactor(level);
-	const int base_pixels_per_second = 50; /// @todo Make this customisable along with the above
+	const int base_pixels_per_second = 50;
 	const int second_pixels = 100 * base_pixels_per_second / factor;
 
 	return fmt_tl("%d%%, %d pixel/second", factor, second_pixels);
@@ -786,7 +934,9 @@ void AudioDisplay::ReloadRenderingSettings()
 	else
 	{
 		colour_scheme_name = OPT_GET("Colour/Audio Display/Waveform")->GetString();
-		audio_renderer_provider = std::make_unique<AudioWaveformRenderer>(colour_scheme_name);
+		auto waveform = std::make_unique<AudioWaveformRenderer>(colour_scheme_name);
+		waveform->SetDbGridGap(DbLabelGap());
+		audio_renderer_provider = std::move(waveform);
 	}
 
 	audio_renderer->SetRenderer(audio_renderer_provider.get());
@@ -839,6 +989,7 @@ void AudioDisplay::OnPaint(wxPaintEvent&)
 	wxRect audio_bounds(0, audio_top, GetClientSize().GetWidth(), audio_height);
 	bool redraw_scrollbar = false;
 	bool redraw_timeline = false;
+	bool redraw_db_scale = false;
 
 	for (wxRegionIterator region(GetUpdateRegion()); region; ++region)
 	{
@@ -857,11 +1008,20 @@ void AudioDisplay::OnPaint(wxPaintEvent&)
 			PaintAudio(dc, updtime, updrect);
 			PaintMarkers(gcdc, updtime);
 			PaintLabels(dc, updtime);
+			redraw_db_scale |= updrect.x <= DbScaleWidth(dc);
 		}
 	}
 
 	if (track_cursor_pos >= 0)
 		PaintTrackCursor(dc);
+
+	// Over everything else and in the same place whatever the scroll
+	// position: markers, labels and the cursor pass under the values.
+	if (redraw_db_scale)
+	{
+		wxDCClipper clip(dc, audio_bounds);
+		PaintDbScale(dc);
+	}
 
 	if (redraw_scrollbar)
 		scrollbar->Paint(dc, HasFocus(), audio_load_position);
@@ -886,6 +1046,68 @@ void AudioDisplay::PaintAudio(wxDC &dc, const TimeRange updtime, const wxRect up
 			audio_renderer->Render(dc, wxPoint(range_x1, audio_top),
 				range_x1 + scroll_left, range_x2 - range_x1, range_style);
 	}
+}
+
+wxFont AudioDisplay::DbLabelFont() const
+{
+	wxFont font = GetFont();
+	font.SetFractionalPointSize(font.GetFractionalPointSize() * 0.8);
+	return font;
+}
+
+int AudioDisplay::DbLabelGap() const
+{
+	// Lines at least one value and a little apart: their values never touch,
+	// whatever the font and display scale.
+	int height = 0;
+	wxFont font = DbLabelFont();
+	GetTextExtent("-60", nullptr, &height, nullptr, nullptr, &font);
+	return std::max(FromDIP(16), height + FromDIP(4));
+}
+
+int AudioDisplay::DbScaleWidth(wxDC &dc) const
+{
+	wxDCFontChanger font_changer(dc, DbLabelFont());
+	return dc.GetTextExtent("-60").GetWidth() + FromDIP(6);
+}
+
+void AudioDisplay::PaintDbScale(wxDC &dc)
+{
+	wxDCFontChanger font_changer(dc, DbLabelFont());
+	wxDCTextColourChanger colour_changer(dc, AudioWaveformRenderer::DbLabelColour());
+	wxDCPenChanger pen_changer(dc, *wxTRANSPARENT_PEN);
+	wxDCBrushChanger brush_changer(dc, *wxBLACK_BRUSH);
+	for (auto const& label : DbLabelRects(dc))
+	{
+		dc.DrawRectangle(label.rect);
+		dc.DrawText(label.text, label.rect.x + FromDIP(3), label.rect.y);
+	}
+}
+
+std::vector<AudioDisplay::DbLabel> AudioDisplay::DbLabelRects(wxDC &dc) const
+{
+	std::vector<DbLabel> labels;
+	if (OPT_GET("Audio/Spectrum")->GetBool() || !OPT_GET("Audio/Display/Draw/dB Scale")->GetBool()) return labels;
+	const int midpoint = audio_top + audio_height / 2;
+	const int bottom = audio_top + audio_height;
+	for (auto const& level : AudioWaveformRenderer::DbGrid(audio_height, audio_renderer->GetAmplitudeScale(), DbLabelGap()))
+	{
+		wxString text = std::to_wstring(level.db);
+		wxSize extent = dc.GetTextExtent(text);
+		for (int y : {midpoint - level.offset, midpoint + level.offset})
+		{
+			// Centred on its line, pushed inside at the edges, on a black
+			// plate as the waveform runs under it
+			int top = std::clamp(y - extent.y / 2, audio_top, bottom - extent.y);
+			wxRect rect(0, top, extent.x + FromDIP(5), extent.y);
+			if (top < audio_top) continue; // Taller than the display
+			// Never on top of another value
+			if (std::any_of(labels.begin(), labels.end(), [&](DbLabel const& l) { return l.rect.Intersects(rect); }))
+				continue;
+			labels.push_back({text, rect});
+		}
+	}
+	return labels;
 }
 
 void AudioDisplay::PaintMarkers(wxDC &dc, TimeRange updtime)
@@ -1126,10 +1348,13 @@ void AudioDisplay::OnMouseEvent(wxMouseEvent& event)
 	const int old_scroll_pos = scroll_left;
 	if (event.LeftDown() || event.RightDown())
 	{
+		if(!timing->BeginDrag())return;
 		const int timepos = TimeFromRelativeX(mouse_x);
-		std::vector<AudioMarker*> markers = event.LeftDown()
+		std::vector<AudioMarker*> markers;
+		try { markers = event.LeftDown()
 			? timing->OnLeftClick(timepos, event.CmdDown(), event.AltDown(), drag_sensitivity, snap_sensitivity)
 			: timing->OnRightClick(timepos, event.CmdDown(), drag_sensitivity, snap_sensitivity);
+		} catch (...) { timing->EndDrag(true); throw; }
 
 		// Clicking should never result in the audio display scrolling
 		ScrollPixelToLeft(old_scroll_pos);
@@ -1141,6 +1366,7 @@ void AudioDisplay::OnMouseEvent(wxMouseEvent& event)
 			SetDraggedObject(audio_marker.get());
 			return;
 		}
+		timing->EndDrag(false);
 	}
 }
 
@@ -1148,7 +1374,10 @@ bool AudioDisplay::ForwardMouseEvent(wxMouseEvent &event) {
 	// Handle any ongoing drag
 	if (dragged_object && HasCapture())
 	{
-		if (!dragged_object->OnMouseEvent(event))
+		bool handled;
+		try { handled = dragged_object->OnMouseEvent(event); }
+		catch (...) { SetDraggedObject(nullptr); scroll_timer.Stop(); throw; }
+		if (!handled)
 		{
 			scroll_timer.Stop();
 			SetDraggedObject(nullptr);
@@ -1232,6 +1461,7 @@ int AudioDisplay::GetDuration() const
 
 void AudioDisplay::OnAudioOpen(agi::AudioProvider *provider)
 {
+	SetDraggedObject(nullptr);
 	this->provider = provider;
 
 	if (!audio_renderer_provider)
@@ -1257,6 +1487,7 @@ void AudioDisplay::OnAudioOpen(agi::AudioProvider *provider)
 				controller->AddTimingControllerListener(&AudioDisplay::OnTimingController, this),
 				OPT_SUB("Audio/Spectrum", &AudioDisplay::ReloadRenderingSettings, this),
 				OPT_SUB("Audio/Display/Waveform Style", &AudioDisplay::ReloadRenderingSettings, this),
+				OPT_SUB("Audio/Display/Draw/dB Scale", &AudioDisplay::ReloadRenderingSettings, this),
 				OPT_SUB("Colour/Audio Display/Spectrum", &AudioDisplay::ReloadRenderingSettings, this),
 				OPT_SUB("Colour/Audio Display/Waveform", &AudioDisplay::ReloadRenderingSettings, this),
 				OPT_SUB("Audio/Renderer/Spectrum/Quality", &AudioDisplay::ReloadRenderingSettings, this),
@@ -1280,6 +1511,7 @@ void AudioDisplay::OnAudioOpen(agi::AudioProvider *provider)
 
 void AudioDisplay::OnTimingController()
 {
+	SetDraggedObject(nullptr);
 	AudioTimingController *timing_controller = controller->GetTimingController();
 	if (timing_controller)
 	{
@@ -1324,7 +1556,7 @@ void AudioDisplay::OnSelectionChanged()
 	TimeRange sel(controller->GetPrimaryPlaybackRange());
 	scrollbar->SetSelection(AbsoluteXFromTime(sel.begin()), AbsoluteXFromTime(sel.length()));
 
-	if (audio_marker)
+	if (audio_marker && audio_marker->Current())
 	{
 		if (!scroll_timer.IsRunning())
 		{
@@ -1349,7 +1581,7 @@ void AudioDisplay::OnSelectionChanged()
 
 void AudioDisplay::OnScrollTimer(wxTimerEvent &)
 {
-	if (!audio_marker) return;
+	if (!audio_marker || !audio_marker->Current()) { scroll_timer.Stop(); return; }
 
 	int rel_x = RelativeXFromTime(audio_marker->GetPosition());
 	int width = GetClientSize().GetWidth();
@@ -1381,5 +1613,8 @@ void AudioDisplay::OnStyleRangesChanged()
 
 void AudioDisplay::OnMarkerMoved()
 {
+	// Rebuilding a cache invalidates the borrow before deleting its markers.
+	// A drag currently dispatching an event is retired on its next event;
+	// never delete that event's receiver from inside a marker notification.
 	RefreshRect(wxRect(0, audio_top, GetClientSize().GetWidth(), audio_height), false);
 }

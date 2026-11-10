@@ -42,6 +42,9 @@
 #include "video_provider_dummy.h"
 
 
+#include <algorithm>
+#include <cmath>
+
 #include <wx/dcclient.h>
 #include <wx/msgdlg.h>
 
@@ -72,6 +75,49 @@ SubtitlesPreview::SubtitlesPreview(wxWindow *parent, wxSize size, int winStyle, 
 SubtitlesPreview::~SubtitlesPreview() {
 }
 
+namespace {
+/// Relative luminance, as WCAG reckons it
+double Luminance(agi::Color c) {
+	auto channel = [](unsigned char v) {
+		double x = v / 255.;
+		return x <= 0.03928 ? x / 12.92 : std::pow((x + 0.055) / 1.055, 2.4);
+	};
+	return 0.2126 * channel(c.r) + 0.7152 * channel(c.g) + 0.0722 * channel(c.b);
+}
+
+double Contrast(agi::Color a, agi::Color b) {
+	double la = Luminance(a), lb = Luminance(b);
+	return (std::max(la, lb) + 0.05) / (std::min(la, lb) + 0.05);
+}
+}
+
+agi::Color PreviewBackdrop(AssStyle const& style, agi::Color back) {
+	// An alpha of 255 is transparent
+	bool fill = style.primary.a < 255;
+	bool outline = style.outline_w > 0 && style.outline.a < 255;
+	// An outline set apart from the fill frames the text on any background
+	if (fill && outline && Contrast(style.primary, style.outline) >= 4.5) return back;
+	if (!fill && !outline) return back;
+	// Otherwise the text is one colour, which the background must stand
+	// apart from. Dark text on a middling grey is darker than the contrast
+	// ratio says: it wants a light background.
+	agi::Color ink = fill ? style.primary : style.outline;
+	bool dark = Luminance(ink) < 0.18;
+	if (dark ? Luminance(back) >= 0.45 : Contrast(ink, back) >= 4.5) return back;
+	return dark ? agi::Color(232, 234, 238) : agi::Color(40, 44, 52);
+}
+
+agi::Color SubtitlesPreview::Backdrop() const {
+	return PreviewBackdrop(*style, back_color);
+}
+
+void SubtitlesPreview::UpdateBackdrop() {
+	auto wanted = Backdrop();
+	if (vid && wanted == shown_back) return;
+	shown_back = wanted;
+	if (bmp) vid = std::make_unique<DummyVideoProvider>(0.0, 10, bmp->GetWidth(), bmp->GetHeight(), shown_back, true);
+}
+
 void SubtitlesPreview::SetStyle(AssStyle const& new_style) {
 	if (provider && style->font != new_style.font)
 		provider->Reinitialize();
@@ -81,6 +127,7 @@ void SubtitlesPreview::SetStyle(AssStyle const& new_style) {
 	style->alignment = 5;
 	std::fill(style->Margin.begin(), style->Margin.end(), 0);
 	style->UpdateData();
+	UpdateBackdrop();
 	UpdateBitmap();
 }
 
@@ -95,7 +142,7 @@ void SubtitlesPreview::SetText(std::string const& text) {
 void SubtitlesPreview::SetColour(agi::Color col) {
 	if (col != back_color) {
 		back_color = col;
-		vid = std::make_unique<DummyVideoProvider>(0.0, 10, bmp->GetWidth(), bmp->GetHeight(), back_color, true);
+		UpdateBackdrop();
 		UpdateBitmap();
 	}
 }
@@ -130,7 +177,8 @@ void SubtitlesPreview::OnSize(wxSizeEvent &evt) {
 	int h = evt.GetSize().GetHeight();
 
 	bmp = std::make_unique<wxBitmap>(w, h, -1);
-	vid = std::make_unique<DummyVideoProvider>(0.0, 10, w, h, back_color, true);
+	shown_back = Backdrop();
+	vid = std::make_unique<DummyVideoProvider>(0.0, 10, w, h, shown_back, true);
 	try {
 		if (!progress)
 			progress = std::make_unique<DialogProgress>(this);

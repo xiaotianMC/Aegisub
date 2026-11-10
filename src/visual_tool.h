@@ -15,10 +15,13 @@
 // Aegisub Project http://www.aegisub.org/
 
 #pragma once
+#include <memory>
 
 #include "gl_wrap.h"
 #include "vector2d.h"
 #include "options.h"
+#include "subtitle_project_access.h"
+#include <map>
 
 #include <libaegisub/owning_intrusive_list.h>
 #include <libaegisub/signal.h>
@@ -30,6 +33,7 @@ class VideoDisplay;
 class wxMouseCaptureLostEvent;
 class wxMouseEvent;
 class wxToolBar;
+class wxKeyEvent;
 namespace agi {
 	struct Context;
 	class OptionValue;
@@ -43,6 +47,25 @@ namespace agi {
 /// functionality as possible is implemented here to avoid having four copies
 /// of each method for no good reason (and four times as many error messages)
 class VisualToolBase {
+protected:
+    // Declared first: expires only after all owned bindings/cache members are destroyed.
+    std::shared_ptr<int> model_observer_lifetime = std::make_shared<int>(0);
+private:
+	std::map<int, std::unique_ptr<AssDialogue>> rows;
+	std::vector<AssDialogue*> ordered_rows; // borrows only our owned snapshots
+	std::optional<agi::SubtitleEditGate::RevisionToken> cache_revision;
+	std::optional<SubtitleProjectAccess::Interaction> interaction;
+	std::set<int> dirty;
+	std::vector<int> targets;
+	std::map<int, AssDialogueBase> originals;
+	void ValidateOriginals() const;
+	wxString edit_message;
+	bool changing_selection = false;
+	bool previewing = false;
+	bool deferred_seek = false;
+	void ReadSelection();
+	void OnSelectionChanged();
+	void OnKeyDown(wxKeyEvent&);
 	void SetResolutions();
 	void OnCommit(int type);
 	void OnSeek(int new_frame);
@@ -54,7 +77,7 @@ class VisualToolBase {
 	AssDialogue *GetActiveDialogueLine();
 
 	// SubtitleSelectionListener implementation
-	void OnActiveLineChanged(AssDialogue *new_line);
+	void OnActiveLineChanged();
 
 	// Below here are the virtuals that must be implemented
 
@@ -76,6 +99,7 @@ class VisualToolBase {
 	virtual void DoRefresh() { }
 
 protected:
+	void RefreshRows();
 	std::vector<agi::signal::Connection> connections;
 
 	OpenGLWrapper gl;
@@ -87,7 +111,7 @@ protected:
 	VideoDisplay *parent;
 
 	bool holding = false; ///< Is a hold currently in progress?
-	AssDialogue *active_line = nullptr; ///< Active dialogue line; nullptr if it is not visible on the current frame
+	AssDialogue *active_line = nullptr; ///< Owned independent snapshot, never a live project row
 	bool dragging = false; ///< Is a drag currently in progress?
 
 	int frame_number; ///< Current frame number
@@ -111,7 +135,18 @@ protected:
 	const agi::OptionValue *shaded_area_alpha_opt;
 
 	agi::signal::Connection file_changed_connection;
-	int commit_id = -1; ///< Last used commit id for coalescing
+	std::vector<int> selected_ids;
+	AssDialogue* Snapshot(int id) const;
+	std::vector<AssDialogue*> SelectedLines() const;
+	std::vector<AssDialogue*> const& Rows() const { return ordered_rows; }
+	bool BeginEdit(int include_id = 0);
+	bool EditCurrent() const;
+	bool HasEdit() const { return interaction.has_value(); }
+	void EndEdit(bool apply);
+	void SelectLine(int id);
+	void SelectFeature(int id, bool clear);
+	void DeselectFeature(int id);
+	int InsertDrawing(AssDialogueBase const&, AssStyle const*);
 
 	/// @brief Commit the current file state
 	/// @param message Description of changes for undo
@@ -131,10 +166,15 @@ protected:
 
 	void SetOverride(AssDialogue* line, std::string const& tag, std::string const& value);
 	void SetSelectedOverride(std::string const& tag, std::string const& value);
+	/// Set a line's Effect field, as SetOverride sets a tag: previewed, then
+	/// written with the text when the edit ends
+	void SetEffect(AssDialogue* line, std::string const& value);
 
 	VisualToolBase(VideoDisplay *parent, agi::Context *context);
 
 public:
+	// Explicit teardown discards detached previews; it never commits a subtitle.
+	void Cancel();
 	/// Convert a point from video to script coordinates
 	Vector2D ToScriptCoords(Vector2D point) const;
 	/// Convert a point from script to video coordinates
@@ -150,7 +190,7 @@ public:
 	virtual void SetToolbar(wxToolBar *) { }
 	virtual void SetSubTool([[maybe_unused]] int subtool) { }
 	virtual int GetSubTool() { return 0; }
-	virtual ~VisualToolBase() = default;
+	virtual ~VisualToolBase();
 };
 
 /// Visual tool base class containing all common feature-related functionality
@@ -161,6 +201,7 @@ protected:
 	typedef agi::owning_intrusive_list<FeatureType> feature_list;
 
 private:
+	void MouseEvent(wxMouseEvent&);
 	bool sel_changed = false; /// Has the selection already been changed in the current click?
 
 	/// @brief Called when a hold is begun

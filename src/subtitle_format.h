@@ -31,11 +31,19 @@
 
 #include <libaegisub/exception.h>
 #include <libaegisub/fs.h>
+#include <libaegisub/ass/version_compare.h>
 
 #include <string>
 #include <vector>
 
 class AssFile;
+struct SubtitleReadOptions {
+	bool preserve_whitespace = false;
+	agi::ass::compare::Cancel cancelled;
+	// Optional output for container formats whose capability depends on track.
+	agi::ass::compare::Fields *fields = nullptr;
+	void CheckCancelled() const { agi::ass::compare::CheckCancelled(cancelled); }
+};
 namespace agi::vfr { class Framerate; }
 
 class SubtitleFormat {
@@ -98,7 +106,7 @@ public:
 	/// @param[out] target Destination to read lines into
 	/// @param filename File to load
 	/// @param encoding Encoding to use. May be ignored by the reader.
-	virtual void ReadFile([[maybe_unused]] AssFile *target, [[maybe_unused]] agi::fs::path const& filename, [[maybe_unused]] agi::vfr::Framerate const& fps, [[maybe_unused]] const char *encoding) const { }
+	virtual void ReadFile([[maybe_unused]] AssFile *target, [[maybe_unused]] agi::fs::path const& filename, [[maybe_unused]] agi::vfr::Framerate const& fps, [[maybe_unused]] const char *encoding, [[maybe_unused]] SubtitleReadOptions const& options = {}) const { }
 
 	/// Save a subtitle file
 	/// @param src Data to write

@@ -51,6 +51,8 @@
 #include <boost/algorithm/string/case_conv.hpp>
 #include <cassert>
 #include <memory>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace {
 	using namespace agi::lua;
@@ -125,7 +127,7 @@ namespace {
 		return 0;
 	}
 
-	int modification_mask(AssEntry *e)
+	int modification_mask(AssEntry const* e)
 	{
 		if (!e) return AssFile::COMMIT_SCRIPTINFO;
 		switch (e->Group()) {
@@ -341,9 +343,20 @@ namespace Automation4 {
 	}
 
 	std::unique_ptr<AssEntry> LuaAssFile::LuaToTrackedAssEntry(lua_State *L) {
-		std::unique_ptr<AssEntry> e = LuaToAssEntry(L, ass);
-		allocated_lines.push_back(e.get());
-		return e;
+		// Writes are only possible with a target (CheckAllowModify ran first)
+		assert(target);
+		return LuaToAssEntry(L, target);
+	}
+
+	AssEntry const* LuaAssFile::Adopt(std::unique_ptr<AssEntry> e) {
+		AssEntry const* ptr = e.get();
+		if (e->Group() == AssEntryGroup::INFO)
+			info_entries.push_back(std::move(e));
+		else {
+			allocated_lines.reserve(allocated_lines.size() + 1);
+			allocated_lines.push_back(e.release());
+		}
+		return ptr;
 	}
 
 	int LuaAssFile::ObjectIndexRead(lua_State *L)
@@ -369,17 +382,20 @@ namespace Automation4 {
 					return 1;
 				}
 
+				// exception_wrapper turns C++ errors into Lua errors so no C++
+				// exception crosses the Lua C boundary (the metamethods and the
+				// aegisub.* functions are wrapped the same way by set_field).
 				lua_pushvalue(L, 1);
 				if (strcmp(idx, "delete") == 0)
-					lua_pushcclosure(L, closure_wrapper_v<&LuaAssFile::ObjectDelete, false>, 1);
+					lua_pushcclosure(L, exception_wrapper<closure_wrapper_v<&LuaAssFile::ObjectDelete, false>>, 1);
 				else if (strcmp(idx, "deleterange") == 0)
-					lua_pushcclosure(L, closure_wrapper_v<&LuaAssFile::ObjectDeleteRange, false>, 1);
+					lua_pushcclosure(L, exception_wrapper<closure_wrapper_v<&LuaAssFile::ObjectDeleteRange, false>>, 1);
 				else if (strcmp(idx, "insert") == 0)
-					lua_pushcclosure(L, closure_wrapper_v<&LuaAssFile::ObjectInsert, false>, 1);
+					lua_pushcclosure(L, exception_wrapper<closure_wrapper_v<&LuaAssFile::ObjectInsert, false>>, 1);
 				else if (strcmp(idx, "append") == 0)
-					lua_pushcclosure(L, closure_wrapper_v<&LuaAssFile::ObjectAppend, false>, 1);
+					lua_pushcclosure(L, exception_wrapper<closure_wrapper_v<&LuaAssFile::ObjectAppend, false>>, 1);
 				else if (strcmp(idx, "script_resolution") == 0)
-					lua_pushcclosure(L, closure_wrapper<&LuaAssFile::LuaGetScriptResolution>, 1);
+					lua_pushcclosure(L, exception_wrapper<closure_wrapper<&LuaAssFile::LuaGetScriptResolution>>, 1);
 				else {
 					// idiot
 					lua_pop(L, 1);
@@ -406,42 +422,33 @@ namespace Automation4 {
 			// Just in case an insane user inserted non-info lines into the
 			// script info section...
 			while (lines[i]) ++i;
-			lines_to_delete.emplace_back(std::make_unique<AssInfo>(info));
-			lines[i++] = lines_to_delete.back().get();
+			info_entries.emplace_back(std::make_unique<AssInfo>(info));
+			lines[i++] = info_entries.back().get();
 		}
 		script_info_copied = true;
 	}
 
 	void LuaAssFile::QueueLineForDeletion(size_t idx)
 	{
+		// Removed lines stay owned by the work model or allocated_lines; the
+		// host retires them when the result is published or discarded.
 		if (!lines[idx] || lines[idx]->Group() == AssEntryGroup::INFO)
 			InitScriptInfoIfNeeded();
-		else
-			lines_to_delete.emplace_back(lines[idx]);
 	}
 
 	void LuaAssFile::AssignLine(size_t idx, std::unique_ptr<AssEntry> e)
 	{
-		auto group = e->Group();
-		if (group == AssEntryGroup::INFO)
+		if (e->Group() == AssEntryGroup::INFO)
 			InitScriptInfoIfNeeded();
-		lines[idx] = e.get();
-		if (group == AssEntryGroup::INFO)
-			lines_to_delete.emplace_back(std::move(e));
-		else
-			e.release();
+		lines[idx] = Adopt(std::move(e));
 	}
 
-	void LuaAssFile::InsertLine(std::vector<AssEntry *> &vec, size_t idx, std::unique_ptr<AssEntry> e)
+	void LuaAssFile::InsertLine(std::vector<AssEntry const*> &vec, size_t idx, std::unique_ptr<AssEntry> e)
 	{
-		auto group = e->Group();
-		if (group == AssEntryGroup::INFO)
+		if (e->Group() == AssEntryGroup::INFO)
 			InitScriptInfoIfNeeded();
 		vec.insert(vec.begin() + idx, e.get());
-		if (group == AssEntryGroup::INFO)
-			lines_to_delete.emplace_back(std::move(e));
-		else
-			e.release();
+		Adopt(std::move(e));
 	}
 
 	void LuaAssFile::ObjectIndexWrite(lua_State *L)
@@ -600,7 +607,7 @@ namespace Automation4 {
 		}
 
 		int n = lua_gettop(L);
-		std::vector<AssEntry *> new_entries;
+		std::vector<AssEntry const*> new_entries;
 		new_entries.reserve(n - 1);
 		for (int i = 2; i <= n; i++) {
 			lua_pushvalue(L, i);
@@ -622,7 +629,7 @@ namespace Automation4 {
 	int LuaAssFile::ObjectIPairs(lua_State *L)
 	{
 		lua_pushvalue(L, lua_upvalueindex(1)); // push 'this' as userdata
-		lua_pushcclosure(L, closure_wrapper<&LuaAssFile::IterNext>, 1);
+		lua_pushcclosure(L, exception_wrapper<closure_wrapper<&LuaAssFile::IterNext>>, 1);
 		lua_pushnil(L);
 		push_value(L, 0);
 		return 3;
@@ -643,7 +650,10 @@ namespace Automation4 {
 
 	int LuaAssFile::LuaParseKaraokeData(lua_State *L)
 	{
-		auto e = LuaToAssEntry(L, ass);
+		// The conversion registers the line's extradata somewhere; read-only
+		// contexts use a throwaway file so the live document is never written.
+		AssFile scratch;
+		auto e = LuaToAssEntry(L, target ? target : &scratch);
 		auto dia = check_cast_constptr<AssDialogue>(e.get());
 		argcheck(L, !!dia, 1, "Subtitle line must be a dialogue line");
 
@@ -712,54 +722,81 @@ namespace Automation4 {
 		return laf;
 	}
 
-	std::vector<AssEntry *> LuaAssFile::ProcessingComplete(wxString const& undo_description)
+	void LuaAssFile::Expire()
 	{
-		auto apply_lines = [&](std::vector<AssEntry *> const& lines) {
-			if (script_info_copied)
-				ass->Info.clear();
-			ass->Styles.clear();
-			ass->Events.clear();
+		ass = nullptr;
+		target = nullptr;
+		references--;
+		if (!references) delete this;
+	}
 
+	void LuaAssFile::ProcessingComplete()
+	{
+		if (target && modification_type) {
+			// Export filters own a detached file: rebuild it from the final line
+			// list, reusing unchanged nodes, and free the ones no longer used.
+			std::unordered_map<AssEntry const*, AssEntry*> owned;
+			for (auto& style : target->Styles) owned.emplace(&style, &style);
+			for (auto& event : target->Events) owned.emplace(&event, &event);
+			for (auto line : allocated_lines) owned.emplace(line, line);
+
+			if (script_info_copied)
+				target->Info.clear();
+			target->Styles.clear();
+			target->Events.clear();
+
+			std::unordered_set<AssEntry const*> kept;
 			for (auto line : lines) {
 				if (!line) continue;
 				switch (line->Group()) {
-					case AssEntryGroup::INFO:     ass->Info.push_back(*static_cast<AssInfo *>(line)); break;
-					case AssEntryGroup::STYLE:    ass->Styles.push_back(*static_cast<AssStyle *>(line)); break;
-					case AssEntryGroup::DIALOGUE: ass->Events.push_back(*static_cast<AssDialogue *>(line)); break;
+					case AssEntryGroup::INFO: target->Info.push_back(*static_cast<AssInfo const*>(line)); break;
+					case AssEntryGroup::STYLE: target->Styles.push_back(*static_cast<AssStyle *>(owned.at(line))); kept.insert(line); break;
+					case AssEntryGroup::DIALOGUE: target->Events.push_back(*static_cast<AssDialogue *>(owned.at(line))); kept.insert(line); break;
 					default: break;
 				}
 			}
-		};
-		// Apply any pending commits
-		for (auto const& pc : pending_commits) {
-			apply_lines(pc.lines);
-			ass->Commit(pc.mesage, pc.modification_type);
+			for (auto const& entry : owned)
+				if (!kept.count(entry.first)) delete entry.second;
 		}
+		else {
+			for (AssEntry *line : allocated_lines) delete line;
+		}
+		allocated_lines.clear();
+		info_entries.clear();
+		Expire();
+	}
 
-		// Commit any changes after the last undo point was set
+	LuaSubtitleResult LuaAssFile::TakeMacroResult(wxString const& undo_description)
+	{
+		LuaSubtitleResult result;
+		for (auto& pc : pending_commits)
+			result.steps.push_back({pc.mesage, pc.modification_type, true, std::move(pc.lines)});
+		// Changes after the last undo point are committed with the macro's name;
+		// without a name they were historically applied without a commit.
 		if (modification_type)
-			apply_lines(lines);
-		if (modification_type && can_set_undo && !undo_description.empty())
-			ass->Commit(undo_description, modification_type);
-
-		lines_to_delete.clear();
-
-		auto ret = std::move(lines);
-		references--;
-		if (!references) delete this;
-		return ret;
+			result.steps.push_back({undo_description, modification_type, can_set_undo && !undo_description.empty(), lines});
+		result.final_lines = std::move(lines);
+		result.pool.reserve(info_entries.size() + allocated_lines.size());
+		for (auto& entry : info_entries) result.pool.push_back(std::move(entry));
+		for (AssEntry *line : allocated_lines) result.pool.emplace_back(line);
+		info_entries.clear();
+		allocated_lines.clear();
+		pending_commits.clear();
+		Expire();
+		return result;
 	}
 
 	void LuaAssFile::Cancel()
 	{
-		for (auto& line : lines_to_delete) line.release();
 		for (AssEntry *line : allocated_lines) delete line;
-		references--;
-		if (!references) delete this;
+		allocated_lines.clear();
+		info_entries.clear();
+		Expire();
 	}
 
-	LuaAssFile::LuaAssFile(lua_State *L, AssFile *ass, bool can_modify, bool can_set_undo)
-	: ass(ass)
+	LuaAssFile::LuaAssFile(lua_State *L, AssFile const& source, AssFile *target, bool can_modify, bool can_set_undo)
+	: ass(&source)
+	, target(target)
 	, L(L)
 	, can_modify(can_modify)
 	, can_set_undo(can_set_undo)

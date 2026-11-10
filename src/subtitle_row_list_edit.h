@@ -1,0 +1,65 @@
+// Copyright (c) 2026, Aegisub contributors
+// SPDX-License-Identifier: ISC
+#pragma once
+#include "subtitle_row_edit.h"
+
+// Detached list for ordinary structural algorithms. It contains no live nodes.
+// Mutable row pointers below belong exclusively to this independent file.
+class SubtitleRowListEdit {
+    agi::Context* c;
+    std::optional<SubtitleProjectAccess::WriteScope> scope;
+    agi::SubtitleEditGate::RevisionToken revision;
+    std::vector<AssDialogueBase> originals;
+    bool applied = false;
+    bool committed = false;
+    void Apply() {
+        if (applied) return;
+        std::vector<AssDialogueBase> values;
+        for (auto const& row : file.Events) values.push_back(row);
+        c->subtitleAccess->Edit(scope->Lease()).ReplaceRows(revision, originals, values);
+        applied = true;
+    }
+public:
+    AssFile file;
+    std::set<AssDialogue*> selection;
+    AssDialogue* active = nullptr;
+    explicit SubtitleRowListEdit(agi::Context* c)
+    : c(c), scope(c->subtitleAccess->TryWrite()), revision(c->subtitleEditGate.Capture()) {
+        if (!scope) throw std::logic_error("Row-list edit requires authorization");
+        std::set<int> selected;
+        for (auto row : c->selectionController->ReadSelectedLines()) selected.insert(row->Id);
+        auto current = c->selectionController->ReadActiveLine();
+        for (auto const& row : c->subtitleAccess->Read().Events) {
+            originals.push_back(row);
+            auto copy = std::make_unique<AssDialogue>(static_cast<AssDialogueBase const&>(row));
+            if (selected.contains(row.Id)) selection.insert(copy.get());
+            if (&row == current) active = copy.get();
+            file.Events.push_back(*copy.release());
+        }
+    }
+    std::vector<AssDialogue*> SortedSelection() const {
+        std::vector<AssDialogue*> rows(selection.begin(), selection.end());
+        std::sort(rows.begin(), rows.end(), [](auto a, auto b) { return a->Row < b->Row; });
+        return rows;
+    }
+    int Commit(wxString const& message, int type) {
+        Apply();
+        auto id = c->subtitleAccess->Edit(scope->Lease()).Commit(message, type);
+        committed = true;
+        return id;
+    }
+    template<class Row> void Select(std::set<Row*> const& chosen, AssDialogue const* current, bool expand = true) {
+        Select(Selection(chosen.begin(), chosen.end()), current, expand);
+    }
+    void Select(Selection const& chosen, AssDialogue const* current, bool expand = true) {
+        std::set<int> ids;
+        for (auto row : chosen) ids.insert(row->Id);
+        int active_id = current ? current->Id : 0;
+        // C1-C1c-13 (audit C6): selection observers may only see the new row
+        // structure after it has been committed and announced. Selecting first
+        // published uncommitted rows to them. The undo record of the commit
+        // follows the selection (SubsController::OnSelectionChanged).
+        if (!committed) throw std::logic_error("Row-list selection must follow its commit");
+        c->selectionController->SetSelectionAndActiveIDs(std::move(ids), active_id, expand);
+    }
+};

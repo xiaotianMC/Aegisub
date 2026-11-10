@@ -54,6 +54,19 @@ TEST_F(lagi_option, nonexistent_file) {
 	EXPECT_NO_THROW(agi::Options("", default_opt, agi::Options::FLUSH_SKIP));
 }
 
+TEST_F(lagi_option, ass_completion_setting_survives_reload) {
+	const char defaults[] = R"({"Subtitle":{"Edit Box":{"Auto Completion":true}}})";
+	const char path[] = "data/options/ass-completion.json";
+	{
+		agi::Options opt(path, defaults);
+		opt.Get("Subtitle/Edit Box/Auto Completion")->SetBool(false);
+		opt.Flush();
+	}
+	agi::Options reloaded(path, defaults);
+	reloaded.ConfigUser();
+	EXPECT_FALSE(reloaded.Get("Subtitle/Edit Box/Auto Completion")->GetBool());
+}
+
 TEST_F(lagi_option, get_existing_option) {
 	agi::Options opt(conf_ok, default_opt, agi::Options::FLUSH_SKIP);
 	ASSERT_NO_THROW(opt.Get("Valid"));

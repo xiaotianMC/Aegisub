@@ -8,14 +8,18 @@
         { "submenu" : "main/audio",    "tlcontext" : "Menu bar", "text" : "&Audio" },
         { "special" : "automation",    "tlcontext" : "Menu bar", "text" : "A&utomation" },
         { "submenu" : "main/view",     "tlcontext" : "Menu bar", "text" : "Vie&w" },
+        { "submenu" : "main/preferences", "tlcontext" : "Menu bar", "text" : "Preferences (&O)" },
         { "submenu" : "main/help",     "tlcontext" : "Menu bar", "text" : "&Help", "special" : "help" }
     ],
     "main/file" : [
+        { "command" : "app/project_manager" },
+        {},
         { "command" : "subtitle/new" },
         { "command" : "subtitle/open" },
         { "command" : "subtitle/open/charset" },
         { "command" : "subtitle/open/video" },
         { "command" : "subtitle/open/autosave" },
+        { "command" : "subtitle/compare" },
         { "command" : "subtitle/save" },
         { "command" : "subtitle/save/as" },
         { "command" : "tool/export" },
@@ -43,7 +47,6 @@
     ],
     "main/subtitle" : [
         { "command" : "tool/style/manager" },
-        { "command" : "tool/style/assistant" },
         { "command" : "tool/translation_assistant" },
         { "command" : "tool/resampleres" },
         { "command" : "subtitle/spellcheck" },

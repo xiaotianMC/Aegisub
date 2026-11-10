@@ -44,6 +44,7 @@
 #include <wx/dcmemory.h>
 
 #include <algorithm>
+#include <vector>
 #include <boost/noncopyable.hpp>
 
 #ifdef HAVE_OPENGL_GL_H
@@ -66,7 +67,7 @@ struct OpenGLTextGlyph {
 	wxFont font;  ///< Font used for this glyph
 
 	OpenGLTextGlyph(int value, wxFont const& font)
-	: str(wxChar(value))
+	: str(wxUniChar(value))
 	, font(font)
 	{
 		wxCoord desc,lead;
@@ -237,6 +238,15 @@ void OpenGLText::SetFont(std::string const& face, int size, bool bold, bool ital
 	glyphs.clear();
 }
 
+void OpenGLText::SetFont(wxFont const& new_font) {
+	if (new_font == font) return;
+	font = new_font;
+	fontFace.clear();
+	fontSize = 0;
+	textures.clear();
+	glyphs.clear();
+}
+
 void OpenGLText::SetColour(agi::Color col) {
 	r = col.r / 255.f;
 	g = col.g / 255.f;
@@ -244,17 +254,19 @@ void OpenGLText::SetColour(agi::Color col) {
 	a = col.a / 255.f;
 }
 
-void OpenGLText::Print(const std::string &text, int x, int y) {
+void OpenGLText::Print(const std::string &text, int x, int y, bool outline) {
 	glEnable(GL_BLEND);
 	glEnable(GL_TEXTURE_2D);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
 	// Draw border
-	glColor4f(0.0f, 0.0f, 0.0f, 1.0f);
-	DrawString(text, x-1, y);
-	DrawString(text, x+1, y);
-	DrawString(text, x, y-1);
-	DrawString(text, x, y+1);
+	if (outline) {
+		glColor4f(0.0f, 0.0f, 0.0f, 1.0f);
+		DrawString(text, x-1, y);
+		DrawString(text, x+1, y);
+		DrawString(text, x, y-1);
+		DrawString(text, x, y+1);
+	}
 
 	// Draw primary string
 	glColor4f(r, g, b, a);
@@ -265,8 +277,32 @@ void OpenGLText::Print(const std::string &text, int x, int y) {
 	glDisable(GL_BLEND);
 }
 
+std::vector<int> OpenGLText::CodePoints(std::string const& text) {
+	std::vector<int> out;
+	out.reserve(text.size());
+	for (size_t i = 0; i < text.size();) {
+		auto byte = static_cast<unsigned char>(text[i]);
+		int length = byte < 0x80 ? 1 : (byte >> 5) == 0x6 ? 2 : (byte >> 4) == 0xE ? 3 : (byte >> 3) == 0x1E ? 4 : 0;
+		int value = length == 1 ? byte : length == 2 ? byte & 0x1F : length == 3 ? byte & 0x0F : byte & 0x07;
+		bool whole = length > 0 && i + length <= text.size();
+		for (int k = 1; whole && k < length; ++k) {
+			auto next = static_cast<unsigned char>(text[i + k]);
+			if ((next >> 6) != 0x2) whole = false;
+			else value = (value << 6) | (next & 0x3F);
+		}
+		if (!whole) {
+			out.push_back(byte);
+			++i;
+			continue;
+		}
+		out.push_back(value);
+		i += length;
+	}
+	return out;
+}
+
 void OpenGLText::DrawString(const std::string &text, int x, int y) {
-	for (char curChar : text) {
+	for (int curChar : CodePoints(text)) {
 		OpenGLTextGlyph const& glyph = GetGlyph(curChar);
 		glyph.Draw(x, y);
 		x += glyph.w;
@@ -276,7 +312,7 @@ void OpenGLText::DrawString(const std::string &text, int x, int y) {
 void OpenGLText::GetExtent(std::string const& text, int &w, int &h) {
 	w = h = 0;
 
-	for (char curChar : text) {
+	for (int curChar : CodePoints(text)) {
 		OpenGLTextGlyph const& glyph = GetGlyph(curChar);
 		w += glyph.w;
 		h = std::max(h, glyph.h);

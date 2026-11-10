@@ -62,11 +62,20 @@ void VisualToolVectorClip::SetToolbar(wxToolBar *toolBar) {
 	toolBar->ToggleTool(BUTTON_ID_BASE + VCLIP_DRAG, true);
 	toolBar->Realize();
 	toolBar->Show(true);
-	toolBar->Bind(wxEVT_TOOL, [this](wxCommandEvent& e) { SetSubTool((VisualToolVectorClipMode) (e.GetId() - BUTTON_ID_BASE)); });
+	toolBar->Bind(wxEVT_TOOL, &VisualToolVectorClip::OnSubTool, this);
 	SetSubTool(features.empty() ? VCLIP_LINE : VCLIP_DRAG);
 }
 
+VisualToolVectorClip::~VisualToolVectorClip() {
+	if (toolBar) toolBar->Unbind(wxEVT_TOOL, &VisualToolVectorClip::OnSubTool, this);
+}
+void VisualToolVectorClip::OnSubTool(wxCommandEvent& event) { SetSubTool(event.GetId() - BUTTON_ID_BASE); }
+
 void VisualToolVectorClip::SetSubTool(int subtool) {
+	if (HasEdit()) Cancel();
+	SetMode(subtool);
+}
+void VisualToolVectorClip::SetMode(int subtool) {
 	if (toolBar == nullptr) {
 		throw agi::InternalError("Vector clip toolbar hasn't been set yet!");
 	}
@@ -226,7 +235,7 @@ void VisualToolVectorClip::Save() {
 		value += std::to_string(spline.GetScale()) + ",";
 	value += spline.EncodeToAss() + ")";
 
-	for (auto line : c->selectionController->GetSelectedSet()) {
+	for (auto line : SelectedLines()) {
 		// This check is technically not correct as it could be outside of an
 		// override block... but that's rather unlikely
 		bool has_iclip = line->Text.get().find("\\iclip") != std::string::npos;
@@ -438,13 +447,13 @@ void VisualToolVectorClip::UpdateHold() {
 
 	// End freedraw
 	if (!holding && (mode == VCLIP_FREEHAND || mode == VCLIP_FREEHAND_SMOOTH)) {
-		SetSubTool(VCLIP_DRAG);
+		SetMode(VCLIP_DRAG);
 		MakeFeatures();
 	}
 }
 
 void VisualToolVectorClip::DoRefresh() {
-	if (!active_line) return;
+	if (!active_line) { spline.clear(); MakeFeatures(); return; }
 
 	int scale;
 	std::string vect = GetLineVectorClip(active_line, scale, inverse);

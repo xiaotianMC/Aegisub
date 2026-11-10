@@ -152,6 +152,8 @@ public:
 	/// to be rendered as if it had double amplitude. (The exact meaning of the scaling
 	/// depends on the bitmap provider used.)
 	void SetAmplitudeScale(float amplitude_scale);
+	/// Vertical zoom set by SetAmplitudeScale()
+	float GetAmplitudeScale() const { return amplitude_scale; }
 
 	/// @brief Set the maximum allowed cache size
 	/// @param max_size Size in bytes that may be used for caching

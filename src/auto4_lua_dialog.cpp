@@ -33,9 +33,11 @@
 ///
 
 #include "auto4_lua.h"
+#include "utils.h"
 
 #include "colour_button.h"
 #include "compat.h"
+#include "flat_controls.h"
 #include "validators.h"
 
 #include <libaegisub/ass/string_codec.h>
@@ -226,7 +228,7 @@ namespace Automation4 {
 			// Same serialisation interface as single-line edit
 			wxControl *Create(wxWindow *parent) override {
 				cw = new wxTextCtrl(parent, -1, "", wxDefaultPosition, wxDefaultSize, wxTE_MULTILINE, StringBinder(&text));
-				cw->SetMinSize(wxSize(0, 30));
+				cw->SetMinSize(DipSize(0, 30));
 				cw->SetToolTip(to_wx(hint));
 				return cw;
 			}
@@ -493,7 +495,8 @@ namespace Automation4 {
 		auto bs = new wxStdDialogButtonSizer;
 
 		auto make_button = [&](wxWindowID id, int button_pushed, std::string const& text) -> wxButton *{
-			auto button = new wxButton(window, id, to_wx(text));
+			// A stock button's words from our translations, as the flat ones have them
+			auto button = new wxButton(window, id, text.empty() && wxIsStockID(id) ? flat::StockLabel(id) : to_wx(text));
 			button->Bind(wxEVT_BUTTON, [=, this](wxCommandEvent &) {
 				this->button_pushed = button_pushed;
 				dialog->TransferDataFromWindow();

@@ -31,6 +31,8 @@
 
 #include <memory>
 #include <string>
+#include <optional>
+#include <libaegisub/subtitle_edit_gate.h>
 #include <wx/dialog.h>
 
 class AssStyle;
@@ -38,14 +40,9 @@ class AssStyleStorage;
 class PersistLocation;
 class SubtitlesPreview;
 class wxArrayString;
-class wxCheckBox;
 class wxChildFocusEvent;
-class wxComboBox;
 class wxCommandEvent;
-class wxRadioBox;
-class wxSpinCtrl;
 class wxTextCtrl;
-class wxThreadEvent;
 class wxWindow;
 namespace agi { struct Context; struct Color; }
 template<typename T> class ValueEvent;
@@ -62,7 +59,10 @@ class DialogStyleEditor final : public wxDialog {
 	bool updating = false;
 
 	/// The style currently being edited
-	AssStyle *style;
+	AssStyle const* style;
+    std::optional<agi::SubtitleEditGate::RevisionToken> source_revision;
+    std::unique_ptr<AssStyle> pending;
+    std::string style_name;
 
 	/// Copy of style passed to the subtitles preview to avoid making changes
 	/// before Apply is clicked
@@ -72,28 +72,18 @@ class DialogStyleEditor final : public wxDialog {
 	AssStyleStorage *store;
 
 	wxTextCtrl *StyleName;
-	wxComboBox *FontName;
-	wxCheckBox *BoxBold;
-	wxCheckBox *BoxItalic;
-	wxCheckBox *BoxUnderline;
-	wxCheckBox *BoxStrikeout;
-	wxSpinCtrl *margin[3];
-	wxRadioBox *Alignment;
-	wxComboBox *OutlineType;
-	wxComboBox *Encoding;
-	wxTextCtrl *PreviewText;
-	SubtitlesPreview *SubsPreview;
+	wxTextCtrl *FontName;
+	wxTextCtrl *PreviewText = nullptr;
+	SubtitlesPreview *SubsPreview = nullptr;
 
-	void SetBitmapColor(int n,wxColour color);
-	int AlignToControl(int n);
-	int ControlToAlign(int n);
-	int BorderStyleToControl(int n);
-	int ControlToBorderStyle(int n);
+	/// The font, size, flags, alignment, border, numbers and encoding are
+	/// written into work as they change; the name, the font typed and the
+	/// colours are read from their controls here
 	void UpdateWorkStyle();
+	/// Show the work style in the preview, after any change
+	void Changed();
 
 	void OnChildFocus(wxChildFocusEvent &event);
-	void OnCommandPreviewUpdate(wxCommandEvent &event);
-
 	void OnPreviewTextChange(wxCommandEvent &event);
 	void OnPreviewColourChange(ValueEvent<agi::Color> &event);
 
@@ -105,7 +95,7 @@ class DialogStyleEditor final : public wxDialog {
 	void OnSetColor(ValueEvent<agi::Color>& evt);
 
 public:
-	DialogStyleEditor(wxWindow *parent, AssStyle *style, agi::Context *c, AssStyleStorage *store, std::string const& new_name, wxArrayString const& font_list);
+	DialogStyleEditor(wxWindow *parent, AssStyle const* style, agi::Context *c, AssStyleStorage *store, std::string const& new_name, wxArrayString const& font_list);
 	~DialogStyleEditor();
 
 	std::string GetStyleName() const;

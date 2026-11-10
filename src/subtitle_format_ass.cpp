@@ -33,13 +33,15 @@
 
 DEFINE_EXCEPTION(AssParseError, SubtitleFormatParseError);
 
-void AssSubtitleFormat::ReadFile(AssFile *target, agi::fs::path const& filename, agi::vfr::Framerate const&, const char *encoding) const {
+void AssSubtitleFormat::ReadFile(AssFile *target, agi::fs::path const& filename, agi::vfr::Framerate const&, const char *encoding, SubtitleReadOptions const& options) const {
 	int version = !agi::fs::HasExtension(filename, "ssa");
 
-	TextFileReader file(filename, encoding);
+	TextFileReader file(filename, encoding, !options.preserve_whitespace);
 	AssParser parser(target, version);
-	while (file.HasMoreLines())
+	while (file.HasMoreLines()) {
+		options.CheckCancelled();
 		parser.AddLine(file.ReadLineFromFile());
+	}
 }
 
 #ifdef _WIN32
@@ -99,6 +101,8 @@ struct Writer {
 		WriteIfNotEmpty("Video File: ", properties.video_file);
 		WriteIfNotEmpty("Timecodes File: ", properties.timecodes_file);
 		WriteIfNotEmpty("Keyframes File: ", properties.keyframes_file);
+        for (auto const& [key, value] : properties.automation_settings)
+            WriteIfNotEmpty(("Automation Settings " + key + ": ").c_str(), value);
 
 		WriteIfNotZero("Video AR Mode: ", properties.ar_mode);
 		WriteIfNotZero("Video AR Value: ", properties.ar_value);

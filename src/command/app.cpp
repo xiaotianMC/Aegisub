@@ -35,6 +35,7 @@
 
 #include <libaegisub/log.h>
 
+#include "../command_palette.h"
 #include "../compat.h"
 #include "../dialog_detached_video.h"
 #include "../dialog_manager.h"
@@ -45,6 +46,7 @@
 #include "../main.h"
 #include "../options.h"
 #include "../project.h"
+#include "../theme.h"
 #include "../utils.h"
 
 namespace {
@@ -59,6 +61,19 @@ struct app_about final : public Command {
 
 	void operator()(agi::Context *c) override {
 		ShowAboutDialog(c->parent);
+	}
+};
+
+struct app_command_palette final : public Command {
+	CMD_NAME("app/command_palette")
+	STR_MENU("&Command Palette...")
+	STR_DISP("Command Palette")
+	STR_HELP("Find and run any command by its name")
+
+	void operator()(agi::Context *c) override {
+		// Run the chosen command once the palette has closed.
+		auto name = ShowCommandPalette(c);
+		if (!name.empty()) cmd::call(name, c);
 	}
 };
 
@@ -208,9 +223,32 @@ struct app_options final : public Command {
 	void operator()(agi::Context *c) override {
 		try {
 			ShowPreferences(c->parent);
+			// Windows draws its own controls light or dark as at startup:
+			// offer a restart once for each change of the theme
+			static int asked_for = -1;
+			int theme_mode = OPT_GET("App/Theme")->GetInt();
+			if (theme::RestartNeeded() && asked_for != theme_mode) {
+				asked_for = theme_mode;
+				int result = wxMessageBox(_("Windows switches its own controls (text boxes, lists, scroll bars) between light and dark only when Aegisub starts. Restart Aegisub now to use the new theme everywhere?"),
+					_("Restart Aegisub?"), wxYES_NO | wxICON_QUESTION | wxCENTER);
+				if (result == wxYES && c->frame->Close())
+					RestartAegisub();
+			}
 		} catch (agi::Exception& e) {
 			LOG_E("config/init") << "Caught exception: " << e.GetMessage();
 		}
+	}
+};
+
+struct app_project_manager final : public Command {
+	CMD_NAME("app/project_manager")
+	CMD_ICON(new_window_menu)
+	STR_MENU("Project Management...")
+	STR_DISP("Project Management")
+	STR_HELP("Open the project dashboard")
+
+	void operator()(agi::Context *) override {
+		wxGetApp().ShowProjectDashboard();
 	}
 };
 
@@ -249,6 +287,27 @@ struct app_toggle_toolbar final : public Command {
 
 	void operator()(agi::Context *) override {
 		agi::OptionValue *opt = OPT_SET("App/Show Toolbar");
+		opt->SetBool(!opt->GetBool());
+	}
+};
+
+struct app_toggle_style_panel final : public Command {
+	CMD_NAME("app/toggle/style_panel")
+	STR_HELP("Show or hide the style panel at the right of the window")
+	CMD_TYPE(COMMAND_DYNAMIC_NAME)
+
+	wxString StrMenu(const agi::Context *) const override {
+		return OPT_GET("App/Style Panel/Show")->GetBool() ?
+			_("Hide Style Panel") :
+			_("Show Style Panel");
+	}
+
+	wxString StrDisplay(const agi::Context *) const override {
+		return StrMenu(nullptr);
+	}
+
+	void operator()(agi::Context *) override {
+		agi::OptionValue *opt = OPT_SET("App/Style Panel/Show");
 		opt->SetBool(!opt->GetBool());
 	}
 };
@@ -337,6 +396,7 @@ struct app_show_all final : public Command {
 namespace cmd {
 	void init_app() {
 		reg(std::make_unique<app_about>());
+		reg(std::make_unique<app_command_palette>());
 		reg(std::make_unique<app_display_audio_subs>());
 		reg(std::make_unique<app_display_full>());
 		reg(std::make_unique<app_display_subs>());
@@ -346,8 +406,10 @@ namespace cmd {
 		reg(std::make_unique<app_log>());
 		reg(std::make_unique<app_new_window>());
 		reg(std::make_unique<app_options>());
+		reg(std::make_unique<app_project_manager>());
 		reg(std::make_unique<app_toggle_global_hotkeys>());
 		reg(std::make_unique<app_toggle_toolbar>());
+		reg(std::make_unique<app_toggle_style_panel>());
 #ifdef __WXMAC__
 		reg(std::make_unique<app_minimize>());
 		reg(std::make_unique<app_maximize>());

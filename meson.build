@@ -246,6 +246,9 @@ else
         # Aegisub registers only wxPNGHandler. Avoid building the unused TIFF
         # codec and its additional zlib/JPEG dependency plumbing.
         'wxUSE_LIBTIFF': 'OFF',
+        # Nor WebP (new in wxWidgets 3.3): its bundled static library is not
+        # built position-independent and cannot go into a shared fallback wx.
+        'wxUSE_LIBWEBP': 'OFF',
         'wxUSE_ZLIB': 'sys',            # supplied by Meson below
         'CMAKE_BUILD_TYPE': build_type,
         'wxUSE_IMAGE': true,
@@ -292,6 +295,9 @@ else
 
     if wx.target_list().contains('wxtiff')
         error('wxWidgets unexpectedly built wxtiff despite wxUSE_LIBTIFF=OFF')
+    endif
+    if wx.target_list().contains('webp')
+        error('wxWidgets unexpectedly built libwebp despite wxUSE_LIBWEBP=OFF')
     endif
 
     if wx_libpng == 'builtin' and not wx.target_list().contains('wxpng')
@@ -352,6 +358,12 @@ check_deps = [
 if host_machine.system() == 'linux'
     if cc.get_define('__WXGTK3__', dependencies: wx_defines_dep, prefix: '#include <wx/defs.h>') != ''
         check_deps += [['libportal-gtk3', [], 'libportal', [], []]]
+        # The appearance setting (theme.cpp) asks GTK for its dark variant.
+        gtk3_dep = dependency('gtk+-3.0', required: false)
+        if gtk3_dep.found()
+            deps += gtk3_dep
+            conf.set('WITH_GTK3_APPEARANCE', 1)
+        endif
     else
         check_deps += [['libportal', [], 'libportal', [], []]]
     endif
@@ -581,7 +593,7 @@ if host_machine.system() == 'windows'
     link_depends += manifest_file
 endif
 
-aegisub = executable('aegisub', aegisub_src, version_h, libresrc_headers, aegisub_order_dep,
+aegisub = executable('aegisub', aegisub_src, files('src/main_entry.cpp'), version_h, libresrc_headers, aegisub_order_dep,
                      c_args: aegisub_defines,
                      cpp_args: aegisub_defines,
                      link_with: [libresrc, libaegisub],
@@ -594,3 +606,30 @@ aegisub = executable('aegisub', aegisub_src, version_h, libresrc_headers, aegisu
                      install_dir: bindir,
                      dependencies: deps,
                      win_subsystem: 'windows')
+
+# The editor entry point is in src/main_entry.cpp, so a console test main can
+# reuse the exact application objects without a second implementation of
+# commands/history. Windows keeps its unused WinMain object as before; other
+# platforms extract everything except the entry point, which defines main().
+if get_option('tests')
+    if host_machine.system() == 'windows'
+        ordinary_objects = aegisub.extract_all_objects(recursive: true)
+    else
+        ordinary_objects = aegisub.extract_objects(aegisub_src)
+    endif
+    ordinary_runner = executable('ordinary-edit-tests',
+        'tests/support/ordinary_main.cpp', 'tests/tests/ordinary_edit.cpp',
+        'tests/tests/lua_isolation.cpp',
+        objects: ordinary_objects,
+        include_directories: [libaegisub_inc, libresrc_inc, version_inc, include_directories('src')],
+        dependencies: [tests_deps, deps], link_with: [libresrc, libaegisub],
+        cpp_args: aegisub_defines + ['-DAEGISUB_SOURCE_ROOT="@0@"'.format(meson.project_source_root())],
+        win_subsystem: 'console')
+    test('ordinary editing integration', find_program('tests/run_isolated.py'),
+        args: [ordinary_runner, '--output-root', meson.current_build_dir() / 'ordinary-data'])
+    # C1-C1c-10: API scan plus real compile-failure cases for the live-model owner.
+    # Borrows a production compile command from compile_commands.json (Ninja backend).
+    test('live model owner access', find_program('tests/owner_access_check.py'),
+        args: ['--source-root', meson.project_source_root(), '--build-root', meson.project_build_root()],
+        depends: aegisub, timeout: 600)
+endif

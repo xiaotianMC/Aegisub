@@ -25,4 +25,7 @@ namespace agi { class BackgroundRunner; }
 namespace libass {
 	std::unique_ptr<SubtitlesProvider> Create(std::string const&, agi::BackgroundRunner *br);
 	void CacheFonts();
+	/// Stops forwarding libass messages to the log; call before the log sink
+	/// is destroyed. Never blocks on the font cache worker.
+	void StopLogging();
 }

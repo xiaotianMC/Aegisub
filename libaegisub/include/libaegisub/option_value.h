@@ -119,6 +119,7 @@ public:
 		: OptionValue(std::move(member_name))                                         \
 		, value(member_value), value_default(member_value) { }                        \
 		type const& GetValue() const { return value; }                                \
+		type const& GetDefaultValue() const { return value_default; }                 \
 		void SetValue(type new_val) { value = std::move(new_val); NotifyChanged(); }  \
 		OptionType GetType() const { return OptionType::type_name; }                  \
 		void Reset() { value = value_default; NotifyChanged(); }                      \

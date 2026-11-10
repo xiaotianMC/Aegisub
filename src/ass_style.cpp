@@ -244,3 +244,29 @@ int AssStyle::SsaToAss(int ssa_align) {
 		default: return 2;
 	}
 }
+
+void AssStyle::SwapData(AssStyle& other) noexcept {
+	using std::swap;
+	swap(data,other.data);
+	swap(name,other.name);
+	swap(font,other.font);
+	swap(fontsize,other.fontsize);
+	swap(primary,other.primary);
+	swap(secondary,other.secondary);
+	swap(outline,other.outline);
+	swap(shadow,other.shadow);
+	swap(bold,other.bold);
+	swap(italic,other.italic);
+	swap(underline,other.underline);
+	swap(strikeout,other.strikeout);
+	swap(scalex,other.scalex);
+	swap(scaley,other.scaley);
+	swap(spacing,other.spacing);
+	swap(angle,other.angle);
+	swap(borderstyle,other.borderstyle);
+	swap(outline_w,other.outline_w);
+	swap(shadow_w,other.shadow_w);
+	swap(alignment,other.alignment);
+	swap(Margin,other.Margin);
+	swap(encoding,other.encoding);
+}

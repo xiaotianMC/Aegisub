@@ -76,7 +76,7 @@ std::vector<std::string> VideoProviderFactory::GetFileExtensions() {
 	return extensions;
 }
 
-std::unique_ptr<VideoProvider> VideoProviderFactory::GetProvider(agi::fs::path const& filename, agi::ycbcr::Header colormatrix, agi::BackgroundRunner *br) {
+std::unique_ptr<VideoProvider> VideoProviderFactory::GetProvider(agi::fs::path const& filename, agi::ycbcr::Header colormatrix, agi::BackgroundRunner *br, bool cached) {
 	auto preferred = OPT_GET("Video/Provider")->GetString();
 	auto sorted = GetSorted(providers, preferred);
 
@@ -91,7 +91,7 @@ std::unique_ptr<VideoProvider> VideoProviderFactory::GetProvider(agi::fs::path c
 			auto provider = factory->create(filename, colormatrix, br);
 			if (!provider) continue;
 			LOG_I("manager/video/provider") << factory->name << ": opened " << filename;
-			return provider->WantsCaching() ? CreateCacheVideoProvider(std::move(provider)) : std::move(provider);
+			return cached && provider->WantsCaching() ? CreateCacheVideoProvider(std::move(provider)) : std::move(provider);
 		}
 		catch (agi::fs::FileNotFound const&) {
 			err = from_wx(_("file not found."));

@@ -34,6 +34,7 @@
 #include <libaegisub/of_type_adaptor.h>
 #include <libaegisub/split.h>
 #include <libaegisub/string.h>
+#include <libaegisub/id_allocator.h>
 
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/lexical_cast.hpp>
@@ -44,23 +45,23 @@
 
 using namespace boost::adaptors;
 
-static int next_id = 0;
+static agi::IdAllocator next_id;
 
 AssDialogue::AssDialogue() {
-	Id = ++next_id;
+	Id = next_id.Next();
 }
 
 AssDialogue::AssDialogue(AssDialogue const& that)
 : AssDialogueBase(that)
 , AssEntryListHook(that)
 {
-	Id = ++next_id;
+	Id = next_id.Next();
 }
 
 AssDialogue::AssDialogue(AssDialogueBase const& that) : AssDialogueBase(that) { }
 
 AssDialogue::AssDialogue(std::string const& data) {
-	Id = ++next_id;
+	Id = next_id.Next();
 	Parse(data);
 }
 

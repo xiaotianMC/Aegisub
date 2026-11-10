@@ -32,6 +32,9 @@
 #include "include/aegisub/context.h"
 #include "libresrc/libresrc.h"
 #include "project.h"
+#include "flat_controls.h"
+#include "flat_dialog.h"
+#include "theme.h"
 #include "timeedit_ctrl.h"
 #include "validators.h"
 #include "video_controller.h"
@@ -70,29 +73,26 @@ DialogJumpTo::DialogJumpTo(agi::Context *c)
 {
 	d.SetIcons(GETICONS(jumpto_button));
 
-	auto LabelFrame = new wxStaticText(&d, -1, _("Frame: "));
-	auto LabelTime = new wxStaticText(&d, -1, _("Time: "));
+	theme::UseSurface(&d);
 
+	// The frame and the time it starts at, each named in its field
 	int JumpFrameSize = std::to_string(c->project->VideoProvider()->GetFrameCount() - 1).size();
-	JumpFrame = new wxTextCtrl(&d,-1,"",wxDefaultPosition,wxSize(-1,-1),wxTE_PROCESS_ENTER, IntValidator((int)jumpframe));
-	JumpFrame->SetInitialSize(JumpFrame->GetSizeFromText(wxString(JumpFrameSize, '0')));
+	auto frame_field = new FlatFrame(&d, _("Frame"));
+	JumpFrame = new wxTextCtrl(frame_field, -1, "", wxDefaultPosition, wxDefaultSize, wxTE_PROCESS_ENTER | wxBORDER_NONE, IntValidator((int)jumpframe));
 	JumpFrame->SetMaxLength(JumpFrameSize);
-	JumpTime = new TimeEdit(&d, -1, c, agi::Time(c->videoController->TimeAtFrame(jumpframe)).GetAssFormatted(), wxSize(-1,-1));
+	frame_field->SetContent(JumpFrame, std::max(50, d.ToDIP(JumpFrame->GetSizeFromText(wxString(std::max(JumpFrameSize, 4), '0')).x)));
+	auto time_field = new FlatFrame(&d, _("Time"));
+	JumpTime = new TimeEdit(time_field, -1, c, agi::Time(c->videoController->TimeAtFrame(jumpframe)).GetAssFormatted(), wxDefaultSize, false, wxBORDER_NONE);
+	time_field->SetContent(JumpTime, d.ToDIP(JumpTime->GetSizeFromText(wxS("0:00:00.000")).x));
 
-	auto TimesSizer = new wxFlexGridSizer(2, 5, 5);
-
-	TimesSizer->Add(LabelFrame, wxSizerFlags().CenterVertical());
-	TimesSizer->Add(JumpFrame);
-
-	TimesSizer->Add(LabelTime, wxSizerFlags().CenterVertical());
-	TimesSizer->Add(JumpTime);
-
-	auto ButtonSizer = d.CreateStdDialogButtonSizer(wxOK | wxCANCEL);
+	auto TimesSizer = new wxBoxSizer(wxHORIZONTAL);
+	TimesSizer->Add(frame_field, wxSizerFlags(1).Expand());
+	TimesSizer->Add(time_field, wxSizerFlags(1).Expand().Border(wxLEFT, d.FromDIP(6)));
 
 	// General layout
 	auto MainSizer = new wxBoxSizer(wxVERTICAL);
-	MainSizer->Add(TimesSizer, 0, wxALL | wxALIGN_CENTER, 5);
-	MainSizer->Add(ButtonSizer, 0, wxEXPAND | wxLEFT | wxBOTTOM | wxRIGHT, 5);
+	MainSizer->Add(TimesSizer, wxSizerFlags().Expand().Border(wxALL, d.FromDIP(10)));
+	MainSizer->Add(new flat::DialogButtons(&d, wxOK | wxCANCEL), wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxBOTTOM, d.FromDIP(10)));
 	d.SetSizerAndFit(MainSizer);
 	d.CenterOnParent();
 

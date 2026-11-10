@@ -17,8 +17,10 @@
 #pragma once
 
 #include <memory>
+#include <libaegisub/subtitle_edit_gate.h>
 
 class AssFile;
+class SubtitleProjectAccess;
 class AudioBox;
 class AudioController;
 class AssDialogue;
@@ -34,7 +36,11 @@ class BaseGrid;
 class TextSelectionController;
 class VideoController;
 class VideoDisplay;
+class WorkspaceTabs;
 class wxWindow;
+// Test-only attorney, defined solely under tests/support (enforced by the
+// owner-access API check). Production code cannot name the live model.
+struct LiveSubtitleModelTestAccess;
 namespace Automation4 { class ScriptManager; }
 
 namespace agi {
@@ -43,7 +49,17 @@ class Path;
 struct Context {
 	// Note: order here matters quite a bit, as things need to be set up and
     // torn down in the correct order
+    SubtitleEditGate subtitleEditGate;
+private:
+    // The live document. Owned here, mutated only by its document owner
+    // (SubsController: history, installation, Lua publication) and by the
+    // controlled interfaces bound at construction. Everyone else reads through
+    // subtitleAccess->Read() and writes through its leases and interactions.
+    friend class ::SubsController;
+    friend struct ::LiveSubtitleModelTestAccess;
 	std::unique_ptr<AssFile> ass;
+public:
+    std::unique_ptr<SubtitleProjectAccess> subtitleAccess;
 	std::unique_ptr<TextSelectionController> textSelectionController;
 	std::unique_ptr<SubsController> subsController;
 	std::unique_ptr<Project> project;
@@ -67,6 +83,7 @@ struct Context {
 	std::unique_ptr<DialogManager> dialog;
 	FrameMain *frame = nullptr;
 	VideoDisplay *videoDisplay = nullptr;
+	WorkspaceTabs *workspaceTabs = nullptr; ///< The editor and comparison tabs
 
 	Context();
 	~Context();

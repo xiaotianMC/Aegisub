@@ -30,6 +30,7 @@ class Path {
 	void FillPlatformSpecificPaths();
 
 public:
+    void swap(Path& other) noexcept { paths.swap(other.paths); }
 	/// Constructor
 	Path();
 

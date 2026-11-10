@@ -46,9 +46,11 @@
 #include <map>
 #include <unicode/locid.h>
 #include <unicode/unistr.h>
+#include <chrono>
 #include <wx/clipbrd.h>
 #include <wx/filedlg.h>
 #include <wx/stdpaths.h>
+#include <wx/utils.h>
 #include <wx/window.h>
 
 #ifdef __APPLE__
@@ -84,6 +86,10 @@ std::string float_to_string(double val, int precision) {
 	if (pos != s.find(".")) ++pos;
 	s.erase(begin(s) + pos, end(s));
 	return s;
+}
+
+wxSize DipSize(int width, int height, wxWindow const *window) {
+	return wxWindow::FromDIP(wxSize(width, height), window);
 }
 
 int SmallestPowerOf2(int x) {
@@ -131,6 +137,48 @@ bool ForwardMouseWheelEvent([[maybe_unused]] wxWindow *source, [[maybe_unused]] 
 #else
 	return true;
 #endif
+}
+
+namespace {
+bool alt_used_for_wheel = false;
+std::chrono::steady_clock::time_point alt_wheel_time;
+}
+
+bool WheelAltDown(wxMouseEvent const& evt) {
+#ifdef __WXMSW__
+	return wxGetKeyState(WXK_ALT);
+#else
+	return evt.AltDown();
+#endif
+}
+
+bool WheelCmdDown(wxMouseEvent const& evt) {
+#ifdef __WXMSW__
+	return wxGetKeyState(WXK_CONTROL);
+#else
+	return evt.CmdDown();
+#endif
+}
+
+bool WheelShiftDown(wxMouseEvent const& evt) {
+#ifdef __WXMSW__
+	return wxGetKeyState(WXK_SHIFT);
+#else
+	return evt.ShiftDown();
+#endif
+}
+
+void NoteAltUsedForWheel() {
+	alt_used_for_wheel = true;
+	alt_wheel_time = std::chrono::steady_clock::now();
+}
+void ResetAltUsedForWheel() { alt_used_for_wheel = false; }
+bool TakeAltUsedForWheel() {
+	// Alt is let go right after the last turn; a later press of Alt alone
+	// still opens the menu bar.
+	bool used = alt_used_for_wheel && std::chrono::steady_clock::now() - alt_wheel_time < std::chrono::milliseconds(1500);
+	alt_used_for_wheel = false;
+	return used;
 }
 
 std::string GetClipboard() {

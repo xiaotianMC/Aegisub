@@ -38,11 +38,17 @@
 class AegisubApp;
 class AsyncVideoProvider;
 class AudioBox;
+class StylePanel;
+class SubsEditBox;
 class VideoBox;
 namespace agi { class AudioProvider; }
 namespace agi { struct Context; class OptionValue; }
 
 class FrameMain : public wxFrame, private agi::signal::ConnectionScope {
+protected:
+    // Declared first: expires only after all owned bindings/cache members are destroyed.
+    std::shared_ptr<int> model_observer_lifetime = std::make_shared<int>(0);
+private:
 	friend class AegisubApp;
 
 	std::unique_ptr<agi::Context> context;
@@ -60,6 +66,8 @@ class FrameMain : public wxFrame, private agi::signal::ConnectionScope {
 	void InitContents();
 
 	void UpdateTitle();
+	/// Refresh the line and file fields of the status bar.
+	void UpdateStatus();
 
 	void OnKeyDown(wxKeyEvent &event);
 	void OnMouseWheel(wxMouseEvent &evt);
@@ -76,14 +84,26 @@ class FrameMain : public wxFrame, private agi::signal::ConnectionScope {
 
 	AudioBox *audioBox;      ///< The audio area
 	VideoBox *videoBox;      ///< The video area
+	StylePanel *stylePanel;  ///< The style panel at the right
+	SubsEditBox *editBox;    ///< The fields of the active line
 
+	wxSizer *OuterSizer; ///< The editing area, then the style panel at the right
 	wxSizer *MainSizer;  ///< Arranges things from top to bottom in the window
 	wxSizer *TopSizer;   ///< Arranges video box and tool box from left to right
 	wxSizer *ToolsSizer; ///< Arranges audio and editing areas top to bottom
 
+#ifdef __WXMSW__
+	WXLRESULT MSWWindowProc(WXUINT message, WXWPARAM wParam, WXLPARAM lParam) override;
+#endif
+
 public:
+	/// The style panel at the right of the window
+	StylePanel *GetStylePanel() const { return stylePanel; }
+	/// The edit box below the audio
+	SubsEditBox *GetEditBox() const { return editBox; }
 	FrameMain();
 	~FrameMain();
+    bool Destroy() override;
 
 	/// Set the status bar text
 	/// @param text New status bar text

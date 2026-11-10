@@ -35,8 +35,8 @@
 
 class AssDialogue;
 class AssOverrideParameter;
-class wxCheckBox;
-class wxRadioButton;
+class FlatCheck;
+class FlatSwitch;
 class wxTextCtrl;
 
 /// @class AssTransformFramerateFilter
@@ -56,10 +56,9 @@ class AssTransformFramerateFilter final : public AssExportFilter {
 	wxTextCtrl *InputFramerate; ///< Input frame rate text box
 	wxTextCtrl *OutputFramerate; ///< Output frame rate text box
 
-	wxRadioButton *RadioOutputCFR; ///< CFR radio control
-	wxRadioButton *RadioOutputVFR; ///< VFR radio control
+	FlatSwitch *OutputMode; ///< Variable output, or constant at OutputFramerate
 
-	wxCheckBox *Reverse; ///< Switch input and output
+	FlatCheck *Reverse; ///< Switch input and output
 
 	/// @brief Apply the transformation to a file
 	/// @param subs File to process

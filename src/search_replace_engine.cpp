@@ -18,6 +18,7 @@
 
 #include "ass_dialogue.h"
 #include "ass_file.h"
+#include "subtitle_project_access.h"
 #include "format.h"
 #include "include/aegisub/context.h"
 #include "selection_controller.h"
@@ -27,6 +28,10 @@
 #include <libaegisub/util.h>
 
 #include <boost/locale/conversion.hpp>
+#include <unicode/normalizer2.h>
+#include <unicode/bytestream.h>
+#include <unicode/edits.h>
+#include <limits>
 
 #include <wx/msgdlg.h>
 
@@ -44,12 +49,26 @@ auto get_dialogue_field(SearchReplaceSettings::Field field) -> decltype(&AssDial
 	throw agi::InternalError("Bad field for search");
 }
 
-std::string const& get_normalized(const AssDialogue *diag, decltype(&AssDialogueBase::Text) field) {
-	auto& value = const_cast<AssDialogue*>(diag)->*field;
-	auto normalized = boost::locale::normalize(value.get());
-	if (normalized != value)
-		value = normalized;
-	return value.get();
+std::string get_normalized(const AssDialogue *diag, decltype(&AssDialogueBase::Text) field, icu::Edits& edits) {
+    auto const& value = (diag->*field).get();
+    if (value.size() > std::numeric_limits<int32_t>::max()) throw std::length_error("Subtitle text too long to normalize");
+    std::string normalized;
+    icu::StringByteSink<std::string> sink(&normalized);
+    UErrorCode status = U_ZERO_ERROR;
+    auto normalizer = icu::Normalizer2::getNFCInstance(status);
+    if (U_FAILURE(status)) throw agi::InternalError("Unicode normalizer unavailable");
+    normalizer->normalizeUTF8(0, icu::StringPiece(value.data(), static_cast<int32_t>(value.size())), sink, &edits, status);
+    if (U_FAILURE(status)) throw agi::InternalError("Subtitle normalization failed");
+    return normalized;
+}
+size_t map_normalized_index(icu::Edits const& edits, size_t index, bool to_source) {
+    if (index > std::numeric_limits<int32_t>::max()) throw std::out_of_range("Subtitle match offset too large");
+    UErrorCode status = U_ZERO_ERROR;
+    auto iterator = edits.getFineIterator();
+    auto mapped = to_source ? iterator.sourceIndexFromDestinationIndex(static_cast<int32_t>(index), status)
+                            : iterator.destinationIndexFromSourceIndex(static_cast<int32_t>(index), status);
+    if (U_FAILURE(status)) throw agi::InternalError("Subtitle match offset mapping failed");
+    return mapped;
 }
 
 typedef std::function<MatchState (const AssDialogue*, size_t)> matcher;
@@ -57,34 +76,38 @@ typedef std::function<MatchState (const AssDialogue*, size_t)> matcher;
 class noop_accessor {
 	boost::flyweight<std::string> AssDialogueBase::*field;
 	size_t start = 0;
+    icu::Edits edits;
 
 public:
 	noop_accessor(SearchReplaceSettings::Field f) : field(get_dialogue_field(f)) { }
 
 	std::string get(const AssDialogue *d, size_t s) {
-		start = s;
-		return get_normalized(d, field).substr(s);
+        auto normalized = get_normalized(d, field, edits);
+        start = map_normalized_index(edits, s, false);
+        return normalized.substr(start);
 	}
 
 	MatchState make_match_state(size_t s, size_t e, boost::u32regex *r = nullptr) {
-		return {r, s + start, e + start};
+        return {r, map_normalized_index(edits, s + start, true), map_normalized_index(edits, e + start, true)};
 	}
 };
 
 class skip_tags_accessor {
 	boost::flyweight<std::string> AssDialogueBase::*field;
 	agi::util::tagless_find_helper helper;
+    icu::Edits edits;
 
 public:
 	skip_tags_accessor(SearchReplaceSettings::Field f) : field(get_dialogue_field(f)) { }
 
 	std::string get(const AssDialogue *d, size_t s) {
-		return helper.strip_tags(get_normalized(d, field), s);
+        auto normalized = get_normalized(d, field, edits);
+        return helper.strip_tags(normalized, map_normalized_index(edits, s, false));
 	}
 
 	MatchState make_match_state(size_t s, size_t e, boost::u32regex *r = nullptr) {
 		helper.map_range(s, e);
-		return {r, s, e};
+        return {r, map_normalized_index(edits, s, true), map_normalized_index(edits, e, true)};
 	}
 };
 
@@ -155,7 +178,7 @@ void SearchReplaceEngine::Replace(AssDialogue *diag, MatchState &ms) {
 
 	std::string replacement = settings.replace_with;
 	if (ms.re) {
-		auto to_replace = text.substr(ms.start, ms.end - ms.start);
+		auto to_replace = boost::locale::normalize(text.substr(ms.start, ms.end - ms.start));
 		replacement = u32regex_replace(to_replace, *ms.re, replacement, boost::format_first_only);
 	}
 
@@ -164,13 +187,16 @@ void SearchReplaceEngine::Replace(AssDialogue *diag, MatchState &ms) {
 }
 
 bool SearchReplaceEngine::FindReplace(bool replace) {
+    auto edit_scope = replace ? context->subtitleAccess->TryWrite() : std::optional<SubtitleProjectAccess::WriteScope>{};
+    if (replace && !edit_scope) return false;
 	if (!initialized)
 		return false;
 
 	auto matches = GetMatcher(settings);
 
-	AssDialogue *line = context->selectionController->GetActiveLine();
-	auto it = context->ass->iterator_to(*line);
+	AssDialogue const* line = context->selectionController->ReadActiveLine();
+    if (!line) return false;
+	auto it = context->subtitleAccess->Read().iterator_to(*line);
 	size_t pos = 0;
 
 	auto replace_ms = bad_match;
@@ -184,9 +210,11 @@ bool SearchReplaceEngine::FindReplace(bool replace) {
 				end = context->textSelectionController->GetSelectionEnd();
 
 			if (end == bad_pos || (pos == replace_ms.start && end == replace_ms.end)) {
-				Replace(line, replace_ms);
+				AssDialogue candidate(static_cast<AssDialogueBase const&>(*line));
+                Replace(&candidate, replace_ms);
+                context->subtitleAccess->Edit(edit_scope->Lease()).UpdateRows({candidate});
 				pos = replace_ms.end;
-				context->ass->Commit(_("replace"), AssFile::COMMIT_DIAG_TEXT);
+				context->subtitleAccess->Edit(edit_scope->Lease()).Commit(_("replace"), AssFile::COMMIT_DIAG_TEXT);
 			}
 			else {
 				// The current line matches, but it wasn't already selected,
@@ -203,9 +231,9 @@ bool SearchReplaceEngine::FindReplace(bool replace) {
 	// For non-text fields we just look for matching lines rather than each
 	// match within the line, so move to the next line
 	else if (settings.field != SearchReplaceSettings::Field::TEXT)
-		it = circular_next(it, context->ass->Events);
+		it = circular_next(it, context->subtitleAccess->Read().Events);
 
-	auto const& sel = context->selectionController->GetSelectedSet();
+	auto const& sel = context->selectionController->ReadSelectedSet();
 	bool selection_only = sel.size() > 1 && settings.limit_to == SearchReplaceSettings::Limit::SELECTED;
 
 	do {
@@ -215,16 +243,16 @@ bool SearchReplaceEngine::FindReplace(bool replace) {
 		if (MatchState ms = matches(&*it, pos)) {
 			if (selection_only)
 				// We're cycling through the selection, so don't muck with it
-				context->selectionController->SetActiveLine(&*it);
+				context->selectionController->SetActiveID(it->Id);
 			else
-				context->selectionController->SetSelectionAndActive({ &*it }, &*it);
+				context->selectionController->SetSelectionAndActiveIDs({it->Id}, it->Id);
 
 			if (settings.field == SearchReplaceSettings::Field::TEXT)
 				context->textSelectionController->SetSelection(ms.start, ms.end);
 
 			return true;
 		}
-	} while (pos = 0, &*(it = circular_next(it, context->ass->Events)) != line);
+	} while (pos = 0, &*(it = circular_next(it, context->subtitleAccess->Read().Events)) != line);
 
 	// Replaced something and didn't find another match, so select the newly
 	// inserted text
@@ -235,6 +263,8 @@ bool SearchReplaceEngine::FindReplace(bool replace) {
 }
 
 bool SearchReplaceEngine::ReplaceAll() {
+    auto edit_scope = context->subtitleAccess->TryWrite();
+    if (!edit_scope) return false;
 	if (!initialized)
 		return false;
 
@@ -242,22 +272,26 @@ bool SearchReplaceEngine::ReplaceAll() {
 
 	auto matches = GetMatcher(settings);
 
-	auto const& sel = context->selectionController->GetSelectedSet();
+	std::set<int> selected;
+    for(auto row:context->selectionController->ReadSelectedLines())selected.insert(row->Id);
 	bool selection_only = settings.limit_to == SearchReplaceSettings::Limit::SELECTED;
 
-	for (auto& diag : context->ass->Events) {
-		if (selection_only && !sel.count(&diag)) continue;
+	std::vector<AssDialogueBase> updates;
+    for (auto const& original : context->subtitleAccess->Read().Events) {
+        AssDialogue diag(static_cast<AssDialogueBase const&>(original));
+		if (selection_only && !selected.contains(original.Id)) continue;
 		if (settings.ignore_comments && diag.Comment) continue;
 
 		if (settings.use_regex) {
 			if (MatchState ms = matches(&diag, 0)) {
 				auto& diag_field = diag.*get_dialogue_field(settings.field);
-				std::string const& text = diag_field.get();
+                auto text = boost::locale::normalize(diag_field.get());
 				count += std::distance(
 					boost::u32regex_iterator<std::string::const_iterator>(begin(text), end(text), *ms.re),
 					boost::u32regex_iterator<std::string::const_iterator>());
 				diag_field = u32regex_replace(text, *ms.re, settings.replace_with);
 			}
+			updates.push_back(diag);
 			continue;
 		}
 
@@ -267,13 +301,17 @@ bool SearchReplaceEngine::ReplaceAll() {
 			Replace(&diag, ms);
 			pos = ms.end;
 		}
+        updates.push_back(diag);
 	}
 
 	if (count > 0) {
-		context->ass->Commit(_("replace"), AssFile::COMMIT_DIAG_TEXT);
+        context->subtitleAccess->Edit(edit_scope->Lease()).UpdateRows(updates);
+		context->subtitleAccess->Edit(edit_scope->Lease()).Commit(_("replace"), AssFile::COMMIT_DIAG_TEXT);
+		edit_scope.reset(); // C1-C1c-13 (audit B6): no lease across the message box
 		wxMessageBox(fmt_plural(count, "One match was replaced.", "%d matches were replaced.", (int)count));
 	}
 	else {
+		edit_scope.reset();
 		wxMessageBox(_("No matches found."));
 	}
 

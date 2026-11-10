@@ -26,7 +26,7 @@
 #include <libaegisub/background_runner.h>
 
 class DialogProgressSink;
-class wxButton;
+class FlatButton;
 class wxGauge;
 class wxStaticText;
 class wxTextCtrl;
@@ -40,7 +40,7 @@ class DialogProgress final : public wxDialog, public agi::BackgroundRunner {
 	wxStaticText *title;
 	wxStaticText *text;
 	wxGauge *gauge;
-	wxButton *cancel_button;
+	FlatButton *cancel_button;
 	wxTextCtrl *log_output;
 
 	wxTimer pulse_timer;

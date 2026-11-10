@@ -36,10 +36,12 @@
 class AssDialogue;
 class AssFile;
 class AudioRenderingStyleRanges;
+class AudioEditSession;
 namespace agi { struct Context; }
 namespace agi::ass { class Karaoke; }
 
 #include "audio_marker.h"
+#include <memory>
 
 /// @class AudioTimingController
 /// @brief Base class for objects controlling audio timing
@@ -52,7 +54,9 @@ namespace agi::ass { class Karaoke; }
 /// The timing controller must then be sent the marker drag events as well as
 /// clicks in empty areas of the audio display.
 class AudioTimingController : public AudioMarkerProvider, public AudioLabelProvider {
+	std::shared_ptr<void const> marker_epoch = std::make_shared<int>(0);
 protected:
+	void InvalidateMarkers() { marker_epoch = std::make_shared<int>(0); }
 	/// The primary playback range has changed, usually as a result of user interaction.
 	agi::signal::Signal<> AnnounceUpdatedPrimaryRange;
 
@@ -60,6 +64,10 @@ protected:
 	agi::signal::Signal<> AnnounceUpdatedStyleRanges;
 
 public:
+	std::weak_ptr<void const> MarkerLifetime() const noexcept { return marker_epoch; }
+	// No model writes or commits are permitted in this teardown hook.
+	virtual bool BeginDrag() { return true; }
+	virtual void EndDrag(bool /*cancelled*/) { }
 	/// @brief Get any warning message to show in the audio display
 	/// @return The warning message to show, may be empty if there is none
 	virtual wxString GetWarningMessage() const = 0;
@@ -188,4 +196,4 @@ std::unique_ptr<AudioTimingController> CreateDialogueTimingController(agi::Conte
 /// @brief Create a karaoke audio timing controller
 /// @param c Project context
 /// @param kara Karaoke model
-std::unique_ptr<AudioTimingController> CreateKaraokeTimingController(agi::Context *c, agi::ass::Karaoke *kara, agi::signal::Connection& file_changed);
+std::unique_ptr<AudioTimingController> CreateKaraokeTimingController(agi::Context *c, agi::ass::Karaoke *kara, agi::signal::Connection& file_changed, std::shared_ptr<AudioEditSession> edit = {});

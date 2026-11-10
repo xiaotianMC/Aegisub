@@ -1,3 +1,4 @@
+#include "subtitle_project_access.h"
 // Copyright (c) 2006, Niels Martin Hansen
 // All rights reserved.
 //
@@ -40,6 +41,7 @@
 
 #include <libaegisub/ass/string_codec.h>
 #include <libaegisub/dispatch.h>
+#include <libaegisub/log.h>
 #include <libaegisub/fs.h>
 #include <libaegisub/path.h>
 #include <libaegisub/split.h>
@@ -185,7 +187,7 @@ namespace Automation4 {
 		config_dialog = GenerateConfigDialog(parent, c);
 
 		if (config_dialog) {
-			std::string const& val = c->ass->Properties.automation_settings[GetScriptSettingsIdentifier()];
+			auto val = c->subtitleAccess->AutomationSetting(GetScriptSettingsIdentifier());
 			if (!val.empty())
 				config_dialog->Unserialise(val);
 			return config_dialog->CreateWindow(parent);
@@ -195,8 +197,15 @@ namespace Automation4 {
 	}
 
 	void ExportFilter::LoadSettings(bool, agi::Context *c) {
-		if (config_dialog)
-			c->ass->Properties.automation_settings[GetScriptSettingsIdentifier()] = config_dialog->Serialise();
+		if (!config_dialog) return;
+		// Remembering filter settings is best-effort: skipped while the
+		// subtitles are being compared (C1-C1c-12); the export still runs.
+		try {
+			c->subtitleAccess->SetAutomationSetting(GetScriptSettingsIdentifier(), config_dialog->Serialise());
+		}
+		catch (SubtitleProjectBusy const& e) {
+			LOG_W("automation/export") << "Filter settings not stored: " << e.GetMessage();
+		}
 	}
 
 	// ProgressSink
@@ -370,7 +379,7 @@ namespace Automation4 {
 		bool was_empty = scripts.empty();
 		scripts.clear();
 
-		auto const& local_scripts = context->ass->Properties.automation_scripts;
+		auto const& local_scripts = context->subtitleAccess->Read().Properties.automation_scripts;
 
 		// Tuples of (raw script path, base path, resolved path)
 		using PathTuple = std::tuple<std::string, agi::fs::path, agi::fs::path>;
@@ -471,7 +480,14 @@ namespace Automation4 {
 
 			scripts_string += scriptfn;
 		}
-		context->ass->Properties.automation_scripts = std::move(scripts_string);
+		try {
+			context->subtitleAccess->SetMetadata(SubtitleProjectAccess::MetadataField::AutomationScripts, std::move(scripts_string));
+		}
+		catch (SubtitleProjectBusy const&) {
+			// C1-C1c-12: the loaded scripts change, but the list stored in the
+			// subtitles cannot while they are being compared.
+			wxLogWarning(_("The list of loaded automation scripts was not stored in the subtitles because they are being compared."));
+		}
 	}
 
 	// ScriptFactory

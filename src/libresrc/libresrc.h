@@ -15,6 +15,7 @@
 #pragma once
 
 #include <cstdlib>
+#include <string>
 #include <string_view>
 
 struct LibresrcBlob {
@@ -43,10 +44,40 @@ wxIcon libresrc_geticon(const unsigned char *image, size_t size);
 // Having to specify this when constructing the bitmap is slightly awkward,
 // but wxWidgets doesn't allow you to scale a wxBitmapBundle after creating it,
 // so the scale has to be set for the individual bitmaps before constructing it.
-wxBitmapBundle libresrc_getbitmapbundle(const LibresrcBlob *images, size_t count, int height, int dir=0);
+// @p name is the icon's name: unless classic icons are chosen, one drawn in
+// icons_modern.cpp replaces the bitmaps (docs/icons.md).
+wxBitmapBundle libresrc_getbitmapbundle(const char *name, const LibresrcBlob *images, size_t count, int height, int dir=0);
 
-wxIconBundle libresrc_geticonbundle(const LibresrcBlob *images, size_t count);
+// A window's icon: the monochrome one of @p name unless classic icons are
+// chosen or it has none, else the coloured bitmaps
+wxIconBundle libresrc_geticonbundle(const char *name, const LibresrcBlob *images, size_t count);
 
-#define GETBUNDLE(a, h) libresrc_getbitmapbundle(a, sizeof(a) / sizeof(*a), h)
-#define GETBUNDLEDIR(a, h, d) libresrc_getbitmapbundle(a, sizeof(a) / sizeof(*a), h, d)
-#define GETICONS(a) libresrc_geticonbundle(a, sizeof(a) / sizeof(*a))
+// Bitmap bundles made after this are adapted for a dark background: dark
+// glyphs (bold, play, arrows...) and black parts reaching the icon's edge are
+// lightened, so they stay visible; colours are kept (docs/icons.md).
+void libresrc_set_dark(bool dark);
+bool libresrc_dark();
+
+// Classic: Aegisub's coloured bitmaps; otherwise the monochrome icons
+// (App/Classic Icons). Like libresrc_set_dark, it affects bundles made after it.
+void libresrc_set_classic(bool classic);
+bool libresrc_classic();
+// The monochrome icon's SVG body, or null if @p name has none
+const char *libresrc_modern_icon(std::string_view name);
+// A monochrome icon from @p body, in the colour for the current appearance;
+// @p flyout adds the corner mark of a tool with a choice of shapes. Each size
+// is drawn on its own, hinted to the pixel grid: a whole number of pixels for
+// the stroke, lines on pixel centres or edges.
+wxBitmapBundle libresrc_modern_bundle(const char *body, int height, int dir = 0, bool flyout = false);
+// The SVG drawn for @p px pixels (for tests)
+std::string libresrc_modern_svg(const char *body, int px, int dir = 0);
+
+class wxImage;
+// The adaptation itself. @p glyph: the icon is drawn mostly in dark colours,
+// as libresrc_is_glyph says of its largest image; all its dark parts are lightened.
+void libresrc_adapt_for_dark(wxImage& image, bool glyph);
+bool libresrc_is_glyph(wxImage const& image);
+
+#define GETBUNDLE(a, h) libresrc_getbitmapbundle(#a, a, sizeof(a) / sizeof(*a), h)
+#define GETBUNDLEDIR(a, h, d) libresrc_getbitmapbundle(#a, a, sizeof(a) / sizeof(*a), h, d)
+#define GETICONS(a) libresrc_geticonbundle(#a, a, sizeof(a) / sizeof(*a))

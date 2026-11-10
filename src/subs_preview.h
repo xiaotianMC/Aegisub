@@ -47,6 +47,10 @@ class DialogProgress;
 class SubtitlesProvider;
 class VideoProvider;
 
+/// The background to preview @p style on: @p back, unless the text would
+/// hardly show on it, then a light or a dark one it shows on
+agi::Color PreviewBackdrop(AssStyle const& style, agi::Color back);
+
 /// Preview window to show a short string with a given ass style
 class SubtitlesPreview final : public wxWindow {
 	/// The subtitle provider used to render the string
@@ -59,6 +63,12 @@ class SubtitlesPreview final : public wxWindow {
 	std::unique_ptr<VideoProvider> vid;
 	/// Current background color
 	agi::Color back_color;
+	/// The background drawn: back_color, unless the text would hardly show
+	/// on it
+	agi::Color shown_back;
+	agi::Color Backdrop() const;
+	/// Make the background again if the colour it should be has changed
+	void UpdateBackdrop();
 	/// Subtitle file containing the style and displayed line
 	std::unique_ptr<AssFile> sub_file;
 	/// Line used to render the specified text

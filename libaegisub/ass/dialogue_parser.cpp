@@ -254,6 +254,7 @@ void MarkDrawings(std::string_view str, std::vector<DialogueToken> &tokens) {
 					tokens[i].type = dt::DRAWING_FULL;
 				break;
 			case dt::TAG_NAME:
+				if (len == 1 && str[pos] == 'r') in_drawing = false;
 				// Mark vector clip arguments as drawings
 				if (i + 3 < tokens.size() && (len == 4 || len == 5) && str.substr(pos, len).ends_with("clip")) {
 					if (tokens[i + 1].type != dt::OPEN_PAREN)

@@ -28,14 +28,14 @@
 #include "search_replace_engine.h"
 #include "utils.h"
 #include "validators.h"
+#include "flat_controls.h"
+#include "flat_dialog.h"
+#include "theme.h"
 
 
 #include <functional>
 
-#include <wx/button.h>
-#include <wx/checkbox.h>
-#include <wx/combobox.h>
-#include <wx/radiobox.h>
+#include <wx/menu.h>
 #include <wx/msgdlg.h>
 #include <wx/sizer.h>
 #include <wx/stattext.h>
@@ -61,60 +61,101 @@ DialogSearchReplace<has_replace>::DialogSearchReplace(agi::Context* c)
 	settings->skip_tags = OPT_GET("Tool/Search Replace/Skip Tags")->GetBool();
 	settings->exact_match = false;
 
-	auto find_sizer = new wxFlexGridSizer(2, 2, 5, 15);
-	find_edit = new wxComboBox(this, -1, "", wxDefaultPosition, wxSize(300, -1), recent_find, wxCB_DROPDOWN | wxTE_PROCESS_ENTER, StringBinder(&settings->find));
-	find_edit->SetMaxLength(0);
-	find_sizer->Add(new wxStaticText(this, -1, _("Find what:")), wxSizerFlags().Center().Left());
-	find_sizer->Add(find_edit);
+	theme::UseSurface(this);
 
+	// What to find and what to put in its place, each with its recent ones
+	auto text_field = [this](wxString const& label, std::string *value, char const *mru_name) {
+		auto frame = new FlatFrame(this, label);
+		auto edit = new wxTextCtrl(frame, -1, "", wxDefaultPosition, wxDefaultSize, wxTE_PROCESS_ENTER | wxBORDER_NONE, StringBinder(value));
+		frame->SetContent(edit, 300);
+		std::string mru = mru_name;
+		frame->SetChevron([this, frame, edit, mru] {
+			auto recent = lagi_MRU_wxAS(mru.c_str());
+			if (recent.empty()) return;
+			wxMenu menu;
+			for (size_t i = 0; i < recent.size(); ++i)
+				menu.Append(wxID_HIGHEST + 1 + i, recent[i]);
+			int chosen = frame->GetPopupMenuSelectionFromUser(menu, 0, frame->GetSize().y);
+			size_t index = chosen - wxID_HIGHEST - 1;
+			if (chosen <= wxID_HIGHEST || index >= recent.size()) return;
+			edit->ChangeValue(recent[index]);
+			edit->SetFocus();
+			edit->SelectAll();
+		});
+		return std::make_pair(frame, edit);
+	};
+	auto [find_frame, find] = text_field(flat::WithoutColon(_("Find what:")), &settings->find, "Find");
+	find_edit = find;
+	auto fields = new wxBoxSizer(wxVERTICAL);
+	fields->Add(find_frame, wxSizerFlags().Expand());
 	if (has_replace) {
-		replace_edit = new wxComboBox(this, -1, "", wxDefaultPosition, wxSize(300, -1), lagi_MRU_wxAS("Replace"), wxCB_DROPDOWN | wxTE_PROCESS_ENTER, StringBinder(&settings->replace_with));
-		replace_edit->SetMaxLength(0);
-		find_sizer->Add(new wxStaticText(this, -1, _("Replace with:")), wxSizerFlags().Center().Left());
-		find_sizer->Add(replace_edit);
+		auto [replace_frame, replace] = text_field(flat::WithoutColon(_("Replace with:")), &settings->replace_with, "Replace");
+		replace_edit = replace;
+		fields->Add(replace_frame, wxSizerFlags().Expand().Border(wxTOP, FromDIP(6)));
 	}
 
-	auto options_sizer = new wxBoxSizer(wxVERTICAL);
-	options_sizer->Add(new wxCheckBox(this, -1, _("&Match case"), wxDefaultPosition, wxDefaultSize, 0, wxGenericValidator(&settings->match_case)), wxSizerFlags().Border(wxBOTTOM));
-	options_sizer->Add(new wxCheckBox(this, -1, _("&Use regular expressions"), wxDefaultPosition, wxDefaultSize, 0, wxGenericValidator(&settings->use_regex)), wxSizerFlags().Border(wxBOTTOM));
-	options_sizer->Add(new wxCheckBox(this, -1, _("&Skip Comments"), wxDefaultPosition, wxDefaultSize, 0, wxGenericValidator(&settings->ignore_comments)), wxSizerFlags().Border(wxBOTTOM));
-	options_sizer->Add(new wxCheckBox(this, -1, _("S&kip Override Tags"), wxDefaultPosition, wxDefaultSize, 0, wxGenericValidator(&settings->skip_tags)));
+	// How to match
+	match_case = new FlatCheck(this, _("&Match case"));
+	use_regex = new FlatCheck(this, _("&Use regular expressions"));
+	skip_comments = new FlatCheck(this, _("&Skip Comments"));
+	skip_tags = new FlatCheck(this, _("S&kip Override Tags"));
+	match_case->SetValue(settings->match_case);
+	use_regex->SetValue(settings->use_regex);
+	skip_comments->SetValue(settings->ignore_comments);
+	skip_tags->SetValue(settings->skip_tags);
+	auto checks = new wxGridSizer(2, FromDIP(6), FromDIP(16));
+	for (auto check : {match_case, use_regex, skip_comments, skip_tags})
+		checks->Add(check);
+
+	// Where to look
+	field = new FlatSwitch(this, {_("&Text"), _("St&yle"), _("A&ctor"), _("&Effect")});
+	field->SetSelection(static_cast<int>(settings->field));
+	limit_to = new FlatSwitch(this, {_("A&ll rows"), _("Selected &rows")});
+	limit_to->SetSelection(static_cast<int>(settings->limit_to));
+	auto dim = [this](wxString const& text) {
+		auto label = new wxStaticText(this, -1, text);
+		label->SetForegroundColour(flat::Colours(this).dim);
+		return label;
+	};
+	auto where = new wxFlexGridSizer(2, FromDIP(6), FromDIP(10));
+	where->AddGrowableCol(1, 1);
+	where->Add(dim(_("In Field")), wxSizerFlags().CenterVertical());
+	where->Add(field, wxSizerFlags().Expand());
+	where->Add(dim(_("Limit to")), wxSizerFlags().CenterVertical());
+	where->Add(limit_to, wxSizerFlags().Expand());
 
 	auto left_sizer = new wxBoxSizer(wxVERTICAL);
-	left_sizer->Add(find_sizer, wxSizerFlags().DoubleBorder(wxBOTTOM));
-	left_sizer->Add(options_sizer);
+	left_sizer->Add(fields, wxSizerFlags().Expand());
+	left_sizer->Add(checks, wxSizerFlags().Expand().Border(wxTOP, FromDIP(12)));
+	left_sizer->Add(where, wxSizerFlags().Expand().Border(wxTOP, FromDIP(12)));
 
-	wxString field[] = { _("&Text"), _("St&yle"), _("A&ctor"), _("&Effect") };
-	wxString affect[] = { _("A&ll rows"), _("Selected &rows") };
-	auto limit_sizer = new wxBoxSizer(wxHORIZONTAL);
-	limit_sizer->Add(new wxRadioBox(this, -1, _("In Field"), wxDefaultPosition, wxDefaultSize, std::size(field), field, 0, wxRA_SPECIFY_COLS, MakeEnumBinder(&settings->field)), wxSizerFlags().Border(wxRIGHT));
-	limit_sizer->Add(new wxRadioBox(this, -1, _("Limit to"), wxDefaultPosition, wxDefaultSize, std::size(affect), affect, 0, wxRA_SPECIFY_COLS, MakeEnumBinder(&settings->limit_to)));
-
-	auto find_next = new wxButton(this, -1, _("&Find next"));
-	auto replace_next = new wxButton(this, -1, _("Replace &next"));
-	auto replace_all = new wxButton(this, -1, _("Replace &all"));
-	find_next->SetDefault();
-
+	// What to do, the first filled as Enter in the find field does it
+	auto find_next = new FlatButton(this, _("&Find next"), wxID_ANY, true);
+	auto replace_next = new FlatButton(this, _("Replace &next"));
+	auto replace_all = new FlatButton(this, _("Replace &all"));
+	auto close = new FlatButton(this, _("Close"), wxID_CANCEL);
 	auto button_sizer = new wxBoxSizer(wxVERTICAL);
-	button_sizer->Add(find_next, wxSizerFlags().Border(wxBOTTOM));
-	button_sizer->Add(replace_next, wxSizerFlags().Border(wxBOTTOM));
-	button_sizer->Add(replace_all, wxSizerFlags().Border(wxBOTTOM));
-	button_sizer->Add(new wxButton(this, wxID_CANCEL));
-
+	for (auto button : {find_next, replace_next, replace_all}) {
+		button->SetMinSize(wxSize(std::max(FromDIP(110), button->GetBestSize().x), FromDIP(28)));
+		button_sizer->Add(button, wxSizerFlags().Expand().Border(wxBOTTOM, FromDIP(6)));
+	}
+	button_sizer->AddStretchSpacer(1);
+	close->SetMinSize(wxSize(std::max(FromDIP(110), close->GetBestSize().x), FromDIP(28)));
+	button_sizer->Add(close, wxSizerFlags().Expand());
 	if (!has_replace) {
 		button_sizer->Hide(replace_next);
 		button_sizer->Hide(replace_all);
 	}
 
 	auto top_sizer = new wxBoxSizer(wxHORIZONTAL);
-	top_sizer->Add(left_sizer, wxSizerFlags().Border());
-	top_sizer->Add(button_sizer, wxSizerFlags().Border());
+	top_sizer->Add(left_sizer, wxSizerFlags(1).Expand());
+	top_sizer->Add(button_sizer, wxSizerFlags().Expand().Border(wxLEFT, FromDIP(16)));
 
 	auto main_sizer = new wxBoxSizer(wxVERTICAL);
-	main_sizer->Add(top_sizer);
-	main_sizer->Add(limit_sizer, wxSizerFlags().Border());
+	main_sizer->Add(top_sizer, wxSizerFlags(1).Expand().Border(wxALL, FromDIP(10)));
 	SetSizerAndFit(main_sizer);
 	CenterOnParent();
+	flat::UseFlatButtonKeys(this);
 
 	TransferDataToWindow();
 	find_edit->SetFocus();
@@ -129,8 +170,19 @@ DialogSearchReplace<has_replace>::DialogSearchReplace(agi::Context* c)
 }
 
 template<bool has_replace>
+void DialogSearchReplace<has_replace>::ReadChoices() {
+	settings->match_case = match_case->GetValue();
+	settings->use_regex = use_regex->GetValue();
+	settings->ignore_comments = skip_comments->GetValue();
+	settings->skip_tags = skip_tags->GetValue();
+	settings->field = static_cast<SearchReplaceSettings::Field>(field->GetSelection());
+	settings->limit_to = static_cast<SearchReplaceSettings::Limit>(limit_to->GetSelection());
+}
+
+template<bool has_replace>
 void DialogSearchReplace<has_replace>::FindReplace(bool (SearchReplaceEngine::*func)()) {
 	TransferDataFromWindow();
+	ReadChoices();
 
 	if (settings->find.empty())
 		return;
@@ -154,25 +206,6 @@ void DialogSearchReplace<has_replace>::FindReplace(bool (SearchReplaceEngine::*f
 	OPT_SET("Tool/Search Replace/Skip Tags")->SetBool(settings->skip_tags);
 	OPT_SET("Tool/Search Replace/Field")->SetInt(static_cast<int>(settings->field));
 	OPT_SET("Tool/Search Replace/Affect")->SetInt(static_cast<int>(settings->limit_to));
-
-	UpdateDropDowns();
-}
-
-static void update_mru(wxComboBox *cb, const char *mru_name) {
-	cb->Freeze();
-	cb->Clear();
-	cb->Append(lagi_MRU_wxAS(mru_name));
-	if (!cb->IsListEmpty())
-		cb->SetSelection(0);
-	cb->Thaw();
-}
-
-template<bool has_replace>
-void DialogSearchReplace<has_replace>::UpdateDropDowns() {
-	update_mru(find_edit, "Find");
-
-	if (has_replace)
-		update_mru(replace_edit, "Replace");
 }
 
 template<bool replace>

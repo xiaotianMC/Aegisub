@@ -15,12 +15,16 @@
 // Aegisub Project http://www.aegisub.org/
 
 #include "grid_column.h"
+#include "theme.h"
 
 #include "ass_dialogue.h"
 #include "ass_file.h"
+#include "subtitle_project_access.h"
 #include "compat.h"
 #include "include/aegisub/context.h"
 #include "options.h"
+#include "subtitle_binding.h"
+#include "timing_adjust.h"
 #include "video_controller.h"
 
 #include <libaegisub/character_count.h>
@@ -82,15 +86,13 @@ void GridColumn::UpdateWidth(const agi::Context *c, WidthHelper &helper) {
 	}
 
 	width = Width(c, helper);
-	if (width) // 10 is an arbitrary amount of padding
-		width = 10 + std::max(width, helper(Header()));
+	if (width)
+		width = 2 * cell_padding + std::max(width, helper(Header()));
 }
 
 void GridColumn::Paint(wxDC &dc, int x, int y, const AssDialogue *d, const agi::Context *c) const {
 	wxString str = Value(d, c);
-	if (Centered())
-		x += (width - 6 - dc.GetTextExtent(str).GetWidth()) / 2;
-	dc.DrawText(str, x + 4, y + 2);
+	dc.DrawText(str, TextLeft(x, dc.GetTextExtent(str).GetWidth()), y + 2);
 }
 
 namespace {
@@ -100,6 +102,15 @@ namespace {
 #define COLUMN_DESCRIPTION(value) \
 	private: const wxString description = value; \
 	public: wxString const& Description() const override { return description; }
+
+/// A rounded tag behind the text of the cell at @p x, in the current brush,
+/// inset from the cell so neighbouring tags stay apart.
+void DrawPill(wxDC &dc, int x, int y, int width) {
+	int inset_x = std::max(2, GridColumn::cell_padding / 2);
+	int height = dc.GetCharHeight() + 2;
+	int radius = std::max(2, height / 3);
+	dc.DrawRoundedRectangle(x + inset_x, y + 1, width - 2 * inset_x, height, radius);
+}
 
 struct GridColumnLineNumber final : GridColumn {
 	COLUMN_HEADER(_("#"))
@@ -111,9 +122,27 @@ struct GridColumnLineNumber final : GridColumn {
 	}
 
 	int Width(const agi::Context *c, WidthHelper &helper) const override {
-		if (c->ass->Events.empty())
-			return helper("1");
-		return helper(Value(&c->ass->Events.back()));
+		int number_width = c->subtitleAccess->Read().Events.empty() ? helper("1") : helper(Value(&c->subtitleAccess->Read().Events.back()));
+		return std::max(number_width, helper("00"));
+	}
+
+	void Paint(wxDC &dc, int x, int y, const AssDialogue *d, const agi::Context *c) const override {
+		if (!d->Comment) {
+			GridColumn::Paint(dc, x, y, d, c);
+			return;
+		}
+		// Draw a slashed eye at the grid's font size, without a font-glyph dependency.
+		int eye_width = std::min(width - cell_padding, std::max(10, dc.GetCharHeight()));
+		int eye_height = std::max(6, eye_width / 2);
+		int cx = x + width / 2;
+		int cy = y + 2 + dc.GetCharHeight() / 2;
+		wxDCPenChanger pen(dc, wxPen(dc.GetTextForeground(), std::max(1, eye_width / 10)));
+		wxDCBrushChanger brush(dc, *wxTRANSPARENT_BRUSH);
+		dc.DrawEllipse(cx - eye_width / 2, cy - eye_height / 2, eye_width, eye_height);
+		dc.SetBrush(wxBrush(dc.GetTextForeground()));
+		dc.DrawCircle(cx, cy, std::max(1, eye_height / 4));
+		dc.DrawLine(cx - eye_width / 2, cy - eye_height / 2 - 2,
+			cx + eye_width / 2, cy + eye_height / 2 + 2);
 	}
 };
 
@@ -132,13 +161,31 @@ struct GridColumnLayer final : GridColumn {
 	COLUMN_DESCRIPTION(_("Layer"))
 	bool Centered() const override { return true; }
 
-	wxString Value(const AssDialogue *d, const agi::Context *) const override {
-		return d->Layer ? wxString(std::to_wstring(d->Layer)) : wxString();
+	wxString Value(const AssDialogue *d, const agi::Context *c) const override {
+		return d->Layer || !GetSubtitleBinding(c->subtitleAccess->Read(), *d).empty() ? wxString(std::to_wstring(d->Layer)) : wxString();
+	}
+
+	void Paint(wxDC &dc, int x, int y, const AssDialogue *d, const agi::Context *c) const override {
+		auto group = GetSubtitleBinding(c->subtitleAccess->Read(), *d);
+		if (group.empty()) { GridColumn::Paint(dc, x, y, d, c); return; }
+		static const wxColour colors[] = {
+			{191, 219, 254}, {254, 215, 170}, {187, 247, 208}, {233, 213, 255},
+			{254, 202, 202}, {165, 243, 252}, {254, 240, 138}, {251, 207, 232}};
+		wxDCPenChanger pen(dc, *wxTRANSPARENT_PEN);
+		wxDCBrushChanger brush(dc, wxBrush(colors[SubtitleBindingColorIndex(group)]));
+		DrawPill(dc, x, y, width);
+		auto foreground = dc.GetTextForeground();
+		dc.SetTextForeground(*wxBLACK);
+		GridColumn::Paint(dc, x, y, d, c);
+		dc.SetTextForeground(foreground);
 	}
 
 	int Width(const agi::Context *c, WidthHelper &helper) const override {
-		int max_layer = max_value(&AssDialogue::Layer, c->ass->Events);
-		return max_layer == 0 ? 0 : helper(std::to_wstring(max_layer));
+		int max_layer = max_value(&AssDialogue::Layer, c->subtitleAccess->Read().Events);
+		bool bound = std::any_of(c->subtitleAccess->Read().Events.begin(), c->subtitleAccess->Read().Events.end(), [&](auto const& line) {
+			return !GetSubtitleBinding(c->subtitleAccess->Read(), line).empty();
+		});
+		return max_layer == 0 && !bound ? 0 : helper(std::to_wstring(max_layer));
 	}
 };
 
@@ -162,7 +209,7 @@ struct GridColumnStartTime final : GridColumnTime {
 	int Width(const agi::Context *c, WidthHelper &helper) const override {
 		if (!by_frame)
 			return helper(wxS("0:00:00.00"));
-		int frame = c->videoController->FrameAtTime(max_value(&AssDialogue::Start, c->ass->Events), agi::vfr::START);
+		int frame = c->videoController->FrameAtTime(max_value(&AssDialogue::Start, c->subtitleAccess->Read().Events), agi::vfr::START);
 		return helper(std::to_wstring(frame));
 	}
 };
@@ -180,7 +227,7 @@ struct GridColumnEndTime final : GridColumnTime {
 	int Width(const agi::Context *c, WidthHelper &helper) const override {
 		if (!by_frame)
 			return helper(wxS("0:00:00.00"));
-		int frame = c->videoController->FrameAtTime(max_value(&AssDialogue::End, c->ass->Events), agi::vfr::END);
+		int frame = c->videoController->FrameAtTime(max_value(&AssDialogue::End, c->subtitleAccess->Read().Events), agi::vfr::END);
 		return helper(std::to_wstring(frame));
 	}
 };
@@ -208,7 +255,7 @@ struct GridColumnStyle final : GridColumn {
 	}
 
 	int Width(const agi::Context *c, WidthHelper &helper) const override {
-		return max_width(&AssDialogue::Style, c->ass->Events, helper);
+		return max_width(&AssDialogue::Style, c->subtitleAccess->Read().Events, helper);
 	}
 };
 
@@ -222,7 +269,7 @@ struct GridColumnEffect final : GridColumn {
 	}
 
 	int Width(const agi::Context *c, WidthHelper &helper) const override {
-		return max_width(&AssDialogue::Effect, c->ass->Events, helper);
+		return max_width(&AssDialogue::Effect, c->subtitleAccess->Read().Events, helper);
 	}
 };
 
@@ -236,7 +283,7 @@ struct GridColumnActor final : GridColumn {
 	}
 
 	int Width(const agi::Context *c, WidthHelper &helper) const override {
-		return max_width(&AssDialogue::Actor, c->ass->Events, helper);
+		return max_width(&AssDialogue::Actor, c->subtitleAccess->Read().Events, helper);
 	}
 };
 
@@ -252,7 +299,7 @@ struct GridColumnMargin : GridColumn {
 
 	int Width(const agi::Context *c, WidthHelper &helper) const override {
 		int max = 0;
-		for (AssDialogue const& line : c->ass->Events) {
+		for (AssDialogue const& line : c->subtitleAccess->Read().Events) {
 			if (line.Margin[index] > max)
 				max = line.Margin[index];
 		}
@@ -290,7 +337,6 @@ class GridColumnCPS final : public GridColumn {
 	const agi::OptionValue *ignore_punctuation = OPT_GET("Subtitle/Character Counter/Ignore Punctuation");
 	const agi::OptionValue *cps_warn = OPT_GET("Subtitle/Character Counter/CPS Warning Threshold");
 	const agi::OptionValue *cps_error = OPT_GET("Subtitle/Character Counter/CPS Error Threshold");
-	const agi::OptionValue *bg_color = OPT_GET("Colour/Subtitle Grid/CPS Error");
 
 public:
 	COLUMN_HEADER(_("CPS"))
@@ -303,19 +349,7 @@ public:
 	}
 
 	int CPS(const AssDialogue *d) const {
-		int duration = d->End - d->Start;
-		auto const& text = d->Text.get();
-
-		if (duration <= 100 || text.size() > static_cast<size_t>(duration))
-			return -1;
-
-		int ignore = agi::IGNORE_BLOCKS;
-		if (ignore_whitespace->GetBool())
-			ignore |= agi::IGNORE_WHITESPACE;
-		if (ignore_punctuation->GetBool())
-			ignore |= agi::IGNORE_PUNCTUATION;
-
-		return agi::CharacterCount(text, ignore) * 1000 / duration;
+		return CharactersPerSecond(d->Text.get(), d->End - d->Start, ignore_whitespace->GetBool(), ignore_punctuation->GetBool());
 	}
 
 	int Width(const agi::Context *, WidthHelper &helper) const override {
@@ -334,14 +368,13 @@ public:
 		int cps_max = std::max<int>(cps_min, cps_error->GetInt());
 		if (cps > cps_min) {
 			double alpha = std::min((double)(cps - cps_min + 1) / (cps_max - cps_min + 1), 1.0);
-			dc.SetBrush(wxBrush(blend(to_wx(bg_color->GetColor()), dc.GetBrush().GetColour(), alpha)));
+			dc.SetBrush(wxBrush(blend(theme::Colour("Colour/Subtitle Grid/CPS Error"), dc.GetBrush().GetColour(), alpha)));
 			dc.SetPen(*wxTRANSPARENT_PEN);
-			dc.DrawRectangle(x, y + 1, width, ext.GetHeight() + 3);
-			dc.SetTextForeground(blend(*wxBLACK, tc, alpha));
+			DrawPill(dc, x, y, width);
+			dc.SetTextForeground(blend(*wxWHITE, tc, alpha));
 		}
 
-		x += (width + 2 - ext.GetWidth()) / 2;
-		dc.DrawText(str, x, y + 2);
+		dc.DrawText(str, TextLeft(x, ext.GetWidth()), y + 2);
 		dc.SetTextForeground(tc);
 	}
 };

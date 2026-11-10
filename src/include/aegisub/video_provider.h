@@ -84,6 +84,13 @@ public:
 
 	/// Does the file which this provider is reading have an audio track?
 	virtual bool HasAudio() const { return false; }
+
+	/// Hand out frames no wider than @p max_width from now on, for reading
+	/// a video through to measure it rather than to show it: scaling a
+	/// frame down as it is converted costs much less than converting it
+	/// whole. False when the frames stay as they were, the provider not
+	/// being able to or the video being no wider already.
+	virtual bool ScaleDownForAnalysis(int /*max_width*/) { return false; }
 };
 
 DEFINE_EXCEPTION(VideoProviderError, agi::Exception);

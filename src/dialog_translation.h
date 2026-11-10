@@ -25,22 +25,29 @@
 
 namespace agi { struct Context; }
 class AssDialogue;
+class SubtitleDialogEdit;
 class AssDialogueBlock;
 class PersistLocation;
 class SubsTextEditCtrl;
-class wxCheckBox;
+class FlatCheck;
 class wxStaticText;
 class wxStyledTextCtrl;
 
 /// Assistant for translating subtitles in one language to another language
 class DialogTranslation final : public wxDialog {
+protected:
+    // Declared first: expires only after all owned bindings/cache members are destroyed.
+    std::shared_ptr<int> model_observer_lifetime = std::make_shared<int>(0);
+private:
 	agi::Context *c;
 
 	agi::signal::Connection file_change_connection;
 	agi::signal::Connection active_line_connection;
 
 	/// The active line
-	AssDialogue *active_line;
+	std::unique_ptr<AssDialogue> active_line;
+	std::unique_ptr<SubtitleDialogEdit> edit;
+	bool updating_display = false;
 	/// The parsed dialogue blocks for the active line
 	std::vector<std::unique_ptr<AssDialogueBlock>> blocks;
 	/// Which dialogue block in the active line is currently being translated
@@ -55,18 +62,19 @@ class DialogTranslation final : public wxDialog {
 	wxStaticText *line_number_display;
 	wxStyledTextCtrl *original_text;
 	SubsTextEditCtrl *translated_text;
-	wxCheckBox *seek_video;
+	FlatCheck *seek_video;
 
 	std::unique_ptr<PersistLocation> persist;
 
 	void OnPlayAudioButton(wxCommandEvent &);
 	void OnPlayVideoButton(wxCommandEvent &);
 	void OnKeyDown(wxKeyEvent &evt);
+	void OnShow(wxShowEvent &evt);
 	void OnExternalCommit(int commit_type);
 
 	void UpdateDisplay();
 
-	void OnActiveLineChanged(AssDialogue *new_line);
+	void OnActiveLineChanged(bool installing = false);
 
 public:
 	DialogTranslation(agi::Context *context);

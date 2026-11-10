@@ -5639,6 +5639,14 @@ msgid "Default timing length (ms)"
 msgstr ""
 
 #: ../src/preferences.cpp:174
+msgid "Automatically link nearby subtitles"
+msgstr ""
+
+#: ../src/preferences.cpp:175
+msgid "Link subtitle gaps under (s)"
+msgstr ""
+
+#: ../src/preferences.cpp:174
 msgid "Default lead-in length (ms)"
 msgstr ""
 

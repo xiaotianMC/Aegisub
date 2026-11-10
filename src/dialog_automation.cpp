@@ -28,14 +28,18 @@
 // Aegisub Project http://www.aegisub.org/
 
 #include "auto4_base.h"
+#include "utils.h"
 #include "compat.h"
 #include "command/command.h"
 #include "dialog_manager.h"
 #include "format.h"
-#include "help_button.h"
+#include "flat_controls.h"
+#include "flat_dialog.h"
+#include "flat_list.h"
 #include "include/aegisub/context.h"
 #include "libresrc/libresrc.h"
 #include "options.h"
+#include "theme.h"
 
 #include <libaegisub/signal.h>
 
@@ -43,10 +47,8 @@
 #include <boost/range/algorithm/transform.hpp>
 #include <vector>
 
-#include <wx/button.h>
 #include <wx/dialog.h>
 #include <wx/filedlg.h>
-#include <wx/listctrl.h>
 #include <wx/log.h>
 #include <wx/msgdlg.h>
 #include <wx/sizer.h>
@@ -78,17 +80,18 @@ class DialogAutomation final : public wxDialog {
 
 
 	/// List of loaded scripts
-	wxListView *list;
+	FlatList *list;
 
 	/// Unload a local script
-	wxButton *remove_button;
+	FlatButton *remove_button;
 
 	/// Reload a script
-	wxButton *reload_button;
+	FlatButton *reload_button;
 
 	void RebuildList();
 	void AddScript(Automation4::Script *script, bool is_global);
-	void SetScriptInfo(int i, Automation4::Script *script);
+	/// The script chosen, if there is one
+	ExtraScriptInfo *Chosen();
 	void UpdateDisplay();
 
 	void OnAdd(wxCommandEvent &);
@@ -111,104 +114,105 @@ DialogAutomation::DialogAutomation(agi::Context *c)
 , global_scripts_changed(global_manager->AddScriptChangeListener(&DialogAutomation::RebuildList, this))
 {
 	SetIcons(GETICONS(automation_toolbutton));
+	theme::UseSurface(this);
+	int gap = FromDIP(10), row = FromDIP(6);
 
-	// create main controls
-	list = new wxListView(this, -1, wxDefaultPosition, wxSize(600, 175), wxLC_REPORT|wxLC_SINGLE_SEL);
-	wxButton *add_button = new wxButton(this, -1, _("&Add"));
-	remove_button = new wxButton(this, -1, _("&Remove"));
-	reload_button = new wxButton(this, -1, _("Re&load"));
-	wxButton *info_button = new wxButton(this, -1, _("Show &Info"));
-	wxButton *reload_autoload_button = new wxButton(this, -1, _("Re&scan Autoload Dir"));
-	wxButton *close_button = new wxButton(this, wxID_CANCEL, _("&Close"));
+	// Each script: its name, its file and description under it, and at the
+	// right whether it is global or local, or how its loading went wrong
+	list = new FlatList(this, false, false, _("No scripts loaded"));
+	list->SetMinSize(FromDIP(wxSize(600, 240)));
+	auto add_button = new FlatButton(this, _("&Add"));
+	remove_button = new FlatButton(this, _("&Remove"));
+	reload_button = new FlatButton(this, _("Re&load"));
+	auto info_button = new FlatButton(this, _("Show &Info"));
+	auto reload_autoload_button = new FlatButton(this, _("Re&scan Autoload Dir"));
 
-	list->Bind(wxEVT_LIST_ITEM_SELECTED, std::bind(&DialogAutomation::UpdateDisplay, this));
-	list->Bind(wxEVT_LIST_ITEM_DESELECTED, std::bind(&DialogAutomation::UpdateDisplay, this));
+	list->Bind(wxEVT_LISTBOX, [this](wxCommandEvent&) { UpdateDisplay(); });
+	list->Bind(wxEVT_LISTBOX_DCLICK, &DialogAutomation::OnInfo, this);
 	add_button->Bind(wxEVT_BUTTON, &DialogAutomation::OnAdd, this);
 	remove_button->Bind(wxEVT_BUTTON, &DialogAutomation::OnRemove, this);
 	reload_button->Bind(wxEVT_BUTTON, &DialogAutomation::OnReload, this);
 	info_button->Bind(wxEVT_BUTTON, &DialogAutomation::OnInfo, this);
 	reload_autoload_button->Bind(wxEVT_BUTTON, &DialogAutomation::OnReloadAutoload, this);
 
-	// add headers to list view
-	list->InsertColumn(0, "", wxLIST_FORMAT_CENTER, 20);
-	list->InsertColumn(1, _("Name"), wxLIST_FORMAT_LEFT, 140);
-	list->InsertColumn(2, _("Filename"), wxLIST_FORMAT_LEFT, 90);
-	list->InsertColumn(3, _("Description"), wxLIST_FORMAT_LEFT, 330);
-
-	// button layout
+	// What is done with the scripts at the left, the autoload folder at the right
 	wxSizer *button_box = new wxBoxSizer(wxHORIZONTAL);
-	button_box->AddStretchSpacer(2);
-	button_box->Add(add_button, 0);
-	button_box->Add(remove_button, 0);
-	button_box->AddSpacer(10);
-	button_box->Add(reload_button, 0);
-	button_box->Add(info_button, 0);
-	button_box->AddSpacer(10);
-	button_box->Add(reload_autoload_button, 0);
-	button_box->AddSpacer(10);
-	button_box->Add(new HelpButton(this,"Automation Manager"), 0);
-	button_box->Add(close_button, 0);
-	button_box->AddStretchSpacer(2);
+	button_box->Add(add_button);
+	button_box->Add(remove_button, wxSizerFlags().Border(wxLEFT, row));
+	button_box->Add(reload_button, wxSizerFlags().Border(wxLEFT, gap));
+	button_box->Add(info_button, wxSizerFlags().Border(wxLEFT, row));
+	button_box->AddStretchSpacer(1);
+	button_box->Add(reload_autoload_button, wxSizerFlags().Border(wxLEFT, gap));
 
-	// main layout
+	auto buttons = new flat::DialogButtons(this, wxCANCEL | wxHELP, "Automation Manager");
+	buttons->Get(wxID_CANCEL)->SetLabel(_("&Close"));
+	// Enter closes, as Escape does
+	SetAffirmativeId(wxID_CANCEL);
+
 	wxSizer *main_box = new wxBoxSizer(wxVERTICAL);
-	main_box->Add(list, wxSizerFlags(1).Expand().Border());
-	main_box->Add(button_box, wxSizerFlags().Expand().Border(wxALL & ~wxTOP));
+	main_box->Add(list, wxSizerFlags(1).Expand().Border(wxLEFT | wxRIGHT | wxTOP, gap));
+	auto button_row = new wxBoxSizer(wxVERTICAL);
+	button_row->Add(button_box, wxSizerFlags().Expand().Border(wxTOP, row));
+	main_box->Add(button_row, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT, gap));
+	main_box->Add(buttons, wxSizerFlags().Expand().Border(wxALL, gap));
 	SetSizerAndFit(main_box);
 	Center();
-
-	// why doesn't this work... the button gets the "default" decoration but doesn't answer to Enter
-	// ("esc" does work)
-	SetDefaultItem(close_button);
-	SetAffirmativeId(wxID_CANCEL);
-	close_button->SetDefault();
 
 	RebuildList();
 }
 
 void DialogAutomation::RebuildList()
 {
+	// The script chosen stays chosen as the list is made again
+	auto chosen = Chosen();
+	auto chosen_script = chosen ? chosen->script : nullptr;
 	script_info.clear();
-	list->DeleteAllItems();
 
 	for (auto& script : local_manager->GetScripts()) AddScript(script.get(), false);
 	for (auto& script : global_manager->GetScripts()) AddScript(script.get(), true);
 
-	UpdateDisplay();
-}
+	std::vector<FlatList::Row> rows;
+	for (auto const& ei : script_info) {
+		auto script = ei.script;
+		FlatList::Row row{to_wx(script->GetName()), wxString(), wxString()};
+		row.detail = script->GetPrettyFilename().wstring();
+		auto description = flat::OneLine(to_wx(script->GetDescription()));
+		if (!description.empty()) row.detail += L" \u2014 " + description;
+		if (!script->GetLoadedState()) {
+			row.note = _("Failed to load");
+			row.warn = true;
+		}
+		else if (!script->GetWarnings().empty()) {
+			row.note = _("Loaded with warnings");
+			row.warn = true;
+		}
+		else
+			row.note = ei.is_global ? wxGETTEXT_IN_CONTEXT("automation script", "Global") : wxGETTEXT_IN_CONTEXT("automation script", "Local");
+		rows.push_back(std::move(row));
+	}
+	list->Set(std::move(rows));
+	for (size_t i = 0; i < script_info.size(); ++i)
+		if (script_info[i].script == chosen_script) list->SetSelection(static_cast<int>(i));
 
-void DialogAutomation::SetScriptInfo(int i, Automation4::Script *script)
-{
-	list->SetItem(i, 1, to_wx(script->GetName()));
-	list->SetItem(i, 2, script->GetPrettyFilename().wstring());
-	list->SetItem(i, 3, to_wx(script->GetDescription()));
-	if (!script->GetLoadedState())
-		list->SetItemBackgroundColour(i, wxColour(255,128,128));
-	else if (!script->GetWarnings().empty())
-		list->SetItemBackgroundColour(i, wxColour(255,255,128));
-	else
-		list->SetItemBackgroundColour(i, list->GetBackgroundColour());
+	UpdateDisplay();
 }
 
 void DialogAutomation::AddScript(Automation4::Script *script, bool is_global)
 {
-	ExtraScriptInfo ei = { script, is_global };
-	script_info.push_back(ei);
+	script_info.push_back({script, is_global});
+}
 
-	wxListItem itm;
-	itm.SetText(is_global ? "G" : "L");
-	itm.SetData((int)script_info.size()-1);
-	itm.SetId(list->GetItemCount());
-	SetScriptInfo(list->InsertItem(itm), script);
+ExtraScriptInfo *DialogAutomation::Chosen()
+{
+	int i = list->GetSelection();
+	return i >= 0 && i < static_cast<int>(script_info.size()) ? &script_info[i] : nullptr;
 }
 
 void DialogAutomation::UpdateDisplay()
 {
-	int i = list->GetNextItem(-1, wxLIST_NEXT_ALL, wxLIST_STATE_SELECTED);
-	bool selected = i >= 0;
-	bool local = selected && !script_info[list->GetItemData(i)].is_global;
-	remove_button->Enable(local);
-	reload_button->Enable(selected);
+	auto ei = Chosen();
+	remove_button->Enable(ei && !ei->is_global);
+	reload_button->Enable(ei != nullptr);
 }
 
 template<class Container>
@@ -247,30 +251,26 @@ void DialogAutomation::OnAdd(wxCommandEvent &)
 
 void DialogAutomation::OnRemove(wxCommandEvent &)
 {
-	int i = list->GetNextItem(-1, wxLIST_NEXT_ALL, wxLIST_STATE_SELECTED);
-	if (i < 0) return;
-	const ExtraScriptInfo &ei = script_info[list->GetItemData(i)];
-	if (ei.is_global) return;
+	auto ei = Chosen();
+	if (!ei || ei->is_global) return;
 
-	local_manager->Remove(ei.script);
+	local_manager->Remove(ei->script);
 }
 
 void DialogAutomation::OnReload(wxCommandEvent &)
 {
-	int i = list->GetNextItem(-1, wxLIST_NEXT_ALL, wxLIST_STATE_SELECTED);
-	if (i < 0) return;
+	auto ei = Chosen();
+	if (!ei) return;
 
-	ExtraScriptInfo const& ei = script_info[list->GetItemData(i)];
-	if (ei.is_global)
-		global_manager->Reload(ei.script);
+	if (ei->is_global)
+		global_manager->Reload(ei->script);
 	else
-		local_manager->Reload(ei.script);
+		local_manager->Reload(ei->script);
 }
 
 void DialogAutomation::OnInfo(wxCommandEvent &)
 {
-	int i = list->GetNextItem(-1, wxLIST_NEXT_ALL, wxLIST_STATE_SELECTED);
-	ExtraScriptInfo *ei = i >= 0 ? &script_info[list->GetItemData(i)] : nullptr;
+	ExtraScriptInfo *ei = Chosen();
 
 	wxArrayString info;
 	std::back_insert_iterator<wxArrayString> append_info(info);

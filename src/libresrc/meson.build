@@ -102,4 +102,4 @@ resrc += custom_target('default_config.{cpp,h}',
 libresrc_inc = include_directories('.')
 # Only the generated headers; libresrc compiles the generated sources
 libresrc_headers = [resrc[0][1], resrc[1][1]]
-libresrc = static_library('resrc', 'libresrc.cpp', resrc, dependencies: deps)
+libresrc = static_library('resrc', 'libresrc.cpp', 'icons_modern.cpp', resrc, dependencies: deps)

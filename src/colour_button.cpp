@@ -23,8 +23,8 @@
 AGI_DEFINE_EVENT(EVT_COLOR, agi::Color);
 
 ColourButton::ColourButton(wxWindow *parent, wxSize const& size, bool alpha, agi::Color col, wxValidator const& validator)
-: wxButton(parent, -1, "", wxDefaultPosition, wxSize(size.GetWidth() + 6, size.GetHeight() + 6), 0, validator)
-, bmp(size)
+: wxButton(parent, -1, "", wxDefaultPosition, parent->FromDIP(wxSize(size.GetWidth() + 6, size.GetHeight() + 6)), 0, validator)
+, bmp(parent->FromDIP(size))
 , colour(std::move(col))
 {
 	UpdateBitmap();
@@ -46,4 +46,9 @@ void ColourButton::UpdateBitmap() {
 		(bgr8_pixel_t*)bmp.GetData(), 3 * bmp.GetWidth()),
 		bgr8_pixel_t(colour.r, colour.g, colour.b));
 	SetBitmapLabel(bmp);
+}
+
+void ColourButton::SetColor(agi::Color color) {
+	colour = color;
+	UpdateBitmap();
 }

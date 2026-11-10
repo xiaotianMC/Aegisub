@@ -183,7 +183,7 @@ void VisualToolRotateXY::UpdateDrag(Feature *feature) {
 	if (!org) org = GetLinePosition(active_line);
 	auto d = ToScriptCoords(feature->pos) - org;
 
-	for (auto line : c->selectionController->GetSelectedSet()) {
+	for (auto line : SelectedLines()) {
 		org = GetLineOrigin(line);
 		if (!org) org = GetLinePosition(line);
 		SetOverride(line, "\\org", (d + org).PStr());

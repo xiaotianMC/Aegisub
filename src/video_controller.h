@@ -28,6 +28,7 @@
 // Aegisub Project http://www.aegisub.org/
 
 #pragma once
+#include <memory>
 
 #include <libaegisub/signal.h>
 #include <libaegisub/vfr.h>
@@ -58,6 +59,10 @@ enum class AspectRatio {
 
 /// Manage stuff related to video playback
 class VideoController final : public wxEvtHandler {
+protected:
+    // Declared first: expires only after all owned bindings/cache members are destroyed.
+    std::shared_ptr<int> model_observer_lifetime = std::make_shared<int>(0);
+private:
 	/// Current frame number changed (new frame number)
 	agi::signal::Signal<int> Seek;
 	/// Aspect ratio was changed (type, value)
@@ -109,7 +114,7 @@ class VideoController final : public wxEvtHandler {
 
 	void OnSubtitlesCommit(int type, const AssDialogue *changed);
 	void OnNewVideoProvider(AsyncVideoProvider *provider);
-	void OnActiveLineChanged(AssDialogue *line);
+	void OnActiveLineChanged();
 
 	void RequestFrame();
 

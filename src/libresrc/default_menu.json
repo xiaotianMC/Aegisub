@@ -1,5 +1,10 @@
 {
     "grid_context" : [
+        { "command" : "edit/line/rectangle" },
+        { "command" : "edit/line/reverse_move" },
+        { "command" : "subtitle/bind" },
+        { "command" : "subtitle/unbind" },
+        {},
         { "command" : "subtitle/insert/before", "text" : "&Insert (before)" },
         { "command" : "subtitle/insert/after", "text" : "Insert (after)" },
         { "command" : "subtitle/insert/before/videotime", "text" : "Insert at video time (before)" },
@@ -17,6 +22,7 @@
         { "command" : "time/continuous/start", "text" : "&Make times continuous (change start)" },
         { "command" : "time/continuous/end", "text" : "&Make times continuous (change end)" },
         { "command" : "edit/line/recombine" },
+        { "command" : "time/snap/scene_nearby" },
         {},
         { "command" : "audio/save/clip" },
         {},
@@ -62,10 +68,12 @@
         { "command" : "time/shift" },
         { "command" : "tool/time/postprocess" },
         { "command" : "tool/time/kanji" },
+        { "command" : "tool/magiatimeline" },
         {},
         { "command" : "time/snap/start_video" },
         { "command" : "time/snap/end_video" },
         { "command" : "time/snap/scene" },
+        { "command" : "time/snap/scene_nearby" },
         { "command" : "time/frame/current" },
         {},
         { "submenu" : "main/timing/make times continuous", "text" : "Make Times Continuous" }
@@ -80,6 +88,7 @@
         { "recent" : "Video" },
         { "command" : "video/open/dummy" },
         { "command" : "video/details" },
+        { "command" : "video/tool/rectangle" },
         {},
         { "command" : "timecode/open" },
         { "command" : "timecode/save" },
@@ -90,6 +99,7 @@
         { "command" : "keyframe/save" },
         { "command" : "keyframe/close" },
         { "recent" : "Keyframes" },
+        { "command" : "keyframe/detect" },
         {},
         { "command" : "video/detach" },
         { "submenu" : "main/video/set zoom", "text" : "Set &Zoom" },
@@ -125,9 +135,6 @@
         { "command" : "audio/open/noise" }
     ],
     "main/view" : [
-        { "command" : "app/language" },
-        { "command" : "app/options", "special" : "options" },
-        {},
         { "command" : "app/display/subs" },
         { "command" : "app/display/video_subs" },
         { "command" : "app/display/audio_subs" },
@@ -137,7 +144,15 @@
         { "command" : "grid/tags/simplify" },
         { "command" : "grid/tags/hide" },
         {},
-        { "command" : "app/toggle/toolbar" }
+        { "command" : "app/toggle/toolbar" },
+        { "command" : "app/toggle/style_panel" },
+        {},
+        { "command" : "app/command_palette" }
+    ],
+    "main/preferences" : [
+        { "command" : "app/language" },
+        {},
+        { "command" : "app/options", "text" : "Preferences...", "special" : "options" }
     ],
     "main/help" : [
         { "command" : "help/contents" },
@@ -160,6 +175,7 @@
         { "command" : "video/frame/save/subs" },
         { "command" : "video/frame/copy/subs" },
         {},
+        { "command" : "video/tool/rectangle" },
         { "command" : "video/copy_coordinates" },
         { "command" : "video/reset_pan" }
     ]

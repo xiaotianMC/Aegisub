@@ -29,29 +29,32 @@
 // Aegisub Project http://www.aegisub.org/
 
 #include "ass_dialogue.h"
+#include "utils.h"
 #include "ass_file.h"
+#include "subtitle_project_access.h"
+#include "subtitle_dialog_edit.h"
 #include "ass_karaoke.h"
 #include "compat.h"
-#include "help_button.h"
+#include "flat_controls.h"
+#include "flat_dialog.h"
 #include "include/aegisub/context.h"
 #include "libresrc/libresrc.h"
 #include "options.h"
+#include "theme.h"
 
 #include <libaegisub/ass/karaoke.h>
 #include <libaegisub/karaoke_matcher.h>
 #include <libaegisub/unicode.h>
 
 #include <deque>
+#include <memory>
 #include <vector>
-#include <wx/checkbox.h>
-#include <wx/combobox.h>
 #include <wx/dcclient.h>
 #include <wx/dialog.h>
 #include <wx/listctrl.h>
 #include <wx/msgdlg.h>
 #include <wx/settings.h>
 #include <wx/sizer.h>
-#include <wx/statbox.h>
 #include <wx/stattext.h>
 #include <wx/string.h>
 
@@ -78,7 +81,7 @@ class KaraokeLineMatchDisplay final : public wxControl {
 
 public:
 	/// Start processing a new line pair
-	void SetInputData(AssDialogue *src, AssDialogue *dst);
+	void SetInputData(AssDialogue const *src, AssDialogue const *dst);
 	/// Build and return the output line from the matched syllables
 	std::string GetOutputLine() const { return matcher.GetOutputLine(); }
 
@@ -299,7 +302,7 @@ void KaraokeLineMatchDisplay::OnPaint(wxPaintEvent &)
 	}
 }
 
-void KaraokeLineMatchDisplay::SetInputData(AssDialogue *src, AssDialogue *dst)
+void KaraokeLineMatchDisplay::SetInputData(AssDialogue const *src, AssDialogue const *dst)
 {
 	last_total_matchgroup_render_width = 0;
 	matcher.SetInputData(ParseKaraokeSyllables(src), dst ? dst->GetStrippedText() : "");
@@ -350,17 +353,22 @@ bool KaraokeLineMatchDisplay::UndoMatch()
 }
 
 class DialogKanjiTimer final : public wxDialog {
-	AssFile *subs;
+protected:
+    // Declared first: expires only after all owned bindings/cache members are destroyed.
+    std::shared_ptr<int> model_observer_lifetime = std::make_shared<int>(0);
+private:
+	SubtitleDialogEdit edit;
+	agi::signal::Connection file_changed;
 
 	KaraokeLineMatchDisplay *display;
 
-	wxComboBox *SourceStyle, *DestStyle;
-	wxCheckBox *Interpolate;
+	FlatChoice *SourceStyle, *DestStyle;
+	FlatCheck *Interpolate;
 
-	std::vector<std::pair<AssDialogue*, std::string>> LinesToChange;
+	std::vector<std::pair<int, std::string>> LinesToChange;
 
-	AssDialogue *currentSourceLine = nullptr;
-	AssDialogue *currentDestinationLine = nullptr;
+	int currentSourceLine = 0;
+	int currentDestinationLine = 0;
 
 	void OnClose(wxCommandEvent &event);
 	void OnStart(wxCommandEvent &event);
@@ -375,8 +383,8 @@ class DialogKanjiTimer final : public wxDialog {
 	void ResetForNewLine();
 	void TryAutoMatch();
 
-	AssDialogue *FindNextStyleMatch(AssDialogue *search_from, const std::string &search_style);
-	AssDialogue *FindPrevStyleMatch(AssDialogue *search_from, const std::string &search_style);
+	int FindNextStyleMatch(int search_from, const std::string &search_style);
+	int FindPrevStyleMatch(int search_from, const std::string &search_style);
 
 public:
 	DialogKanjiTimer(agi::Context *context);
@@ -384,89 +392,93 @@ public:
 
 DialogKanjiTimer::DialogKanjiTimer(agi::Context *c)
 : wxDialog(c->parent, -1, _("Kanji timer"))
-, subs(c->ass.get())
+, edit(c)
+, file_changed(c->subtitleAccess->Read().AddCommitListener("dialog_kara_timing_copy.AddCommitListener", [this](SubtitleModelRebindTicket ticket){edit.Invalidate();currentSourceLine=currentDestinationLine=0;display->SetInputData(nullptr,nullptr);if (ticket.Current()) ticket.Acknowledge(ticket.Revision());}, std::weak_ptr<void const>(model_observer_lifetime)))
 {
 	SetIcons(GETICONS(kara_timing_copier));
+	theme::UseSurface(this);
+	int gap = FromDIP(10), row = FromDIP(6);
 
-	wxStaticBoxSizer *DisplayBoxSizer = new wxStaticBoxSizer(wxVERTICAL,this,_("Text"));
-	wxStaticBoxSizer *StylesBoxSizer = new wxStaticBoxSizer(wxVERTICAL,this,_("Styles"));
-	auto StylesGridSizer = new wxFlexGridSizer(2, 2, 6, 6);
-	wxStaticBoxSizer *HelpBoxSizer = new wxStaticBoxSizer(wxVERTICAL,this,_("Shortcut Keys"));
-	wxStaticBoxSizer *ButtonsBoxSizer = new wxStaticBoxSizer(wxVERTICAL,this,_("Commands"));
-	wxSizer *MainStackSizer = new wxBoxSizer(wxVERTICAL);
-	wxSizer *BottomShelfSizer = new wxBoxSizer(wxHORIZONTAL);
-	wxSizer *BottomLeftStackSizer = new wxBoxSizer(wxVERTICAL);
-
-	wxWindow *DisplayBox = DisplayBoxSizer->GetStaticBox();
-	wxWindow *StylesBox = StylesBoxSizer->GetStaticBox();
-	wxWindow *HelpBox = HelpBoxSizer->GetStaticBox();
-	wxWindow *ButtonsBox = ButtonsBoxSizer->GetStaticBox();
-
-	display = new KaraokeLineMatchDisplay(DisplayBox);
-
-	//Checkbox
-	Interpolate = new wxCheckBox(DisplayBox,-1,_("Attempt to &interpolate kanji"),wxDefaultPosition,wxDefaultSize,wxALIGN_LEFT);
+	// The lines being matched, as before; the rest drawn as the flat dialogs are
+	display = new KaraokeLineMatchDisplay(this);
+	Interpolate = new FlatCheck(this, _("Attempt to &interpolate kanji"));
 	Interpolate->SetValue(OPT_GET("Tool/Kanji Timer/Interpolation")->GetBool());
 
-	wxArrayString styles = to_wx(subs->GetStyles());
-	SourceStyle = new wxComboBox(StylesBox, -1, "", wxDefaultPosition, wxSize(160, -1), styles, wxCB_READONLY);
-	DestStyle = new wxComboBox(StylesBox, -1, "", wxDefaultPosition, wxSize(160, -1), styles, wxCB_READONLY);
+	// The styles of the lines timed and of those given the timing
+	auto styles = to_wx(c->subtitleAccess->Read().GetStyles());
+	auto style_choice = [&](wxString const& name) {
+		auto choice = new FlatChoice(this, name);
+		choice->Set(std::vector<wxString>(styles.begin(), styles.end()));
+		choice->SetMinSize(FromDIP(wxSize(160, -1)));
+		return choice;
+	};
+	SourceStyle = style_choice(flat::WithoutColon(TEXT_LABEL_SOURCE));
+	DestStyle = style_choice(flat::WithoutColon(TEXT_LABEL_DEST));
+	auto StylesGridSizer = new wxFlexGridSizer(2, row, gap);
+	StylesGridSizer->AddGrowableCol(1, 1);
+	StylesGridSizer->Add(flat::DimLabel(this, flat::WithoutColon(TEXT_LABEL_SOURCE)), wxSizerFlags().CenterVertical());
+	StylesGridSizer->Add(SourceStyle, wxSizerFlags().Expand());
+	StylesGridSizer->Add(flat::DimLabel(this, flat::WithoutColon(TEXT_LABEL_DEST)), wxSizerFlags().CenterVertical());
+	StylesGridSizer->Add(DestStyle, wxSizerFlags().Expand());
 
-	wxStaticText *ShortcutKeys = new wxStaticText(HelpBox,-1,_("When the destination textbox has focus, use the following keys:\n\nRight Arrow: Increase dest. selection length\nLeft Arrow: Decrease dest. selection length\nUp Arrow: Increase source selection length\nDown Arrow: Decrease source selection length\nEnter: Link, accept line when done\nBackspace: Unlink last"));
+	auto ShortcutKeys = flat::DimLabel(this, _("When the destination textbox has focus, use the following keys:\n\nRight Arrow: Increase dest. selection length\nLeft Arrow: Decrease dest. selection length\nUp Arrow: Increase source selection length\nDown Arrow: Decrease source selection length\nEnter: Link, accept line when done\nBackspace: Unlink last"));
 
-	//Buttons
-	wxButton *Start = new wxButton(ButtonsBox, -1,_("S&tart!"));
-	wxButton *Link = new wxButton(ButtonsBox, -1,_("&Link"));
-	wxButton *Unlink = new wxButton(ButtonsBox, -1,_("&Unlink"));
-	wxButton *SkipSourceLine = new wxButton(ButtonsBox, -1,_("Skip &Source Line"));
-	wxButton *SkipDestLine = new wxButton(ButtonsBox, -1,_("Skip &Dest Line"));
-	wxButton *GoBackLine = new wxButton(ButtonsBox, -1,_("&Go Back a Line"));
-	wxButton *AcceptLine = new wxButton(ButtonsBox, -1,_("&Accept Line"));
-	wxButton *CloseKT = new wxButton(this,wxID_CLOSE,_("&Close"));
+	// The commands down the right, accepting the line the one it ends with
+	auto Start = new FlatButton(this, _("S&tart!"));
+	auto Link = new FlatButton(this, _("&Link"));
+	auto Unlink = new FlatButton(this, _("&Unlink"));
+	auto SkipSourceLine = new FlatButton(this, _("Skip &Source Line"));
+	auto SkipDestLine = new FlatButton(this, _("Skip &Dest Line"));
+	auto GoBackLine = new FlatButton(this, _("&Go Back a Line"));
+	auto AcceptLine = new FlatButton(this, _("&Accept Line"), wxID_ANY, true);
+	auto ButtonsSizer = new wxBoxSizer(wxVERTICAL);
+	for (auto button : {Start, Link, Unlink, SkipSourceLine, SkipDestLine, GoBackLine, AcceptLine})
+		ButtonsSizer->Add(button, wxSizerFlags().Expand().Border(wxTOP, button == Start ? 0 : row));
 
-	//Frame: Text
-	DisplayBoxSizer->Add(display, 0, wxEXPAND|wxALL, 6);
-	DisplayBoxSizer->Add(Interpolate, 0, wxEXPAND|wxALL, 6);
-	//Frame: Styles
-	StylesGridSizer->Add(new wxStaticText(StylesBox, -1, TEXT_LABEL_SOURCE), 0, wxALIGN_LEFT|wxALIGN_CENTER_VERTICAL);
-	StylesGridSizer->Add(SourceStyle, 1, wxEXPAND);
-	StylesGridSizer->Add(new wxStaticText(StylesBox, -1, TEXT_LABEL_DEST), 0, wxALIGN_LEFT|wxALIGN_CENTER_VERTICAL);
-	StylesGridSizer->Add(DestStyle, 1, wxEXPAND);
-	StylesBoxSizer->Add(StylesGridSizer, 1, wxEXPAND|wxALL, 6);
-	//Frame: Shortcut Keys
-	HelpBoxSizer->Add(ShortcutKeys, 1, wxALIGN_CENTER_HORIZONTAL|wxRIGHT, 6);
-	//Frame: Commands
-	ButtonsBoxSizer->AddStretchSpacer(1);
-	ButtonsBoxSizer->Add(Start, 0, wxEXPAND|wxALL, 6);
-	ButtonsBoxSizer->Add(Link, 0, wxEXPAND|(wxALL&~wxTOP), 6);
-	ButtonsBoxSizer->Add(Unlink, 0, wxEXPAND|(wxALL&~wxTOP), 6);
-	ButtonsBoxSizer->Add(SkipSourceLine, 0, wxEXPAND|(wxALL&~wxTOP), 6);
-	ButtonsBoxSizer->Add(SkipDestLine, 0, wxEXPAND|(wxALL&~wxTOP), 6);
-	ButtonsBoxSizer->Add(GoBackLine, 0, wxEXPAND|(wxALL&~wxTOP), 6);
-	ButtonsBoxSizer->Add(AcceptLine, 0, wxEXPAND|(wxALL&~wxTOP), 6);
-	ButtonsBoxSizer->AddStretchSpacer(1);
+	auto buttons = new flat::DialogButtons(this, wxCLOSE | wxHELP, "Kanji Timer");
+	auto CloseKT = buttons->Get(wxID_CLOSE);
+	CloseKT->SetLabel(_("&Close"));
+	// Accept Line is the one in the accent colour
+	CloseKT->SetAccent(false);
 
-	// Button sizer
-	auto buttonSizer = new wxStdDialogButtonSizer();
-	buttonSizer->AddButton(new HelpButton(this,"Kanji Timer"));
-	buttonSizer->SetAffirmativeButton(CloseKT);
-	buttonSizer->Realize();
+	auto section = [&](wxString const& title, wxSizer *content, int proportion = 0) {
+		auto sizer = new wxBoxSizer(wxVERTICAL);
+		sizer->Add(flat::SectionTitle(this, title), wxSizerFlags().Expand());
+		sizer->Add(content, wxSizerFlags(proportion).Expand().Border(wxTOP, row));
+		return sizer;
+	};
+	auto DisplaySizer = new wxBoxSizer(wxVERTICAL);
+	DisplaySizer->Add(display, wxSizerFlags().Expand());
+	DisplaySizer->Add(Interpolate, wxSizerFlags().Border(wxTOP, row));
+	auto HelpSizer = new wxBoxSizer(wxVERTICAL);
+	HelpSizer->Add(ShortcutKeys);
 
-	// Layout it all
-	BottomLeftStackSizer->Add(StylesBoxSizer, 0, wxEXPAND|wxBOTTOM, 6);
-	BottomLeftStackSizer->Add(HelpBoxSizer, 1, wxEXPAND, 0);
-	BottomShelfSizer->Add(BottomLeftStackSizer, 1, wxEXPAND|wxRIGHT, 6);
-	BottomShelfSizer->Add(ButtonsBoxSizer, 0, wxEXPAND, 0);
-	MainStackSizer->Add(DisplayBoxSizer, 0, wxEXPAND|wxALL, 6);
-	MainStackSizer->Add(BottomShelfSizer, 1, wxEXPAND|wxLEFT|wxRIGHT, 6);
-	MainStackSizer->Add(buttonSizer, 0, wxEXPAND|wxALL, 6);
+	auto BottomLeftStackSizer = new wxBoxSizer(wxVERTICAL);
+	BottomLeftStackSizer->Add(section(_("Styles"), StylesGridSizer), wxSizerFlags().Expand());
+	BottomLeftStackSizer->Add(section(_("Shortcut Keys"), HelpSizer, 1), wxSizerFlags(1).Expand().Border(wxTOP, gap));
+	auto BottomShelfSizer = new wxBoxSizer(wxHORIZONTAL);
+	BottomShelfSizer->Add(BottomLeftStackSizer, wxSizerFlags(1).Expand());
+	BottomShelfSizer->Add(section(_("Commands"), ButtonsSizer), wxSizerFlags().Expand().Border(wxLEFT, gap * 2));
+
+	auto MainStackSizer = new wxBoxSizer(wxVERTICAL);
+	MainStackSizer->Add(section(_("Text"), DisplaySizer), wxSizerFlags().Expand().Border(wxALL, gap));
+	MainStackSizer->Add(BottomShelfSizer, wxSizerFlags(1).Expand().Border(wxLEFT | wxRIGHT, gap));
+	MainStackSizer->Add(buttons, wxSizerFlags().Expand().Border(wxALL, gap));
 
 	SetSizerAndFit(MainStackSizer);
 	CenterOnParent();
 
+	// Escape leaves without applying, as closing the window does, rather
+	// than pressing Close, which applies
+	Bind(wxEVT_CHAR_HOOK, [this](wxKeyEvent &event) {
+		if (event.GetKeyCode() == WXK_ESCAPE && !event.HasAnyModifiers()) Close();
+		else event.Skip();
+	});
+
 	Bind(wxEVT_KEY_DOWN, &DialogKanjiTimer::OnKeyDown, this);
 	display->Bind(wxEVT_KEY_DOWN, &DialogKanjiTimer::OnKeyDown, this);
 
+	Bind(wxEVT_CLOSE_WINDOW,[this](wxCloseEvent&){edit.End();LinesToChange.clear();EndModal(wxID_CANCEL);});
 	CloseKT->Bind(wxEVT_BUTTON, &DialogKanjiTimer::OnClose, this);
 	Start->Bind(wxEVT_BUTTON, &DialogKanjiTimer::OnStart, this);
 	Link->Bind(wxEVT_BUTTON, &DialogKanjiTimer::OnLink, this);
@@ -477,70 +489,87 @@ DialogKanjiTimer::DialogKanjiTimer(agi::Context *c)
 	AcceptLine->Bind(wxEVT_BUTTON, &DialogKanjiTimer::OnAccept, this);
 }
 
-void DialogKanjiTimer::OnClose(wxCommandEvent &) {
-	OPT_SET("Tool/Kanji Timer/Interpolation")->SetBool(Interpolate->IsChecked());
+void DialogKanjiTimer::OnClose(wxCommandEvent &) try {
+	OPT_SET("Tool/Kanji Timer/Interpolation")->SetBool(Interpolate->GetValue());
 
-	for (auto& line : LinesToChange)
-		line.first->Text = line.second;
-
-	if (LinesToChange.size()) {
-		subs->Commit(_("kanji timing"), AssFile::COMMIT_DIAG_TEXT);
-		LinesToChange.clear();
+	BOOST_SCOPE_EXIT_ALL(this){edit.End();};
+	if(!LinesToChange.empty()) {
+		std::vector<AssDialogueBase> updates;updates.reserve(LinesToChange.size());
+		for(auto const& [id,text]:LinesToChange) {
+			auto original=edit.Find(id);if(!original){edit.Invalidate();return;}
+			auto row=*original;row.Text=text;updates.push_back(std::move(row));
+		}
+		file_changed.Block();
+		BOOST_SCOPE_EXIT_ALL(this){file_changed.Unblock();};
+		if(!edit.Commit(updates,_("kanji timing"),AssFile::COMMIT_DIAG_TEXT)) {
+			wxMessageBox(_("The subtitles or their dependencies changed. Start again before applying."),_("Kanji timer"),wxOK|wxICON_WARNING,this);return;
+		}
 	}
-	Close();
+	LinesToChange.clear();EndModal(wxID_OK);
 }
 
-void DialogKanjiTimer::OnStart(wxCommandEvent &) {
-	if (SourceStyle->GetValue().empty() || DestStyle->GetValue().empty())
+catch (...) {edit.Invalidate();throw;}
+
+void DialogKanjiTimer::OnStart(wxCommandEvent &) try {
+	LinesToChange.clear();currentSourceLine=currentDestinationLine=0;edit.End();
+	if (SourceStyle->GetStringSelection().empty() || DestStyle->GetStringSelection().empty())
 		wxMessageBox(_("Select source and destination styles first."),_("Error"),wxICON_EXCLAMATION | wxOK);
-	else if (SourceStyle->GetValue() == DestStyle->GetValue())
+	else if (SourceStyle->GetStringSelection() == DestStyle->GetStringSelection())
 		wxMessageBox(_("The source and destination styles must be different."),_("Error"),wxICON_EXCLAMATION | wxOK);
 	else {
-		currentDestinationLine = currentSourceLine = &*subs->Events.begin();
-		auto sourceStyle = from_wx(SourceStyle->GetValue());
-		auto destStyle = from_wx(DestStyle->GetValue());
-		if (currentSourceLine->Style != sourceStyle)
+		edit.ResetAll();
+		if(edit.Rows().empty() || !edit.Begin())return;
+		currentDestinationLine=currentSourceLine=edit.Rows().front().Id;
+		auto sourceStyle = from_wx(SourceStyle->GetStringSelection());
+		auto destStyle = from_wx(DestStyle->GetStringSelection());
+		if (edit.Find(currentSourceLine)->Style != sourceStyle)
 			currentSourceLine = FindNextStyleMatch(currentSourceLine, sourceStyle);
-		if (currentDestinationLine->Style != destStyle)
+		if (edit.Find(currentDestinationLine)->Style != destStyle)
 			currentDestinationLine = FindNextStyleMatch(currentDestinationLine, destStyle);
 		ResetForNewLine();
 	}
 	LinesToChange.clear();
 }
+catch (...) {edit.Invalidate();throw;}
 
-void DialogKanjiTimer::OnLink(wxCommandEvent &) {
+void DialogKanjiTimer::OnLink(wxCommandEvent &) try {
 	if (display->AcceptMatch())
 		TryAutoMatch();
 	else
 		wxBell();
 }
+catch (...) {edit.Invalidate();throw;}
 
-void DialogKanjiTimer::OnUnlink(wxCommandEvent &) {
+void DialogKanjiTimer::OnUnlink(wxCommandEvent &) try {
 	if (!display->UndoMatch())
 		wxBell();
 	// Don't auto-match here, undoing sets the selection to the undone match
 }
+catch (...) {edit.Invalidate();throw;}
 
-void DialogKanjiTimer::OnSkipSource(wxCommandEvent &) {
-	currentSourceLine = FindNextStyleMatch(currentSourceLine, from_wx(SourceStyle->GetValue()));
+void DialogKanjiTimer::OnSkipSource(wxCommandEvent &) try {
+	currentSourceLine = FindNextStyleMatch(currentSourceLine, from_wx(SourceStyle->GetStringSelection()));
 	ResetForNewLine();
 }
+catch (...) {edit.Invalidate();throw;}
 
-void DialogKanjiTimer::OnSkipDest(wxCommandEvent &) {
-	currentDestinationLine = FindNextStyleMatch(currentDestinationLine, from_wx(DestStyle->GetValue()));
+void DialogKanjiTimer::OnSkipDest(wxCommandEvent &) try {
+	currentDestinationLine = FindNextStyleMatch(currentDestinationLine, from_wx(DestStyle->GetStringSelection()));
 	ResetForNewLine();
 }
+catch (...) {edit.Invalidate();throw;}
 
-void DialogKanjiTimer::OnGoBack(wxCommandEvent &) {
+void DialogKanjiTimer::OnGoBack(wxCommandEvent &) try {
 	if (LinesToChange.size())
 		LinesToChange.pop_back(); //If we go back, then take out the modified line we saved.
 
-	currentSourceLine = FindPrevStyleMatch(currentSourceLine, from_wx(SourceStyle->GetValue()));
-	currentDestinationLine = FindPrevStyleMatch(currentDestinationLine, from_wx(DestStyle->GetValue()));
+	currentSourceLine = FindPrevStyleMatch(currentSourceLine, from_wx(SourceStyle->GetStringSelection()));
+	currentDestinationLine = FindPrevStyleMatch(currentDestinationLine, from_wx(DestStyle->GetStringSelection()));
 	ResetForNewLine();
 }
+catch (...) {edit.Invalidate();throw;}
 
-void DialogKanjiTimer::OnAccept(wxCommandEvent &) {
+void DialogKanjiTimer::OnAccept(wxCommandEvent &) try {
 	if (!currentDestinationLine) return;
 
 	if (display->GetRemainingSource() > 0)
@@ -548,17 +577,18 @@ void DialogKanjiTimer::OnAccept(wxCommandEvent &) {
 	else {
 		LinesToChange.emplace_back(currentDestinationLine, display->GetOutputLine());
 
-		currentSourceLine = FindNextStyleMatch(currentSourceLine, from_wx(SourceStyle->GetValue()));
-		currentDestinationLine = FindNextStyleMatch(currentDestinationLine, from_wx(DestStyle->GetValue()));
+		currentSourceLine = FindNextStyleMatch(currentSourceLine, from_wx(SourceStyle->GetStringSelection()));
+		currentDestinationLine = FindNextStyleMatch(currentDestinationLine, from_wx(DestStyle->GetStringSelection()));
 		ResetForNewLine();
 	}
 }
+catch (...) {edit.Invalidate();throw;}
 
-void DialogKanjiTimer::OnKeyDown(wxKeyEvent &event) {
+void DialogKanjiTimer::OnKeyDown(wxKeyEvent &event) try {
 	wxCommandEvent evt;
 	switch(event.GetKeyCode()) {
 		case WXK_ESCAPE:
-			OnClose(evt);
+			edit.End();LinesToChange.clear();EndModal(wxID_CANCEL);
 			break;
 		case WXK_BACK:
 			OnUnlink(evt);
@@ -585,16 +615,20 @@ void DialogKanjiTimer::OnKeyDown(wxKeyEvent &event) {
 			event.Skip();
 	}
 }
+catch (...) {edit.Invalidate();throw;}
 
 void DialogKanjiTimer::ResetForNewLine()
 {
 	if (!currentSourceLine || !currentDestinationLine)
 	{
-		currentSourceLine = currentDestinationLine = nullptr;
+		currentSourceLine = currentDestinationLine = 0;
 		wxBell();
 	}
 
-	display->SetInputData(currentSourceLine, currentDestinationLine);
+	auto source=edit.Find(currentSourceLine),destination=edit.Find(currentDestinationLine);
+	if(source && destination) {
+		AssDialogue src(*source),dst(*destination);display->SetInputData(&src,&dst);
+	} else display->SetInputData(nullptr,nullptr);
 
 	TryAutoMatch();
 
@@ -607,27 +641,23 @@ void DialogKanjiTimer::TryAutoMatch()
 		display->AutoMatchJapanese();
 }
 
-template<typename Iterator>
-static AssDialogue *find_next(Iterator from, Iterator to, std::string const& style_name) {
-	for (; from != to; ++from) {
-		if (from->Style == style_name && !from->Text.get().empty())
-			return &*from;
+int DialogKanjiTimer::FindNextStyleMatch(int id, const std::string& style) {
+	bool found=false;
+	for(auto const& row:edit.Rows()) {
+		if(found && row.Style==style && !row.Text.get().empty())return row.Id;
+		if(row.Id==id)found=true;
 	}
-
-	return nullptr;
+	return 0;
+}
+int DialogKanjiTimer::FindPrevStyleMatch(int id, const std::string& style) {
+	int previous=0;
+	for(auto const& row:edit.Rows()) {
+		if(row.Id==id)return previous;
+		if(row.Style==style && !row.Text.get().empty())previous=row.Id;
+	}
+	return 0;
 }
 
-AssDialogue *DialogKanjiTimer::FindNextStyleMatch(AssDialogue *search_from, const std::string &search_style)
-{
-	if (!search_from) return search_from;
-	return find_next(++subs->iterator_to(*search_from), subs->Events.end(), search_style);
-}
-
-AssDialogue *DialogKanjiTimer::FindPrevStyleMatch(AssDialogue *search_from, const std::string &search_style)
-{
-	if (!search_from) return search_from;
-	return find_next(EntryList<AssDialogue>::reverse_iterator(subs->iterator_to(*search_from)), subs->Events.rend(), search_style);
-}
 }
 
 void ShowKanjiTimerDialog(agi::Context *c) {

@@ -1,0 +1,265 @@
+// Copyright (c) 2026, Aegisub contributors
+// SPDX-License-Identifier: ISC
+
+#include "visual_tool_rectangle.h"
+
+#include "theme.h"
+#include "libresrc/libresrc.h"
+
+#include "ass_dialogue.h"
+#include "ass_file.h"
+#include "ass_style.h"
+#include "compat.h"
+#include "include/aegisub/context.h"
+#include "selection_controller.h"
+#include "video_display.h"
+
+#include <libaegisub/format.h>
+
+#include <wx/colour.h>
+#include <wx/dcmemory.h>
+#include <wx/event.h>
+
+wxString DrawingShapeLabel(DrawingShape shape) {
+	switch (shape) {
+		case DrawingShape::Rectangle: return _("Draw Rectangle");
+		case DrawingShape::Ellipse: return _("Draw Ellipse / Circle");
+		case DrawingShape::Triangle: return _("Draw Triangle");
+		case DrawingShape::Polygon: return _("Draw Polygon");
+	}
+	return {};
+}
+
+wxBitmapBundle DrawingShapeIcon(DrawingShape shape, int size) {
+	if (!libresrc_classic()) {
+		const char *name = "shape_rectangle";
+		switch (shape) {
+			case DrawingShape::Rectangle: break;
+			case DrawingShape::Ellipse: name = "shape_ellipse"; break;
+			case DrawingShape::Triangle: name = "shape_triangle"; break;
+			case DrawingShape::Polygon: name = "shape_polygon"; break;
+		}
+		return libresrc_modern_bundle(libresrc_modern_icon(name), size, 0, true);
+	}
+	// Drawn like Aegisub's own visual_rectangle icon (docs/art-sources), as
+	// SVG so it is sharp at any scale. A corner mark advertises the flyout.
+	const char *body = "";
+	switch (shape) {
+		case DrawingShape::Rectangle: body = "<rect x='8' y='14' width='44' height='32'/>"; break;
+		case DrawingShape::Ellipse: body = "<ellipse cx='30' cy='30' rx='22' ry='18'/>"; break;
+		case DrawingShape::Triangle: body = "<path d='M30 8L54 50H6Z'/>"; break;
+		case DrawingShape::Polygon: body = "<path d='M6 10H54L34 30L54 50H6Z'/>"; break;
+	}
+	auto mark = theme::IsDark() ? "#c8ccd2" : "#253e68";
+	auto svg = agi::format(
+		"<svg xmlns='http://www.w3.org/2000/svg' width='64' height='64' viewBox='0 0 64 64'>"
+		"<g fill='#608bd4' stroke='%s' stroke-width='4' stroke-linejoin='round'>%s</g>"
+		"<path d='M63 50V63H50Z' fill='%s'/></svg>", mark, body, mark);
+	return wxBitmapBundle::FromSVG(svg.c_str(), wxSize(size, size));
+}
+
+VisualToolRectangle::VisualToolRectangle(VideoDisplay *parent, agi::Context *context)
+: VisualToolBase(parent, context) {
+	parent->Bind(wxEVT_CHAR_HOOK, &VisualToolRectangle::OnKeyDown, this);
+	parent->Bind(wxEVT_KEY_UP, &VisualToolRectangle::OnKeyUp, this);
+	parent->Bind(wxEVT_RIGHT_DOWN, &VisualToolRectangle::OnMouseEvent, this);
+}
+
+VisualToolRectangle::~VisualToolRectangle() {
+	// The display explicitly cancels before retiring us; destructors never commit.
+	try { EndEdit(false); } catch (...) { }
+	parent->Unbind(wxEVT_CHAR_HOOK, &VisualToolRectangle::OnKeyDown, this);
+	parent->Unbind(wxEVT_KEY_UP, &VisualToolRectangle::OnKeyUp, this);
+	parent->Unbind(wxEVT_RIGHT_DOWN, &VisualToolRectangle::OnMouseEvent, this);
+}
+
+void VisualToolRectangle::SetSubTool(int subtool) {
+	if (subtool < 0 || subtool > static_cast<int>(DrawingShape::Polygon)) return;
+	Cancel();
+	shape = static_cast<DrawingShape>(subtool);
+	parent->Render();
+}
+
+Vector2D VisualToolRectangle::ClampToVideo(Vector2D point) const {
+	return video_pos.Max((video_pos + video_size).Min(point));
+}
+
+void VisualToolRectangle::Cancel() {
+	if (holding && parent->HasCapture()) parent->ReleaseMouse();
+	holding = false;
+	vertices.clear();
+	EndEdit(false);
+	RefreshRows();
+}
+
+Vector2D VisualToolRectangle::DrawingEnd() const {
+	if (!shift_down) return mouse_pos;
+	Vector2D start = ToScriptCoords(vertices.empty() ? drag_start : vertices.back());
+	Vector2D end = ToScriptCoords(mouse_pos);
+	auto point = ConstrainDrawingPoint({start.X(), start.Y()}, {end.X(), end.Y()},
+		{script_res.X(), script_res.Y()}, shape);
+	return FromScriptCoords(Vector2D(point.x, point.y));
+}
+
+void VisualToolRectangle::OnKeyDown(wxKeyEvent& event) try {
+	if (holding && !EditCurrent()) { Cancel(); return; }
+	if (event.GetKeyCode() == WXK_ESCAPE && holding) {
+		Cancel();
+		parent->Render();
+	}
+	else if ((event.GetKeyCode() == WXK_RETURN || event.GetKeyCode() == WXK_NUMPAD_ENTER)
+		&& holding && shape == DrawingShape::Polygon) {
+		Finish();
+		Cancel();
+		parent->Render();
+	}
+	else if (event.GetKeyCode() == WXK_BACK && holding && shape == DrawingShape::Polygon) {
+		if (!vertices.empty()) vertices.pop_back();
+		if (vertices.empty()) Cancel();
+		parent->Render();
+	}
+	else if (event.GetKeyCode() == WXK_SHIFT) {
+		shift_down = true;
+		parent->Render();
+		event.Skip();
+	}
+	else event.Skip();
+}
+
+catch (...) { Cancel(); throw; }
+
+void VisualToolRectangle::OnKeyUp(wxKeyEvent& event) {
+	if (event.GetKeyCode() == WXK_SHIFT) {
+		shift_down = false;
+		parent->Render();
+	}
+	event.Skip();
+}
+
+void VisualToolRectangle::OnMouseEvent(wxMouseEvent& event) try {
+	if (holding && !EditCurrent()) { VisualToolBase::Cancel(); return; }
+	mouse_pos = ClampToVideo(event.GetPosition());
+	shift_down = event.ShiftDown();
+	if (shape == DrawingShape::Polygon) {
+		if (!active_line) return;
+		if (event.LeftDown() || event.LeftDClick()) {
+			if (event.GetPosition() != wxPoint(mouse_pos.X(), mouse_pos.Y())) return;
+			if (!BeginEdit()) return;
+			parent->SetFocus();
+			if (vertices.size() >= 3 && (mouse_pos - vertices.front()).Len() <= 6) {
+				Finish();
+				Cancel();
+			}
+			else {
+				auto point = vertices.empty() ? mouse_pos : DrawingEnd();
+				if (vertices.empty() || (point - vertices.back()).Len() >= 1)
+					vertices.push_back(point);
+				holding = true;
+				if (event.LeftDClick() && vertices.size() >= 3) {
+					Finish();
+					Cancel();
+				}
+			}
+		}
+		else if (event.RightDown()) Cancel();
+		parent->Render();
+		return;
+	}
+	if (event.LeftDown()) {
+		if (!active_line || event.GetPosition() != wxPoint(mouse_pos.X(), mouse_pos.Y())) return;
+		if (!BeginEdit()) return;
+		parent->SetFocus();
+		drag_start = mouse_pos;
+		holding = true;
+		parent->CaptureMouse();
+	}
+	else if (holding && event.RightDown()) {
+		Cancel();
+	}
+	else if (holding && event.LeftUp()) {
+		Finish();
+		Cancel();
+	}
+	else if (holding && !event.LeftIsDown()) {
+		Cancel();
+	}
+	parent->Render();
+}
+
+catch (...) { Cancel(); throw; }
+
+void VisualToolRectangle::Finish() {
+	if (!active_line || !EditCurrent()) return;
+	Vector2D end = DrawingEnd();
+	Vector2D first;
+	std::string path;
+	if (shape == DrawingShape::Polygon) {
+		if (vertices.size() < 3) return;
+		first = ToScriptCoords(vertices.front()).Round(1);
+		for (auto vertex : vertices) first = first.Min(ToScriptCoords(vertex).Round(1));
+		std::vector<DrawingPoint> points;
+		for (auto vertex : vertices) {
+			auto point = ToScriptCoords(vertex).Round(1) - first;
+			points.push_back({point.X(), point.Y()});
+		}
+		path = PolygonDrawingPath(points);
+	}
+	else {
+		first = ToScriptCoords(drag_start.Min(end)).Round(1);
+		Vector2D last = ToScriptCoords(drag_start.Max(end)).Round(1);
+		path = ShapeDrawingPath(shape, last.X() - first.X(), last.Y() - first.Y());
+	}
+	if (path.empty()) return;
+
+	std::unique_ptr<AssStyle> style;
+	auto const& styles = c->subtitleAccess->Read().Styles;
+	if (std::none_of(styles.begin(), styles.end(), [](auto const& item) { return item.name == "图形"; })) {
+		style = std::make_unique<AssStyle>();
+		style->name = "图形";
+		style->alignment = 7;
+		style->outline_w = 0;
+		style->shadow_w = 0;
+		style->primary = agi::Color(0, 0, 0, 64);
+		style->Margin = {0, 0, 0};
+		style->UpdateData();
+	}
+	auto drawing = std::make_unique<AssDialogue>();
+	drawing->Start = active_line->Start;
+	drawing->End = active_line->End;
+	drawing->Style = "图形";
+	drawing->Layer = active_line->Layer;
+	drawing->Text = agi::format(
+		"{\\an7\\pos(%s)\\fscx100\\fscy100\\frz0\\bord0\\shad0"
+		"\\1c&H000000&\\1a&H40&\\3a&HFF&\\4a&HFF&\\p1}"
+		"%s{\\p0}", first.DStr(), path);
+
+	// Same layer and earlier read order put the shape behind its source.
+	InsertDrawing(*drawing, style.get());
+}
+
+void VisualToolRectangle::Draw() {
+	if (!holding) return;
+	gl.SetLineColour(to_wx(line_color_primary_opt->GetColor()), 1.0f, 2);
+	gl.SetFillColour(*wxBLACK, 0.75f);
+	Vector2D end = DrawingEnd();
+	Vector2D first = drag_start.Min(end), last = drag_start.Max(end);
+	if (shape == DrawingShape::Rectangle) gl.DrawRectangle(first, last);
+	else if (shape == DrawingShape::Ellipse) gl.DrawEllipse((first + last) / 2, (last - first) / 2);
+	else if (shape == DrawingShape::Triangle)
+		gl.DrawTriangle(Vector2D((first.X() + last.X()) / 2, first.Y()), last, Vector2D(first.X(), last.Y()));
+	else if (!vertices.empty()) {
+		std::vector<float> points;
+		for (auto vertex : vertices) {
+			points.push_back(vertex.X());
+			points.push_back(vertex.Y());
+		}
+		points.push_back(end.X());
+		points.push_back(end.Y());
+		std::vector<int> starts{0}, counts{static_cast<int>(vertices.size() + 1)};
+		if (vertices.size() >= 2)
+			gl.DrawMultiPolygon(points, starts, counts, video_pos, video_size, false);
+		else gl.DrawLine(vertices.front(), end);
+		for (auto vertex : vertices) gl.DrawCircle(vertex, 3);
+		gl.DrawCircle(vertices.front(), 6);
+	}
+}

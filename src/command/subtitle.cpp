@@ -30,6 +30,8 @@
 // Aegisub Project http://www.aegisub.org/
 
 #include "command.h"
+#include "../subtitle_project_access.h"
+#include "../subtitle_row_list_edit.h"
 
 #include "../ass_dialogue.h"
 #include "../ass_file.h"
@@ -47,6 +49,7 @@
 #include "../subs_controller.h"
 #include "../subtitle_format.h"
 #include "../utils.h"
+#include "../workspace_tabs.h"
 #include "../video_controller.h"
 
 #include <libaegisub/address_of_adaptor.h>
@@ -62,14 +65,14 @@ namespace {
 struct validate_nonempty_selection : public Command {
 	CMD_TYPE(COMMAND_VALIDATE)
 	bool Validate(const agi::Context *c) override {
-		return !c->selectionController->GetSelectedSet().empty();
+		return !c->selectionController->ReadSelectedSet().empty();
 	}
 };
 
 struct validate_nonempty_selection_video_loaded : public Command {
 	CMD_TYPE(COMMAND_VALIDATE)
 	bool Validate(const agi::Context *c) override {
-		return c->project->VideoProvider() && !c->selectionController->GetSelectedSet().empty();
+		return c->project->VideoProvider() && !c->selectionController->ReadSelectedSet().empty();
 	}
 };
 
@@ -114,19 +117,20 @@ struct subtitle_find_next final : public Command {
 };
 
 static void insert_subtitle_at_video(agi::Context *c, bool after) {
+    SubtitleRowListEdit staged(c);
 	auto def = new AssDialogue;
 	int video_ms = c->videoController->TimeAtFrame(c->videoController->GetFrameN(), agi::vfr::START);
 	def->Start = video_ms;
 	def->End = video_ms + OPT_GET("Timing/Default Duration")->GetInt();
-	def->Style = c->selectionController->GetActiveLine()->Style;
+	def->Style = staged.active->Style;
 
-	auto pos = c->ass->iterator_to(*c->selectionController->GetActiveLine());
+	auto pos = staged.file.iterator_to(*staged.active);
 	if (after) ++pos;
 
-	c->ass->Events.insert(pos, *def);
-	c->ass->Commit(_("line insertion"), AssFile::COMMIT_DIAG_ADDREM);
+	staged.file.Events.insert(pos, *def);
+	staged.Commit(_("line insertion"), AssFile::COMMIT_DIAG_ADDREM);
 
-	c->selectionController->SetSelectionAndActive({ def }, def);
+	staged.Select({ def }, def);
 }
 
 struct subtitle_insert_after final : public validate_nonempty_selection {
@@ -136,14 +140,17 @@ struct subtitle_insert_after final : public validate_nonempty_selection {
 	STR_HELP("Insert a new line after the current one")
 
 	void operator()(agi::Context *c) override {
-		AssDialogue *active_line = c->selectionController->GetActiveLine();
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
+        SubtitleRowListEdit staged(c);
+		AssDialogue *active_line = staged.active;
 
 		auto new_line = new AssDialogue;
 		new_line->Style = active_line->Style;
 		new_line->Start = active_line->End;
 		new_line->End = new_line->Start + OPT_GET("Timing/Default Duration")->GetInt();
 
-		for (auto it = c->ass->Events.begin(); it != c->ass->Events.end(); ++it) {
+		for (auto it = staged.file.Events.begin(); it != staged.file.Events.end(); ++it) {
 			AssDialogue *diag = &*it;
 
 			// Limit the line to the available time
@@ -153,13 +160,13 @@ struct subtitle_insert_after final : public validate_nonempty_selection {
 			// If we just hit the active line, insert the new line after it
 			if (diag == active_line) {
 				++it;
-				c->ass->Events.insert(it, *new_line);
+				staged.file.Events.insert(it, *new_line);
 				--it;
 			}
 		}
 
-		c->ass->Commit(_("line insertion"), AssFile::COMMIT_DIAG_ADDREM);
-		c->selectionController->SetSelectionAndActive({ new_line }, new_line);
+		staged.Commit(_("line insertion"), AssFile::COMMIT_DIAG_ADDREM);
+		staged.Select({ new_line }, new_line);
 	}
 };
 
@@ -170,6 +177,8 @@ struct subtitle_insert_after_videotime final : public validate_nonempty_selectio
 	STR_HELP("Insert a new line after the current one, starting at video time")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		insert_subtitle_at_video(c, true);
 	}
 };
@@ -181,14 +190,17 @@ struct subtitle_insert_before final : public validate_nonempty_selection {
 	STR_HELP("Insert a new line before the current one")
 
 	void operator()(agi::Context *c) override {
-		AssDialogue *active_line = c->selectionController->GetActiveLine();
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
+        SubtitleRowListEdit staged(c);
+		AssDialogue *active_line = staged.active;
 
 		auto new_line = new AssDialogue;
 		new_line->Style = active_line->Style;
 		new_line->End = active_line->Start;
 		new_line->Start = new_line->End - OPT_GET("Timing/Default Duration")->GetInt();
 
-		for (auto it = c->ass->Events.begin(); it != c->ass->Events.end(); ++it) {
+		for (auto it = staged.file.Events.begin(); it != staged.file.Events.end(); ++it) {
 			auto diag = &*it;
 
 			// Limit the line to the available time
@@ -197,11 +209,11 @@ struct subtitle_insert_before final : public validate_nonempty_selection {
 
 			// If we just hit the active line, insert the new line before it
 			if (diag == active_line)
-				c->ass->Events.insert(it, *new_line);
+				staged.file.Events.insert(it, *new_line);
 		}
 
-		c->ass->Commit(_("line insertion"), AssFile::COMMIT_DIAG_ADDREM);
-		c->selectionController->SetSelectionAndActive({ new_line }, new_line);
+		staged.Commit(_("line insertion"), AssFile::COMMIT_DIAG_ADDREM);
+		staged.Select({ new_line }, new_line);
 	}
 };
 
@@ -212,6 +224,8 @@ struct subtitle_insert_before_videotime final : public validate_nonempty_selecti
 	STR_HELP("Insert a new line before the current one, starting at video time")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		insert_subtitle_at_video(c, false);
 	}
 };
@@ -274,6 +288,32 @@ struct subtitle_open final : public Command {
 		auto filename = OpenFileSelector(c, _("Open Subtitles File"), "Path/Last/Subtitles", "","", SubtitleFormat::GetWildcards(0), c->parent);
 		if (!filename.empty())
 			load_subtitles(c, filename);
+	}
+};
+
+struct subtitle_compare final : public Command {
+	CMD_NAME("subtitle/compare")
+	STR_MENU("Co&mpare with Subtitles File...")
+	STR_DISP("Compare with Subtitles File")
+	STR_HELP("Compare the subtitles with another file side by side and accept or reject each difference")
+
+	void operator()(agi::Context *c) override {
+		// One comparison at a time: bring the open one to the front.
+		if (c->workspaceTabs && c->workspaceTabs->Comparison()) {
+			c->workspaceTabs->ShowComparison();
+			return;
+		}
+		// Refuse before the file dialog while anything holds the subtitles
+		// (the probe is released at once; the comparison starts after reading).
+		if (!c->subtitleEditGate.TryBeginComparison()) {
+			wxMessageBox(_("The subtitles cannot be compared while they are being edited.\nClose any open editing tool (such as the color picker, the translation assistant or an audio edit) and try again."),
+				_("Compare Subtitles"), wxOK | wxICON_INFORMATION, c->parent);
+			return;
+		}
+		c->videoController->Stop();
+		auto filename = OpenFileSelector(c, _("Compare with Subtitles File"), "Path/Last/Subtitles", "", "", SubtitleFormat::GetWildcards(0), c->parent);
+		if (!filename.empty())
+			OpenCompareTab(c, filename);
 	}
 };
 
@@ -397,9 +437,9 @@ struct subtitle_select_all final : public Command {
 	STR_HELP("Select all dialogue lines")
 
 	void operator()(agi::Context *c) override {
-		Selection sel;
-		boost::copy(c->ass->Events | agi::address_of, inserter(sel, sel.end()));
-		c->selectionController->SetSelectedSet(std::move(sel));
+		std::set<int> sel;
+        for (auto const& row : c->subtitleAccess->Read().Events) sel.insert(row.Id);
+        c->selectionController->SetSelectedIDs(std::move(sel));
 	}
 };
 
@@ -414,20 +454,20 @@ struct subtitle_select_visible final : public Command {
 	void operator()(agi::Context *c) override {
 		c->videoController->Stop();
 
-		Selection new_selection;
+		std::set<int> new_selection;
 		int frame = c->videoController->GetFrameN();
 
-		for (auto& diag : c->ass->Events) {
+		for (auto const& diag : c->subtitleAccess->Read().Events) {
 			if (c->videoController->FrameAtTime(diag.Start, agi::vfr::START) <= frame &&
 				c->videoController->FrameAtTime(diag.End, agi::vfr::END) >= frame)
 			{
 				if (new_selection.empty())
-					c->selectionController->SetActiveLine(&diag);
-				new_selection.insert(&diag);
+					c->selectionController->SetActiveID(diag.Id);
+				new_selection.insert(diag.Id);
 			}
 		}
 
-		c->selectionController->SetSelectedSet(std::move(new_selection));
+		c->selectionController->SetSelectedIDs(std::move(new_selection));
 	}
 
 	bool Validate(const agi::Context *c) override {
@@ -461,6 +501,7 @@ namespace cmd {
 		reg(std::make_unique<subtitle_new>());
 		reg(std::make_unique<subtitle_close>());
 		reg(std::make_unique<subtitle_open>());
+		reg(std::make_unique<subtitle_compare>());
 		reg(std::make_unique<subtitle_open_autosave>());
 		reg(std::make_unique<subtitle_open_charset>());
 		reg(std::make_unique<subtitle_open_video>());

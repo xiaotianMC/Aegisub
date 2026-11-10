@@ -16,17 +16,21 @@
 // Aegisub Project http://www.aegisub.org/
 
 #include "ass_file.h"
+#include "subtitle_project_access.h"
+#include "subtitle_dialog_edit.h"
+#include "project.h"
 #include "async_video_provider.h"
 #include "include/aegisub/context.h"
 #include "format.h"
-#include "help_button.h"
+#include "flat_dialog.h"
+#include "flat_list.h"
 #include "options.h"
 #include "resolution_resampler.h"
+#include "theme.h"
 
 #include <wx/choicdlg.h>
 #include <wx/dialog.h>
 #include <wx/intl.h>
-#include <wx/listbox.h>
 #include <wx/msgdlg.h>
 #include <wx/radiobox.h>
 #include <wx/sizer.h>
@@ -35,6 +39,20 @@
 namespace ycbcr = agi::ycbcr;
 
 namespace {
+
+// Copy provider metadata before any modal prompt can replace the video provider.
+struct VideoPropertyValues {
+    bool set,hdr; int width,height;
+    std::pair<int,int> display;
+    agi::ycbcr::header_colorspace color;
+    explicit VideoPropertyValues(AsyncVideoProvider const& p):set(p.ShouldSetVideoProperties()),hdr(p.IsHDRorWCG()),width(p.GetWidth()),height(p.GetHeight()),display(p.GetDisplayResolution()),color(p.GetRealColorSpace()) {}
+    bool ShouldSetVideoProperties() const{return set;}
+    bool IsHDRorWCG() const{return hdr;}
+    int GetWidth() const{return width;}
+    int GetHeight() const{return height;}
+    auto GetDisplayResolution() const{return display;}
+    auto GetRealColorSpace() const{return color;}
+};
 
 // This may look a bit silly with there being five copies of almost the same enum,
 // (as well as various copies of very similar-looking code below), but the different
@@ -117,30 +135,30 @@ bool check_ar_changed(int sx, int sy, int vx, int vy) {
 // Basically a wxGetSingleChoiceIndex that also shows a Help button
 int prompt_choice_dialog(const wxString& message, const wxString& caption, const wxArrayString& choices, int initialSelection, wxWindow *parent) {
 	wxDialog d(parent, -1, caption);
+	theme::UseSurface(&d);
+	int gap = d.FromDIP(10);
+
+	auto lb = new FlatList(&d);
+	lb->Set(choices);
+	lb->SetSelection(initialSelection);
 
 	auto sizer = new wxBoxSizer(wxVERTICAL);
-	sizer->Add(new wxStaticText(&d, -1, message), wxSizerFlags().TripleBorder().Expand());
-
-	auto lb = new wxListBox(&d, -1, wxDefaultPosition, wxDefaultSize, choices, wxLB_ALWAYS_SB);
-
-	sizer->Add(lb, wxSizerFlags().TripleBorder(wxLEFT | wxRIGHT).Proportion(1).Expand());
-	sizer->Add(d.CreateSeparatedSizer(d.CreateStdDialogButtonSizer(wxOK | wxCANCEL | wxHELP)), wxSizerFlags().DoubleBorder().Expand());
-
+	sizer->Add(new wxStaticText(&d, -1, message), wxSizerFlags().Expand().Border(wxALL, gap));
+	sizer->Add(lb, wxSizerFlags(1).Expand().Border(wxLEFT | wxRIGHT, gap));
+	sizer->Add(new flat::DialogButtons(&d, wxOK | wxCANCEL | wxHELP, "Resolution and Matrix"), wxSizerFlags().Expand().Border(wxALL, gap));
 	d.SetSizerAndFit(sizer);
 	d.CenterOnParent();
-
-	lb->SetSelection(initialSelection);
+	lb->SetFocus();
 
 	d.Bind(wxEVT_LISTBOX_DCLICK, [&](wxCommandEvent&) { d.EndModal(lb->GetSelection()); });
 	d.Bind(wxEVT_BUTTON, [&](wxCommandEvent&) { d.EndModal(lb->GetSelection()); }, wxID_OK);
 	d.Bind(wxEVT_BUTTON, [&](wxCommandEvent&) { d.EndModal(-1); }, wxID_CANCEL);
-	d.Bind(wxEVT_BUTTON, [&](wxCommandEvent&) { HelpButton::OpenPage("Resolution and Matrix"); }, wxID_HELP);
 
 	return d.ShowModal();
 }
 
 
-bool update_ycbcr_matrix(AssFile *file, const AsyncVideoProvider *new_provider, wxWindow *parent) {
+bool update_ycbcr_matrix(AssFile *file, const VideoPropertyValues *new_provider, wxWindow *parent) {
 	// When opening dummy video only want to set the script properties if
 	// they were previously unset
 	if (!new_provider->ShouldSetVideoProperties()) {
@@ -280,7 +298,7 @@ bool update_ycbcr_matrix(AssFile *file, const AsyncVideoProvider *new_provider, 
 	return false;
 }
 
-bool update_play_res(AssFile *file, const AsyncVideoProvider *new_provider, wxWindow *parent) {
+bool update_play_res(AssFile *file, const VideoPropertyValues *new_provider, wxWindow *parent) {
 	// Check that the script resolution matches the video resolution
 	int sx = file->GetScriptInfoAsInt("PlayResX");
 	int sy = file->GetScriptInfoAsInt("PlayResY");
@@ -373,7 +391,7 @@ bool update_play_res(AssFile *file, const AsyncVideoProvider *new_provider, wxWi
 	}
 }
 
-bool update_layout_res(AssFile *file, const AsyncVideoProvider *new_provider, wxWindow *parent) {
+bool update_layout_res(AssFile *file, const VideoPropertyValues *new_provider, wxWindow *parent) {
 	// When opening dummy video only want to set the script properties if
 	// they were previously unset
 	if (!new_provider->ShouldSetVideoProperties())
@@ -512,13 +530,35 @@ bool update_layout_res(AssFile *file, const AsyncVideoProvider *new_provider, wx
 
 }
 
-void UpdateVideoProperties(AssFile *file, const AsyncVideoProvider *new_provider, wxWindow *parent) {
-	if (update_ycbcr_matrix(file, new_provider, parent))
-		file->Commit(_("change ycbcr matrix"), AssFile::COMMIT_SCRIPTINFO);
-
-	if (update_play_res(file, new_provider, parent))
-		file->Commit(_("change script resolution"), AssFile::COMMIT_SCRIPTINFO);
-
-	if (update_layout_res(file, new_provider, parent))
-		file->Commit(_("change layout resolution"), AssFile::COMMIT_SCRIPTINFO);
+void UpdateVideoProperties(agi::Context *c, const AsyncVideoProvider *new_provider) {
+    auto model_observer_lifetime = std::make_shared<int>(0); // Outlives the draft and both connections.
+    SubtitleDialogEdit edit(c);
+    VideoPropertyValues video(*new_provider);
+    agi::signal::Connection changed=c->subtitleAccess->Read().AddCommitListener("dialog_video_properties.AddCommitListener", [&](SubtitleModelRebindTicket ticket){edit.Invalidate();if (ticket.Current()) ticket.Acknowledge(ticket.Revision());}, std::weak_ptr<void const>(model_observer_lifetime));
+    struct Cancelled {};
+    auto step=[&](auto calculate,wxString const& description) {
+        if(!edit.Alive() || c->project->VideoProvider()!=new_provider)throw Cancelled{};
+        edit.ResetAll();
+        AssFile calculated(c->subtitleAccess->Read());
+        auto originals=edit.Rows().begin();for(auto& row:calculated.Events)row.Id=(originals++)->Id;
+        auto publish=[&](wxString const& message,int type) {
+            if(!edit.Alive() || c->project->VideoProvider()!=new_provider)throw Cancelled{};
+            changed.Block();BOOST_SCOPE_EXIT_ALL(&changed){changed.Unblock();};
+            if(!edit.CommitLayout(calculated,message,type))throw Cancelled{};
+        };
+        // ResampleResolution has its own historical commit, before the outer
+        // resolution commit. Forward both without changing Undo granularity.
+        wxString reason;
+        agi::signal::Connection undo=calculated.AddUndoManager([&](AssFileCommit const& event){reason=event.message;});
+        agi::signal::Connection commit=calculated.AddCommitListener([&](int type,AssDialogue const*){publish(reason,type);});
+        if(calculate(&calculated,&video,c->parent))publish(description,AssFile::COMMIT_SCRIPTINFO);
+    };
+    try {
+        step(update_ycbcr_matrix,_("change ycbcr matrix"));
+        step(update_play_res,_("change script resolution"));
+        step(update_layout_res,_("change layout resolution"));
+    } catch (Cancelled const&) {
+        edit.Invalidate();
+        if(edit.Alive())wxMessageBox(_("The subtitle project changed or editing is unavailable. Video properties were not applied."),_("Video Properties"),wxOK|wxICON_WARNING,c->parent);
+    }
 }

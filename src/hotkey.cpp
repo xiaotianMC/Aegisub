@@ -23,6 +23,7 @@
 
 #include <libaegisub/path.h>
 
+#include <algorithm>
 #include <boost/range/algorithm/find.hpp>
 #include <boost/range/iterator_range.hpp>
 #include <wx/intl.h>
@@ -47,12 +48,28 @@ namespace {
 		{nullptr}
 	};
 
+	const char *added_hotkeys_completion[][3] = {
+		{"edit/complete", "Subtitle Edit Box", "Ctrl-J"},
+		{nullptr}
+	};
+
 #ifdef __WXMAC__
 	const char *added_hotkeys_minimize[][3] = {
 		{"app/minimize", "Default", "Ctrl-M"},
 		{nullptr}
 	};
 #endif
+
+	const char *added_hotkeys_command_palette[][3] = {
+		{"app/command_palette", "Default", "Ctrl-Shift-P"},
+		{nullptr}
+	};
+
+	const char *added_hotkeys_next_style[][3] = {
+		{"grid/line/next/style", "Subtitle Edit Box", "Ctrl-Enter"},
+		{"grid/line/next/style", "Subtitle Edit Box", "Ctrl-KP_Enter"},
+		{nullptr}
+	};
 
 	void migrate_hotkeys(const char *added[][3]) {
 		auto hk_map = hotkey::inst->GetHotkeyMap();
@@ -82,6 +99,47 @@ void init() {
 		GET_DEFAULT_CONFIG(default_hotkey));
 
 	auto migrations = OPT_GET("App/Hotkey Migrations")->GetListString();
+	if (boost::find(migrations, "playback hotkey swap") == end(migrations)) {
+		auto hk_map = inst->GetHotkeyMap();
+		auto is_bound = [&](std::string_view context, std::string_view command, std::string_view key) {
+			auto [it, end] = hk_map.equal_range(command);
+			return std::any_of(it, end, [&](auto const& entry) {
+				return entry.second.Context() == context && entry.second.Str() == key;
+			});
+		};
+		auto key_taken = [&](std::string_view context, std::string_view command, std::string_view key) {
+			return std::any_of(hk_map.begin(), hk_map.end(), [&](auto const& entry) {
+				return entry.second.Context() == context && entry.second.Str() == key && entry.second.CmdName() != command;
+			});
+		};
+		if (is_bound("Default", "video/play", "Ctrl-P")
+			&& is_bound("Audio", "audio/play/selection", "Space")
+			&& !key_taken("Default", "video/play", "Space")
+			&& !key_taken("Audio", "audio/play/selection", "Ctrl-P")) {
+			auto remove_binding = [&](std::string_view command, std::string_view context, std::string_view key) {
+				auto [it, end] = hk_map.equal_range(command);
+				while (it != end) {
+					if (it->second.Context() == context && it->second.Str() == key)
+						it = hk_map.erase(it);
+					else
+						++it;
+				}
+			};
+			remove_binding("video/play", "Default", "Ctrl-P");
+			remove_binding("audio/play/selection", "Audio", "Space");
+			if (!is_bound("Audio", "audio/play/selection", "Ctrl-P"))
+				hk_map.emplace("audio/play/selection", agi::hotkey::Combo("Audio", "audio/play/selection", "Ctrl-P"));
+			if (!is_bound("Default", "video/play", "Space"))
+				hk_map.emplace("video/play", agi::hotkey::Combo("Default", "video/play", "Space"));
+			inst->SetHotkeyMap(std::move(hk_map));
+		}
+		migrations.emplace_back("playback hotkey swap");
+	}
+
+	if (boost::find(migrations, "edit/complete") == end(migrations)) {
+		migrate_hotkeys(added_hotkeys_completion);
+		migrations.emplace_back("edit/complete");
+	}
 
 	if (boost::find(migrations, "7035") == end(migrations)) {
 		migrate_hotkeys(added_hotkeys_7035);
@@ -114,6 +172,30 @@ void init() {
 
 		hotkey::inst->SetHotkeyMap(std::move(hk_map));
 		migrations.emplace_back("duplicate -> split");
+	}
+
+	if (boost::find(migrations, "app/command_palette") == end(migrations)) {
+		migrate_hotkeys(added_hotkeys_command_palette);
+		migrations.emplace_back("app/command_palette");
+	}
+
+	if (boost::find(migrations, "grid/line/next/style") == end(migrations)) {
+		migrate_hotkeys(added_hotkeys_next_style);
+		migrations.emplace_back("grid/line/next/style");
+	}
+
+	// The styling assistant is gone: the style box takes typed letters
+	// and Ctrl+Enter goes on to the next line (docs/main-window.md)
+	if (boost::find(migrations, "no styling assistant") == end(migrations)) {
+		auto hk_map = hotkey::inst->GetHotkeyMap();
+		for (auto it = hk_map.begin(); it != hk_map.end();) {
+			if (it->second.Context() == "Styling Assistant" || it->first == "tool/style/assistant")
+				it = hk_map.erase(it);
+			else
+				++it;
+		}
+		hotkey::inst->SetHotkeyMap(std::move(hk_map));
+		migrations.emplace_back("no styling assistant");
 	}
 
 #ifdef __WXMAC__

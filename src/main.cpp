@@ -33,6 +33,7 @@
 ///
 
 #include "main.h"
+#include "theme.h"
 
 #include "command/command.h"
 #include "include/aegisub/hotkey.h"
@@ -51,6 +52,8 @@
 #include "options.h"
 #include "project.h"
 #include "subs_controller.h"
+#include "startup_window.h"
+#include "audio_colorscheme.h"
 #include "subtitles_provider_libass.h"
 #include "utils.h"
 #include "value_event.h"
@@ -78,7 +81,10 @@ namespace config {
 	Automation4::AutoloadScriptManager *global_scripts;
 }
 
-wxIMPLEMENT_APP(AegisubApp);
+// Equivalent to wxIMPLEMENT_APP; the platform entry point lives in main_entry.cpp
+// so the application-model test runner can link these objects with its own main.
+wxIMPLEMENT_WX_THEME_SUPPORT
+wxIMPLEMENT_APP_NO_MAIN(AegisubApp);
 
 static const char *LastStartupState = nullptr;
 
@@ -219,6 +225,8 @@ bool AegisubApp::OnInit() {
 	}
 #endif
 
+	MigrateAudioColourSchemes();
+
 	// Init commands.
 	cmd::init_builtin_commands();
 
@@ -260,6 +268,10 @@ bool AegisubApp::OnInit() {
 		}
 		locale.Init(lang);
 
+		// Before the first window: Windows applies dark mode only then.
+		StartupLog("Apply appearance");
+		theme::Init();
+
 #ifdef __APPLE__
 		// When run from an app bundle, LC_CTYPE defaults to "C", which breaks on
 		// anything involving unicode and in some cases number formatting.
@@ -288,10 +300,6 @@ bool AegisubApp::OnInit() {
 		StartupLog("Install PNG handler");
 		wxImage::AddHandler(new wxPNGHandler);
 
-		// Open main frame
-		StartupLog("Create main window");
-		NewProjectContext();
-
 		// Version checker
 		StartupLog("Possibly perform automatic updates check");
 		if (OPT_GET("App/First Start")->GetBool()) {
@@ -315,8 +323,11 @@ bool AegisubApp::OnInit() {
 		// Get parameter subs
 		StartupLog("Parse command line");
 		auto const& args = argv.GetArguments();
-		if (args.size() > 1)
+		if (args.size() > 1) {
+			NewProjectContext();
 			OpenFiles(wxArrayStringsAdapter(args.size() - 1, &args[1]));
+		}
+		else if (frames.empty()) ShowStartup();
 	}
 	catch (agi::Exception const& e) {
 		wxMessageBox(to_wx(e.GetMessage()), _("Fatal error while initializing"));
@@ -361,11 +372,54 @@ int AegisubApp::OnExit() {
 
 	agi::xdp_utils::Cleanup();
 
+	// The libass font cache worker may still be running; it must not reach
+	// the log sink once it is gone.
+	libass::StopLogging();
+
 	// Keep this last!
 	delete agi::log::log;
 	crash_writer::Cleanup();
 
 	return wxApp::OnExit();
+}
+
+void AegisubApp::ShowStartup() {
+	if (startup_window) {
+		startup_window->Iconize(false);
+		startup_window->Show();
+		startup_window->Raise();
+		return;
+	}
+	auto window = CreateStartupWindow();
+	startup_window = window;
+	window->Bind(wxEVT_DESTROY, [this, window](wxWindowDestroyEvent& event) {
+		if (event.GetWindow() == window && startup_window == window) startup_window = nullptr;
+		event.Skip();
+	});
+	SetTopWindow(window);
+	window->Show();
+}
+
+void AegisubApp::DismissStartup() {
+	if (!startup_window) return;
+	auto window = startup_window;
+	startup_window = nullptr;
+	window->Destroy();
+}
+
+void AegisubApp::ShowProjectDashboard() {
+	ShowStartup();
+	ShowStartupDashboard(startup_window);
+}
+
+void AegisubApp::OpenEditor() {
+	if (frames.empty()) { NewProjectContext(); return; }
+	auto frame = frames.back();
+	frame->Iconize(false);
+	frame->Show();
+	frame->Raise();
+	SetTopWindow(frame);
+	DismissStartup();
 }
 
 agi::Context& AegisubApp::NewProjectContext() {
@@ -377,15 +431,18 @@ agi::Context& AegisubApp::NewProjectContext() {
 		}
 
 		frames.erase(remove(begin(frames), end(frames), frame), end(frames));
-		if (frames.empty()) {
+		if (frames.empty() && !startup_window) {
 			ExitMainLoop();
 		}
 	});
 	frames.push_back(frame);
+	SetTopWindow(frame);
+	DismissStartup();
 	return *frame->context;
 }
 
 void AegisubApp::CloseAll() {
+	if (startup_window) startup_window->Close();
 	for (auto frame : frames) {
 		if (!frame->Close())
 			break;
@@ -398,17 +455,24 @@ void AegisubApp::UnhandledException([[maybe_unused]] bool stackWalk) {
 	agi::fs::path path;
 	for (auto& frame : frames) {
 		auto c = frame->context.get();
-		if (!c || !c->ass || !c->subsController) continue;
+		if (!c || !c->subsController) continue;
 
-		path = config::path->Decode("?state/recovered");
-		agi::fs::CreateDirectory(path);
+		// C1-C1c-11: one frame's failure must not abort the others, and a
+		// recovery copy must not depend on the document being saveable
+		// (Save refuses an installing or RecoveryBlocked model).
+		try {
+			auto target = config::path->Decode("?state/recovered");
+			agi::fs::CreateDirectory(target);
 
-		auto filename = c->subsController->Filename().stem();
-		filename.replace_extension(agi::format("%s.ass", agi::util::strftime("%Y-%m-%d-%H-%M-%S")));
-		path /= filename;
-		c->subsController->Save(path);
-
-		any = true;
+			auto filename = c->subsController->Filename().stem();
+			filename.replace_extension(agi::format("%s.ass", agi::util::strftime("%Y-%m-%d-%H-%M-%S")));
+			target /= filename;
+			if (c->subsController->WriteRecoveryCopy(target)) {
+				path = target;
+				any = true;
+			}
+		}
+		catch (...) { }
 	}
 
 	if (stackWalk)
@@ -481,6 +545,8 @@ void AegisubApp::OpenFiles(wxArrayStringsAdapter filenames) {
 	std::vector<agi::fs::path> files;
 	for (size_t i = 0; i < filenames.GetCount(); ++i)
 		files.push_back(from_wx(filenames[i]));
-	if (!files.empty())
+	if (!files.empty()) {
+		if (frames.empty()) NewProjectContext();
 		frames[0]->context->project->LoadList(files);
+	}
 }

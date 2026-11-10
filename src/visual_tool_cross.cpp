@@ -28,6 +28,8 @@
 #include <libaegisub/color.h>
 #include <libaegisub/format.h>
 
+#include <wx/settings.h>
+
 VisualToolCross::VisualToolCross(VideoDisplay *parent, agi::Context *context)
 : VisualTool<VisualDraggableFeature>(parent, context)
 , gl_text(std::make_unique<OpenGLText>())
@@ -42,7 +44,7 @@ VisualToolCross::~VisualToolCross() {
 void VisualToolCross::OnDoubleClick() {
 	Vector2D d = ToScriptCoords(mouse_pos) - GetLinePosition(active_line);
 
-	for (auto line : c->selectionController->GetSelectedSet()) {
+	for (auto line : SelectedLines()) {
 		Vector2D p1, p2;
 		int t1, t2;
 		if (GetLineMove(line, p1, p2, t1, t2)) {
@@ -78,25 +80,35 @@ void VisualToolCross::Draw() {
 
 	std::string mouse_text = Text(ToScriptCoords(shift_down ? 2 * video_pos + video_size - mouse_pos : mouse_pos));
 
+	// The interface's own font, white on a dark label, as the readouts below
+	// the video read
 	int tw, th;
-	gl_text->SetFont("Verdana", 12, true, false);
+	wxFont font = wxSystemSettings::GetFont(wxSYS_DEFAULT_GUI_FONT);
+	font.SetPixelSize(wxSize(0, 14));
+	font.SetWeight(wxFONTWEIGHT_MEDIUM);
+	gl_text->SetFont(font);
 	gl_text->SetColour(agi::Color(255, 255, 255, 255));
 	gl_text->GetExtent(mouse_text, tw, th);
+	const int pad_x = 6, pad_y = 2, gap = 6;
+	int w = tw + 2 * pad_x, h = th + 2 * pad_y;
 
-	// Place the text in the corner of the cross closest to the center of the video
+	// Place the label in the corner of the cross closest to the center of the video
 	int dx = mouse_pos.X();
 	int dy = mouse_pos.Y();
 	if (dx > canvas_size.X() / 2)
-		dx -= tw + 4;
+		dx -= w + gap;
 	else
-		dx += 4;
+		dx += gap;
 
 	if (dy < canvas_size.Y() / 2)
-		dy += 3;
+		dy += gap;
 	else
-		dy -= th + 3;
+		dy -= h + gap;
 
-	gl_text->Print(mouse_text, dx, dy);
+	gl.SetLineColour(*wxBLACK, 0.f);
+	gl.SetFillColour(*wxBLACK, 0.6f);
+	gl.DrawRectangle(Vector2D(dx, dy), Vector2D(dx + w, dy + h));
+	gl_text->Print(mouse_text, dx + pad_x, dy + pad_y, false);
 }
 
 std::string VisualToolCross::Text(Vector2D v) {

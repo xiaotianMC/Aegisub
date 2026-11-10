@@ -14,10 +14,17 @@
 //
 // Aegisub Project http://www.aegisub.org/
 
+#include "timing_adjust.h"
 #include "ass_dialogue.h"
+#include "utils.h"
 #include "ass_file.h"
+#include "subtitle_project_access.h"
+#include "subtitle_row_edit.h"
 #include "compat.h"
 #include "dialog_manager.h"
+#include "flat_controls.h"
+#include "flat_dialog.h"
+#include "flat_list.h"
 #include "format.h"
 #include "include/aegisub/context.h"
 #include "help_button.h"
@@ -25,10 +32,12 @@
 #include "options.h"
 #include "project.h"
 #include "selection_controller.h"
+#include "theme.h"
 #include "subs_controller.h"
 #include "timeedit_ctrl.h"
 
 #include <libaegisub/ass/time.h>
+#include <memory>
 #include <libaegisub/fs.h>
 #include <libaegisub/io.h>
 #include <libaegisub/log.h>
@@ -41,15 +50,16 @@
 #include <libaegisub/cajun/writer.h>
 
 #include <wx/dialog.h>
-#include <wx/listbox.h>
-#include <wx/radiobox.h>
-#include <wx/radiobut.h>
 #include <wx/sizer.h>
-#include <wx/statbox.h>
+#include <wx/stattext.h>
 #include <wx/textctrl.h>
 
 namespace {
 class DialogShiftTimes final : public wxDialog {
+protected:
+    // Declared first: expires only after all owned bindings/cache members are destroyed.
+    std::shared_ptr<int> model_observer_lifetime = std::make_shared<int>(0);
+private:
 	agi::Context *context;
 
 	agi::fs::path history_filename;
@@ -59,23 +69,25 @@ class DialogShiftTimes final : public wxDialog {
 	agi::signal::Connection selected_set_changed_slot;
 
 	TimeEdit *shift_time;
-	wxTextCtrl *shift_frames;
-	wxRadioButton *shift_by_time;
-	wxRadioButton *shift_by_frames;
-	wxRadioButton *shift_forward;
-	wxRadioButton *shift_backward;
-	wxRadioBox *selection_mode;
-	wxRadioBox *time_fields;
-	wxListBox *history_box;
+	FlatFrame *time_frame;
+	flat::NumberField *shift_frames;
+	FlatSwitch *shift_by;      ///< Time or frames
+	FlatSwitch *direction;     ///< Forward or backward
+	FlatSwitch *selection_mode;
+	FlatSwitch *time_fields;
+	FlatList *history_box;
+
+	bool ByTime() const { return shift_by->GetSelection() == 0; }
+	/// Show the field for time or for frames
+	void ShowAmount(bool by_time);
 
 	void SaveHistory(json::Array shifted_blocks);
 	void LoadHistory();
+	void ShowHistory();
 	void Process(wxCommandEvent&);
 	int Shift(int initial_time, int shift, bool by_time, agi::vfr::Time type);
 
 	void OnClear(wxCommandEvent&);
-	void OnByTime(wxCommandEvent&);
-	void OnByFrames(wxCommandEvent&);
 	void OnHistoryClick(wxCommandEvent&);
 
 	void OnSelectedSetChanged();
@@ -136,46 +148,43 @@ DialogShiftTimes::DialogShiftTimes(agi::Context *context)
 , context(context)
 , history_filename(config::path->Decode("?state/shift_history.json"))
 , timecodes_loaded_slot(context->project->AddTimecodesListener(&DialogShiftTimes::OnTimecodesLoaded, this))
-, selected_set_changed_slot(context->selectionController->AddSelectionListener(&DialogShiftTimes::OnSelectedSetChanged, this))
+, selected_set_changed_slot(context->selectionController->AddSelectionListener("dialog_shift_times.AddSelectionListener", [this](SubtitleModelRebindTicket ticket) { OnSelectedSetChanged(); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime)))
 {
 	SetIcons(GETICONS(shift_times_toolbutton));
+	theme::UseSurface(this);
+	auto dim = [this](wxString const& text) {
+		auto label = new wxStaticText(this, -1, text);
+		label->SetForegroundColour(flat::Colours(this).dim);
+		return label;
+	};
 
-	// Create static box sizers
-	wxStaticBoxSizer *shift_by_sizer = new wxStaticBoxSizer(wxVERTICAL, this, _("Shift by"));
-	wxStaticBoxSizer *history_sizer = new wxStaticBoxSizer(wxVERTICAL, this, _("Load from history"));
-	wxWindow *shift_by_static_box = shift_by_sizer->GetStaticBox();
-	wxWindow *history_static_box = history_sizer->GetStaticBox();
+	// How far: a time or a number of frames, and which way
+	shift_by = new FlatSwitch(this, {_("&Time"), _("&Frames")});
+	shift_by->SetItemToolTip(0, _("Shift by time"));
+	shift_by->SetItemToolTip(1, _("Shift by frames"));
+	shift_by->on_choose = [this](int index) { ShowAmount(index == 0); };
 
-	// Create controls
-	shift_by_time = new wxRadioButton(shift_by_static_box, -1, _("&Time: "), wxDefaultPosition, wxDefaultSize, wxRB_GROUP);
-	shift_by_time->SetToolTip(_("Shift by time"));
-	shift_by_time->Bind(wxEVT_RADIOBUTTON, &DialogShiftTimes::OnByTime, this);
-
-	shift_by_frames = new wxRadioButton(shift_by_static_box, -1 , _("&Frames: "));
-	shift_by_frames->SetToolTip(_("Shift by frames"));
-	shift_by_frames->Bind(wxEVT_RADIOBUTTON, &DialogShiftTimes::OnByFrames, this);
-
-	shift_time = new TimeEdit(shift_by_static_box, -1, context);
+	time_frame = new FlatFrame(this, _("Time"));
+	shift_time = new TimeEdit(time_frame, -1, context, "", wxDefaultSize, false, wxBORDER_NONE);
+	time_frame->SetContent(shift_time, ToDIP(shift_time->GetSizeFromText(wxS("0:00:00.000")).x));
 	shift_time->SetToolTip(_("Enter time in h:mm:ss.cs notation"));
 
-	shift_frames = new wxTextCtrl(shift_by_static_box, -1);
+	shift_frames = flat::NumberField::Create(this, _("Frames"), 0, 0, 1e7, 1, 0, 80);
 	shift_frames->SetToolTip(_("Enter number of frames to shift by"));
 
-	shift_forward = new wxRadioButton(shift_by_static_box, -1, _("For&ward"), wxDefaultPosition, wxDefaultSize, wxRB_GROUP);
-	shift_forward->SetToolTip(_("Shifts subs forward, making them appear later. Use if they are appearing too soon."));
+	direction = new FlatSwitch(this, {_("For&ward"), _("&Backward")});
+	direction->SetItemToolTip(0, _("Shifts subs forward, making them appear later. Use if they are appearing too soon."));
+	direction->SetItemToolTip(1, _("Shifts subs backward, making them appear earlier. Use if they are appearing too late."));
 
-	shift_backward = new wxRadioButton(shift_by_static_box, -1, _("&Backward"));
-	shift_backward->SetToolTip(_("Shifts subs backward, making them appear earlier. Use if they are appearing too late."));
+	// Which lines and which of their times
+	selection_mode = new FlatSwitch(this, {_("&All rows"), _("Selected &rows"), _("Selection &onward")});
+	time_fields = new FlatSwitch(this, {_("Start a&nd End times"), _("&Start times only"), _("&End times only")});
 
-	wxString selection_mode_vals[] = { _("&All rows"), _("Selected &rows"), _("Selection &onward") };
-	selection_mode = new wxRadioBox(this, -1, _("Affect"), wxDefaultPosition, wxDefaultSize, 3, selection_mode_vals, 1);
-
-	wxString time_field_vals[] = { _("Start a&nd End times"), _("&Start times only"), _("&End times only") };
-	time_fields = new wxRadioBox(this, -1, _("Times"), wxDefaultPosition, wxDefaultSize, 3, time_field_vals, 1);
-
-	history_box = new wxListBox(history_static_box, -1, wxDefaultPosition, wxSize(350, 100), 0, nullptr, wxLB_HSCROLL);
-
-	wxButton *clear_button = new wxButton(history_static_box, -1, _("&Clear"));
+	// What was shifted before, to do again
+	history_box = new FlatList(this, false, false, _("Nothing shifted yet"));
+	history_box->SetMinSize(FromDIP(wxSize(320, 150)));
+	history_box->SetToolTip(_("Click an entry to load its shift"));
+	auto clear_button = new FlatButton(this, _("&Clear"));
 	clear_button->Bind(wxEVT_BUTTON, &DialogShiftTimes::OnClear, this);
 
 	// Set initial control states
@@ -184,107 +193,91 @@ DialogShiftTimes::DialogShiftTimes(agi::Context *context)
 	LoadHistory();
 
 	shift_time->SetTime(OPT_GET("Tool/Shift Times/Time")->GetInt());
-	*shift_frames << (int)OPT_GET("Tool/Shift Times/Frames")->GetInt();
-	shift_by_frames->SetValue(!OPT_GET("Tool/Shift Times/ByTime")->GetBool() && shift_by_frames->IsEnabled());
+	shift_frames->SetValue(OPT_GET("Tool/Shift Times/Frames")->GetInt());
+	shift_by->SetSelection(!OPT_GET("Tool/Shift Times/ByTime")->GetBool() && shift_by->IsItemEnabled(1) ? 1 : 0);
 	time_fields->SetSelection(OPT_GET("Tool/Shift Times/Type")->GetInt());
-	selection_mode->SetSelection(OPT_GET("Tool/Shift Times/Affect")->GetInt());
-	shift_backward->SetValue(OPT_GET("Tool/Shift Times/Direction")->GetBool());
+	if (selection_mode->IsItemEnabled(OPT_GET("Tool/Shift Times/Affect")->GetInt()))
+		selection_mode->SetSelection(OPT_GET("Tool/Shift Times/Affect")->GetInt());
+	direction->SetSelection(OPT_GET("Tool/Shift Times/Direction")->GetBool() ? 1 : 0);
 
-	if (shift_by_frames->GetValue())
-		shift_time->Disable();
-	else
-		shift_frames->Disable();
+	// Position controls: a name and its choice on each row, the history beside
+	auto amount = new wxBoxSizer(wxHORIZONTAL);
+	amount->Add(time_frame, wxSizerFlags(1).Expand());
+	amount->Add(shift_frames->Frame(), wxSizerFlags(1).Expand());
 
-	// Position controls
-	wxFlexGridSizer* shift_amount_sizer = new wxFlexGridSizer(2, 2, 5, 5);
-	shift_amount_sizer->AddGrowableCol(1, 1);
-	shift_amount_sizer->Add(shift_by_time, wxSizerFlags(0).Align(wxALIGN_CENTER_VERTICAL));
-	shift_amount_sizer->Add(shift_time, wxSizerFlags().Expand());
-	shift_amount_sizer->Add(shift_by_frames, wxSizerFlags(0).Align(wxALIGN_CENTER_VERTICAL));
-	shift_amount_sizer->Add(shift_frames, wxSizerFlags().Expand());
+	auto grid = new wxFlexGridSizer(2, FromDIP(6), FromDIP(10));
+	grid->AddGrowableCol(1, 1);
+	auto row = [&](wxString const& name, wxWindow *control) {
+		grid->Add(dim(name), wxSizerFlags().CenterVertical());
+		grid->Add(control, wxSizerFlags().Expand());
+	};
+	row(_("Shift by"), shift_by);
+	grid->AddSpacer(0);
+	grid->Add(amount, wxSizerFlags().Expand());
+	row(_("Direction"), direction);
+	row(_("Affect"), selection_mode);
+	row(_("Times"), time_fields);
 
-	wxSizer *shift_direction_sizer = new wxBoxSizer(wxHORIZONTAL);
-	shift_direction_sizer->Add(shift_forward, wxSizerFlags(1).Expand());
-	shift_direction_sizer->Add(shift_backward, wxSizerFlags(1).Expand().Border(wxLEFT));
-
-	shift_by_sizer->Add(shift_amount_sizer, wxSizerFlags().Expand());
-	shift_by_sizer->Add(shift_direction_sizer, wxSizerFlags().Expand().Border(wxTOP));
-
-	wxSizer *left_sizer = new wxBoxSizer(wxVERTICAL);
-	left_sizer->Add(shift_by_sizer, wxSizerFlags().Expand().Border(wxBOTTOM));
-	left_sizer->Add(selection_mode, wxSizerFlags().Expand().Border(wxBOTTOM));
-	left_sizer->Add(time_fields, wxSizerFlags().Expand());
-
+	auto history_sizer = new wxBoxSizer(wxVERTICAL);
+	auto history_title = new wxBoxSizer(wxHORIZONTAL);
+	history_title->Add(dim(_("Load from history")), wxSizerFlags(1).CenterVertical());
+	history_title->Add(clear_button);
+	history_sizer->Add(history_title, wxSizerFlags().Expand().Border(wxBOTTOM, FromDIP(4)));
 	history_sizer->Add(history_box, wxSizerFlags(1).Expand());
-	history_sizer->Add(clear_button, wxSizerFlags().Expand().Border(wxTOP));
 
 	wxSizer *top_sizer = new wxBoxSizer(wxHORIZONTAL);
-	top_sizer->Add(left_sizer, wxSizerFlags().Border(wxALL & ~wxRIGHT).Expand());
-	top_sizer->Add(history_sizer, wxSizerFlags().Border().Expand());
+	top_sizer->Add(grid, wxSizerFlags());
+	top_sizer->Add(history_sizer, wxSizerFlags(1).Expand().Border(wxLEFT, FromDIP(16)));
 
 	wxSizer *main_sizer = new wxBoxSizer(wxVERTICAL);
-	main_sizer->Add(top_sizer, wxSizerFlags().Border(wxALL & ~wxBOTTOM));
-	main_sizer->Add(CreateButtonSizer(wxOK | wxCANCEL | wxHELP), wxSizerFlags().Right().Border());
+	main_sizer->Add(top_sizer, wxSizerFlags(1).Expand().Border(wxALL, FromDIP(10)));
+	main_sizer->Add(new flat::DialogButtons(this, wxOK | wxCANCEL | wxHELP, "Shift Times"), wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(10)));
+	ShowAmount(ByTime());
 	SetSizerAndFit(main_sizer);
 	CenterOnParent();
 
 	Bind(wxEVT_BUTTON, &DialogShiftTimes::Process, this, wxID_OK);
-	Bind(wxEVT_BUTTON, std::bind(&HelpButton::OpenPage, "Shift Times"), wxID_HELP);
 	shift_time->Bind(wxEVT_TEXT_ENTER, &DialogShiftTimes::Process, this);
-	history_box->Bind(wxEVT_LISTBOX_DCLICK, &DialogShiftTimes::OnHistoryClick, this);
+	history_box->Bind(wxEVT_LISTBOX, &DialogShiftTimes::OnHistoryClick, this);
+}
+
+void DialogShiftTimes::ShowAmount(bool by_time) {
+	time_frame->Show(by_time);
+	shift_frames->Frame()->Show(!by_time);
+	Layout();
+	(by_time ? static_cast<wxWindow*>(shift_time) : shift_frames->Text())->SetFocus();
 }
 
 DialogShiftTimes::~DialogShiftTimes() {
-	long shift;
-	shift_frames->GetValue().ToLong(&shift);
-
 	OPT_SET("Tool/Shift Times/Time")->SetInt(shift_time->GetTime());
-	OPT_SET("Tool/Shift Times/Frames")->SetInt(shift);
-	OPT_SET("Tool/Shift Times/ByTime")->SetBool(shift_by_time->GetValue());
+	OPT_SET("Tool/Shift Times/Frames")->SetInt(shift_frames->GetInt());
+	OPT_SET("Tool/Shift Times/ByTime")->SetBool(ByTime());
 	OPT_SET("Tool/Shift Times/Type")->SetInt(time_fields->GetSelection());
 	OPT_SET("Tool/Shift Times/Affect")->SetInt(selection_mode->GetSelection());
-	OPT_SET("Tool/Shift Times/Direction")->SetBool(shift_backward->GetValue());
+	OPT_SET("Tool/Shift Times/Direction")->SetBool(direction->GetSelection() == 1);
 }
 
 void DialogShiftTimes::OnTimecodesLoaded(agi::vfr::Framerate const& new_fps) {
 	fps = new_fps;
-	if (fps.IsLoaded()) {
-		shift_by_frames->Enable();
-	}
-	else {
-		shift_by_time->SetValue(true);
-		shift_by_frames->Disable();
-		shift_time->Enable();
-		shift_frames->Disable();
+	// Frames only with timecodes to count them by
+	shift_by->EnableItem(1, fps.IsLoaded());
+	if (!fps.IsLoaded() && !ByTime()) {
+		shift_by->SetSelection(0);
+		if (GetSizer()) ShowAmount(true);
 	}
 }
 
 void DialogShiftTimes::OnSelectedSetChanged() {
-	if (context->selectionController->GetSelectedSet().empty()) {
-		selection_mode->Enable(1, false);
-		selection_mode->Enable(2, false);
-		selection_mode->SetSelection(0);
-	}
-	else {
-		selection_mode->Enable(1, true);
-		selection_mode->Enable(2, true);
-	}
+	bool any = !context->selectionController->ReadSelectedSet().empty();
+	selection_mode->EnableItem(1, any);
+	selection_mode->EnableItem(2, any);
+	if (!any) selection_mode->SetSelection(0);
 }
 
 void DialogShiftTimes::OnClear(wxCommandEvent &) {
 	agi::fs::Remove(history_filename);
-	history_box->Clear();
+	history_box->Set(wxArrayString());
 	history.clear();
-}
-
-void DialogShiftTimes::OnByTime(wxCommandEvent &) {
-	shift_time->Enable(true);
-	shift_frames->Enable(false);
-}
-
-void DialogShiftTimes::OnByFrames(wxCommandEvent &) {
-	shift_time->Enable(false);
-	shift_frames->Enable(true);
 }
 
 void DialogShiftTimes::OnHistoryClick(wxCommandEvent &evt) {
@@ -294,32 +287,31 @@ void DialogShiftTimes::OnHistoryClick(wxCommandEvent &evt) {
 	json::Object& obj = history[entry];
 	if (obj["is by time"]) {
 		shift_time->SetTime(agi::Time((std::string&)obj["amount"]));
-		shift_by_time->SetValue(true);
-		OnByTime(evt);
+		shift_by->SetSelection(0);
+		ShowAmount(true);
 	}
 	else {
-		shift_frames->SetValue(to_wx((std::string&)obj["amount"]));
-		if (shift_by_frames->IsEnabled()) {
-			shift_by_frames->SetValue(true);
-			OnByFrames(evt);
+		long frames = 0;
+		to_wx((std::string&)obj["amount"]).ToLong(&frames);
+		shift_frames->SetValue(frames);
+		if (shift_by->IsItemEnabled(1)) {
+			shift_by->SetSelection(1);
+			ShowAmount(false);
 		}
 	}
 
-	if (obj["is backward"])
-		shift_backward->SetValue(true);
-	else
-		shift_forward->SetValue(true);
-
-	selection_mode->SetSelection((int64_t)obj["mode"]);
+	direction->SetSelection(obj["is backward"] ? 1 : 0);
+	int mode = static_cast<int>((int64_t)obj["mode"]);
+	if (selection_mode->IsItemEnabled(mode)) selection_mode->SetSelection(mode);
 	time_fields->SetSelection((int64_t)obj["fields"]);
 }
 
 void DialogShiftTimes::SaveHistory(json::Array shifted_blocks) {
 	json::Object new_entry;
 	new_entry["filename"] = context->subsController->Filename().filename().string();
-	new_entry["is by time"] = shift_by_time->GetValue();
-	new_entry["is backward"] = shift_backward->GetValue();
-	new_entry["amount"] = from_wx(shift_by_time->GetValue() ? shift_time->GetValue() : shift_frames->GetValue());
+	new_entry["is by time"] = ByTime();
+	new_entry["is backward"] = direction->GetSelection() == 1;
+	new_entry["amount"] = from_wx(ByTime() ? shift_time->GetValue() : wxString::Format("%d", shift_frames->GetInt()));
 	new_entry["fields"] = time_fields->GetSelection();
 	new_entry["mode"] = selection_mode->GetSelection();
 	new_entry["selection"] = std::move(shifted_blocks);
@@ -327,6 +319,7 @@ void DialogShiftTimes::SaveHistory(json::Array shifted_blocks) {
 	history.insert(history.begin(), std::move(new_entry));
 	if (history.size() > 50)
 		history.resize(50);
+	ShowHistory();
 
 	try {
 		agi::fs::CreateDirectory(history_filename.parent_path());
@@ -338,16 +331,10 @@ void DialogShiftTimes::SaveHistory(json::Array shifted_blocks) {
 }
 
 void DialogShiftTimes::LoadHistory() {
-	history_box->Clear();
-	history_box->Freeze();
-
 	try {
 		json::UnknownElement root;
 		json::Reader::Read(root, *agi::io::Open(history_filename));
 		history = std::move(static_cast<json::Array&>(root));
-
-		for (auto& history_entry : history)
-			history_box->Append(get_history_string(history_entry));
 	}
 	catch (agi::fs::FileSystemError const& e) {
 		LOG_D("dialog_shift_times/load_history") << "Cannot load shift times history: " << e.GetMessage();
@@ -355,24 +342,28 @@ void DialogShiftTimes::LoadHistory() {
 	catch (json::Exception const& e) {
 		LOG_D("dialog_shift_times/load_history") << "Cannot load shift times history: " << e.what();
 	}
-	catch (...) {
-		history_box->Thaw();
-		throw;
-	}
+	ShowHistory();
+}
 
-	history_box->Thaw();
+void DialogShiftTimes::ShowHistory() {
+	wxArrayString entries;
+	for (auto& history_entry : history)
+		entries.push_back(get_history_string(history_entry));
+	history_box->Set(entries);
 }
 
 void DialogShiftTimes::Process(wxCommandEvent &) {
+    auto edit_scope = context->subtitleAccess->TryWrite();
+    if (!edit_scope) return;
 	int mode = selection_mode->GetSelection();
 	int type = time_fields->GetSelection();
-	bool reverse = shift_backward->GetValue();
-	bool by_time = shift_by_time->GetValue();
+	bool reverse = direction->GetSelection() == 1;
+	bool by_time = ByTime();
 
 	bool start = type != 2;
 	bool end = type != 1;
 
-	auto const& sel = context->selectionController->GetSelectedSet();
+	auto const& sel = context->selectionController->ReadSelectedSet();
 
 	long shift;
 	if (by_time) {
@@ -383,7 +374,7 @@ void DialogShiftTimes::Process(wxCommandEvent &) {
 		}
 	}
 	else
-		shift_frames->GetValue().ToLong(&shift);
+		shift = shift_frames->GetInt();
 
 	if (reverse)
 		shift = -shift;
@@ -392,8 +383,10 @@ void DialogShiftTimes::Process(wxCommandEvent &) {
 	int block_start = 0;
 	json::Array shifted_blocks;
 
-	for (auto& line : context->ass->Events) {
-		if (!sel.count(&line)) {
+	SubtitleRowEdit staged(context,true);
+    for (auto candidate : staged.rows) {
+        auto& line=*candidate;
+		if (!staged.selected.count(line.Id)) {
 			if (block_start) {
 				json::Object block;
 				block["start"] = block_start;
@@ -413,12 +406,12 @@ void DialogShiftTimes::Process(wxCommandEvent &) {
 			line.End = Shift(line.End, shift, by_time, agi::vfr::END);
 	}
 
-	context->ass->Commit(_("shifting"), AssFile::COMMIT_DIAG_TIME);
+	auto edit=context->subtitleAccess->Edit(edit_scope->Lease());edit.UpdateRows(staged.Values());edit.Commit(_("shifting"), AssFile::COMMIT_DIAG_TIME);
 
 	if (block_start) {
 		json::Object block;
 		block["start"] = block_start;
-		block["end"] = context->ass->Events.back().Row + 1;
+		block["end"] = context->subtitleAccess->Read().Events.back().Row + 1;
 		shifted_blocks.push_back(std::move(block));
 	}
 
@@ -427,10 +420,7 @@ void DialogShiftTimes::Process(wxCommandEvent &) {
 }
 
 int DialogShiftTimes::Shift(int initial_time, int shift, bool by_time, agi::vfr::Time type) {
-	if (by_time)
-		return initial_time + shift;
-	else
-		return fps.TimeAtFrame(shift + fps.FrameAtTime(initial_time, type), type);
+	return ShiftTime(initial_time, shift, by_time, fps, type);
 }
 }
 

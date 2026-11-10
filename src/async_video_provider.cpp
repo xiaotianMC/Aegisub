@@ -24,6 +24,7 @@
 #include "video_provider_manager.h"
 
 #include <libaegisub/dispatch.h>
+#include <unordered_map>
 
 #include <boost/gil.hpp>
 
@@ -99,13 +100,24 @@ VideoFrame AsyncVideoProvider::GetSubtitles(double time) {
 	// usually by blending many separate small images with alpha).
 	// To do this, draw the subtitles once on a black frame and once on a white frame
 	// and solve for the color and alpha.
-	VideoFrame frame_black = GetBlankFrame(false);
-	if (!subs) return frame_black;
-	VideoFrame frame_white = GetBlankFrame(true);
-
-	subs_provider->LoadSubtitles(subs.get());
-	subs_provider->DrawSubtitles(frame_black, time / 1000.);
-	subs_provider->DrawSubtitles(frame_white, time / 1000.);
+	//
+	// C1-C1c-11 B5: `subs`, `single_frame` and `subs_provider` belong to the
+	// worker thread (LoadSubtitles/UpdateSubtitles replace them there), so the
+	// rendering runs on the worker, ordered after every queued update.
+	VideoFrame frame_black, frame_white;
+	bool has_subs = false;
+	worker->Sync([&] {
+		frame_black = GetBlankFrame(false);
+		if (!subs || !subs_provider) return;
+		has_subs = true;
+		frame_white = GetBlankFrame(true);
+		subs_provider->LoadSubtitles(subs.get());
+		// The provider now holds the complete file, not a single-frame export.
+		single_frame = SUBS_FILE_ALREADY_LOADED;
+		subs_provider->DrawSubtitles(frame_black, time / 1000.);
+		subs_provider->DrawSubtitles(frame_white, time / 1000.);
+	});
+	if (!has_subs) return frame_black;
 
 	using namespace boost::gil;
 	auto blackview = interleaved_view(frame_black.width, frame_black.height, (bgra8_pixel_t*) frame_black.data.data(), frame_black.width * 4);
@@ -174,6 +186,10 @@ void AsyncVideoProvider::LoadSubtitles(const AssFile *new_subs) throw() {
 	uint_fast32_t req_version = ++version;
 
 	auto copy = new AssFile(*new_subs);
+	// AssDialogue's normal copy deliberately allocates a new ID. The private
+	// renderer copy instead needs source IDs for validated visual previews.
+	auto source = new_subs->Events.begin();
+	for (auto& row : copy->Events) row.Id = (source++)->Id;
 	worker->Async([=, this]{
 		subs.reset(copy);
 		single_frame = NEW_SUBS_FILE;
@@ -186,7 +202,7 @@ void AsyncVideoProvider::UpdateSubtitles(const AssDialogue *changed) throw() {
 
 	// Copy just the line which were changed, then replace the line at the
 	// same index in the worker's copy of the file with the new entry
-	auto copy = new AssDialogue(*changed);
+	auto copy = new AssDialogue(static_cast<AssDialogueBase const&>(*changed));
 	worker->Async([=, this]{
 		int i = 0;
 		auto it = subs->Events.begin();
@@ -195,6 +211,27 @@ void AsyncVideoProvider::UpdateSubtitles(const AssDialogue *changed) throw() {
 		subs->Events.insert(it, *copy);
 		delete &*it--;
 
+		single_frame = NEW_SUBS_FILE;
+		ProcAsync(req_version, true);
+	});
+}
+
+void AsyncVideoProvider::PreviewSubtitles(std::vector<AssDialogueBase> changes) {
+	uint_fast32_t req_version = ++version;
+	worker->Async([this, req_version, changes = std::move(changes)] {
+		if (!subs) return;
+		// Validate all targets before changing the detached render state.
+		std::vector<std::pair<AssDialogue*, AssDialogueBase const*>> updates;
+		std::unordered_map<int, AssDialogueBase const*> by_id;
+		for (auto const& change : changes) if (!by_id.emplace(change.Id, &change).second) return;
+		for (auto& row : subs->Events) {
+			auto it = by_id.find(row.Id);
+			if (it == by_id.end()) continue;
+			if (row.Row != it->second->Row) return;
+			updates.emplace_back(&row, it->second);
+		}
+		if (updates.size() != changes.size()) return;
+		for (auto const& [row, change] : updates) static_cast<AssDialogueBase&>(*row) = *change;
 		single_frame = NEW_SUBS_FILE;
 		ProcAsync(req_version, true);
 	});

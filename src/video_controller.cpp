@@ -31,6 +31,7 @@
 
 #include "ass_dialogue.h"
 #include "ass_file.h"
+#include "subtitle_project_access.h"
 #include "audio_controller.h"
 #include "compat.h"
 #include "format.h"
@@ -50,9 +51,9 @@ VideoController::VideoController(agi::Context *c)
 : context(c)
 , playAudioOnStep(OPT_GET("Audio/Plays When Stepping Video"))
 , connections(agi::signal::make_vector({
-	context->ass->AddCommitListener(&VideoController::OnSubtitlesCommit, this),
+	context->subtitleAccess->Read().AddCommitListener("video_controller.AddCommitListener", [this](int type, AssDialogue const* line, SubtitleModelRebindTicket ticket) { OnSubtitlesCommit(type, line); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime)),
 	context->project->AddVideoProviderListener(&VideoController::OnNewVideoProvider, this),
-	context->selectionController->AddActiveLineListener(&VideoController::OnActiveLineChanged, this),
+	context->selectionController->AddActiveLineListener("video_controller.AddActiveLineListener", [this](SubtitleModelRebindTicket ticket) { OnActiveLineChanged(); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime)),
 }))
 {
 	Bind(EVT_VIDEO_ERROR, &VideoController::OnVideoError, this);
@@ -70,7 +71,7 @@ void VideoController::OnSubtitlesCommit(int type, const AssDialogue *changed) {
 	if (!provider) return;
 
 	if ((type & AssFile::COMMIT_SCRIPTINFO) || type == AssFile::COMMIT_NEW) {
-		auto new_matrix = context->ass->GetYCbCrMatrix();
+		auto new_matrix = context->subtitleAccess->Read().GetYCbCrMatrix();
 		if (new_matrix != color_matrix) {
 			color_matrix = new_matrix;
 			provider->SetColorSpace(new_matrix);
@@ -78,12 +79,13 @@ void VideoController::OnSubtitlesCommit(int type, const AssDialogue *changed) {
 	}
 
 	if (!changed)
-		provider->LoadSubtitles(context->ass.get());
+		provider->LoadSubtitles(&context->subtitleAccess->Read());
 	else
 		provider->UpdateSubtitles(changed);
 }
 
-void VideoController::OnActiveLineChanged(AssDialogue *line) {
+void VideoController::OnActiveLineChanged() {
+    auto line = context->selectionController->ReadActiveLine();
 	if (line && provider && OPT_GET("Video/Subtitle Sync")->GetBool()) {
 		Stop();
 		JumpToTime(line->Start);
@@ -91,7 +93,7 @@ void VideoController::OnActiveLineChanged(AssDialogue *line) {
 }
 
 void VideoController::RequestFrame() {
-	context->ass->Properties.video_position = frame_n;
+	{ auto ui = context->subtitleAccess->UIState(); ui.video_position = frame_n; context->subtitleAccess->UpdateUIState(ui); }
 	provider->RequestFrame(frame_n, TimeAtFrame(frame_n));
 }
 
@@ -152,15 +154,18 @@ void VideoController::Play() {
 void VideoController::PlayLine() {
 	Stop();
 
-	AssDialogue *curline = context->selectionController->GetActiveLine();
+	AssDialogue const* curline = context->selectionController->ReadActiveLine();
 	if (!curline) return;
+	const int start = curline->Start, end = curline->End;
 
-	context->audioController->PlayRange(TimeRange(curline->Start, curline->End));
+	context->audioController->PlayRange(TimeRange(start, end));
 
 	// Round-trip conversion to convert start to exact
-	int startFrame = FrameAtTime(context->selectionController->GetActiveLine()->Start, agi::vfr::START);
+	// C1-C1c-14 (audit C7): the audio controller may change the active line;
+	// use the times read above instead of dereferencing it again.
+	int startFrame = FrameAtTime(start, agi::vfr::START);
 	start_ms = TimeAtFrame(startFrame);
-	end_frame = FrameAtTime(context->selectionController->GetActiveLine()->End, agi::vfr::END) + 1;
+	end_frame = FrameAtTime(end, agi::vfr::END) + 1;
 
 	JumpToFrame(startFrame);
 
@@ -202,16 +207,16 @@ double VideoController::GetARFromType(AspectRatio type) const {
 void VideoController::SetAspectRatio(double value) {
 	ar_type = AspectRatio::Custom;
 	ar_value = mid(.5, value, 5.);
-	context->ass->Properties.ar_mode = (int)ar_type;
-	context->ass->Properties.ar_value = ar_value;
+	{ auto ui = context->subtitleAccess->UIState(); ui.ar_mode = (int)ar_type; context->subtitleAccess->UpdateUIState(ui); }
+	{ auto ui = context->subtitleAccess->UIState(); ui.ar_value = ar_value; context->subtitleAccess->UpdateUIState(ui); }
 	ARChange(ar_type, ar_value);
 }
 
 void VideoController::SetAspectRatio(AspectRatio type) {
 	ar_value = mid(.5, GetARFromType(type), 5.);
 	ar_type = type;
-	context->ass->Properties.ar_mode = (int)ar_type;
-	context->ass->Properties.ar_value = ar_value;
+	{ auto ui = context->subtitleAccess->UIState(); ui.ar_mode = (int)ar_type; context->subtitleAccess->UpdateUIState(ui); }
+	{ auto ui = context->subtitleAccess->UIState(); ui.ar_value = ar_value; context->subtitleAccess->UpdateUIState(ui); }
 	ARChange(ar_type, ar_value);
 }
 

@@ -1,0 +1,168 @@
+// Copyright (c) 2026, Aegisub contributors
+// SPDX-License-Identifier: ISC
+#pragma once
+#include "ass_dialogue.h"
+#include "ass_file.h"
+#include "ass_style.h"
+#include <libaegisub/exception.h>
+#include <libaegisub/subtitle_edit_gate.h>
+#include <stdexcept>
+#include <type_traits>
+#include <utility>
+
+// C1-C1c-12: project state outside the compared rows (metadata, automation
+// settings, saving, media paths) cannot change while a comparison session or
+// an exclusive borrow is active. Such a refusal changes nothing.
+DEFINE_EXCEPTION(SubtitleProjectBusy, agi::Exception);
+
+// Incremental live-model boundary. Detached AssFiles keep their existing API.
+// The live AssFile is private to agi::Context and its owner (SubsController);
+// this facade is the only business route to it and exposes no mutable pointer.
+class SubtitleProjectAccess {
+    friend class SubsController;
+    friend class SubtitleModelInstallation;
+    struct State;
+    struct ActiveWrite;
+    std::shared_ptr<State> state;
+    agi::SubtitleEditGate& gate;
+    uint64_t metadata_revision = 0;
+    ProjectMetadata saved_metadata;
+    agi::signal::Signal<> metadata_changed;
+    void NotifyMetadataChanged();
+    void MarkMetadataSaved(ProjectMetadata const& value) { saved_metadata = value; }
+    // C1-C1c-13 (audit C2): rollback of a failed save. Like SetMetadata, a real
+    // change advances the metadata revision and notifies listeners, so they never
+    // keep values the model no longer has. Never throws: listener failures are
+    // logged, because the caller is already propagating the save failure.
+    void RestoreMetadata(ProjectMetadata const& value) noexcept;
+public:
+    enum class MetadataField { AutomationScripts, ExportFilters, ExportEncoding, StyleStorage,
+        AudioFile, VideoFile, TimecodesFile, KeyframesFile };
+    uint64_t MetadataRevision() const;
+    bool MetadataDirty() const;
+    ProjectUIState UIState() const;
+    void UpdateUIState(ProjectUIState const&);
+    /// Throws SubtitleProjectBusy (nothing changed) during a comparison session.
+    void SetMetadata(MetadataField, std::string);
+    std::string AutomationSetting(std::string const&) const;
+    void SetAutomationSetting(std::string, std::string);
+    DEFINE_SIGNAL_ADDERS(metadata_changed, AddMetadataListener)
+    /// C1-C1c-13 (audit C6): the "link adjacent lines" follow-up of a timing
+    /// edit. It is applied in the same call as the row values, after all
+    /// validation, so a refusal leaves the live model unchanged.
+    struct AdjacentLink {
+        int id = 0;
+        bool start_changed = false;
+        int old_boundary = 0;
+        int threshold_ms = 0;
+        bool exact_milliseconds = false;
+    };
+    /// Registers a change of project state outside the compared rows for the
+    /// lifetime of the result (excludes comparison; no row revision change).
+    /// Throws SubtitleProjectBusy during a comparison session.
+    agi::SubtitleEditGate::ProjectWriteLease BeginProjectWrite();
+    // A synchronous ordinary edit, including nested commands and notifications.
+    // Shares a C0 lease, never the gate's internal mutex.
+    class WriteScope {
+        std::weak_ptr<State> owner;
+        std::shared_ptr<ActiveWrite> active;
+        WriteScope(std::shared_ptr<State> const&, std::shared_ptr<ActiveWrite>);
+        friend class SubtitleProjectAccess;
+    public:
+        agi::SubtitleEditGate::WriteLease const& Lease() const;
+    };
+    std::optional<WriteScope> TryWrite();
+    class Interaction {
+        std::weak_ptr<State> owner;
+        std::optional<WriteScope> scope;
+        agi::SubtitleEditGate::RevisionToken revision;
+        std::vector<int> targets;
+        Interaction(std::shared_ptr<State> const&, WriteScope, agi::SubtitleEditGate::RevisionToken, std::vector<int>);
+        friend class SubtitleProjectAccess;
+    public:
+        Interaction(Interaction const&) = delete;
+        Interaction& operator=(Interaction const&) = delete;
+        Interaction(Interaction&&) noexcept = default;
+        Interaction& operator=(Interaction&&) noexcept = default;
+        bool Current() const;
+        // Data-only writeback: no mutable live pointers escape the session.
+        void UpdateRows(std::vector<AssDialogueBase> const&);
+        // Video-property resampling only: complete same-ID/order rows, same-name
+        // style values and Script Info; never replace live nodes or project state.
+        void UpdateLayout(AssFile const&);
+        /// Writes the rows and then links the neighbour of `link.id`. The neighbour
+        /// search may touch any row, so it requires the complete live set as targets.
+        /// Returns whether a neighbour changed.
+        bool UpdateRowsLinkingAdjacent(std::vector<AssDialogueBase> const&, AdjacentLink const& link);
+        int InsertBefore(int target_id, AssDialogueBase const&, AssStyle const* missing_style = nullptr);
+        int Commit(wxString const&, int type, int amend_id = -1, int single_line_id = 0);
+        // Releases task registration; does not imply rollback or an Undo record.
+        void End() noexcept { scope.reset(); }
+    };
+    std::optional<Interaction> TryBeginInteraction(std::vector<int> targets);
+    class WriteAccess {
+        std::weak_ptr<State> state;
+        agi::SubtitleEditGate::WriteLease::Token token;
+        struct Borrow {
+            std::shared_ptr<void const> authority;
+            std::shared_ptr<State> owner;
+            AssFile *file;
+        };
+        Borrow Check() const;
+        WriteAccess(std::shared_ptr<State> const&, agi::SubtitleEditGate::WriteLease::Token);
+        friend class SubtitleProjectAccess;
+    public:
+        template<class T, class Value> void SetDialogueField(int id, T AssDialogueBase::*field, Value value) const {
+            auto access = Check();
+            if (!field) throw std::invalid_argument("Missing subtitle field");
+            if constexpr (std::is_same_v<T, int>)
+                if (field == &AssDialogueBase::Id || field == &AssDialogueBase::Row)
+                    throw std::invalid_argument("Line identity and order require a structural operation");
+            for (auto& line : access.file->Events)
+                if (line.Id == id) { line.*field = T(std::move(value)); return; }
+            throw std::out_of_range("Subtitle line no longer exists");
+        }
+        template<class T, class Value> void SetStyleField(std::string const& name, T AssStyle::*field, Value value) const {
+            auto access = Check();
+            if (!field) throw std::invalid_argument("Missing style field");
+            if constexpr (std::is_same_v<T, std::string>)
+                if (field == &AssStyle::name) throw std::invalid_argument("Style rename requires dependency handling");
+            auto style = access.file->GetStyle(name);
+            if (!style) throw std::out_of_range("Subtitle style no longer exists");
+            style->*field = T(std::move(value));
+            style->UpdateData();
+        }
+        void SetExtradataValue(uint32_t id, std::string value) const;
+        // Value-only ordinary edits; row structure and project/UI properties cannot change.
+        // Replaced style nodes are retained by the project (see ReplaceRows).
+        void UpdateValues(
+            agi::SubtitleEditGate::RevisionToken const&, AssFile const& original, AssFile const& result,
+            std::vector<int> const& style_sources, int parts) const;
+        void UpdateRows(std::vector<AssDialogueBase> const&) const;
+        // Ordinary row-list edits only. Detached nodes are retained by the project,
+        // never by the caller: they are freed only after a later Commit notified
+        // every observer and the outermost write scope ended; if that Commit
+        // fails they stay parked until the project access is destroyed.
+        void ReplaceRows(
+            agi::SubtitleEditGate::RevisionToken const&, std::vector<AssDialogueBase> const& originals,
+            std::vector<AssDialogueBase> const& result) const;
+        /// Writes the rows, then applies each link in order. Every row and link
+        /// target is validated before the first write. Returns whether any
+        /// neighbour changed.
+        bool UpdateRowsLinkingAdjacent(std::vector<AssDialogueBase> const&, std::vector<AdjacentLink> const&) const;
+        int Commit(wxString const&, int type, int amend_id = -1, int single_line_id = 0) const;
+    };
+    SubtitleProjectAccess(AssFile&, agi::SubtitleEditGate&);
+    SubtitleProjectAccess(SubtitleProjectAccess const&) = delete;
+    SubtitleProjectAccess& operator=(SubtitleProjectAccess const&) = delete;
+    ~SubtitleProjectAccess();
+    AssFile const& Read() const;
+    // Independent, host-thread snapshot including Properties and stable row IDs.
+    std::unique_ptr<AssFile> Snapshot() const;
+    AssFile const& Read(agi::SubtitleEditGate::RevisionToken const&) const;
+    WriteAccess Edit(agi::SubtitleEditGate::WriteLease const&);
+    // Diagnostics: retired live nodes still owned by the project (pending, settled
+    // or parked after a failed commit). Read-only; grants no access to them.
+    size_t RetainedRetiredNodes() const noexcept;
+    void Close() noexcept;
+};

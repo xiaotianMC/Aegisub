@@ -30,6 +30,7 @@
 #pragma once
 
 #include <libaegisub/signal.h>
+#include <libaegisub/ass/completion.h>
 
 #include <memory>
 #include <string>
@@ -75,7 +76,7 @@ class SubsTextEditCtrl final : public wxStyledTextCtrl, private agi::signal::Con
 	size_t calltip_position = 0;
 
 	/// Cursor position which the current calltip is for
-	int cursor_pos;
+	int cursor_pos = -1;
 
 	/// The last seen line text, used to avoid reparsing the line for syntax
 	/// highlighting when possible
@@ -83,6 +84,20 @@ class SubsTextEditCtrl final : public wxStyledTextCtrl, private agi::signal::Con
 
 	/// Tokenized version of line_text
 	std::vector<agi::ass::DialogueToken> tokenized_line;
+	agi::ass::Completion completion;
+	std::string completion_source;
+	int completion_pos = 0;
+	std::vector<std::string> completion_fonts;
+	bool completion_fonts_loaded = false;
+	bool ime_composing = false;
+	bool completion_calltip = false;
+	void AcceptCompletion(wxStyledTextEvent &event);
+	bool IsComposing();
+	void ResumeAssistance();
+	void OnChar(wxKeyEvent &event);
+#ifdef __WXMSW__
+	WXLRESULT MSWWindowProc(WXUINT message, WXWPARAM wParam, WXLPARAM lParam) override;
+#endif
 
 	void OnContextMenu(wxContextMenuEvent &);
 	void OnDoubleClick(wxStyledTextEvent&);
@@ -119,6 +134,8 @@ public:
 
 	void SetTextTo(std::string const& text);
 	void Paste() override;
+	void ShowCompletion(bool manual = true);
+	bool HandleCompletionKey(wxKeyEvent &event);
 
 	std::pair<int, int> GetBoundsOfWordAtPosition(int pos);
 

@@ -30,6 +30,7 @@
 #pragma once
 
 #include "auto4_base.h"
+#include "subtitle_lua_transaction.h"
 
 #include <deque>
 #include <vector>
@@ -47,11 +48,16 @@ namespace Automation4 {
 		struct PendingCommit {
 			wxString mesage;
 			int modification_type;
-			std::vector<AssEntry*> lines;
+			std::vector<AssEntry const*> lines;
 		};
 
-		/// Pointer to file being modified
-		AssFile *ass;
+		/// File the script reads. For macros this is the run's private work
+		/// model; for validation/config callbacks it is the live document,
+		/// read synchronously on the host thread and never written.
+		AssFile const *ass;
+		/// File receiving new extradata and, for export filters, the result.
+		/// nullptr in read-only contexts.
+		AssFile *target;
 
 		/// Lua state the object exists in
 		lua_State *L;
@@ -72,16 +78,20 @@ namespace Automation4 {
 		/// calling C++ code are done with it
 		int references = 2;
 
-		/// Set of subtitle lines being modified; initially a shallow copy of ass->Line
-		std::vector<AssEntry*> lines;
+		/// Set of subtitle lines being modified; initially a shallow copy of ass->Line.
+		/// Lines are never modified in place: every write creates a new entry.
+		std::vector<AssEntry const*> lines;
 		bool script_info_copied = false;
 
 		/// Commits to apply once processing completes successfully
 		std::deque<PendingCommit> pending_commits;
-		/// Lines to delete once processing complete successfully
-		std::vector<std::unique_ptr<AssEntry>> lines_to_delete;
-		/// Lines that were allocated here and need to be deleted if the script is cancelled.
+		/// Script Info entries created by the script (copies and new entries)
+		std::vector<std::unique_ptr<AssEntry>> info_entries;
+		/// Styles and dialogue lines allocated here; owned until handed over or cancelled
 		std::vector<AssEntry *> allocated_lines;
+
+		/// Mark the object as finished on the C++ side
+		void Expire();
 
 		/// Create copies of all of the lines in the script info section if it
 		/// hasn't already happened. This is done lazily, since it only needs
@@ -94,7 +104,9 @@ namespace Automation4 {
 		void QueueLineForDeletion(size_t idx);
 		/// Set the line at the index to the given value
 		void AssignLine(size_t idx, std::unique_ptr<AssEntry> e);
-		void InsertLine(std::vector<AssEntry *> &vec, size_t idx, std::unique_ptr<AssEntry> e);
+		void InsertLine(std::vector<AssEntry const*> &vec, size_t idx, std::unique_ptr<AssEntry> e);
+		/// Take ownership of a newly created entry and return the pointer to store in lines
+		AssEntry const* Adopt(std::unique_ptr<AssEntry> e);
 
 		int ObjectIndexRead(lua_State *L);
 		void ObjectIndexWrite(lua_State *L);
@@ -124,21 +136,26 @@ namespace Automation4 {
 
 		std::unique_ptr<AssEntry> LuaToTrackedAssEntry(lua_State *L);
 
-		/// @brief Signal that the script using this file is now done running
-		/// @param undo_description If there's any uncommitted changes to the
-		///                         file, they will be automatically committed
-		///                         with this description
-		std::vector<AssEntry *> ProcessingComplete(wxString const& undo_description = wxString());
+		/// @brief Signal that a read-only or export filter call is done. For an
+		///        export filter the changes are applied to its own detached file.
+		void ProcessingComplete();
+
+		/// @brief Signal that a macro is done: hand every undo point, the final
+		///        line list and all created entries to the host for validation and
+		///        publication. Nothing is written to any document here.
+		/// @param undo_description Description for changes after the last undo point
+		LuaSubtitleResult TakeMacroResult(wxString const& undo_description);
 
 		/// End processing without applying any changes made
 		void Cancel();
 
 		/// Constructor
 		/// @param L lua state
-		/// @param ass File to wrap
+		/// @param source File to read
+		/// @param target File receiving writes (nullptr for read-only use)
 		/// @param can_modify Is modifying the file allowed?
 		/// @param can_set_undo Is setting undo points allowed?
-		LuaAssFile(lua_State *L, AssFile *ass, bool can_modify = false, bool can_set_undo = false);
+		LuaAssFile(lua_State *L, AssFile const& source, AssFile *target = nullptr, bool can_modify = false, bool can_set_undo = false);
 	};
 
 	class LuaProgressSink {

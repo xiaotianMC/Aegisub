@@ -99,6 +99,12 @@ EntryList<AssDialogue>::iterator AssFile::iterator_to(AssDialogue& line) {
 	return in_list ? Events.iterator_to(line) : Events.end();
 }
 
+EntryList<AssDialogue>::const_iterator AssFile::iterator_to(AssDialogue const& line) const {
+    using l = EntryList<AssDialogue>;
+    bool in_list = !l::node_algorithms::inited(l::value_traits::to_node_ptr(line));
+    return in_list ? Events.iterator_to(line) : Events.end();
+}
+
 void AssFile::InsertAttachment(agi::fs::path const& filename) {
 	AssEntryGroup group = AssEntryGroup::GRAPHIC;
 
@@ -190,7 +196,15 @@ AssStyle *AssFile::GetStyle(std::string const& name) {
 	return nullptr;
 }
 
+AssStyle const* AssFile::GetStyle(std::string const& name) const {
+    for (auto const& style : Styles)
+        if (boost::iequals(style.name, name)) return &style;
+    return nullptr;
+}
+
 int AssFile::Commit(wxString const& desc, int type, int amend_id, AssDialogue *single_line) {
+    if (installing || (edit_gate && edit_gate->NeedsRebinding())) throw std::logic_error("Model installation has not completed");
+    if (edit_gate) edit_gate->NoteLegacyCommit();
 	if (type == COMMIT_NEW || (type & COMMIT_DIAG_ADDREM) || (type & COMMIT_ORDER)) {
 		int i = 0;
 		for (auto& event : Events)
@@ -199,6 +213,12 @@ int AssFile::Commit(wxString const& desc, int type, int amend_id, AssDialogue *s
 
 	PushState({desc, &amend_id, single_line});
 
+    struct NotificationScope {
+        bool& flag;
+        bool previous;
+        explicit NotificationScope(bool& flag) : flag(flag), previous(flag) { flag = true; }
+        ~NotificationScope() { flag = previous; }
+    } notification(notifying);
 	AnnounceCommit(type, single_line);
 
 	return amend_id;
@@ -210,6 +230,32 @@ bool AssFile::CompStart(AssDialogue const& lft, AssDialogue const& rgt) {
 bool AssFile::CompEnd(AssDialogue const& lft, AssDialogue const& rgt) {
 	return lft.End < rgt.End;
 }
+
+bool AssFile::LinkAdjacentLine(AssDialogue *line, bool start_changed, int old_boundary, int threshold_ms, bool exact_milliseconds) {
+	if (!line || threshold_ms <= 0) return false;
+	auto milliseconds = [=](agi::Time time) { return exact_milliseconds ? time.GetMilliseconds() : static_cast<int>(time); };
+	int new_boundary = milliseconds(start_changed ? line->Start : line->End);
+	if (new_boundary == old_boundary) return false;
+
+	AssDialogue *adjacent = nullptr;
+	int smallest_gap = threshold_ms;
+	for (auto& candidate : Events) {
+		if (&candidate == line || candidate.Comment || milliseconds(candidate.End) <= milliseconds(candidate.Start)) continue;
+
+		int gap = start_changed ? old_boundary - milliseconds(candidate.End) : milliseconds(candidate.Start) - old_boundary;
+		if (gap < 0 || gap >= smallest_gap) continue;
+		if (start_changed ? new_boundary < milliseconds(candidate.Start) : new_boundary > milliseconds(candidate.End)) continue;
+
+		smallest_gap = gap;
+		adjacent = &candidate;
+	}
+	if (!adjacent) return false;
+
+	if (start_changed) adjacent->End = new_boundary;
+	else adjacent->Start = new_boundary;
+	return true;
+}
+
 bool AssFile::CompStyle(AssDialogue const& lft, AssDialogue const& rgt) {
 	return lft.Style < rgt.Style;
 }
@@ -295,8 +341,6 @@ std::vector<ExtradataEntry> AssFile::GetExtradata(std::vector<uint32_t> const& i
 }
 
 void AssFile::CleanExtradata() {
-	if (Extradata.empty()) return;
-
 	std::unordered_set<uint32_t> ids_used;
 	for (auto& line : Events) {
 		if (line.ExtradataIds.get().empty()) continue;

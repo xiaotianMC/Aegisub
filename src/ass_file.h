@@ -30,6 +30,7 @@
 #pragma once
 
 #include "ass_entry.h"
+#include "subtitle_model_observers.h"
 
 #include <libaegisub/fs.h>
 #include <libaegisub/signal.h>
@@ -38,6 +39,7 @@
 #include <boost/intrusive/list.hpp>
 #include <map>
 #include <set>
+#include <stdexcept>
 #include <vector>
 
 class AssAttachment;
@@ -45,7 +47,7 @@ class AssDialogue;
 class AssInfo;
 class AssStyle;
 class wxString;
-namespace agi { struct Context; }
+namespace agi { struct Context; class SubtitleEditGate; }
 
 template<typename T>
 using EntryList = typename boost::intrusive::make_list<T, boost::intrusive::constant_time_size<false>, boost::intrusive::base_hook<AssEntryListHook>>::type;
@@ -59,10 +61,10 @@ struct ExtradataEntry {
 struct AssFileCommit {
 	wxString const& message;
 	int *commit_id;
-	AssDialogue *single_line;
+	AssDialogue const* single_line;
 };
 
-struct ProjectProperties {
+struct ProjectMetadata {
 	std::string automation_scripts;
 	std::string export_filters;
 	std::string export_encoding;
@@ -72,8 +74,9 @@ struct ProjectProperties {
 	std::string timecodes_file;
 	std::string keyframes_file;
 	std::map<std::string, std::string> automation_settings;
-
-	// UI State
+    bool operator==(ProjectMetadata const&) const = default;
+};
+struct ProjectUIState {
 	double video_zoom = 0.;
 	double ar_value = 0.;
 	int scroll_position = 0;
@@ -81,12 +84,24 @@ struct ProjectProperties {
 	int ar_mode = 0;
 	int video_position = 0;
 };
+// Independent readers/writers retain the existing flattened ASS property names.
+struct ProjectProperties : ProjectMetadata, ProjectUIState {};
 
 class AssFile {
+    friend class SubtitleProjectAccess;
+    friend class SubsController;
+    friend class SelectionController;
+    friend class SubtitleModelInstallation;
+    // Identity belongs to the live file, never copied or swapped into snapshots.
+    agi::SubtitleEditGate *edit_gate = nullptr;
+    bool notifying = false;
 	/// A set of changes has been committed to the file (AssFile::COMMITType)
-	agi::signal::Signal<int, const AssDialogue*> AnnounceCommit;
+	SubtitleModelObservers<int, const AssDialogue*> AnnounceCommit{"commit"};
+    bool installing = false;
 	agi::signal::Signal<AssFileCommit> PushState;
 public:
+    bool IsNotifying() const noexcept { return notifying; }
+    bool IsInstalling() const noexcept { return installing; }
 	/// The lines in the file
 	std::vector<AssInfo> Info;
 	EntryList<AssStyle> Styles;
@@ -103,6 +118,7 @@ public:
 	~AssFile();
 
 	EntryList<AssDialogue>::iterator iterator_to(AssDialogue& line);
+    EntryList<AssDialogue>::const_iterator iterator_to(AssDialogue const& line) const;
 
 	/// @brief Load default file
 	/// @param defline Add a blank line to the file
@@ -116,6 +132,7 @@ public:
 	/// @param name Style name
 	/// @return Pointer to style or nullptr
 	AssStyle *GetStyle(std::string const& name);
+    AssStyle const* GetStyle(std::string const& name) const;
 
 	void swap(AssFile &) throw();
 
@@ -182,8 +199,20 @@ public:
 		COMMIT_EXTRADATA   = 0x100,
 	};
 
-	DEFINE_SIGNAL_ADDERS(AnnounceCommit, AddCommitListener)
-	DEFINE_SIGNAL_ADDERS(PushState, AddUndoManager)
+	template<typename... Args>
+    agi::signal::UnscopedConnection AddCommitListener(Args&&... args) const {
+        return AnnounceCommit.Connect(std::forward<Args>(args)...);
+    }
+    template<class F> agi::signal::UnscopedConnection AddInstallationObserver(std::string name, std::function<void()> prepare, F callback,
+            std::optional<std::weak_ptr<void const>> owner_lifetime = std::nullopt) const {
+        return AnnounceCommit.Observe(std::move(name),std::move(prepare),std::move(callback),std::move(owner_lifetime));
+    }
+    // Independent models may observe their own history. Live history registration
+    // belongs exclusively to SubsController, not to ordinary business code.
+    template<typename... Args> agi::signal::UnscopedConnection AddUndoManager(Args&&... args) {
+        if (edit_gate) throw std::logic_error("Live subtitle history is internal");
+        return PushState.Connect(std::forward<Args>(args)...);
+    }
 
 	/// @brief Flag the file as modified and push a copy onto the undo stack
 	/// @param desc        Undo description
@@ -200,6 +229,8 @@ public:
 	static bool CompStart(AssDialogue const& lft, AssDialogue const& rgt);
 	/// Compare based on end time
 	static bool CompEnd(AssDialogue const& lft, AssDialogue const& rgt);
+	/// Link a changed boundary to the nearest subtitle when the old gap is below the threshold
+	bool LinkAdjacentLine(AssDialogue *line, bool start_changed, int old_boundary, int threshold_ms, bool exact_milliseconds = false);
 	/// Compare based on style name
 	static bool CompStyle(AssDialogue const& lft, AssDialogue const& rgt);
 	/// Compare based on actor name

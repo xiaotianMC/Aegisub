@@ -30,10 +30,15 @@
 // Aegisub Project http://www.aegisub.org/
 
 #include "command.h"
+#include "edit.h"
+#include "../subtitle_project_access.h"
+#include "../subtitle_row_edit.h"
+#include "../subtitle_row_list_edit.h"
 
 #include "../ass_dialogue.h"
 #include "../ass_file.h"
 #include "../ass_karaoke.h"
+#include "../ass_override.h"
 #include "../ass_style.h"
 #include "../compat.h"
 #include "../dialog_search_replace.h"
@@ -46,6 +51,8 @@
 #include "../project.h"
 #include "../selection_controller.h"
 #include "../subs_controller.h"
+#include "../subtitle_binding.h"
+#include "../subs_edit_ctrl.h"
 #include "../text_selection_controller.h"
 #include "../utils.h"
 #include "../video_controller.h"
@@ -74,24 +81,35 @@ namespace {
 	using namespace boost::adaptors;
 	using cmd::Command;
 
+struct edit_complete final : public Command {
+	CMD_NAME("edit/complete")
+	STR_MENU("Complete ASS Tag")
+	STR_DISP("Complete ASS Tag")
+	STR_HELP("Show ASS tag and parameter completions at the cursor")
+	void operator()(agi::Context *) override {
+		if (auto editor = dynamic_cast<SubsTextEditCtrl*>(wxWindow::FindFocus()))
+			editor->ShowCompletion();
+	}
+};
+
 struct validate_sel_nonempty : public Command {
 	CMD_TYPE(COMMAND_VALIDATE)
 	bool Validate(const agi::Context *c) override {
-		return c->selectionController->GetSelectedSet().size() > 0;
+		return c->selectionController->ReadSelectedSet().size() > 0;
 	}
 };
 
 struct validate_video_and_sel_nonempty : public Command {
 	CMD_TYPE(COMMAND_VALIDATE)
 	bool Validate(const agi::Context *c) override {
-		return c->project->VideoProvider() && !c->selectionController->GetSelectedSet().empty();
+		return c->project->VideoProvider() && !c->selectionController->ReadSelectedSet().empty();
 	}
 };
 
 struct validate_sel_multiple : public Command {
 	CMD_TYPE(COMMAND_VALIDATE)
 	bool Validate(const agi::Context *c) override {
-		return c->selectionController->GetSelectedSet().size() > 1;
+		return c->selectionController->ReadSelectedSet().size() > 1;
 	}
 };
 
@@ -113,16 +131,29 @@ std::unique_ptr<AssDialogue> get_dialogue(String data) {
 }
 
 template<typename Paster>
-void paste_lines(agi::Context *c, bool paste_over, Paster&& paste_line) {
-	std::string data = GetClipboard();
+void paste_lines(agi::Context *c, SubtitleRowListEdit& staged, bool paste_over, std::string const& data, Paster&& paste_line) {
 	if (data.empty()) return;
 
 	AssDialogue *first = nullptr;
 	Selection newsel;
 
 	boost::char_separator<char> sep("\r\n");
+	auto const& extradata = c->subtitleAccess->Read().Extradata;
 	for (auto curdata : boost::tokenizer<boost::char_separator<char>>(data, sep)) {
-		AssDialogue *inserted = paste_line(get_dialogue(curdata));
+		auto line = get_dialogue(curdata);
+		// C1-C1c-14 (audit C3): copied lines carry "{=id}" references of the
+		// document they came from. Keep the ones that resolve here (copy and
+		// paste within a document) and drop the rest instead of storing
+		// dangling references.
+		auto ids = line->ExtradataIds.get();
+		auto kept = std::remove_if(ids.begin(), ids.end(), [&](uint32_t id) {
+			return std::none_of(extradata.begin(), extradata.end(), [&](ExtradataEntry const& e) { return e.id == id; });
+		});
+		if (kept != ids.end()) {
+			ids.erase(kept, ids.end());
+			line->ExtradataIds = ids;
+		}
+		AssDialogue *inserted = paste_line(std::move(line));
 		if (!inserted)
 			break;
 
@@ -132,18 +163,15 @@ void paste_lines(agi::Context *c, bool paste_over, Paster&& paste_line) {
 	}
 
 	if (first) {
-		c->ass->Commit(_("paste"), paste_over ? AssFile::COMMIT_DIAG_FULL : AssFile::COMMIT_DIAG_ADDREM);
+		staged.Commit(_("paste"), paste_over ? AssFile::COMMIT_DIAG_FULL : AssFile::COMMIT_DIAG_ADDREM);
 
 		if (!paste_over)
-			c->selectionController->SetSelectionAndActive(std::move(newsel), first);
+			staged.Select(std::move(newsel), first);
 	}
 }
 
-bool paste_over(wxWindow *parent, std::vector<bool>& pasteOverOptions, AssDialogue &new_line, AssDialogue &old_line) {
-	if (pasteOverOptions.empty()) {
-		if (!ShowPasteOverDialog(parent)) return false;
-		pasteOverOptions = OPT_GET("Tool/Paste Lines Over/Fields")->GetListBool();
-	}
+bool paste_over(std::vector<bool> const& pasteOverOptions, AssDialogue &new_line, AssDialogue &old_line) {
+	if (pasteOverOptions.size() < 11) return false;
 
 	if (pasteOverOptions[0])  old_line.Comment   = new_line.Comment;
 	if (pasteOverOptions[1])  old_line.Layer     = new_line.Layer;
@@ -297,28 +325,33 @@ int normalize_pos(std::string const& text, int pos) {
 
 template<typename Func>
 void update_lines(const agi::Context *c, wxString const& undo_msg, Func&& f) {
-	const auto active_line = c->selectionController->GetActiveLine();
+	auto scope = c->subtitleAccess->TryWrite(); if (!scope) return;
+    SubtitleRowEdit staged(c);
+	const auto active_line = c->selectionController->ReadActiveLine();
+	if (!active_line) return;
 	const int sel_start = c->textSelectionController->GetSelectionStart();
 	const int sel_end = c->textSelectionController->GetSelectionEnd();
 	const int norm_sel_start = normalize_pos(active_line->Text, sel_start);
 	const int norm_sel_end = normalize_pos(active_line->Text, sel_end);
 	int active_sel_shift = 0;
 
-	for (const auto line : c->selectionController->GetSelectedSet()) {
+	for (const auto line : staged.rows) {
 		int shift = f(line, sel_start, sel_end, norm_sel_start, norm_sel_end);
-		if (line == active_line)
+		if (line->Id == active_line->Id)
 			active_sel_shift = shift;
 	}
 
-	auto const& sel = c->selectionController->GetSelectedSet();
-	c->ass->Commit(undo_msg, AssFile::COMMIT_DIAG_TEXT, -1, sel.size() == 1 ? *sel.begin() : nullptr);
+	auto const& sel = c->selectionController->ReadSelectedSet();
+	auto edit = c->subtitleAccess->Edit(scope->Lease());
+    edit.UpdateRows(staged.Values());
+    edit.Commit(undo_msg, AssFile::COMMIT_DIAG_TEXT, -1, sel.size() == 1 ? (*sel.begin())->Id : 0);
 	if (active_sel_shift != 0)
 		c->textSelectionController->SetSelection(sel_start + active_sel_shift, sel_end + active_sel_shift);
 }
 
 void toggle_override_tag(const agi::Context *c, bool (AssStyle::*field), const char *tag, wxString const& undo_msg) {
 	update_lines(c, undo_msg, [&](AssDialogue *line, int sel_start, int sel_end, int norm_sel_start, int norm_sel_end) {
-		AssStyle const* const style = c->ass->GetStyle(line->Style);
+		AssStyle const* const style = c->subtitleAccess->Read().GetStyle(line->Style);
 		bool state = style ? style->*field : AssStyle().*field;
 
 		parsed_line parsed(line);
@@ -334,17 +367,31 @@ void toggle_override_tag(const agi::Context *c, bool (AssStyle::*field), const c
 }
 
 void show_color_picker(const agi::Context *c, agi::Color (AssStyle::*field), const char *tag, const char *alt, const char *alpha) {
+	// C1-C1c-13 (audit B6): the live preview runs inside the colour dialog's
+	// modal loop, so it is an Interaction over the selected rows rather than a
+	// plain write scope: every preview checks that nothing else has changed the
+	// model since the previous one, and Cancel only undoes the preview when it
+	// is still the latest change. Any other commit during the dialog ends the
+	// preview; that commit is never undone.
+	SubtitleRowEdit staged(c);
+	const auto active_line = c->selectionController->ReadActiveLine();
+	if (staged.rows.empty() || !active_line) return;
+	const int active_id = active_line->Id;
+	std::vector<int> targets;
+	for (auto line : staged.rows) targets.push_back(line->Id);
+	auto session = c->subtitleAccess->TryBeginInteraction(targets);
+	if (!session) return;
 	agi::Color initial_color;
-	const auto active_line = c->selectionController->GetActiveLine();
 	const int sel_start = c->textSelectionController->GetSelectionStart();
 	const int sel_end = c->textSelectionController->GetSelectionStart();
 	const int norm_sel_start = normalize_pos(active_line->Text, sel_start);
 
-	auto const& sel = c->selectionController->GetSelectedSet();
+	auto const& sel = c->selectionController->ReadSelectedSet();
+	const int single_line_id = sel.size() == 1 ? (*sel.begin())->Id : 0;
 	using line_info = std::pair<agi::Color, parsed_line>;
 	std::vector<line_info> lines;
-	for (auto line : sel) {
-		AssStyle const* const style = c->ass->GetStyle(line->Style);
+	for (auto line : staged.rows) {
+		AssStyle const* const style = c->subtitleAccess->Read().GetStyle(line->Style);
 		agi::Color color = (style ? style->*field : AssStyle().*field);
 
 		parsed_line parsed(line);
@@ -354,7 +401,7 @@ void show_color_picker(const agi::Context *c, agi::Color (AssStyle::*field), con
 		color = parsed.get_value(blockn, color, tag, alt);
 		color.a = a;
 
-		if (line == active_line)
+		if (line->Id == active_id)
 			initial_color = color;
 
 		lines.emplace_back(color, std::move(parsed));
@@ -362,7 +409,9 @@ void show_color_picker(const agi::Context *c, agi::Color (AssStyle::*field), con
 
 	int active_shift = 0;
 	int commit_id = -1;
+	bool previewed = false;
 	bool ok = GetColorFromUser(c->parent, initial_color, true, [&](agi::Color new_color) {
+		if (!session || !session->Current()) return;
 		for (auto& line : lines) {
 			int shift = line.second.set_tag(tag, new_color.GetAssOverrideFormatted(), norm_sel_start, sel_start);
 			if (new_color.a != line.first.a) {
@@ -370,16 +419,22 @@ void show_color_picker(const agi::Context *c, agi::Color (AssStyle::*field), con
 				line.first.a = new_color.a;
 			}
 
-			if (line.second.line == active_line)
+			if (line.second.line->Id == active_id)
 				active_shift = shift;
 		}
 
-		commit_id = c->ass->Commit(_("set color"), AssFile::COMMIT_DIAG_TEXT, commit_id, sel.size() == 1 ? *sel.begin() : nullptr);
+		session->UpdateRows(staged.Values());
+		commit_id = session->Commit(_("set color"), AssFile::COMMIT_DIAG_TEXT, commit_id, single_line_id);
+		previewed = true;
 		if (active_shift)
 			c->textSelectionController->SetSelection(sel_start + active_shift, sel_start + active_shift);
 	});
 
-	if (!ok && commit_id != -1) {
+	// Current(): no revision since this session's own last preview commit, so
+	// the top of the undo stack is that preview.
+	const bool undo_preview = !ok && previewed && session->Current();
+	session->End();
+	if (undo_preview) {
 		c->subsController->Undo();
 		c->textSelectionController->SetSelection(sel_start, sel_end);
 	}
@@ -393,6 +448,8 @@ struct edit_color_primary final : public Command {
 	STR_HELP("Set the primary fill color (\\c) at the cursor position")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		show_color_picker(c, &AssStyle::primary, "\\c", "\\1c", "\\1a");
 	}
 };
@@ -405,6 +462,8 @@ struct edit_color_secondary final : public Command {
 	STR_HELP("Set the secondary (karaoke) fill color (\\2c) at the cursor position")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		show_color_picker(c, &AssStyle::secondary, "\\2c", "", "\\2a");
 	}
 };
@@ -417,6 +476,8 @@ struct edit_color_outline final : public Command {
 	STR_HELP("Set the outline color (\\3c) at the cursor position")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		show_color_picker(c, &AssStyle::outline, "\\3c", "", "\\3a");
 	}
 };
@@ -429,6 +490,8 @@ struct edit_color_shadow final : public Command {
 	STR_HELP("Set the shadow color (\\4c) at the cursor position")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		show_color_picker(c, &AssStyle::shadow, "\\4c", "", "\\4a");
 	}
 };
@@ -441,6 +504,8 @@ struct edit_style_bold final : public Command {
 	STR_HELP("Toggle bold (\\b) for the current selection or at the current cursor position")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		toggle_override_tag(c, &AssStyle::bold, "\\b", _("toggle bold"));
 	}
 };
@@ -453,6 +518,8 @@ struct edit_style_italic final : public Command {
 	STR_HELP("Toggle italics (\\i) for the current selection or at the current cursor position")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		toggle_override_tag(c, &AssStyle::italic, "\\i", _("toggle italic"));
 	}
 };
@@ -465,6 +532,8 @@ struct edit_style_underline final : public Command {
 	STR_HELP("Toggle underline (\\u) for the current selection or at the current cursor position")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		toggle_override_tag(c, &AssStyle::underline, "\\u", _("toggle underline"));
 	}
 };
@@ -477,6 +546,8 @@ struct edit_style_strikeout final : public Command {
 	STR_HELP("Toggle strikeout (\\s) for the current selection or at the current cursor position")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		toggle_override_tag(c, &AssStyle::strikeout, "\\s", _("toggle strikeout"));
 	}
 };
@@ -489,13 +560,20 @@ struct edit_font final : public Command {
 	STR_HELP("Select a font face and size")
 
 	void operator()(agi::Context *c) override {
-		const parsed_line active(c->selectionController->GetActiveLine());
+		// C1-C1c-13 (audit B6): refuse before the dialog, but do not hold the
+		// write lease across the font dialog. update_lines() below stages the
+		// rows from the live model with its own scope after the choice.
+		if (!c->subtitleAccess->TryWrite()) return;
+		auto const* current = c->selectionController->ReadActiveLine();
+		if (!current) return;
+		AssDialogue active_copy(static_cast<AssDialogueBase const&>(*current));
+        const parsed_line active(&active_copy);
 		const int insertion_point = normalize_pos(active.line->Text, c->textSelectionController->GetInsertionPoint());
 
 		auto font_for_line = [&](parsed_line const& line) -> wxFont {
 			const int blockn = line.block_at_pos(insertion_point);
 
-			const AssStyle *style = c->ass->GetStyle(line.line->Style);
+			const AssStyle *style = c->subtitleAccess->Read().GetStyle(line.line->Style);
 			const AssStyle default_style;
 			if (!style)
 				style = &default_style;
@@ -551,20 +629,22 @@ struct edit_find_replace final : public Command {
 };
 
 static void copy_lines(agi::Context *c) {
-	SetClipboard(join(c->selectionController->GetSortedSelection()
-		| transformed(static_cast<std::string(*)(AssDialogue*)>([](AssDialogue *d) { return d->GetEntryData(); })),
+	SetClipboard(join(c->selectionController->ReadSortedSelection()
+		| transformed(static_cast<std::string(*)(AssDialogue const*)>([](AssDialogue const*d) { return d->GetEntryData(); })),
 		"\r\n"));
 }
 
 static void delete_lines(agi::Context *c, wxString const& commit_message) {
-	auto const& sel = c->selectionController->GetSelectedSet();
+    SubtitleRowListEdit staged(c);
+	auto const& sel = staged.selection;
+    std::set<AssDialogue const*> readonly_selection(sel.begin(), sel.end());
 
 	// Find a line near the active line not being deleted to make the new active line
 	AssDialogue *pre_sel = nullptr;
 	AssDialogue *post_sel = nullptr;
 	bool hit_selection = false;
 
-	for (auto& diag : c->ass->Events) {
+	for (auto& diag : staged.file.Events) {
 		if (sel.count(&diag))
 			hit_selection = true;
 		else if (hit_selection && !post_sel) {
@@ -580,8 +660,8 @@ static void delete_lines(agi::Context *c, wxString const& commit_message) {
 	// need to create a new dialogue line for it, and we can't select dialogue
 	// lines until after they're committed.
 	std::vector<std::unique_ptr<AssDialogue>> to_delete;
-	c->ass->Events.remove_and_dispose_if([&sel](AssDialogue const& e) {
-		return sel.count(const_cast<AssDialogue *>(&e));
+	staged.file.Events.remove_and_dispose_if([&readonly_selection](AssDialogue const& e) {
+		return readonly_selection.count(&e);
 	}, [&](AssDialogue *e) {
 		to_delete.emplace_back(e);
 	});
@@ -593,11 +673,11 @@ static void delete_lines(agi::Context *c, wxString const& commit_message) {
 	// lines, so make a new one
 	if (!new_active) {
 		new_active = new AssDialogue;
-		c->ass->Events.push_back(*new_active);
+		staged.file.Events.push_back(*new_active);
 	}
 
-	c->ass->Commit(commit_message, AssFile::COMMIT_DIAG_ADDREM);
-	c->selectionController->SetSelectionAndActive({ new_active }, new_active);
+	staged.Commit(commit_message, AssFile::COMMIT_DIAG_ADDREM);
+	staged.Select({ new_active }, new_active);
 }
 
 struct edit_line_copy final : public validate_sel_nonempty {
@@ -631,6 +711,8 @@ struct edit_line_cut: public validate_sel_nonempty {
 	STR_HELP("Cut subtitles")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		if (wxTextEntryBase *ctrl = dynamic_cast<wxTextEntryBase*>(c->parent->FindFocus()))
 			ctrl->Cut();
 		else {
@@ -648,19 +730,23 @@ struct edit_line_delete final : public validate_sel_nonempty {
 	STR_HELP("Delete currently selected lines")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		delete_lines(c, _("delete lines"));
 	}
 };
 
 static void duplicate_lines(agi::Context *c, int shift) {
-	auto const& sel = c->selectionController->GetSelectedSet();
-	auto in_selection = [&](AssDialogue const& d) { return sel.count(const_cast<AssDialogue *>(&d)); };
+    SubtitleRowListEdit staged(c);
+	auto const& sel = staged.selection;
+    std::set<AssDialogue const*> readonly_selection(sel.begin(), sel.end());
+    auto in_selection = [&](AssDialogue const& d) { return readonly_selection.count(&d); };
 
 	Selection new_sel;
 	AssDialogue *new_active = nullptr;
 
-	auto start = c->ass->Events.begin();
-	auto end = c->ass->Events.end();
+	auto start = staged.file.Events.begin();
+	auto end = staged.file.Events.end();
 	while (start != end) {
 		// Find the first line in the selection
 		start = std::find_if(start, end, in_selection);
@@ -676,7 +762,7 @@ static void duplicate_lines(agi::Context *c, int shift) {
 			auto old_diag = &*start;
 			auto new_diag = new AssDialogue(*old_diag);
 
-			c->ass->Events.insert(insert_pos, *new_diag);
+			staged.file.Events.insert(insert_pos, *new_diag);
 			new_sel.insert(new_diag);
 			if (!new_active)
 				new_active = new_diag;
@@ -713,9 +799,9 @@ static void duplicate_lines(agi::Context *c, int shift) {
 
 	if (new_sel.empty()) return;
 
-	c->ass->Commit(shift ? _("split") : _("duplicate lines"), AssFile::COMMIT_DIAG_ADDREM);
+	staged.Commit(shift ? _("split") : _("duplicate lines"), AssFile::COMMIT_DIAG_ADDREM);
 
-	c->selectionController->SetSelectionAndActive(std::move(new_sel), new_active);
+	staged.Select(std::move(new_sel), new_active);
 }
 
 struct edit_line_duplicate final : public validate_sel_nonempty {
@@ -725,6 +811,8 @@ struct edit_line_duplicate final : public validate_sel_nonempty {
 	STR_HELP("Duplicate the selected lines")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		duplicate_lines(c, 0);
 	}
 };
@@ -737,6 +825,8 @@ struct edit_line_duplicate_shift final : public validate_video_and_sel_nonempty 
 	CMD_TYPE(COMMAND_VALIDATE)
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		duplicate_lines(c, 1);
 	}
 };
@@ -749,12 +839,15 @@ struct edit_line_duplicate_shift_back final : public validate_video_and_sel_none
 	CMD_TYPE(COMMAND_VALIDATE)
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		duplicate_lines(c, -1);
 	}
 };
 
 static void combine_lines(agi::Context *c, void (*combiner)(AssDialogue *, AssDialogue *), wxString const& message) {
-	auto sel = c->selectionController->GetSortedSelection();
+    SubtitleRowListEdit staged(c);
+	auto sel = staged.SortedSelection();
 
 	AssDialogue *first = sel[0];
 	combiner(first, nullptr);
@@ -764,9 +857,8 @@ static void combine_lines(agi::Context *c, void (*combiner)(AssDialogue *, AssDi
 		delete sel[i];
 	}
 
-	c->selectionController->SetSelectionAndActive({first}, first);
-
-	c->ass->Commit(message, AssFile::COMMIT_DIAG_ADDREM | AssFile::COMMIT_DIAG_FULL);
+	staged.Commit(message, AssFile::COMMIT_DIAG_ADDREM | AssFile::COMMIT_DIAG_FULL);
+	staged.Select({first}, first);
 }
 
 static void combine_karaoke(AssDialogue *first, AssDialogue *second) {
@@ -790,6 +882,8 @@ struct edit_line_join_as_karaoke final : public validate_sel_multiple {
 	STR_HELP("Join selected lines in a single one, as karaoke")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		combine_lines(c, combine_karaoke, _("join as karaoke"));
 	}
 };
@@ -801,6 +895,8 @@ struct edit_line_join_concatenate final : public validate_sel_multiple {
 	STR_HELP("Join selected lines in a single one, concatenating text together")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		combine_lines(c, combine_concat, _("join lines"));
 	}
 };
@@ -812,11 +908,14 @@ struct edit_line_join_keep_first final : public validate_sel_multiple {
 	STR_HELP("Join selected lines in a single one, keeping text of first and discarding remaining")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		combine_lines(c, combine_drop, _("join lines"));
 	}
 };
 
 static bool try_paste_lines(agi::Context *c) {
+    SubtitleRowListEdit staged(c);
 	std::string data = GetClipboard();
 	boost::trim_left(data);
 	if (!data.starts_with("Dialogue:")) return false;
@@ -839,10 +938,10 @@ static bool try_paste_lines(agi::Context *c) {
 	for (auto& line : parsed)
 		new_selection.insert(&line);
 
-	auto pos = c->ass->iterator_to(*c->selectionController->GetActiveLine());
-	c->ass->Events.splice(pos, parsed, parsed.begin(), parsed.end());
-	c->ass->Commit(_("paste"), AssFile::COMMIT_DIAG_ADDREM);
-	c->selectionController->SetSelectionAndActive(std::move(new_selection), new_active);
+	auto pos = staged.file.iterator_to(*staged.active);
+	staged.file.Events.splice(pos, parsed, parsed.begin(), parsed.end());
+	staged.Commit(_("paste"), AssFile::COMMIT_DIAG_ADDREM);
+	staged.Select(std::move(new_selection), new_active);
 
 	return true;
 }
@@ -865,16 +964,14 @@ struct edit_line_paste final : public Command {
 	}
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		if (wxTextEntryBase *ctrl = dynamic_cast<wxTextEntryBase*>(c->parent->FindFocus())) {
 			if (!try_paste_lines(c))
 				ctrl->Paste();
 		}
 		else {
-			auto pos = c->ass->iterator_to(*c->selectionController->GetActiveLine());
-			paste_lines(c, false, [=](std::unique_ptr<AssDialogue> new_line) -> AssDialogue * {
-				c->ass->Events.insert(pos, *new_line);
-				return new_line.release();
-			});
+            cmd::PasteSubtitleLines(c, GetClipboard());
 		}
 	}
 };
@@ -887,7 +984,7 @@ struct edit_line_paste_over final : public Command {
 	CMD_TYPE(COMMAND_VALIDATE)
 
 	bool Validate(const agi::Context *c) override {
-		bool can_paste = !c->selectionController->GetSelectedSet().empty();
+		bool can_paste = !c->selectionController->ReadSelectedSet().empty();
 		if (can_paste && wxTheClipboard->Open()) {
 			can_paste = wxTheClipboard->IsSupported(wxDF_TEXT) || wxTheClipboard->IsSupported(wxDF_UNICODETEXT);
 			wxTheClipboard->Close();
@@ -896,31 +993,42 @@ struct edit_line_paste_over final : public Command {
 	}
 
 	void operator()(agi::Context *c) override {
-		auto const& sel = c->selectionController->GetSelectedSet();
-		std::vector<bool> pasteOverOptions;
+		// C1-C1c-13 (audit B6): refuse (e.g. during a comparison) before the
+		// dialog, but do not hold the write lease across its modal loop. The
+		// rows are staged from the live model only after the fields are chosen.
+		if (!c->subtitleAccess->TryWrite()) return;
+		auto data = GetClipboard();
+		if (data.empty()) return;
+		if (!ShowPasteOverDialog(c->parent)) return;
+		const std::vector<bool> pasteOverOptions = OPT_GET("Tool/Paste Lines Over/Fields")->GetListBool();
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
+        SubtitleRowListEdit staged(c);
+		auto const& sel = staged.selection;
+		if (!staged.active) return;
 
 		// Only one line selected, so paste over downwards from the active line
 		if (sel.size() < 2) {
-			auto pos = c->ass->iterator_to(*c->selectionController->GetActiveLine());
+			auto pos = staged.file.iterator_to(*staged.active);
 
-			paste_lines(c, true, [&](std::unique_ptr<AssDialogue> new_line) -> AssDialogue * {
-				if (pos == c->ass->Events.end()) return nullptr;
+			paste_lines(c, staged, true, data, [&](std::unique_ptr<AssDialogue> new_line) -> AssDialogue * {
+				if (pos == staged.file.Events.end()) return nullptr;
 
 				auto& old = *pos;
-				if (paste_over(c->parent, pasteOverOptions, *new_line, old))
+				if (paste_over(pasteOverOptions, *new_line, old))
 					++pos;
 				return &old;
 			});
 		}
 		else {
 			// Multiple lines selected, so paste over the selection
-			auto sorted_selection = c->selectionController->GetSortedSelection();
+			auto sorted_selection = staged.SortedSelection();
 			auto pos = begin(sorted_selection);
-			paste_lines(c, true, [&](std::unique_ptr<AssDialogue> new_line) -> AssDialogue * {
+			paste_lines(c, staged, true, data, [&](std::unique_ptr<AssDialogue> new_line) -> AssDialogue * {
 				if (pos == end(sorted_selection)) return nullptr;
 
 				auto& old = **pos;
-				if (paste_over(c->parent, pasteOverOptions, *new_line, old))
+				if (paste_over(pasteOverOptions, *new_line, old))
 					++pos;
 				return &old;
 			});
@@ -970,10 +1078,13 @@ struct edit_line_recombine final : public validate_sel_multiple {
 	STR_HELP("Recombine subtitles which have been split and merged")
 
 	void operator()(agi::Context *c) override {
-		auto const& sel_set = c->selectionController->GetSelectedSet();
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
+        SubtitleRowListEdit staged(c);
+		auto const& sel_set = staged.selection;
 		if (sel_set.size() < 2) return;
 
-		auto active_line = c->selectionController->GetActiveLine();
+		auto active_line = staged.active;
 
 		std::vector<AssDialogue*> sel(sel_set.begin(), sel_set.end());
 		boost::sort(sel, [](const AssDialogue *a, const AssDialogue *b) {
@@ -1025,8 +1136,8 @@ struct edit_line_recombine final : public validate_sel_multiple {
 		}
 
 		// Remove now non-existent lines from the selection
-		Selection lines, new_sel;
-		boost::copy(c->ass->Events | agi::address_of, inserter(lines, lines.begin()));
+		std::set<AssDialogue*> lines, new_sel;
+		boost::copy(staged.file.Events | agi::address_of, inserter(lines, lines.begin()));
 		boost::set_intersection(lines, sel_set, inserter(new_sel, new_sel.begin()));
 
 		if (new_sel.empty())
@@ -1035,9 +1146,8 @@ struct edit_line_recombine final : public validate_sel_multiple {
 		// Restore selection
 		if (!new_sel.count(active_line))
 			active_line = *new_sel.begin();
-		c->selectionController->SetSelectionAndActive(std::move(new_sel), active_line);
-
-		c->ass->Commit(_("combining"), AssFile::COMMIT_DIAG_ADDREM | AssFile::COMMIT_DIAG_FULL);
+		staged.Commit(_("combining"), AssFile::COMMIT_DIAG_ADDREM | AssFile::COMMIT_DIAG_FULL);
+		staged.Select(std::move(new_sel), active_line);
 	}
 };
 
@@ -1048,10 +1158,13 @@ struct edit_line_split_by_karaoke final : public validate_sel_nonempty {
 	STR_HELP("Use karaoke timing to split line into multiple smaller lines")
 
 	void operator()(agi::Context *c) override {
-		auto sel = c->selectionController->GetSortedSelection();
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
+        SubtitleRowListEdit staged(c);
+		auto sel = staged.SortedSelection();
 		if (sel.empty()) return;
 
-		Selection new_sel;
+		std::set<AssDialogue*> new_sel;
 		agi::ass::Karaoke kara;
 
 		std::vector<std::unique_ptr<AssDialogue>> to_delete;
@@ -1068,32 +1181,32 @@ struct edit_line_split_by_karaoke final : public validate_sel_nonempty {
 				new_line->End = syl.start_time + syl.duration;
 				new_line->Text = syl.GetText(false);
 
-				c->ass->Events.insert(c->ass->iterator_to(*line), *new_line);
+				staged.file.Events.insert(staged.file.iterator_to(*line), *new_line);
 
 				new_sel.insert(new_line);
 			}
 
-			c->ass->Events.erase(c->ass->iterator_to(*line));
+			staged.file.Events.erase(staged.file.iterator_to(*line));
 			to_delete.emplace_back(line);
 		}
 
 		if (to_delete.empty()) return;
 
-		c->ass->Commit(_("splitting"), AssFile::COMMIT_DIAG_ADDREM | AssFile::COMMIT_DIAG_FULL);
+		staged.Commit(_("splitting"), AssFile::COMMIT_DIAG_ADDREM | AssFile::COMMIT_DIAG_FULL);
 
-		AssDialogue *new_active = c->selectionController->GetActiveLine();
-		if (!new_sel.count(c->selectionController->GetActiveLine()))
+		AssDialogue *new_active = staged.active;
+		if (!new_sel.count(staged.active))
 			new_active = *new_sel.begin();
-		c->selectionController->SetSelectionAndActive(std::move(new_sel), new_active);
+		staged.Select(std::move(new_sel), new_active);
 	}
 };
 
-void split_lines(agi::Context *c, AssDialogue *&n1, AssDialogue *&n2) {
+void split_lines(agi::Context *c, SubtitleRowListEdit& staged, AssDialogue *&n1, AssDialogue *&n2) {
 	int pos = c->textSelectionController->GetSelectionStart();
 
-	n1 = c->selectionController->GetActiveLine();
+	n1 = staged.active;
 	n2 = new AssDialogue(*n1);
-	c->ass->Events.insert(++c->ass->iterator_to(*n1), *n2);
+	staged.file.Events.insert(++staged.file.iterator_to(*n1), *n2);
 
 	std::string orig = n1->Text;
 	n1->Text = boost::trim_right_copy(orig.substr(0, pos));
@@ -1102,11 +1215,12 @@ void split_lines(agi::Context *c, AssDialogue *&n1, AssDialogue *&n2) {
 
 template<typename Func>
 void split_lines(agi::Context *c, Func&& set_time) {
+    SubtitleRowListEdit staged(c);
 	AssDialogue *n1, *n2;
-	split_lines(c, n1, n2);
+	split_lines(c, staged, n1, n2);
 	set_time(n1, n2);
 
-	c->ass->Commit(_("split"), AssFile::COMMIT_DIAG_ADDREM | AssFile::COMMIT_DIAG_FULL);
+	staged.Commit(_("split"), AssFile::COMMIT_DIAG_ADDREM | AssFile::COMMIT_DIAG_FULL);
 }
 
 struct edit_line_split_estimate final : public validate_video_and_sel_nonempty {
@@ -1116,6 +1230,8 @@ struct edit_line_split_estimate final : public validate_video_and_sel_nonempty {
 	STR_HELP("Split the current line at the cursor, dividing the original line's duration between the new ones")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		split_lines(c, [](AssDialogue *n1, AssDialogue *n2) {
 			size_t len = n1->Text.get().size() + n2->Text.get().size();
 			if (!len) return;
@@ -1132,6 +1248,8 @@ struct edit_line_split_preserve final : public validate_sel_nonempty {
 	STR_HELP("Split the current line at the cursor, setting both lines to the original line's times")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		split_lines(c, [](AssDialogue *, AssDialogue *) { });
 	}
 };
@@ -1143,6 +1261,8 @@ struct edit_line_split_video final : public validate_video_and_sel_nonempty {
 	STR_HELP("Split the current line at the cursor, dividing the line's duration at the current video frame")
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		split_lines(c, [&](AssDialogue *n1, AssDialogue *n2) {
 			int cur_frame = mid(
 				c->videoController->FrameAtTime(n1->Start, agi::vfr::START),
@@ -1175,6 +1295,8 @@ struct edit_redo final : public Command {
 	}
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		c->subsController->Redo();
 	}
 };
@@ -1201,8 +1323,101 @@ struct edit_undo final : public Command {
 	}
 
 	void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
 		c->subsController->Undo();
 	}
+};
+
+
+// Swap parameter objects to retain the exact coordinate strings and move times.
+bool reverse_move_paths(AssDialogue *line, bool apply) {
+    if (!line) return false;
+    auto blocks = line->ParseTags();
+    bool found = false;
+    for (auto const& block : blocks) {
+        if (block->GetType() != AssBlockType::OVERRIDE) continue;
+        auto over = static_cast<AssDialogueBlockOverride*>(block.get());
+        for (auto& tag : over->Tags) {
+            if (tag.Name != "\\move" || tag.Params.size() != 6
+                || std::any_of(tag.Params.begin(), tag.Params.begin() + 4,
+                    [](auto const& p) { return p.omitted; })
+                || tag.Params[4].omitted != tag.Params[5].omitted)
+                continue;
+            if (!apply) return true;
+            std::swap(tag.Params[0], tag.Params[2]);
+            std::swap(tag.Params[1], tag.Params[3]);
+            found = true;
+        }
+    }
+    if (!found) return false;
+    auto original = line->Text;
+    line->UpdateText(blocks);
+    return line->Text != original;
+}
+
+struct edit_line_reverse_move final : public Command {
+    CMD_NAME("edit/line/reverse_move")
+    CMD_TYPE(COMMAND_VALIDATE)
+    STR_MENU("Reverse Move Path")
+    STR_DISP("Reverse Move Path")
+    STR_HELP("Swap the active line's move start and end positions, keeping its movement times")
+    bool Validate(const agi::Context *c) override {
+        auto const* active_row = c->selectionController->ReadActiveLine();
+        if (!active_row) return false; // C1-C1c-14 (audit C7)
+        AssDialogue candidate(static_cast<AssDialogueBase const&>(*active_row));
+        return reverse_move_paths(&candidate, false);
+    }
+    void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
+        auto const* active_row = c->selectionController->ReadActiveLine();
+        if (!active_row) return; // C1-C1c-14 (audit C7)
+        AssDialogue candidate(static_cast<AssDialogueBase const&>(*active_row));
+        auto line = &candidate;
+        if (reverse_move_paths(line, true)) {
+            auto edit=c->subtitleAccess->Edit(edit_scope->Lease());edit.UpdateRows({candidate});
+            edit.Commit(_("reverse move path"), AssFile::COMMIT_DIAG_TEXT, -1, line->Id);
+        }
+    }
+};
+
+struct edit_bind_subtitles final : public Command {
+    CMD_NAME("subtitle/bind")
+    CMD_TYPE(COMMAND_VALIDATE)
+    STR_MENU("Bind Subtitles")
+    STR_DISP("Bind Subtitles")
+    STR_HELP("Bind selected subtitles into a persistent multi-selection group")
+    bool Validate(const agi::Context *c) override {
+        auto const& selection = c->selectionController->ReadSelectedSet();
+        if (selection.size() < 2) return false;
+        std::string group;
+        for (auto line : selection) {
+            auto current = GetSubtitleBinding(c->subtitleAccess->Read(), *line);
+            if (current.empty()) return true;
+            if (group.empty()) group = std::move(current);
+            else if (group != current) return true;
+        }
+        return false;
+    }
+    void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return; BindSelectedSubtitles(c); }
+};
+
+struct edit_unbind_subtitles final : public Command {
+    CMD_NAME("subtitle/unbind")
+    CMD_TYPE(COMMAND_VALIDATE)
+    STR_MENU("Unbind Subtitles")
+    STR_DISP("Unbind Subtitles")
+    STR_HELP("Remove the selected subtitles from their binding groups")
+    bool Validate(const agi::Context *c) override {
+        auto const& selection = c->selectionController->ReadSelectedSet();
+        return std::any_of(selection.begin(), selection.end(), [&](auto line) { return !GetSubtitleBinding(c->subtitleAccess->Read(), *line).empty(); });
+    }
+    void operator()(agi::Context *c) override {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return; UnbindSelectedSubtitles(c); }
 };
 
 struct edit_revert final : public Command {
@@ -1212,9 +1427,15 @@ struct edit_revert final : public Command {
 	STR_HELP("Revert the active line to its initial state (shown in the upper editor)")
 
 	void operator()(agi::Context *c) override {
-		AssDialogue *line = c->selectionController->GetActiveLine();
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
+		auto const* active_row = c->selectionController->ReadActiveLine();
+		if (!active_row) return; // C1-C1c-14 (audit C7)
+		AssDialogue candidate(static_cast<AssDialogueBase const&>(*active_row));
+        auto line = &candidate;
 		line->Text = c->initialLineState->GetInitialText();
-		c->ass->Commit(_("revert line"), AssFile::COMMIT_DIAG_TEXT, -1, line);
+		auto edit=c->subtitleAccess->Edit(edit_scope->Lease());edit.UpdateRows({candidate});
+        edit.Commit(_("revert line"), AssFile::COMMIT_DIAG_TEXT, -1, line->Id);
 	}
 };
 
@@ -1225,9 +1446,15 @@ struct edit_clear final : public Command {
 	STR_HELP("Clear the current line's text")
 
 	void operator()(agi::Context *c) override {
-		AssDialogue *line = c->selectionController->GetActiveLine();
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
+		auto const* active_row = c->selectionController->ReadActiveLine();
+		if (!active_row) return; // C1-C1c-14 (audit C7)
+		AssDialogue candidate(static_cast<AssDialogueBase const&>(*active_row));
+        auto line = &candidate;
 		line->Text = "";
-		c->ass->Commit(_("clear line"), AssFile::COMMIT_DIAG_TEXT, -1, line);
+		auto edit=c->subtitleAccess->Edit(edit_scope->Lease());edit.UpdateRows({candidate});
+        edit.Commit(_("clear line"), AssFile::COMMIT_DIAG_TEXT, -1, line->Id);
 	}
 };
 
@@ -1239,14 +1466,20 @@ struct edit_clear_text final : public Command {
 	STR_HELP("Clear the current line's text, leaving override tags")
 
 	void operator()(agi::Context *c) override {
-		AssDialogue *line = c->selectionController->GetActiveLine();
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
+		auto const* active_row = c->selectionController->ReadActiveLine();
+		if (!active_row) return; // C1-C1c-14 (audit C7)
+		AssDialogue candidate(static_cast<AssDialogueBase const&>(*active_row));
+        auto line = &candidate;
 		auto blocks = line->ParseTags();
 		line->Text = join(blocks
 			| indirected
 			| filtered([](AssDialogueBlock const& b) { return b.GetType() != AssBlockType::PLAIN; })
 			| transformed(get_text),
 			"");
-		c->ass->Commit(_("clear line"), AssFile::COMMIT_DIAG_TEXT, -1, line);
+		auto edit=c->subtitleAccess->Edit(edit_scope->Lease());edit.UpdateRows({candidate});
+        edit.Commit(_("clear line"), AssFile::COMMIT_DIAG_TEXT, -1, line->Id);
 	}
 };
 
@@ -1257,19 +1490,36 @@ struct edit_insert_original final : public Command {
 	STR_HELP("Insert the original line text at the cursor")
 
 	void operator()(agi::Context *c) override {
-		AssDialogue *line = c->selectionController->GetActiveLine();
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
+		auto const* active_row = c->selectionController->ReadActiveLine();
+		if (!active_row) return; // C1-C1c-14 (audit C7)
+		AssDialogue candidate(static_cast<AssDialogueBase const&>(*active_row));
+        auto line = &candidate;
 		int sel_start = c->textSelectionController->GetSelectionStart();
 		int sel_end = c->textSelectionController->GetSelectionEnd();
 
 		line->Text = line->Text.get().substr(0, sel_start) + c->initialLineState->GetInitialText() + line->Text.get().substr(sel_end);
-		c->ass->Commit(_("insert original"), AssFile::COMMIT_DIAG_TEXT, -1, line);
+		auto edit=c->subtitleAccess->Edit(edit_scope->Lease());edit.UpdateRows({candidate});
+        edit.Commit(_("insert original"), AssFile::COMMIT_DIAG_TEXT, -1, line->Id);
 	}
 };
 
 }
 
 namespace cmd {
+    void PasteSubtitleLines(agi::Context* c, std::string const& data) {
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
+        SubtitleRowListEdit staged(c);
+        auto pos = staged.file.iterator_to(*staged.active);
+        paste_lines(c, staged, false, data, [&](std::unique_ptr<AssDialogue> line) {
+            staged.file.Events.insert(pos, *line);
+            return line.release();
+        });
+    }
 	void init_edit() {
+		reg(std::make_unique<edit_complete>());
 		reg(std::make_unique<edit_color_primary>());
 		reg(std::make_unique<edit_color_secondary>());
 		reg(std::make_unique<edit_color_outline>());
@@ -1299,6 +1549,9 @@ namespace cmd {
 		reg(std::make_unique<edit_redo>());
 		reg(std::make_unique<edit_undo>());
 		reg(std::make_unique<edit_revert>());
+		reg(std::make_unique<edit_bind_subtitles>());
+		reg(std::make_unique<edit_unbind_subtitles>());
+		reg(std::make_unique<edit_line_reverse_move>());
 		reg(std::make_unique<edit_insert_original>());
 		reg(std::make_unique<edit_clear>());
 		reg(std::make_unique<edit_clear_text>());

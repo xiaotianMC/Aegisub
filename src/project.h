@@ -18,9 +18,11 @@
 
 #include <libaegisub/fs.h>
 #include <libaegisub/signal.h>
+#include <libaegisub/subtitle_edit_gate.h>
 #include <libaegisub/vfr.h>
 
 #include <memory>
+#include <optional>
 #include <vector>
 
 class AsyncVideoProvider;
@@ -31,6 +33,10 @@ namespace agi { struct Context; }
 struct ProjectProperties;
 
 class Project : private agi::signal::ConnectionScope {
+    friend class FrameMain;
+    enum class HostLifetime { Open, Closing };
+    HostLifetime host_lifetime = HostLifetime::Open;
+    void BeginHostShutdown() noexcept { host_lifetime=HostLifetime::Closing; }
 	std::unique_ptr<agi::AudioProvider> audio_provider;
 	std::unique_ptr<AsyncVideoProvider> video_provider;
 	agi::vfr::Framerate timecodes;
@@ -52,6 +58,19 @@ class Project : private agi::signal::ConnectionScope {
 
 	void ShowError(wxString const& message);
 	void ShowError(std::string const& message);
+	/// Report a RecoveryBlocked document installation; false if not blocked.
+	bool ReportRecoveryBlocked(wxString const& title);
+	/// Warn about failed post-commit work of a Committed document installation.
+	void ReportPeripheralErrors(wxString const& heading);
+	/// C1-C1c-11/12: media and project paths are part of the document's
+	/// metadata, which is sealed while a subtitle model is being installed or
+	/// awaits recovery, and cannot change during a comparison session. Entry
+	/// points refuse (and report) before any side effect; the internal Do*
+	/// helpers enforce the same precondition by throwing. The returned
+	/// registration is held for the whole change, so a comparison cannot begin
+	/// part-way through (e.g. inside a progress dialog).
+	std::optional<agi::SubtitleEditGate::ProjectWriteLease> BeginMediaChange(wxString const& title);
+	agi::SubtitleEditGate::ProjectWriteLease RequireMediaChange() const;
 
 	bool DoLoadSubtitles(agi::fs::path const& path, std::string encoding, ProjectProperties &properties);
 	void DoLoadAudio(agi::fs::path const& path, bool quiet);
@@ -72,6 +91,7 @@ public:
 
 	void LoadSubtitles(agi::fs::path path, std::string encoding="", bool load_linked=true);
 	void SetSubtitlesFilename(agi::fs::path path);
+    ProjectProperties PropertiesForSave(agi::fs::path const& path) const;
 	void CloseSubtitles();
 	bool CanLoadSubtitlesFromVideo() const { return video_has_subtitles; }
 
@@ -95,7 +115,8 @@ public:
 	bool CanCloseKeyframes() const { return !keyframes_file.empty(); }
 	std::vector<int> const& Keyframes() const { return keyframes; }
 
-	void LoadList(std::vector<agi::fs::path> const& files);
+	/// File drops may offer comparison before replacing an open subtitle document.
+	void LoadList(std::vector<agi::fs::path> const& files, bool from_drop = false);
 
 	DEFINE_SIGNAL_ADDERS(AnnounceAudioProviderModified, AddAudioProviderListener)
 	DEFINE_SIGNAL_ADDERS(AnnounceVideoProviderModified, AddVideoProviderListener)

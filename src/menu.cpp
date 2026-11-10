@@ -381,7 +381,9 @@ void process_menu_item(wxMenu *parent, agi::Context *c, json::Object const& ele,
 	read_entry(ele, "text", &text);
 
 	try {
-		int id = cm->AddCommand(cmd::get(command), parent, text, context);
+		auto co = cmd::get(command);
+		if (command == "edit/line/rectangle" && !co->Validate(c)) return;
+		int id = cm->AddCommand(co, parent, text, context);
 #ifdef __WXMAC__
 		if (!special.empty()) {
 			if (special == "about")

@@ -30,10 +30,11 @@
 // Aegisub Project http://www.aegisub.org/
 
 #include "command.h"
+#include "../subtitle_project_access.h"
+#include "../subtitle_value_edit.h"
 
 #include "../compat.h"
 #include "../dialog_manager.h"
-#include "../dialog_styling_assistant.h"
 #include "../dialog_translation.h"
 #include "../dialogs.h"
 #include "../include/aegisub/context.h"
@@ -44,6 +45,19 @@
 #include <libaegisub/fs.h>
 #include <libaegisub/path.h>
 
+#include "../ass_dialogue.h"
+#include "../ass_file.h"
+#include "../format.h"
+#include "../frame_main.h"
+#include "../magia_timeline.h"
+#include "../options.h"
+#include "../project.h"
+#include "../subtitle_format.h"
+#include "../subtitle_row_list_edit.h"
+
+#include <libaegisub/io.h>
+
+#include <wx/dirdlg.h>
 #include <wx/msgdlg.h>
 #include <wx/utils.h>
 
@@ -60,6 +74,115 @@ struct tool_export final : public Command {
 	void operator()(agi::Context *c) override {
 		c->videoController->Stop();
 		ShowExportDialog(c);
+	}
+};
+
+struct tool_magiatimeline final : public Command {
+	CMD_NAME("tool/magiatimeline")
+	STR_MENU("Time &Hardsubs with MagiaTimeline...")
+	STR_DISP("Time Hardsubs with MagiaTimeline")
+	STR_HELP("Run MagiaTimeline on the video to find when the subtitles burnt into it show, and add an empty line for each, to be filled in")
+	CMD_TYPE(COMMAND_VALIDATE)
+
+	bool Validate(const agi::Context *c) override {
+		return !!c->project->VideoProvider() && !c->project->VideoName().empty();
+	}
+
+	static void Fail(agi::Context *c, wxString const& message) {
+		wxMessageBox(message, _("Time Hardsubs with MagiaTimeline"), wxOK | wxICON_ERROR, c->parent);
+	}
+
+	void operator()(agi::Context *c) override {
+		c->videoController->Stop();
+		auto const video = c->project->VideoName();
+
+		// Where it is installed: asked for once, then kept
+		auto launch = magia_timeline::FindLaunch(OPT_GET("Tool/MagiaTimeline/Path")->GetString());
+		if (!launch) {
+			wxString folder = wxDirSelector(_("Choose the folder MagiaTimeline is installed in"), "", wxDD_DEFAULT_STYLE | wxDD_DIR_MUST_EXIST, wxDefaultPosition, c->parent);
+			if (folder.empty()) return;
+			launch = magia_timeline::FindLaunch(from_wx(folder));
+			if (!launch) {
+				Fail(c, _("There is no MagiaTimeline in that folder: it should hold MagiaTimeline.py (set up with its install script) or MagiaTimeline.exe."));
+				return;
+			}
+			OPT_SET("Tool/MagiaTimeline/Path")->SetString(from_wx(folder));
+		}
+
+		// Its own config, with the video and where to write put in
+		std::string config;
+		try {
+			auto in = agi::io::Open(launch->folder / "config.yml");
+			config.assign(std::istreambuf_iterator<char>(*in), std::istreambuf_iterator<char>());
+		}
+		catch (agi::Exception const&) {
+			Fail(c, fmt_tl("MagiaTimeline's config.yml could not be read in %s.", launch->folder.string()));
+			return;
+		}
+		auto const work = config::path->Decode("?temp/");
+		auto const destination = work / "aegisub-magiatimeline";
+		auto const output = work / "aegisub-magiatimeline.ass";
+		auto const config_file = work / "aegisub-magiatimeline.yml";
+		auto written = magia_timeline::WriteConfig(config, video.string(), destination.string(),
+			OPT_GET("Tool/MagiaTimeline/Strategy")->GetString());
+		if (!written) {
+			Fail(c, _("MagiaTimeline's config.yml has no source and destination to fill in."));
+			return;
+		}
+		try {
+			agi::fs::CreateDirectory(work);
+			if (agi::fs::FileExists(output)) agi::fs::Remove(output);
+			agi::io::Save(config_file).Get() << *written;
+		}
+		catch (agi::Exception const& e) {
+			Fail(c, to_wx(e.GetMessage()));
+			return;
+		}
+
+		auto outcome = magia_timeline::Run(*launch, config_file, c->parent);
+		if (outcome.cancelled) return;
+		bool const wrote = agi::fs::FileExists(output);
+		if (outcome.reported_error || !wrote) {
+			Fail(c, _("MagiaTimeline did not finish. The last of what it said:") + "\n\n" +
+				to_wx(magia_timeline::LastLines(outcome.output, 15)));
+			return;
+		}
+
+		AssFile result;
+		try {
+			auto reader = SubtitleFormat::GetReader(output, "UTF-8");
+			reader->ReadFile(&result, output, c->project->Timecodes(), "UTF-8");
+		}
+		catch (agi::Exception const& e) {
+			Fail(c, to_wx(e.GetMessage()));
+			return;
+		}
+		auto intervals = magia_timeline::ReadTimeline(result);
+		if (intervals.empty()) {
+			wxMessageBox(_("MagiaTimeline found no subtitles in the video."), _("Time Hardsubs with MagiaTimeline"), wxOK | wxICON_INFORMATION, c->parent);
+			return;
+		}
+
+		// A line for each, after the others, in the style of the current one
+		auto edit_scope = c->subtitleAccess->TryWrite();
+		if (!edit_scope) return;
+		SubtitleRowListEdit staged(c);
+		std::string const style = staged.active ? staged.active->Style.get() : std::string("Default");
+		std::set<AssDialogue*> added;
+		AssDialogue *first = nullptr;
+		for (auto const& interval : intervals) {
+			auto line = new AssDialogue;
+			line->Start = interval.start;
+			line->End = interval.end;
+			line->Style = style;
+			staged.file.Events.push_back(*line);
+			added.insert(line);
+			if (!first) first = line;
+		}
+		staged.Commit(_("MagiaTimeline"), AssFile::COMMIT_DIAG_ADDREM);
+		staged.Select(added, first);
+		if (c->frame)
+			c->frame->StatusTimeout(fmt_plural(intervals.size(), "Added %d line timed by MagiaTimeline", "Added %d lines timed by MagiaTimeline", static_cast<int>(intervals.size())));
 	}
 };
 
@@ -95,52 +218,18 @@ struct tool_resampleres final : public Command {
 	STR_HELP("Resample subtitles to maintain their current appearance at a different script resolution")
 
 	void operator()(agi::Context *c) override {
+		// C1-C1c-13 (audit B6): refuse before the dialog, but stage and write
+		// the live model only after it closed; the lease is not held across it.
+		if (!c->subtitleAccess->TryWrite()) return;
 		c->videoController->Stop();
 		ResampleSettings settings;
-		if (PromptForResampleSettings(c, settings))
-			ResampleResolution(c->ass.get(), settings);
-	}
-};
-
-struct tool_style_assistant final : public Command {
-	CMD_NAME("tool/style/assistant")
-	CMD_ICON(styling_toolbutton)
-	STR_MENU("St&yling Assistant...")
-	STR_DISP("Styling Assistant")
-	STR_HELP("Open styling assistant")
-
-	void operator()(agi::Context *c) override {
-		c->dialog->Show<DialogStyling>(c);
-	}
-};
-
-struct tool_styling_assistant_validator : public Command {
-	CMD_TYPE(COMMAND_VALIDATE)
-
-	bool Validate(const agi::Context *c) override {
-		return !!c->dialog->Get<DialogStyling>();
-	}
-};
-
-struct tool_styling_assistant_commit final : public tool_styling_assistant_validator {
-	CMD_NAME("tool/styling_assistant/commit")
-	STR_MENU("&Accept changes")
-	STR_DISP("Accept changes")
-	STR_HELP("Commit changes and move to the next line")
-
-	void operator()(agi::Context *c) override {
-		c->dialog->Get<DialogStyling>()->Commit(true);
-	}
-};
-
-struct tool_styling_assistant_preview final : public tool_styling_assistant_validator {
-	CMD_NAME("tool/styling_assistant/preview")
-	STR_MENU("&Preview changes")
-	STR_DISP("Preview changes")
-	STR_HELP("Commit changes and stay on the current line")
-
-	void operator()(agi::Context *c) override {
-		c->dialog->Get<DialogStyling>()->Commit(false);
+		if (!PromptForResampleSettings(c, settings)) return;
+        auto edit_scope = c->subtitleAccess->TryWrite();
+        if (!edit_scope) return;
+        SubtitleValueEdit staged(c);
+		ResampleResolution(&staged.file, settings);
+		staged.Publish(AssFile::COMMIT_SCRIPTINFO|AssFile::COMMIT_DIAG_FULL|AssFile::COMMIT_STYLES);
+		staged.Commit(_("resolution resampling"),AssFile::COMMIT_SCRIPTINFO|AssFile::COMMIT_DIAG_FULL);
 	}
 };
 
@@ -266,11 +355,9 @@ namespace cmd {
 	void init_tool() {
 		reg(std::make_unique<tool_export>());
 		reg(std::make_unique<tool_font_collector>());
+		reg(std::make_unique<tool_magiatimeline>());
 		reg(std::make_unique<tool_line_select>());
 		reg(std::make_unique<tool_resampleres>());
-		reg(std::make_unique<tool_style_assistant>());
-		reg(std::make_unique<tool_styling_assistant_commit>());
-		reg(std::make_unique<tool_styling_assistant_preview>());
 		reg(std::make_unique<tool_style_manager>());
 		reg(std::make_unique<tool_time_kanji>());
 		reg(std::make_unique<tool_time_postprocess>());

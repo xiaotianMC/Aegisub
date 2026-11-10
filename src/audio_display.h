@@ -132,6 +132,9 @@ class AudioDisplay: public wxWindow {
 	/// Zoom level given as a number, see SetZoomLevel for details
 	int zoom_level;
 
+	/// Apply a new scale, keeping the time under relative x @p anchor in place
+	void ApplyMsPerPixel(double new_ms_per_pixel, double anchor);
+
 	/// Absolute pixel position of the tracking cursor (mouse or playback)
 	int track_cursor_pos = -1;
 	/// Label to show by track cursor
@@ -175,6 +178,12 @@ class AudioDisplay: public wxWindow {
 	/// @param dc DC to paint to
 	/// @param updtime Time range to repaint
 	void PaintLabels(wxDC &dc, TimeRange updtime);
+	/// Paint the values of the dB scale at the left edge (waveform only)
+	/// The dB scale's values at the left edge, over everything else
+	void PaintDbScale(wxDC &dc);
+	/// Width of the strip at the left edge the values take
+	int DbScaleWidth(wxDC &dc) const;
+	wxFont DbLabelFont() const;
 
 	/// Paint the track cursor
 	/// @param dc DC to paint to
@@ -199,7 +208,6 @@ class AudioDisplay: public wxWindow {
 	void OnMouseEnter(wxMouseEvent&);
 	void OnMouseLeave(wxMouseEvent&);
 
-	int GetDuration() const;
 
 	void OnAudioOpen(agi::AudioProvider *provider);
 	void OnPlaybackPosition(int ms_position);
@@ -260,6 +268,37 @@ public:
 	/// The zoom levels generally go from +30 to -30. It is possible to zoom in
 	/// more than +30.
 	void SetZoomLevel(int new_zoom_level);
+
+	/// @brief Zoom so that exactly @p begin..@p end (ms) fills the display
+	///
+	/// Used by the scrollbar's edge handles: the zoom is continuous, not one
+	/// of the levels. The zoom level becomes the nearest level and is saved
+	/// as the horizontal zoom option. The span is limited to what the zoom
+	/// levels allow.
+	void ZoomToTimeRange(double begin, double end);
+
+	/// A value of the dB scale where it is drawn
+	struct DbLabel { wxString text; wxRect rect; };
+	/// The values of the dB scale drawn on @p dc, none overlapping
+	std::vector<DbLabel> DbLabelRects(wxDC &dc) const;
+	/// Smallest distance between dB lines: one value and a little
+	int DbLabelGap() const;
+
+	/// Shortest and longest spans of the display width in ms, at the highest
+	/// and lowest zoom levels
+	double MinVisibleDuration() const;
+	double MaxVisibleDuration() const;
+
+	/// The zoom level whose scale is closest to @p ms_per_pixel
+	static int NearestZoomLevel(double ms_per_pixel);
+
+	/// Milliseconds per pixel at a zoom level
+	static double ZoomLevelMsPerPixel(int level);
+
+	double GetMillisecondsPerPixel() const { return ms_per_pixel; }
+	int GetScrollLeft() const { return scroll_left; }
+	/// Duration of the open audio in ms, 0 without audio
+	int GetDuration() const;
 
 	/// @brief Get the zoom level
 	/// @return The zoom level

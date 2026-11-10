@@ -19,13 +19,16 @@
 #include "../include/aegisub/context.h"
 #include "../libresrc/libresrc.h"
 #include "../project.h"
+#include "../dialog_rectangle.h"
 #include "../video_display.h"
 #include "../visual_tool_clip.h"
+#include "../visual_tool_rectangle.h"
 #include "../visual_tool_cross.h"
 #include "../visual_tool_drag.h"
 #include "../visual_tool_rotatexy.h"
 #include "../visual_tool_rotatez.h"
 #include "../visual_tool_scale.h"
+#include "../visual_tool_scroll.h"
 #include "../visual_tool_vector_clip.h"
 
 
@@ -105,6 +108,45 @@ namespace {
 		STR_MENU("Scale")
 		STR_DISP("Scale")
 		STR_HELP("Scale subtitles on X and Y axes")
+	};
+
+	struct visual_mode_rectangle final : public visual_tool_command<VisualToolRectangle> {
+		CMD_NAME("video/tool/rectangle")
+		CMD_ICON(visual_rectangle)
+		STR_MENU("Draw Rectangle")
+		STR_DISP("Draw Rectangle")
+		STR_HELP("Draw shapes behind a visible subtitle; hold the toolbar button to choose a shape, Shift constrains proportions, Escape cancels")
+	};
+
+	struct edit_shape final : public Command {
+		CMD_NAME("edit/line/rectangle")
+		CMD_ICON(visual_rectangle)
+		CMD_TYPE(COMMAND_VALIDATE)
+		STR_MENU("Edit Shape")
+		STR_DISP("Edit Shape")
+		STR_HELP("Show the shape in the style panel: its size, and its position, fill and opacity in the sections below")
+		bool Validate(const agi::Context *c) override { return CanEditDrawing(c); }
+		void operator()(agi::Context *c) override { EditDrawing(c); }
+	};
+
+	struct video_pan_mode final : public Command {
+		CMD_NAME("video/tool/pan")
+		CMD_ICON(visual_pan)
+		CMD_TYPE(COMMAND_VALIDATE | COMMAND_TOGGLE)
+		STR_MENU("Pan Preview")
+		STR_DISP("Pan Preview")
+		STR_HELP("Drag the enlarged preview to view other parts; turning it off restores the original size")
+		bool Validate(const agi::Context *c) override { return !!c->project->VideoProvider(); }
+		bool IsActive(const agi::Context *c) override { return c->videoDisplay->IsPanMode(); }
+		void operator()(agi::Context *c) override { c->videoDisplay->TogglePanMode(); }
+	};
+
+	struct visual_mode_scroll final : public visual_tool_command<VisualToolScroll> {
+		CMD_NAME("video/tool/scroll")
+		CMD_ICON(visual_scroll)
+		STR_MENU("Scroll Effect")
+		STR_DISP("Scroll Effect")
+		STR_HELP("Set where a line with a Banner or Scroll effect moves, and how fast: drag out an area, drag its edges or the dashed end, double-click to turn it round")
 	};
 
 	struct visual_mode_clip final : public visual_tool_command<VisualToolClip> {
@@ -191,6 +233,10 @@ namespace cmd {
 		reg(std::make_unique<visual_mode_rotate_z>());
 		reg(std::make_unique<visual_mode_rotate_xy>());
 		reg(std::make_unique<visual_mode_scale>());
+		reg(std::make_unique<visual_mode_rectangle>());
+		reg(std::make_unique<edit_shape>());
+		reg(std::make_unique<video_pan_mode>());
+		reg(std::make_unique<visual_mode_scroll>());
 		reg(std::make_unique<visual_mode_clip>());
 		reg(std::make_unique<visual_mode_vector_clip>());
 

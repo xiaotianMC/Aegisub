@@ -1312,11 +1312,11 @@ msgstr "撤销 %s"
 
 #: ../src/command/edit.cpp:1210 ../src/command/edit.cpp:1211
 msgid "Revert"
-msgstr "还原"
+msgstr "还原为原文"
 
 #: ../src/command/edit.cpp:1212
 msgid "Revert the active line to its initial state (shown in the upper editor)"
-msgstr "恢复编辑框的内容到它原来的状态 (编辑框上方显示的内容)"
+msgstr "把当前行恢复为原文（编辑框上方显示的内容）"
 
 #: ../src/command/edit.cpp:1217
 msgid "revert line"
@@ -2057,27 +2057,27 @@ msgstr "对齐关键帧"
 
 #: ../src/command/time.cpp:239 ../src/command/time.cpp:240
 msgid "Add lead in and out"
-msgstr "添加开始提前及结束延后"
+msgstr "加前后余量"
 
 #: ../src/command/time.cpp:241
 msgid "Add both lead in and out to the selected lines"
-msgstr "同时开始提前、结束延后所选行"
+msgstr "给所选行加上前留和后留"
 
 #: ../src/command/time.cpp:253 ../src/command/time.cpp:254
 msgid "Add lead in"
-msgstr "添加开始提前"
+msgstr "加前留"
 
 #: ../src/command/time.cpp:255
 msgid "Add the lead in time to the selected lines"
-msgstr "为所选行的开始时间提前指定的时间"
+msgstr "所选行的开始时间往前留出指定的时长"
 
 #: ../src/command/time.cpp:265 ../src/command/time.cpp:266
 msgid "Add lead out"
-msgstr "添加结束延后"
+msgstr "加后留"
 
 #: ../src/command/time.cpp:267
 msgid "Add the lead out time to the selected lines"
-msgstr "为所选行的结束时间延后指定的时间"
+msgstr "所选行的结束时间往后留出指定的时长"
 
 #: ../src/command/time.cpp:276 ../src/command/time.cpp:277
 msgid "Increase length"
@@ -2322,7 +2322,7 @@ msgstr "时轴后处理器"
 msgid ""
 "Post-process the subtitle timing to add lead-ins and lead-outs, snap timing "
 "to scene changes, etc."
-msgstr "运行时轴后处理器来处理时间开始提前、结束延后以及对齐转场等。"
+msgstr "运行时轴后处理器：加前后余量、对齐画面切换等。"
 
 #: ../src/command/tool.cpp:186
 msgid "&Translation Assistant..."
@@ -4823,11 +4823,11 @@ msgstr "仅应用于所选行"
 
 #: ../src/dialog_timing_processor.cpp:175
 msgid "Lead-in/Lead-out"
-msgstr "提前开始/延后结束"
+msgstr "前后余量"
 
 #: ../src/dialog_timing_processor.cpp:177
 msgid "Add lead &in:"
-msgstr "开始提前(&I)"
+msgstr "前留(&I)"
 
 #: ../src/dialog_timing_processor.cpp:179
 msgid "Enable adding of lead-ins to lines"
@@ -4839,7 +4839,7 @@ msgstr "提前的时长 (ms)"
 
 #: ../src/dialog_timing_processor.cpp:182
 msgid "Add lead &out:"
-msgstr "结束延后:"
+msgstr "后留"
 
 #: ../src/dialog_timing_processor.cpp:184
 msgid "Enable adding of lead-outs to lines"
@@ -5805,12 +5805,20 @@ msgid "Default timing length (ms)"
 msgstr "默认时轴长度 (ms)"
 
 #: ../src/preferences.cpp:174
+msgid "Automatically link nearby subtitles"
+msgstr "自动衔接相邻字幕"
+
+#: ../src/preferences.cpp:175
+msgid "Link subtitle gaps under (s)"
+msgstr "字幕间隔小于此值时自动衔接（秒）"
+
+#: ../src/preferences.cpp:174
 msgid "Default lead-in length (ms)"
-msgstr "默认提前开始时间长度 (ms)"
+msgstr "默认前留时长 (ms)"
 
 #: ../src/preferences.cpp:175
 msgid "Default lead-out length (ms)"
-msgstr "默认延后结束时间长度 (ms)"
+msgstr "默认后留时长 (ms)"
 
 #: ../src/preferences.cpp:177
 msgid "Marker drag-start sensitivity (px)"
@@ -6843,7 +6851,7 @@ msgstr "按帧数显示时轴"
 
 #: ../src/subs_edit_box.cpp:189
 msgid "Show Original"
-msgstr "显示原始字幕"
+msgstr "对照原文"
 
 #: ../src/subs_edit_box.cpp:190
 msgid ""
@@ -7030,6 +7038,67 @@ msgstr "当前帧时间和序号"
 msgid "Time of this frame relative to start and end of current subs"
 msgstr "该帧时间，相对于当前字幕的开始与结束时间"
 
+#: ../src/video_box.cpp
+msgid "Copy time"
+msgstr "复制时间"
+
+#: ../src/video_box.cpp
+msgid "Copy frame number"
+msgstr "复制帧号"
+
+#: ../src/video_box.cpp
+msgid "Copy"
+msgstr "复制"
+
+#: ../src/video_box.cpp
+msgid "Current frame time and number. K marks a keyframe."
+msgstr "当前帧的时间和帧号。K 表示关键帧。"
+
+#: ../src/video_box.cpp
+msgid "Click the time to type a time (0:01:23.456, or seconds such as 83.5), or the frame number to type a frame, then press Enter; Esc or a click elsewhere cancels."
+msgstr "单击时间可输入时间（0:01:23.456，或秒数如 83.5），单击帧号可输入帧号，按回车跳转；Esc 或单击别处取消。"
+
+#: ../src/video_box.cpp
+msgid "Right-click to copy the time or the frame number."
+msgstr "右键可复制时间或帧号。"
+
+#: ../src/video_box.cpp
+msgid "First: this frame minus the line's start. Negative means the line has not started yet."
+msgstr "第一个数：当前帧时间减去当前行的开始时间。负数表示这一行还没开始。"
+
+#: ../src/video_box.cpp
+msgid "Second: this frame minus the line's end. Negative means the line has not ended yet."
+msgstr "第二个数：当前帧时间减去当前行的结束时间。负数表示这一行还没结束。"
+
+#: ../src/video_box.cpp
+msgid "Both negative: before the line. First positive, second negative: during the line. Both positive: after it."
+msgstr "两个都是负数：在这一行之前；第一个正、第二个负：在这一行之内；两个都是正数：已过了这一行。"
+
+#: ../src/video_box.cpp
+msgid "Useful for timing to the frame, e.g. +42ms on a scene change means the line starts 42ms too early."
+msgstr "可用于逐帧对时间轴，例如停在镜头切换处显示 +42ms，说明这一行早开始了 42 毫秒。"
+
+#: ../src/video_box.cpp
+msgid "Right-click to copy."
+msgstr "右键可复制。"
+
+#: ../src/video_zoom_control.cpp
+msgid "Video zoom: click for presets, turn the wheel to zoom in or out"
+msgstr "视频缩放：单击选择预设比例，滚动滚轮放大或缩小"
+
+#: ../src/command/video.cpp
+msgid "Pause"
+msgstr "暂停"
+
+#: ../src/command/video.cpp
+msgid "Play the video from this position, or pause it while playing"
+msgstr "从当前位置播放视频；正在播放时则暂停"
+
+#: ../src/video_slider.cpp
+#, c-format
+msgid "%s, frame %d"
+msgstr "%s，第 %d 帧"
+
 #: ../src/video_controller.cpp:228
 #, c-format
 msgid ""
@@ -7197,6 +7266,10 @@ msgstr "视图(&W)"
 msgctxt "Menu bar"
 msgid "&Help"
 msgstr "帮助(&H)"
+
+msgctxt "Menu bar"
+msgid "Preferences (&O)"
+msgstr "首选项(&O)"
 
 #: default_menu.json:0
 msgid "&Insert Lines"
@@ -7504,3 +7577,2934 @@ msgstr "音视频"
 #: ../packages/desktop/aegisub.metainfo.xml.in.in:51
 msgid "Audio timing"
 msgstr "音频时轴"
+
+msgid "Draw Rectangle"
+msgstr "绘制矩形"
+
+msgid "Select a visible subtitle, then drag to create a rectangle behind it; Escape cancels"
+msgstr "选中当前画面可见的字幕，拖拽绘制底框；按 Esc 取消"
+
+msgid "draw rectangle"
+msgstr "绘制矩形"
+
+msgid "Draw Ellipse / Circle"
+msgstr "绘制椭圆 / 圆形"
+
+msgid "Draw Triangle"
+msgstr "绘制三角形"
+
+msgid "Draw Polygon"
+msgstr "绘制任意多边形"
+
+msgid "draw shape"
+msgstr "绘制图形"
+
+msgid "Hold left mouse button for shapes; Shift constrains proportions"
+msgstr "长按左键展开形状菜单；Shift 约束比例"
+
+msgid "Draw shapes behind a visible subtitle; hold the toolbar button to choose a shape, Shift constrains proportions, Escape cancels"
+msgstr "在可见字幕后绘制图形；长按工具按钮选择形状，Shift 约束比例，Esc 取消"
+
+#: ../src/base_grid.cpp
+msgid "Click to hide this subtitle line"
+msgstr "点击隐藏此行字幕"
+
+#: ../src/base_grid.cpp
+msgid "Click to show this subtitle line"
+msgstr "点击恢复显示此行字幕"
+
+msgid "Edit Rectangle..."
+msgstr "编辑矩形…"
+
+msgid "Edit Rectangle"
+msgstr "编辑矩形"
+
+msgid "Adjust the rectangle's width, height, position, fill color and transparency"
+msgstr "调整矩形的宽、高、位置、填充颜色和透明度"
+
+msgid "Rectangle width"
+msgstr "宽度"
+
+msgid "Rectangle height"
+msgstr "高度"
+
+msgid "Left position (X)"
+msgstr "左侧位置（X）"
+
+msgid "Top position (Y)"
+msgstr "顶部位置（Y）"
+
+msgid "Fill color"
+msgstr "填充颜色"
+
+msgid "Transparency (%)"
+msgstr "透明度（%）"
+
+msgid "Sizes use script pixels before rotation. Transparency: 0% opaque, 100% invisible."
+msgstr "尺寸按旋转前的字幕坐标计算。透明度：0% 不透明，100% 完全透明。"
+
+msgid "Enter a number within the allowed range."
+msgstr "请输入允许范围内的数字。"
+
+msgid "The drawing path could not be resized."
+msgstr "无法调整此图形的绘图路径。"
+
+msgid "edit rectangle"
+msgstr "编辑矩形"
+
+msgid "Edit Shape..."
+msgstr "编辑图形…"
+
+msgid "Edit Shape"
+msgstr "编辑图形"
+
+msgid "edit shape"
+msgstr "编辑图形"
+
+msgid "Shape width"
+msgstr "图形宽度"
+
+msgid "Shape height"
+msgstr "图形高度"
+
+msgid "Position X"
+msgstr "位置 X"
+
+msgid "Position Y"
+msgstr "位置 Y"
+
+msgid "Show the shape in the style panel: its size, and its position, fill and opacity in the sections below"
+msgstr "在样式面板中显示该图形：上面是尺寸，位置、填充和不透明度在下面各区"
+
+msgid "Size uses the drawing control-point bounds before rotation. Position is the alignment anchor. Transparency: 0% opaque, 100% invisible."
+msgstr "宽高按旋转前的绘图控制点边界计算，位置为对齐锚点。透明度：0% 不透明，100% 完全透明。"
+
+msgid "Pan Preview"
+msgstr "拖动预览"
+
+msgid "Drag the enlarged preview to view other parts; turning it off restores the original size"
+msgstr "按住左键拖动放大的预览查看其他位置；退出后恢复原大小"
+
+msgid "Reverse Move Path"
+msgstr "反向移动路径"
+
+msgid "Swap the active line's move start and end positions, keeping its movement times"
+msgstr "交换此行 move 的起点和终点，保留原运动时间"
+
+msgid "reverse move path"
+msgstr "反向移动路径"
+
+msgid "Preferences..."
+msgstr "首选项…"
+
+msgid "Bind Subtitles"
+msgstr "绑定字幕"
+
+msgid "Unbind Subtitles"
+msgstr "解除绑定"
+
+msgid "Bind selected subtitles to synchronize changes to their durations"
+msgstr "绑定所选字幕，同步增减持续时间"
+
+msgid "Remove the selected subtitles from their binding groups"
+msgstr "将所选字幕从绑定组中移除"
+
+msgid "bind subtitles"
+msgstr "绑定字幕"
+
+msgid "unbind subtitles"
+msgstr "解除字幕绑定"
+
+msgid "Maximize / Restore"
+msgstr "最大化 / 还原"
+
+msgid "Your subtitle workspace"
+msgstr "开始你的字幕工作"
+
+msgid "Organize your projects, or jump straight into editing."
+msgstr "按项目组织工作，或直接开始编辑。"
+
+msgid "Project dashboard"
+msgstr "项目看板"
+
+msgid "Subtitle editor"
+msgstr "字幕编辑器"
+
+msgid "A dedicated space for your\nsubtitle projects."
+msgstr "为字幕项目准备的独立空间，\n让每一份工作都有清晰的起点。"
+
+msgid "Open the familiar editor and\nstart working right away."
+msgstr "进入熟悉的字幕编辑环境，\n打开字幕，立即开始工作。"
+
+msgid "Go to dashboard"
+msgstr "进入项目看板"
+
+msgid "Open editor"
+msgstr "直接进入软件"
+
+msgid "You can also open subtitle files directly from Windows."
+msgstr "也可以在 Windows 中直接双击字幕文件打开。"
+
+msgid "Back to start"
+msgstr "返回启动页"
+
+msgid "A place for your subtitle projects."
+msgstr "集中查看你的字幕项目。"
+
+msgid "No projects yet"
+msgstr "还没有项目"
+
+msgid "Your projects will appear here."
+msgstr "你的字幕项目将显示在这里。"
+
+msgid "Open subtitle editor"
+msgstr "打开字幕编辑器"
+
+msgid "Project Management..."
+msgstr "项目管理…"
+
+msgid "Project Management"
+msgstr "项目管理"
+
+msgid "Open the project dashboard"
+msgstr "打开项目看板"
+
+msgid "Enable ASS autocompletion"
+msgstr "启用 ASS 自动补全"
+
+msgid "Complete ASS Tag"
+msgstr "补全 ASS 标签"
+
+msgid "Show ASS tag and parameter completions at the cursor"
+msgstr "在光标处显示 ASS 标签和参数补全"
+
+msgid "Position"
+msgstr "位置"
+
+msgid "Movement"
+msgstr "移动"
+
+msgid "Rotation origin"
+msgstr "旋转原点"
+
+msgid "Clipping"
+msgstr "裁剪"
+
+msgid "Inverse clipping"
+msgstr "反向裁剪"
+
+msgid "Animated transform"
+msgstr "渐变变换"
+
+msgid "Font name"
+msgstr "字体名称"
+
+msgid "Increase font size"
+msgstr "增大字号"
+
+msgid "Decrease font size"
+msgstr "减小字号"
+
+msgid "Horizontal scale"
+msgstr "水平缩放"
+
+msgid "Vertical scale"
+msgstr "垂直缩放"
+
+msgid "Character spacing"
+msgstr "字间距"
+
+msgid "Legacy alignment"
+msgstr "旧式对齐方式"
+
+msgid "Reset to style"
+msgstr "重置为样式"
+
+msgid "Bold / font weight"
+msgstr "粗体／字重"
+
+msgid "Italic"
+msgstr "斜体"
+
+msgid "Underline"
+msgstr "下划线"
+
+msgid "Strikeout"
+msgstr "删除线"
+
+msgid "Border width"
+msgstr "边框宽度"
+
+msgid "Horizontal border"
+msgstr "水平边框"
+
+msgid "Vertical border"
+msgstr "垂直边框"
+
+msgid "Shadow depth"
+msgstr "阴影距离"
+
+msgid "Horizontal shadow"
+msgstr "水平阴影"
+
+msgid "Vertical shadow"
+msgstr "垂直阴影"
+
+msgid "Gaussian blur"
+msgstr "高斯模糊"
+
+msgid "Edge blur"
+msgstr "边缘模糊"
+
+msgid "Z rotation"
+msgstr "Z 轴旋转"
+
+msgid "X rotation"
+msgstr "X 轴旋转"
+
+msgid "Y rotation"
+msgstr "Y 轴旋转"
+
+msgid "Horizontal shear"
+msgstr "水平倾斜"
+
+msgid "Vertical shear"
+msgstr "垂直倾斜"
+
+msgid "Primary layer"
+msgstr "主色"
+
+msgid "Secondary layer"
+msgstr "次色"
+
+msgid "Outline layer"
+msgstr "边框"
+
+msgid "Shadow layer"
+msgstr "阴影"
+
+msgid "Transparency (00 opaque, FF invisible)"
+msgstr "透明度（00 不透明，FF 全透明）"
+
+msgid "Fade in / out (ms)"
+msgstr "淡入／淡出（毫秒）"
+
+msgid "Complex fade (ms)"
+msgstr "复杂淡入淡出（毫秒）"
+
+msgid "Karaoke timing"
+msgstr "卡拉 OK"
+
+msgid "Fill"
+msgstr "填充"
+
+msgid "Wrap style"
+msgstr "换行方式"
+
+msgid "Drawing mode"
+msgstr "绘图模式"
+
+msgid "Drawing baseline offset"
+msgstr "绘图基线偏移"
+
+msgid "Font encoding"
+msgstr "字体编码"
+
+msgid "Bottom left"
+msgstr "左下"
+
+msgid "Bottom center"
+msgstr "中下"
+
+msgid "Bottom right"
+msgstr "右下"
+
+msgid "Middle left"
+msgstr "左中"
+
+msgid "Middle center"
+msgstr "居中"
+
+msgid "Middle right"
+msgstr "右中"
+
+msgid "Top left"
+msgstr "左上"
+
+msgid "Top center"
+msgstr "中上"
+
+msgid "Top right"
+msgstr "右上"
+
+msgid "Off"
+msgstr "关闭"
+
+msgid "On"
+msgstr "开启"
+
+msgid "Normal weight"
+msgstr "常规字重"
+
+msgid "Bold weight"
+msgstr "粗体字重"
+
+msgid "Smart wrap, wider top line"
+msgstr "智能换行，上行较宽"
+
+msgid "End-of-line wrap"
+msgstr "行尾换行"
+
+msgid "No automatic wrapping"
+msgstr "不自动换行"
+
+msgid "Smart wrap, wider bottom line"
+msgstr "智能换行，下行较宽"
+
+msgid "Text mode"
+msgstr "文本模式"
+
+msgid "White"
+msgstr "白色"
+
+msgid "Black"
+msgstr "黑色"
+
+msgid "Red"
+msgstr "红色"
+
+msgid "Green"
+msgstr "绿色"
+
+msgid "Blue"
+msgstr "蓝色"
+
+msgid "Opaque"
+msgstr "不透明"
+
+msgid "25% transparent"
+msgstr "约 25% 透明"
+
+msgid "50% transparent"
+msgstr "约 50% 透明"
+
+msgid "75% transparent"
+msgstr "约 75% 透明"
+
+msgid "Invisible"
+msgstr "全透明"
+
+msgid "Move (close previous shape)"
+msgstr "移动起点（闭合前一图形）"
+
+msgid "Move (leave previous shape open)"
+msgstr "移动起点（不闭合前一图形）"
+
+msgid "Straight line"
+msgstr "直线"
+
+msgid "Cubic Bezier curve"
+msgstr "三次贝塞尔曲线"
+
+msgid "B-spline (at least 3 points)"
+msgstr "B 样条（至少三个点）"
+
+msgid "Extend B-spline"
+msgstr "延伸 B 样条"
+
+msgid "Close B-spline"
+msgstr "闭合 B 样条"
+
+msgid "Duration"
+msgstr "时长（厘秒）"
+
+msgid "Weight"
+msgstr "字重"
+
+msgid "Colour"
+msgstr "颜色（BBGGRR）"
+
+msgid "1/0"
+msgstr "1 开启／0 关闭"
+
+msgid "Exponent"
+msgstr "绘图缩放指数"
+
+msgid "Wrap Style"
+msgstr "换行方式"
+
+msgid "Acceleration"
+msgstr "加速度"
+
+msgid "Alpha"
+msgstr "透明度"
+
+msgid "Strength"
+msgstr "强度"
+
+msgid "Encoding"
+msgstr "字符编码"
+
+msgid "Font Name"
+msgstr "字体名称"
+
+msgid "Angle"
+msgstr "角度"
+
+msgid "Factor"
+msgstr "倾斜系数"
+
+msgid "X"
+msgstr "横坐标"
+
+msgid "Y"
+msgstr "纵坐标"
+
+msgid "Offset"
+msgstr "偏移量"
+
+msgid "Width"
+msgstr "边框宽度"
+
+msgid "X1"
+msgstr "横坐标1"
+
+msgid "Y1"
+msgstr "纵坐标1"
+
+msgid "X2"
+msgstr "横坐标2"
+
+msgid "Y2"
+msgstr "纵坐标2"
+
+msgid "Start Alpha"
+msgstr "起始透明度"
+
+msgid "Middle Alpha"
+msgstr "中间透明度"
+
+msgid "End Alpha"
+msgstr "结束透明度"
+
+msgid "Start In"
+msgstr "淡入开始时间（毫秒）"
+
+msgid "End In"
+msgstr "淡入结束时间（毫秒）"
+
+msgid "Start Out"
+msgstr "淡出开始时间（毫秒）"
+
+msgid "End Out"
+msgstr "淡出结束时间（毫秒）"
+
+msgid "Fade In"
+msgstr "淡入时长（毫秒）"
+
+msgid "Fade Out"
+msgstr "淡出时长（毫秒）"
+
+msgid "Depth"
+msgstr "阴影距离"
+
+msgid "x"
+msgstr "横坐标"
+
+msgid "y"
+msgstr "纵坐标"
+
+msgid "x1"
+msgstr "横坐标1"
+
+msgid "y1"
+msgstr "纵坐标1"
+
+msgid "x2"
+msgstr "横坐标2"
+
+msgid "y2"
+msgstr "纵坐标2"
+
+msgid "x3"
+msgstr "横坐标3"
+
+msgid "y3"
+msgstr "纵坐标3"
+
+msgid "xN"
+msgstr "后续横坐标"
+
+msgid "yN"
+msgstr "后续纵坐标"
+
+msgid "Spacing"
+msgstr "字间距"
+
+msgid "Left margin"
+msgstr "左边距"
+
+msgid "Right margin"
+msgstr "右边距"
+
+msgid "Vertical margin"
+msgstr "垂直边距"
+
+msgid "Extra data"
+msgstr "附加数据"
+
+msgid "several identical candidates"
+msgstr "有多个相同的候选行"
+
+msgid "moved: the order changed"
+msgstr "已移动：顺序发生变化"
+
+msgid "time and text point to different lines"
+msgstr "时间与文本指向不同的行"
+
+msgid "no reliable match"
+msgstr "无可靠匹配"
+
+msgid "Accepted"
+msgstr "已接受"
+
+msgid "Rejected"
+msgstr "已拒绝"
+
+msgid "Partial"
+msgstr "部分接受"
+
+msgid "Pending"
+msgstr "待处理"
+
+msgid "Writing will change the open subtitles as one undoable step: %d lines modified, %d added, %d removed."
+msgstr "写入后将作为一次可撤销的修改更改当前字幕：修改 %d 行，新增 %d 行，删除 %d 行。"
+
+msgid "Style \"%s\" will be copied from the compared file."
+msgstr "将从比较文件复制样式“%s”。"
+
+msgid "Style \"%s\" is not defined in either file."
+msgstr "两个文件都没有定义样式“%s”。"
+
+msgid "Extra data will be copied from the compared file: %s"
+msgstr "将从比较文件复制附加数据：%s"
+
+msgid "These decisions cannot be written:"
+msgstr "这些决定无法写入："
+
+msgid "Bound lines must be applied together (group %s)."
+msgstr "绑定的字幕必须一起应用（组 %s）。"
+
+msgid "Style \"%s\" is defined differently in the open subtitles and in the compared file."
+msgstr "样式“%s”在当前字幕和比较文件中的定义不同。"
+
+msgid "Style \"%s\" is defined more than once."
+msgstr "样式“%s”被定义了多次。"
+
+msgid "The extra data of the subtitles cannot be read."
+msgstr "无法读取字幕的附加数据。"
+
+msgid "Invalid selection."
+msgstr "选择无效。"
+
+msgid "%d hidden lines"
+msgstr "%d 个隐藏的行"
+
+msgid "click to expand"
+msgstr "点击展开"
+
+msgid "Not a comment"
+msgstr "非注释"
+
+msgid "Accept"
+msgstr "应用"
+
+msgid "Reject"
+msgstr "放弃"
+
+msgid "Compare Subtitles"
+msgstr "比较字幕"
+
+msgid "Previous"
+msgstr "上一处"
+
+msgid "Previous difference (Shift+F7)"
+msgstr "上一处差异 (Shift+F7)"
+
+msgid "Next"
+msgstr "下一处"
+
+msgid "Next difference (F7)"
+msgstr "下一处差异 (F7)"
+
+msgid "Difference 9999 of 9999"
+msgstr "第 9999 / 9999 处差异"
+
+msgid "&Accept Change"
+msgstr "应用更改(&A)"
+
+msgid "Keep the right side of the current difference"
+msgstr "保留当前差异的右侧内容"
+
+msgid "&Reject Change"
+msgstr "放弃更改(&R)"
+
+msgid "Restore the left side of the current difference"
+msgstr "恢复当前差异的左侧内容"
+
+msgid "Differences only"
+msgstr "仅显示差异"
+
+msgid "Everything"
+msgstr "显示全部"
+
+msgid "Fold long runs of identical lines, keeping context around each difference"
+msgstr "折叠连续的相同内容，只保留每处差异附近的上下文"
+
+msgid "Show every line"
+msgstr "显示所有字幕行"
+
+msgid "Sync scrolling"
+msgstr "同步滚动"
+
+msgid "Scroll both sides together. When off, each side scrolls on its own and selecting a line locates it on the other side."
+msgstr "两侧一起滚动。关闭后两侧各自滚动，选中一行时会在另一侧定位到对应行。"
+
+msgid "Swap Sides"
+msgstr "交换左右"
+
+msgid "Show the open subtitles on the other side. Decisions keep their effect on the open subtitles."
+msgstr "把当前字幕显示到另一侧。已做的决定对当前字幕的效果保持不变。"
+
+msgid "Undo"
+msgstr "撤销"
+
+msgid "Undo the last decision (Ctrl+Z)"
+msgstr "撤销上一次决定 (Ctrl+Z)"
+
+msgid "Redo"
+msgstr "重做"
+
+msgid "Redo (Ctrl+Y)"
+msgstr "重做 (Ctrl+Y)"
+
+msgid "Select all differences"
+msgstr "全选差异"
+
+msgid "Accept Selected"
+msgstr "应用所选"
+
+msgid "Reject Selected"
+msgstr "放弃所选"
+
+msgid "Accept All Changes"
+msgstr "应用全部更改"
+
+msgid "Reject All Changes"
+msgstr "放弃全部更改"
+
+msgid "Write the decisions to the open subtitles as one undoable change and end the comparison"
+msgstr "把决定作为一次可撤销的修改写入当前字幕，并结束比较"
+
+msgid "Accept keeps the right side, Reject restores the left side. Browsing and deciding never change the open subtitles: they change only when you click Write to Project, as one undoable step."
+msgstr "应用更改保留右侧内容，放弃更改恢复左侧内容。浏览和决定都不会修改当前字幕：只有点击“写入工程”时才会写入，并作为一次可撤销的修改。"
+
+msgid "Take the left side (Reject). Click again to reset."
+msgstr "采用左侧内容（放弃更改）。再次点击重置。"
+
+msgid "Keep the right side (Accept). Click again to reset."
+msgstr "保留右侧内容（应用更改）。再次点击重置。"
+
+msgid "Accept: keep the right side of this difference. Nothing is written until Write to Project."
+msgstr "应用：保留这处差异右侧的内容。点击“写入工程”之前不会修改字幕。"
+
+msgid "Reject: restore the left side of this difference. Nothing is written until Write to Project."
+msgstr "放弃：恢复这处差异左侧的内容。点击“写入工程”之前不会修改字幕。"
+
+msgid "Reset this difference to pending"
+msgstr "把这处差异重置为待处理"
+
+msgid "Select this difference for Accept Selected / Reject Selected (Space)"
+msgstr "勾选这处差异，用于“应用所选 / 放弃所选”（空格键）"
+
+msgid "Overview of all differences: click or drag to jump"
+msgstr "全部差异概览：点击或拖动跳转"
+
+msgid "Time only"
+msgstr "仅时间"
+
+msgid "Text only"
+msgstr "仅文本"
+
+msgid "Style/actor only"
+msgstr "仅样式/说话人"
+
+msgid "Other fields only"
+msgstr "仅其他字段"
+
+msgid "Several fields"
+msgstr "多项"
+
+msgid "Inserted"
+msgstr "新增"
+
+msgid "Removed"
+msgstr "删除"
+
+msgid "Style and actor"
+msgstr "样式和说话人"
+
+msgid "Other fields"
+msgstr "其他字段"
+
+msgid "+%d fields"
+msgstr "+%d 项"
+
+msgid "(empty)"
+msgstr "（空）"
+
+msgid "Right side"
+msgstr "右侧"
+
+msgid "Left side"
+msgstr "左侧"
+
+msgid " (%d in total)"
+msgstr "（共 %d 处）"
+
+msgid "Show:"
+msgstr "显示："
+
+msgid "Show only this kind of difference; Accept All and Reject All then apply to these"
+msgstr "只显示这一类差异；“应用全部更改 / 放弃全部更改”随之只作用于这一类"
+
+msgid "Show every kind of difference"
+msgstr "显示所有类别的差异"
+
+msgid "Ignore:"
+msgstr "忽略："
+
+msgid "Leave these fields out: they are not highlighted, not counted, and decisions here leave them as they are"
+msgstr "不看这些字段：不高亮、不计入差异，在此做出的决定也不改动它们"
+
+msgid "%s: keep the right side"
+msgstr "%s：保留右侧"
+
+msgid "%s: take the left side"
+msgstr "%s：采用左侧"
+
+msgid "Click to show the hidden lines"
+msgstr "点击显示隐藏的行"
+
+msgid "All"
+msgstr "全部"
+
+msgid "the %d differences shown"
+msgstr "当前显示的 %d 处差异"
+
+msgid "Ignored fields keep their current choice: %s"
+msgstr "忽略的字段保持原来的选择：%s"
+
+msgid "This line changed several fields, listed under it: Ctrl+Up/Down picks a field, Ctrl+Left takes the left side, Ctrl+Right keeps the right side."
+msgstr "这一行改动了多个字段，逐项列在下方：Ctrl+↑/↓ 选择字段，Ctrl+← 采用左侧，Ctrl+→ 保留右侧。"
+
+msgid "%s: Ctrl+Left takes the left side, Ctrl+Right keeps the right side, Esc leaves the field"
+msgstr "%s：Ctrl+← 采用左侧，Ctrl+→ 保留右侧，Esc 退出字段选择"
+
+msgid "target project"
+msgstr "目标工程"
+
+msgid "Original (base): %s"
+msgstr "基准版本：%s"
+
+msgid "Modified (current): %s"
+msgstr "当前版本：%s"
+
+msgid "No difference selected."
+msgstr "未选中差异。"
+
+msgid "Fields of this line (checked: keep the right side, unchecked: keep the left side, grey: pending):"
+msgstr "逐字段选择（勾选：保留右侧；不勾选：保留左侧；灰色：待处理）："
+
+msgid "Inserted and removed lines are decided as a whole."
+msgstr "新增和删除的行整行处理。"
+
+msgid "%s\nLeft: %s\nRight: %s"
+msgstr "%s\n左侧：%s\n右侧：%s"
+
+msgid "Difference %d of %d"
+msgstr "第 %d / %d 处差异"
+
+msgid "%d differences"
+msgstr "共 %d 处差异"
+
+msgid "%d pending, %d accepted, %d rejected, %d partial"
+msgstr "待处理 %d · 已接受 %d · 已拒绝 %d · 部分接受 %d"
+
+msgid "%d selected"
+msgstr "已勾选 %d 处"
+
+msgid "No decision changes the open subtitles yet. Pending differences leave them as they are."
+msgstr "目前没有会修改当前字幕的决定。待处理的差异保持当前字幕不变。"
+
+msgid "The decisions leave the open subtitles as they are."
+msgstr "这些决定不会修改当前字幕。"
+
+msgid "&Done"
+msgstr "完成(&D)"
+
+msgid "&Write to Project (%d)"
+msgstr "写入工程(&W) (%d)"
+
+msgid "These differences are already accepted."
+msgstr "这些差异都已接受。"
+
+msgid "These differences are already rejected."
+msgstr "这些差异都已拒绝。"
+
+msgid "all %d differences"
+msgstr "全部 %d 处差异"
+
+msgid "the %d selected differences"
+msgstr "所选的 %d 处差异"
+
+msgid "Accept (keep the right side)"
+msgstr "应用更改（保留右侧）"
+
+msgid "Reject (restore the left side)"
+msgstr "放弃更改（恢复左侧）"
+
+msgid "%s: %s?"
+msgstr "%s：%s？"
+
+msgid "%d of them will change."
+msgstr "其中 %d 处将会改变。"
+
+msgid "%d already decided the other way will be overwritten."
+msgstr "有 %d 处已做出相反的决定，将被覆盖。"
+
+msgid "This can be undone in this window. The open subtitles change only when you write to the project."
+msgstr "可以在此窗口中撤销。只有写入工程时才会修改当前字幕。"
+
+msgid "Accept Change"
+msgstr "应用更改"
+
+msgid "Reject Change"
+msgstr "放弃更改"
+
+msgid "Reset to Pending"
+msgstr "重置为待处理"
+
+msgid "Selected"
+msgstr "勾选"
+
+msgid "Keep right side: %s"
+msgstr "保留右侧：%s"
+
+msgid "Not in the left version (inserted on the right)"
+msgstr "左侧版本没有此行（右侧新增）"
+
+msgid "Not in the right version (removed on the right)"
+msgstr "右侧版本没有此行（右侧已删除）"
+
+msgid "Line %d: %s - %s, %s"
+msgstr "第 %d 行：%s - %s，%s"
+
+msgid "Changed: %s"
+msgstr "变化字段：%s"
+
+msgid "Status: %s"
+msgstr "状态：%s"
+
+msgid "Match note: %s"
+msgstr "匹配说明：%s"
+
+msgid "Close the comparison and discard %d decisions that would change the open subtitles?"
+msgstr "关闭比较并丢弃 %d 项会修改当前字幕的决定？"
+
+msgid "This file is not a supported subtitle format."
+msgstr "此文件不是受支持的字幕格式。"
+
+msgid "The file could not be read:\n%s"
+msgstr "无法读取文件：\n%s"
+
+msgid "The files have no differences that can be applied."
+msgstr "两个文件没有可以应用的差异。"
+
+msgid "Co&mpare with Subtitles File..."
+msgstr "与字幕文件比较(&M)..."
+
+msgid "Compare with Subtitles File"
+msgstr "与字幕文件比较"
+
+msgid "Compare the subtitles with another file side by side and accept or reject each difference"
+msgstr "与另一个字幕文件并排比较，逐项应用或放弃差异"
+
+msgid "The subtitles cannot be compared while they are being edited.\nClose any open editing tool (such as the color picker, the translation assistant or an audio edit) and try again."
+msgstr "字幕正在编辑，无法比较。\n请关闭正在使用的编辑工具（如颜色选择器、翻译助手或音频编辑）后重试。"
+
+msgid "Compare Dropped Subtitles"
+msgstr "对比拖入的字幕"
+
+msgid "Compare %s with the subtitles currently open?\nComparison keeps the current document open. Choose Open Normally to replace it."
+msgstr "是否将 %s 与当前打开的字幕进行对比？\n对比会保留当前文档；选择“正常打开”则会替换当前字幕。"
+
+msgid "Compare"
+msgstr "对比"
+
+msgid "Open Normally"
+msgstr "正常打开"
+
+msgid "Subtitles"
+msgstr "字幕编辑"
+
+msgid "The subtitle editor. It is locked while the comparison is open."
+msgstr "字幕编辑器。对比打开期间它处于锁定状态。"
+
+msgid "The open comparison"
+msgstr "当前打开的对比"
+
+msgid "End the comparison without writing to the subtitles"
+msgstr "结束对比，不写入字幕"
+
+msgid "Back to Comparison"
+msgstr "返回对比"
+
+msgid "End Comparison"
+msgstr "结束对比"
+
+msgid "Compare: %s"
+msgstr "对比：%s"
+
+msgid "Comparing with %s. The subtitles cannot be edited until the comparison ends."
+msgstr "正在与 %s 对比。对比结束前不能编辑字幕。"
+
+msgid "This command is not available in the comparison tab. Switch to the Subtitles tab to use it."
+msgstr "对比页中不能使用此命令，请切换到“字幕编辑”标签页。"
+
+msgid "A comparison is already open. End it before comparing with another file."
+msgstr "已经有一个对比处于打开状态。请先结束它，再与其他文件对比。"
+
+msgid "Appearance"
+msgstr "外观"
+
+msgid "Theme"
+msgstr "主题"
+
+msgid "Follow system"
+msgstr "跟随系统"
+
+msgid "Light"
+msgstr "浅色"
+
+msgid "Dark"
+msgstr "深色"
+
+msgid "The subtitle grid and edit box switch at once; some window controls switch fully only after a restart."
+msgstr "字幕网格和编辑框会立即切换；部分窗口控件需要重启后才能完全切换。"
+
+msgid "&Command Palette..."
+msgstr "命令面板(&C)…"
+
+msgid "Command Palette"
+msgstr "命令面板"
+
+msgid "Find and run any command by its name"
+msgstr "按名称查找并执行任意命令"
+
+msgid "Not available now"
+msgstr "当前不可用"
+
+msgid "Type a command name, pinyin or command id"
+msgstr "输入命令名称、拼音或命令 ID"
+
+msgid "No matching commands"
+msgstr "没有匹配的命令"
+
+msgid "Run"
+msgstr "执行"
+
+msgid "Classic main toolbar (every button)"
+msgstr "经典主工具栏（显示全部按钮）"
+
+msgid "Classic coloured icons"
+msgstr "经典彩色图标"
+
+#: src/preferences.cpp
+msgid "Search settings (name or pinyin)"
+msgstr "搜索设置（名称或拼音）"
+
+#: src/preferences.cpp
+msgid "No matching settings"
+msgstr "没有匹配的设置"
+
+#: src/preferences.cpp
+msgid "%d matches on %d pages, Enter shows the next page"
+msgstr "找到 %d 项，分布在 %d 页，按回车切换到下一页"
+
+#: src/preferences.cpp
+msgid "Shade every other row"
+msgstr "隔行加底色"
+
+#: src/status_info.cpp
+msgid "Line %d of %d (%d selected) · %s"
+msgstr "第 %d 行，共 %d 行（选中 %d 行）· %s"
+
+#: src/status_info.cpp
+msgid "Line %d of %d · %s"
+msgstr "第 %d 行，共 %d 行 · %s"
+
+#: src/status_info.cpp
+msgid "Comparing with %s"
+msgstr "正在与 %s 对比"
+
+#: src/status_info.cpp
+msgid "No unsaved changes"
+msgstr "没有未保存的更改"
+
+#: src/preferences.cpp
+msgid "dB scale on the waveform"
+msgstr "在波形上显示 dB 刻度"
+
+#: src/command/audio.cpp
+msgid "Reset vertical zoom and volume"
+msgstr "重置垂直缩放和音量"
+
+#: src/command/audio.cpp
+msgid "Reset the waveform's vertical zoom and the audio volume to their defaults"
+msgstr "把波形的垂直缩放和音量恢复为默认值"
+
+#: src/audio_levels.cpp
+msgid "Double-click to reset. Hold Shift while dragging for fine steps."
+msgstr "双击恢复默认值，拖动时按住 Shift 可微调。"
+
+#: src/audio_levels.cpp
+#, c-format
+msgid "Vertical zoom and volume: %s, %s"
+msgstr "垂直缩放和音量：%s，%s"
+
+#: src/audio_levels.cpp
+#, c-format
+msgid "Vertical zoom: %s"
+msgstr "垂直缩放：%s"
+
+#: src/audio_levels.cpp
+#, c-format
+msgid "Audio volume: %s"
+msgstr "音量：%s"
+
+#: src/audio_levels.cpp
+msgid "Vertical zoom and volume are linked: click to separate them"
+msgstr "垂直缩放和音量已联动，点击取消联动"
+
+
+#: src/style_panel.cpp
+msgid "Align left (\\an1, \\an4, \\an7)"
+msgstr "左对齐（\\an1、\\an4、\\an7）"
+
+#: src/style_panel.cpp
+msgid "Align right (\\an3, \\an6, \\an9)"
+msgstr "右对齐（\\an3、\\an6、\\an9）"
+
+#: src/style_panel.cpp
+msgid "Align to the bottom (\\an1, \\an2, \\an3)"
+msgstr "底部对齐（\\an1、\\an2、\\an3）"
+
+#: src/style_panel.cpp
+msgid "Align to the top (\\an7, \\an8, \\an9)"
+msgstr "顶部对齐（\\an7、\\an8、\\an9）"
+
+#: src/style_panel.cpp
+msgid "Centre horizontally (\\an2, \\an5, \\an8)"
+msgstr "水平居中（\\an2、\\an5、\\an8）"
+
+#: src/style_panel.cpp
+msgid "Centre vertically (\\an4, \\an5, \\an6)"
+msgstr "垂直居中（\\an4、\\an5、\\an6）"
+
+#: src/style_panel.cpp
+msgid "Blur"
+msgstr "模糊"
+
+#: src/style_panel.cpp
+msgid "Bold"
+msgstr "粗体"
+
+#: src/style_panel.cpp
+msgid "Bold (\\b)"
+msgstr "粗体（\\b）"
+
+#: src/style_panel.cpp
+msgid "Bold Italic"
+msgstr "粗斜体"
+
+#: src/style_panel.cpp
+msgid "Regular"
+msgstr "常规"
+
+#: src/style_panel.cpp
+msgid "Italic (\\i)"
+msgstr "斜体（\\i）"
+
+#: src/style_panel.cpp
+msgid "Underline (\\u)"
+msgstr "下划线（\\u）"
+
+#: src/style_panel.cpp
+msgid "Strikeout (\\s)"
+msgstr "删除线（\\s）"
+
+
+
+
+#: src/style_panel.cpp
+msgid "Distance"
+msgstr "距离"
+
+#: src/style_panel.cpp
+msgid "Extra space between letters, in pixels (\\fsp)"
+msgstr "字母之间额外的间距，单位为像素（\\fsp）"
+
+#: src/style_panel.cpp
+msgid "Font (\\fn)"
+msgstr "字体（\\fn）"
+
+#: src/style_panel.cpp
+msgid "Font size (\\fs)"
+msgstr "字号（\\fs）"
+
+#: src/style_panel.cpp
+msgid "How far the shadow falls from the text (\\xshad, \\yshad)"
+msgstr "阴影离文字的距离（\\xshad、\\yshad）"
+
+#: src/style_panel.cpp
+msgid "No line selected"
+msgstr "没有选中的行"
+
+#: src/style_panel.cpp
+msgid "Softens the edges of the outline, or the letters without one (\\blur)"
+msgstr "柔化描边的边缘；没有描边时柔化文字边缘（\\blur）"
+
+#: src/style_panel.cpp
+msgid "The current line"
+msgstr "当前行"
+
+#: src/style_panel.cpp
+msgid "The line's style: what the text looks like without override tags"
+msgstr "行的样式：不加覆盖标签时文字的样子"
+
+#: src/style_panel.cpp
+msgid "The selected text"
+msgstr "选中的文字"
+
+#: src/style_panel.cpp
+msgid "Weight and slant (\\b, \\i)"
+msgstr "字重和倾斜（\\b、\\i）"
+
+#: src/style_panel.cpp
+#, c-format
+msgid "Which way the shadow falls: 90%s is right, 180%s down (\\xshad, \\yshad)"
+msgstr "阴影的方向：90%s 向右，180%s 向下（\\xshad、\\yshad）"
+
+#: src/command/app.cpp
+msgid "Show Style Panel"
+msgstr "显示样式面板"
+
+#: src/command/app.cpp
+msgid "Hide Style Panel"
+msgstr "隐藏样式面板"
+
+#: src/command/app.cpp
+msgid "Show or hide the style panel at the right of the window"
+msgstr "显示或隐藏窗口右侧的样式面板"
+
+#: src/style_panel.cpp
+#, c-format
+msgid "Weight %d"
+msgstr "字重 %d"
+
+#: src/style_panel.cpp
+#, c-format
+msgid "Weight %d, italic"
+msgstr "字重 %d，斜体"
+
+#: src/style_panel.cpp
+#, c-format
+msgid "%d selected line"
+msgid_plural "%d selected lines"
+msgstr[0] "所选的 %d 行"
+
+#: src/style_edit.cpp
+msgid "set font size"
+msgstr "设置字号"
+
+#: src/style_edit.cpp
+msgid "set font weight"
+msgstr "设置字重"
+
+#: src/style_edit.cpp
+msgid "set letter spacing"
+msgstr "设置字间距"
+
+#: src/style_edit.cpp
+msgid "set alignment"
+msgstr "设置对齐"
+
+#: src/style_edit.cpp
+msgid "set opacity"
+msgstr "设置不透明度"
+
+#: src/style_edit.cpp
+msgid "set outline width"
+msgstr "设置描边宽度"
+
+#: src/style_edit.cpp
+msgid "set shadow"
+msgstr "设置阴影"
+
+#: src/style_edit.cpp
+msgid "set blur"
+msgstr "设置模糊"
+
+#: src/style_edit.cpp
+msgid "style panel"
+msgstr "样式面板"
+
+#: src/style_panel.cpp
+msgid "Search fonts"
+msgstr "搜索字体"
+
+#: src/style_panel.cpp
+msgid "Thin (100)"
+msgstr "极细（100）"
+
+#: src/style_panel.cpp
+msgid "Extra Light (200)"
+msgstr "特细（200）"
+
+#: src/style_panel.cpp
+msgid "Light (300)"
+msgstr "细体（300）"
+
+#: src/style_panel.cpp
+msgid "Medium (500)"
+msgstr "中等（500）"
+
+#: src/style_panel.cpp
+msgid "Semibold (600)"
+msgstr "半粗（600）"
+
+#: src/style_panel.cpp
+msgid "Extra Bold (800)"
+msgstr "特粗（800）"
+
+#: src/style_panel.cpp
+msgid "Black (900)"
+msgstr "极粗（900）"
+
+#: src/style_panel.cpp
+msgid "Colour of the letters (\\1c): click the colour to change it, the box to hide the letters"
+msgstr "文字的颜色（\\1c）：点颜色修改，点勾选框隐藏文字"
+
+#: src/style_panel.cpp
+msgid "Opacity of the letters (\\1a)"
+msgstr "文字的不透明度（\\1a）"
+
+#: src/style_panel.cpp
+msgid "Colour of the outline (\\3c, \\3a): click the colour to change it, the box to remove the outline"
+msgstr "描边的颜色（\\3c、\\3a）：点颜色修改，点勾选框去掉描边"
+
+#: src/style_panel.cpp
+msgid "Width of the outline, in pixels (\\bord)"
+msgstr "描边宽度，单位为像素（\\bord）"
+
+#: src/style_panel.cpp
+msgid "A box behind the text in the outline colour. Only a style can have one, so ticking it gives the selected lines a copy of their style with the box (\"Default Box\"); the style itself and its other lines stay as they are"
+msgstr "文字后面的底框，颜色为描边颜色。只有样式能设置底框，所以勾选时会给所选各行换上一份带底框的样式副本（如“Default Box”）；原样式和用它的其他行保持不变"
+
+#: src/style_panel.cpp
+msgid "Colour of the shadow (\\4c): click the colour to change it, the box to remove the shadow"
+msgstr "阴影的颜色（\\4c）：点颜色修改，点勾选框去掉阴影"
+
+#: src/style_panel.cpp
+msgid "Opacity of the shadow (\\4a)"
+msgstr "阴影的不透明度（\\4a）"
+
+#: src/style_edit.cpp
+msgid "add background"
+msgstr "添加背景"
+
+#: src/style_edit.cpp
+msgid "remove background"
+msgstr "去掉背景"
+
+#: src/style_panel.cpp
+msgid "Edit the style in the style editor, with every setting"
+msgstr "在样式编辑器中编辑样式，可以修改全部设置"
+
+#: src/style_panel.cpp
+msgid "Name of the new style:"
+msgstr "新样式的名称："
+
+#: src/style_panel.cpp
+msgid "New Style"
+msgstr "新建样式"
+
+#: src/style_edit.cpp
+msgid "new style from line"
+msgstr "用当前行新建样式"
+
+#: src/style_panel.cpp
+msgid "New style that looks as the current line does, for the selected lines"
+msgstr "按当前行的外观新建样式，并应用到所选的行"
+
+#: src/style_edit.cpp
+msgid "reset to style"
+msgstr "恢复为样式"
+
+#: src/style_panel.cpp
+msgid "Reset to the style: remove the tags the panel sets from the selected lines"
+msgstr "恢复为样式：从所选的行中删除面板能设置的标签"
+
+#: src/style_edit.cpp
+msgid "set rotation"
+msgstr "设置旋转"
+
+#: src/style_edit.cpp
+msgid "set scale"
+msgstr "设置缩放"
+
+#: src/style_edit.cpp
+msgid "set style"
+msgstr "设置样式"
+
+#: src/style_edit.cpp
+msgid "update style from line"
+msgstr "用当前行更新样式"
+
+#: src/style_panel.cpp
+msgid "Update the style from the current line: the style takes on how the line looks, and the line's tags it makes unneeded go"
+msgstr "用当前行更新样式：样式改成这一行的外观，行里因此多余的标签会被删除"
+
+#: src/style_panel.cpp
+msgid "Drag to change the width of the style panel"
+msgstr "拖动可改变样式面板的宽度"
+
+#: src/style_panel.cpp
+msgid "Scale X"
+msgstr "缩放 X"
+
+#: src/style_panel.cpp
+msgid "Scale Y"
+msgstr "缩放 Y"
+
+#: src/style_panel.cpp
+msgid "Opacity"
+msgstr "不透明度"
+
+#: src/style_panel.cpp
+msgid "Opacity of fill, outline and shadow together (\\alpha)"
+msgstr "填充、描边和阴影一起的不透明度（\\alpha）"
+
+#: src/style_panel.cpp
+msgid "Rotation"
+msgstr "旋转"
+
+#: src/style_panel.cpp
+msgid "Show the style panel"
+msgstr "显示样式面板"
+
+#: src/style_panel.cpp
+msgid "Stretches the letters across (\\fscx)"
+msgstr "横向拉伸文字（\\fscx）"
+
+#: src/style_panel.cpp
+msgid "Stretches the letters up and down (\\fscy)"
+msgstr "纵向拉伸文字（\\fscy）"
+
+#: src/style_panel.cpp
+msgid "Transform"
+msgstr "变换"
+
+#: src/style_panel.cpp
+msgid "Turns the line, anticlockwise (\\frz)"
+msgstr "逆时针旋转这一行（\\frz）"
+
+#: src/style_panel.cpp
+msgid "Where the line is, across (\\pos). Lines that move (\\move) are left as they are"
+msgstr "行的横向位置（\\pos）。用 \\move 移动的行保持不变"
+
+#: src/style_panel.cpp
+msgid "Where the line is, down (\\pos). Lines that move (\\move) are left as they are"
+msgstr "行的纵向位置（\\pos）。用 \\move 移动的行保持不变"
+
+#: src/style_edit.cpp
+msgid "set position"
+msgstr "设置位置"
+
+#: src/style_panel.cpp
+msgid "Hide the style panel"
+msgstr "收起样式面板"
+
+#: src/style_panel.cpp
+msgid "Shape"
+msgstr "图形"
+
+#: src/style_panel.cpp
+msgid "W"
+msgstr "宽"
+
+#: src/style_panel.cpp
+msgid "H"
+msgstr "高"
+
+#: src/style_panel.cpp
+msgid "Keep the shape's proportions: changing its width changes its height with it, and the other way round"
+msgstr "保持图形比例：改宽度时高度随之等比变化，改高度时宽度也一样"
+
+#: src/style_panel.cpp
+msgid "Width of the shape: its points are scaled, so no \\fscx is needed"
+msgstr "图形的宽度：直接缩放图形的各个点，不需要 \\fscx"
+
+#: src/style_panel.cpp
+msgid "Height of the shape: its points are scaled, so no \\fscy is needed"
+msgstr "图形的高度：直接缩放图形的各个点，不需要 \\fscy"
+
+#: src/command/app.cpp
+msgid "Windows switches its own controls (text boxes, lists, scroll bars) between light and dark only when Aegisub starts. Restart Aegisub now to use the new theme everywhere?"
+msgstr "Windows 只在 Aegisub 启动时决定自带控件（输入框、列表、滚动条等）用浅色还是深色。现在重启 Aegisub，让新主题在所有地方生效吗？"
+
+#: ../src/style_panel.cpp:902
+msgid "Karaoke"
+msgstr "卡拉OK"
+
+#: ../src/style_panel.cpp:902
+msgid "Colour of karaoke text before it is sung (\\2c, \\2a): click the colour to change it, the box to hide that text"
+msgstr "卡拉OK文字唱到之前的颜色（\\2c、\\2a）：点颜色修改，点方框隐藏这部分文字"
+
+#: ../src/style_panel.cpp:903
+msgid "Opacity of karaoke text before it is sung (\\2a)"
+msgstr "卡拉OK文字唱到之前的不透明度（\\2a）"
+
+#: ../src/style_panel.cpp:930
+#, c-format
+msgid "%s of the line, in pixels. 0 uses the style's, shown dim. Lines placed by \\pos or \\move do not use their margins to be placed"
+msgstr "此行的%s，以像素计。0 表示使用样式的边距，以暗色显示。用 \\pos 或 \\move 定位的行不按边距放置"
+
+#: ../src/style_panel.cpp:930
+msgctxt "margin"
+msgid "L"
+msgstr "左"
+
+#: ../src/style_panel.cpp:931
+msgctxt "margin"
+msgid "R"
+msgstr "右"
+
+#: ../src/style_panel.cpp:932
+msgctxt "margin"
+msgid "V"
+msgstr "垂直"
+
+#: ../src/time_unit_toggle.cpp:25
+msgid "Time"
+msgstr "时间"
+
+#: ../src/time_unit_toggle.cpp:25
+msgid "Frame"
+msgstr "帧"
+
+#: ../src/time_unit_toggle.cpp:27
+msgid "Show and type the times of lines as h:mm:ss.cs, or as frame numbers (needs a video or timecodes)"
+msgstr "以 h:mm:ss.cs 或帧号显示和输入行的时间（帧号需要视频或时间码）"
+
+#: ../src/preferences.cpp:296
+msgid "Line fields below the text, next to the grid"
+msgstr "行属性放在文本框下方，靠近字幕列表"
+
+#: ../src/subs_edit_box.cpp
+msgid ""
+"Show above the text what this line said before you changed it: its text when you moved to it, read-only, to compare or translate against. It follows when you move to another line.\n"
+"\n"
+"Four buttons come with it: back to the original, clear the line, clear the text but keep the tags, and put the original in at the cursor."
+msgstr ""
+"在文本框上方显示此行改动前的内容（切到这一行时的文字），只读，方便对照着修改或翻译。换到别的行时跟着换。\n"
+"\n"
+"同时显示四个按钮：还原为原文、清除、清除文本（保留标签）、在光标处插入原文。"
+
+#: ../src/subs_edit_box.cpp
+msgctxt "edit box"
+msgid "Start"
+msgstr "开始"
+
+#: ../src/subs_edit_box.cpp
+msgctxt "edit box"
+msgid "End"
+msgstr "结束"
+
+#: ../src/subs_edit_box.cpp
+msgctxt "edit box"
+msgid "Duration"
+msgstr "时长"
+
+#: ../src/subs_edit_box.cpp
+msgctxt "edit box"
+msgid "Layer"
+msgstr "层"
+
+#: ../src/subs_edit_box.cpp
+msgid "Line duration: changing it moves the end time"
+msgstr "此行的时长：修改它会移动结束时间"
+
+#: ../src/subs_edit_box.cpp
+#, c-format
+msgid ""
+"Layer: lines on a higher layer are drawn over lower ones. Only lines on the same layer shown at the same time move out of each other's way; on different layers they can overlap, as a box under text does.\n"
+"\n"
+"Type a number, or drag the label, turn the wheel or press the arrow keys to move every selected line up or down from its own layer. %s: the selected lines are on different layers."
+msgstr ""
+"层：层数大的行画在上面。只有同一层、同时出现的行会互相避让（自动上下错开）；不同层的行可以重叠，常用于给文字垫底框或做特效。\n"
+"\n"
+"可以直接输入数字，也可以拖动“层”字、滚动滚轮或按上下键，让每个选中的行在各自原来的层上加减，保留彼此的层次。显示 %s 表示选中的行不在同一层。"
+
+#: ../src/subs_edit_box.cpp
+msgid "Original: the line as it was when you moved to it"
+msgstr "原文 · 切到此行时的内容"
+
+#: ../src/subs_edit_box.cpp
+msgid "not counting tags in {}, spaces or punctuation"
+msgstr "不计 {} 中的标签、空格和标点"
+
+#: ../src/subs_edit_box.cpp
+msgid "not counting tags in {} or spaces"
+msgstr "不计 {} 中的标签和空格"
+
+#: ../src/subs_edit_box.cpp
+msgid "not counting tags in {} or punctuation"
+msgstr "不计 {} 中的标签和标点"
+
+#: ../src/subs_edit_box.cpp
+msgid "not counting tags in {}"
+msgstr "不计 {} 中的标签"
+
+#: ../src/subs_edit_box.cpp
+#, c-format
+msgid "Characters in the longest line: the text split at \\N, %s."
+msgstr "最长一行的字数：按 \\N 分行，取字最多的一行，%s。"
+
+#: ../src/subs_edit_box.cpp
+#, c-format
+msgid "Red over %zu, the most a line should have so that it can be read and fits on the screen."
+msgstr "超过 %zu 时变红，这是一行字幕为了读得过来、放得下而应有的上限。"
+
+#: ../src/subs_edit_box.cpp
+msgid "Click to change the limit and what is counted (Preferences, Character Counter)."
+msgstr "单击可修改上限和计数方式（首选项 → 字数统计器）。"
+
+#: ../src/style_panel.cpp
+msgid "Animation"
+msgstr "动画"
+
+#: ../src/style_panel.cpp
+msgid "Style: what the text looks like. Animation: make it move and change over time, as \\move does"
+msgstr "样式：文字是什么样子。动画：让文字随时间移动和变化，如 \\move。"
+
+msgid "Rotation X"
+msgstr "X 轴旋转"
+
+msgid "Rotation Y"
+msgstr "Y 轴旋转"
+
+msgid "Shear X"
+msgstr "横向倾斜"
+
+msgid "Shear Y"
+msgstr "纵向倾斜"
+
+msgid "Fill opacity"
+msgstr "填充不透明度"
+
+msgid "Fill colour"
+msgstr "填充颜色"
+
+msgid "Outline colour"
+msgstr "边框颜色"
+
+msgid "Shadow colour"
+msgstr "阴影颜色"
+
+msgid "Remove this effect from the selected lines"
+msgstr "从选中的行中移除此效果"
+
+msgid "A time of the video, h:mm:ss.cc: drag sideways or click and type. Each selected line gets the same time from its start"
+msgstr "视频时间，格式为 h:mm:ss.cc：左右拖动，或点击后输入。每个选中的行都取相对其开始的同一时间"
+
+msgid "Use the video's current time"
+msgstr "使用视频当前时间"
+
+msgid "The same time as a share of the line: 50% is halfway through each selected line"
+msgstr "同一时间占该行时长的比例：50% 即每个选中行的正中间"
+
+msgid "The line from start to end: drag the ends of the range, snapped to the video's frames unless Shift is held; click elsewhere to go there in the video"
+msgstr "从行开始到结束：拖动范围的两端，会吸附到视频帧（按住 Shift 不吸附）；点击其他位置可在视频中跳转到那里"
+
+msgid "In"
+msgstr "入点"
+
+msgid "Out"
+msgstr "出点"
+
+msgid "Whole line"
+msgstr "整行"
+
+msgid "From the line's start to its end"
+msgstr "从行开始到结束"
+
+msgid "First half"
+msgstr "前半"
+
+msgid "The first half of each selected line"
+msgstr "每个选中行的前一半"
+
+msgid "Second half"
+msgstr "后半"
+
+msgid "The second half of each selected line"
+msgstr "每个选中行的后一半"
+
+msgid "Centre"
+msgstr "中心"
+
+msgid "Across, in the script's pixels"
+msgstr "横向位置，单位为脚本像素"
+
+msgid "Down, in the script's pixels"
+msgstr "纵向位置，单位为脚本像素"
+
+msgid "set move"
+msgstr "设置移动"
+
+msgid "Move"
+msgstr "移动"
+
+msgid "Drag the start and the end on the video, with the drag tool"
+msgstr "用拖动工具在视频上拖动起点和终点"
+
+msgid "set fade"
+msgstr "设置淡入淡出"
+
+msgid "Fade"
+msgstr "淡入淡出"
+
+msgid "How much of the text shows over the line: drag the points where it starts and ends showing, snapped to the video's frames unless Shift is held; click elsewhere to go there in the video"
+msgstr "文字在整行中的显示程度：拖动开始显示和完全消失的点，会吸附到视频帧（按住 Shift 不吸附）；点击其他位置可在视频中跳转到那里"
+
+msgid "Fade in"
+msgstr "淡入"
+
+msgid "Shown"
+msgstr "完全显示"
+
+msgid "Fade out"
+msgstr "淡出"
+
+msgid "Gone"
+msgstr "完全消失"
+
+msgid "Before"
+msgstr "之前"
+
+msgid "How much of the text shows before it fades in"
+msgstr "淡入之前文字的不透明度"
+
+msgid "Mid"
+msgstr "中间"
+
+msgid "How much of the text shows between fading in and out"
+msgstr "淡入与淡出之间文字的不透明度"
+
+msgid "After"
+msgstr "之后"
+
+msgid "How much of the text shows after it fades out"
+msgstr "淡出之后文字的不透明度"
+
+msgid "set transform"
+msgstr "设置变换"
+
+msgid "How the change speeds up: 1 is steady, above 1 starts slowly and ends fast, below 1 the other way"
+msgstr "变化的快慢：1 为匀速，大于 1 先慢后快，小于 1 先快后慢"
+
+msgid "Changes to"
+msgstr "变化到"
+
+msgid "The colour it changes to: click to choose"
+msgstr "变化到的颜色：点击选择"
+
+msgid "The value it changes to (%s)"
+msgstr "变化到的值（%s）"
+
+msgid "A tag set by hand: it stays as it is"
+msgstr "手写的标签：保持原样"
+
+msgid "Change this no more"
+msgstr "不再变化此项"
+
+msgid "+ Property"
+msgstr "+ 属性"
+
+msgid "Choose another property for it to change"
+msgstr "再选一个要变化的属性"
+
+msgid "set origin"
+msgstr "设置旋转中心"
+
+msgid "Drag the origin on the video, with the rotate tool"
+msgstr "用旋转工具在视频上拖动旋转中心"
+
+msgid "Nothing moves yet: add an effect"
+msgstr "还没有动画：添加一个效果"
+
+msgid "+ Add effect"
+msgstr "+ 添加效果"
+
+msgid "Make the selected lines move, fade in and out, change over time, turn about a point or scroll"
+msgstr "让选中的行移动、淡入淡出、随时间变化、绕某点旋转或滚动"
+
+msgid "add move"
+msgstr "添加移动"
+
+msgid "add fade"
+msgstr "添加淡入淡出"
+
+msgid "add transform"
+msgstr "添加变换"
+
+msgid "add origin"
+msgstr "添加旋转中心"
+
+msgid "remove effect"
+msgstr "移除效果"
+
+msgid "Move (\\move)"
+msgstr "移动 (\\move)"
+
+msgid "Fade in and out (\\fad)"
+msgstr "淡入淡出 (\\fad)"
+
+msgid "Change over time (\\t)"
+msgstr "随时间变化 (\\t)"
+
+msgid "Rotation origin (\\org)"
+msgstr "旋转中心 (\\org)"
+
+msgid "%d selected line, shown as the current one is"
+msgid_plural "%d selected lines, shown as the current one is"
+msgstr[0] "已选中 %d 行，按当前行显示"
+
+msgctxt "point"
+msgid "Start"
+msgstr "起点"
+
+msgctxt "point"
+msgid "End"
+msgstr "终点"
+
+msgid "reverse move"
+msgstr "倒放移动"
+
+msgid "Reverse: swap the start and the end, so the selected lines move back the way they came"
+msgstr "倒放：对调起点和终点，选中的行沿原路往回移动"
+
+msgid "%d matches on %d pages; Enter shows the next"
+msgstr "找到 %d 项，分布在 %d 页；按回车看下一页"
+
+msgid "&Restore Page Defaults"
+msgstr "恢复本页默认值(&R)"
+
+msgid "Give every setting of the page shown its default; OK keeps it, Cancel forgets it. On the hotkeys page, restore the default hotkeys."
+msgstr "把当前页的所有设置恢复为默认值；按“确定”生效，按“取消”放弃。在快捷键页则恢复默认快捷键。"
+
+msgid "Restore the default hotkeys? Every hotkey you have set will be lost."
+msgstr "恢复默认快捷键？你设置过的快捷键都会丢失。"
+
+msgid "Changed from the default: click to restore the default"
+msgstr "已改过默认值：点击恢复默认值"
+
+msgid "0 doesn't check"
+msgstr "0 表示不检查"
+
+msgid "?video: next to the video; ?script: next to the subtitles; .: the working folder"
+msgstr "?video：视频所在文件夹；?script：字幕所在文件夹；.：工作文件夹"
+
+msgid "Clicking a line gives the keyboard to the grid, rather than leaving it in the text"
+msgstr "点击字幕行时键盘焦点转到字幕列表，而不是留在文本框"
+
+msgid "Dragging the boundary between two lines that touch moves both"
+msgstr "拖动两行相接处的边界时，两行一起移动"
+
+msgid "Dragging with the left button sets the end; otherwise it sets the start"
+msgstr "按住左键拖动设置结束时间；不勾选时设置开始时间"
+
+msgid "Editing"
+msgstr "编辑"
+
+msgid "Interaction"
+msgstr "操作"
+
+msgid "Keep the playback cursor in view while playing"
+msgstr "播放时让播放光标始终可见"
+
+msgid "Leave tags out of the text column, rather than showing a symbol for each"
+msgstr "文本列中直接省略标签，不再为每个标签显示一个符号"
+
+msgid "Lines showing on the video's current frame get their own background"
+msgstr "在视频当前帧上显示的字幕行用单独的底色标出"
+
+msgid "Playback"
+msgstr "播放"
+
+msgid "Show the parameters of the tag being typed, above the text"
+msgstr "在文本上方显示正在输入的标签的参数"
+
+msgid "Snapping"
+msgstr "吸附"
+
+msgid "Startup"
+msgstr "启动"
+
+msgid "The audio display takes the keyboard when the pointer is over it"
+msgstr "鼠标移到音频栏上时，键盘焦点转到音频栏"
+
+msgid "The video, audio and keyframes a subtitle file names, when it is opened"
+msgstr "打开字幕文件时，一并打开其中记录的视频、音频和关键帧"
+
+msgid "Timing"
+msgstr "时间"
+
+msgid "Toolbar"
+msgstr "工具栏"
+
+msgid "Typing in a time replaces the digits after the cursor, rather than pushing them along"
+msgstr "在时间框中输入时覆盖光标后的数字，而不是把它们往后推"
+
+msgid "Video Display"
+msgstr "视频显示"
+
+msgid "Where the video and the grid were, saved with the file and restored when it is opened again"
+msgstr "把视频和字幕列表的位置保存在文件中，再次打开时恢复"
+
+#: src/dialog_style_manager.cpp
+msgid "Make a new style"
+msgstr "新建一个样式"
+
+msgid "Change the style chosen (or double-click it)"
+msgstr "修改选中的样式（也可以双击它）"
+
+msgid "Make a new style starting from the one chosen"
+msgstr "以选中的样式为基础新建一个样式"
+
+msgid "Delete the styles chosen (Delete)"
+msgstr "删除选中的样式（Delete）"
+
+msgid "No styles stored in this catalog"
+msgstr "这个样式库里还没有样式"
+
+msgid "New catalog: a storage of its own"
+msgstr "新建样式库"
+
+msgid "Delete this catalog and its styles"
+msgstr "删除这个样式库及其中的样式"
+
+msgid "The script has no styles"
+msgstr "脚本里没有样式"
+
+msgid "Copy styles from another subtitle file into this script"
+msgstr "从另一个字幕文件复制样式到本脚本"
+
+msgid "Copy the styles chosen to the current script"
+msgstr "把选中的样式复制到当前脚本"
+
+msgid "Copy the styles chosen to the storage"
+msgstr "把选中的样式复制到样式库"
+
+msgid "Double-click a style to edit it, right-click for more. Ctrl+C and Ctrl+V copy styles as text, between scripts too."
+msgstr "双击样式即可编辑，右键查看更多操作。Ctrl+C 和 Ctrl+V 以文本形式复制粘贴样式，也可在不同脚本之间使用。"
+
+msgid "%d line"
+msgid_plural "%d lines"
+msgstr[0] "%d 行"
+
+msgid "%d style"
+msgid_plural "%d styles"
+msgstr[0] "%d 个样式"
+
+msgid "unused"
+msgstr "未使用"
+
+msgid "in script"
+msgstr "已在脚本中"
+
+msgid "differs from script"
+msgstr "与脚本不同"
+
+msgid "D&uplicate..."
+msgstr "创建副本(&U)..."
+
+msgid "Copy as te&xt\tCtrl+C"
+msgstr "复制为文本(&X)\tCtrl+C"
+
+msgid "&Paste styles\tCtrl+V"
+msgstr "粘贴样式(&P)\tCtrl+V"
+
+#: src/dialog_style_editor.cpp
+msgid "Alignment and margins"
+msgstr "对齐与边距"
+
+msgid "Border"
+msgstr "边框"
+
+msgctxt "border style"
+msgid "Per line"
+msgstr "逐行背景"
+
+msgctxt "border style"
+msgid "Whole"
+msgstr "整体背景"
+
+msgid ""
+"Outline: the text is outlined in the outline colour, with a shadow in the shadow colour.\n"
+"Background per line: each line is set on a solid rectangle in the outline colour, the outline width around the text, with the shadow as the rectangle's shadow; the text has no outline.\n"
+"One background: a single solid rectangle in the shadow colour behind the whole subtitle, the shadow distance around it; the text keeps its outline but has no shadow. Drawn by libass only."
+msgstr ""
+"描边：文字带边框颜色的描边，以及阴影颜色的阴影。\n"
+"逐行背景：每行文字垫一块实心矩形，用边框颜色，“描边”宽度是它超出文字的边距，“阴影”成为它的阴影；文字没有描边。\n"
+"整体背景：整条字幕后面只垫一块实心矩形，用阴影颜色，“阴影”距离是它超出文字的边距；文字保留描边，没有阴影。只有 libass 会这样画。"
+
+#: src/dialog_properties.cpp
+msgctxt "script info"
+msgid "Title"
+msgstr "标题"
+
+msgctxt "script info"
+msgid "Original script"
+msgstr "原始脚本"
+
+msgctxt "script info"
+msgid "Translation"
+msgstr "翻译"
+
+msgctxt "script info"
+msgid "Editing"
+msgstr "校对"
+
+msgctxt "script info"
+msgid "Timing"
+msgstr "时间轴"
+
+msgctxt "script info"
+msgid "Synch point"
+msgstr "同步点"
+
+msgctxt "script info"
+msgid "Updated by"
+msgstr "更新者"
+
+msgctxt "script info"
+msgid "Update details"
+msgstr "更新说明"
+
+msgid "Open a video to take this from it"
+msgstr "打开视频后才能从视频获取"
+
+msgid "Use the video's resolution as the script's"
+msgstr "把视频的分辨率用作脚本分辨率"
+
+msgid "Use the video's resolution as the layout's"
+msgstr "把视频的分辨率用作布局分辨率"
+
+msgid "Use the matrix recommended for the video"
+msgstr "使用视频推荐的 YCbCr 矩阵"
+
+msgctxt "resolution"
+msgid "Width"
+msgstr "宽"
+
+msgctxt "resolution"
+msgid "Height"
+msgstr "高"
+
+msgid "Next Line, Choosing Its Style"
+msgstr "下一行并选样式"
+
+msgid "Move to the next subtitle line and put the keyboard in the style box, where typing a style's first letters chooses it"
+msgstr "转到下一行字幕，并把键盘焦点放到样式框，输入样式名的开头几个字母即可选中"
+
+#: ../src/dialog_selection.cpp
+msgid "Set selection"
+msgstr "设为选中"
+
+#: ../src/dialog_selection.cpp
+msgid "Add to selection"
+msgstr "加入选中"
+
+#: ../src/dialog_selection.cpp
+msgid "Subtract from selection"
+msgstr "从选中中去除"
+
+#: ../src/dialog_selection.cpp
+msgid "Intersect with selection"
+msgstr "与所选之交集"
+
+#: ../src/dialog_selection.cpp
+msgctxt "match mode"
+msgid "E&xact"
+msgstr "精确(&X)"
+
+#: ../src/dialog_selection.cpp
+msgctxt "match mode"
+msgid "&Regular expression"
+msgstr "正则表达式(&R)"
+
+#: ../src/dialog_selection.cpp
+msgctxt "selection action"
+msgid "Re&place"
+msgstr "替换(&P)"
+
+#: ../src/dialog_selection.cpp
+msgctxt "selection action"
+msgid "&Add"
+msgstr "加入(&A)"
+
+#: ../src/dialog_selection.cpp
+msgctxt "selection action"
+msgid "S&ubtract"
+msgstr "去除(&U)"
+
+#: ../src/dialog_selection.cpp
+msgctxt "selection action"
+msgid "Int&ersect"
+msgstr "交集(&E)"
+
+#: ../src/dialog_selection.cpp
+msgctxt "select lines"
+msgid "Lines"
+msgstr "行"
+
+#: ../src/dialog_shift_times.cpp
+msgid "&Time"
+msgstr "时间(&T)"
+
+#: ../src/dialog_shift_times.cpp
+msgid "&Frames"
+msgstr "帧(&F)"
+
+#: ../src/dialog_shift_times.cpp
+msgid "Frames"
+msgstr "帧"
+
+#: ../src/dialog_shift_times.cpp
+msgid "Direction"
+msgstr "方向"
+
+#: ../src/dialog_shift_times.cpp
+msgid "Nothing shifted yet"
+msgstr "还没有平移过"
+
+#: ../src/dialog_shift_times.cpp
+msgid "Click an entry to load its shift"
+msgstr "点击一条记录以载入它的平移"
+
+#: ../src/dialog_timing_processor.cpp
+msgid "No styles"
+msgstr "没有样式"
+
+#: ../src/dialog_timing_processor.cpp
+msgid "Lead"
+msgstr "时长"
+
+#: ../src/dialog_timing_processor.cpp
+msgid "Bias"
+msgstr "偏向"
+
+#: ../src/dialog_timing_processor.cpp
+msgid "% toward the end of the first line"
+msgstr "% 偏向调整前一行的结束时间"
+
+#: ../src/dialog_timing_processor.cpp
+msgid "Keyframe snapping needs keyframes and timecodes"
+msgstr "对齐关键帧需要关键帧和时间码"
+
+#: ../src/dialog_timing_processor.cpp
+msgid "Starts before"
+msgstr "开始前阈"
+
+#: ../src/dialog_timing_processor.cpp
+msgid "Starts after"
+msgstr "开始后阈"
+
+#: ../src/dialog_timing_processor.cpp
+msgid "Ends before"
+msgstr "结束前阈"
+
+#: ../src/dialog_timing_processor.cpp
+msgid "Ends after"
+msgstr "结束后阈"
+
+#: ../src/dialog_resample.cpp
+msgid "Top"
+msgstr "上边距"
+
+#: ../src/dialog_resample.cpp
+msgid "Bottom"
+msgstr "下边距"
+
+#: ../src/dialog_spellchecker.cpp
+msgid "No suggestions"
+msgstr "没有建议"
+
+#: ../src/dialog_autosave.cpp
+msgid "No autosave files"
+msgstr "没有自动保存的文件"
+
+#: ../src/dialog_attachments.cpp
+msgid "No attachments"
+msgstr "没有附件"
+
+#: ../src/dialog_automation.cpp
+msgid "No scripts loaded"
+msgstr "没有已载入的脚本"
+
+#: ../src/dialog_automation.cpp
+msgctxt "automation script"
+msgid "Global"
+msgstr "全局"
+
+#: ../src/dialog_automation.cpp
+msgctxt "automation script"
+msgid "Local"
+msgstr "本地"
+
+#: ../src/command/vis_tool.cpp
+msgid "Scroll Effect"
+msgstr "滚动特效"
+
+#: ../src/command/vis_tool.cpp
+msgid "Set where a line with a Banner or Scroll effect moves, and how fast: drag out an area, drag its edges or the dashed end, double-click to turn it round"
+msgstr "设置横幅或滚动特效的移动范围和速度：拖出区域，拖动上下边或虚线结束位置，双击翻转方向"
+
+#: ../src/visual_tool_scroll.cpp
+msgid "scroll effect"
+msgstr "滚动特效"
+
+#: ../src/visual_tool_scroll.cpp
+msgid "This line's Effect holds something else, which is left as it is"
+msgstr "该行特效栏已有其他内容，保持不变"
+
+#: ../src/visual_tool_scroll.cpp
+msgid "Drag up or down to make the line scroll in that area"
+msgstr "上下拖动，让该行在拖出的区域内滚动"
+
+#: ../src/visual_tool_scroll.cpp
+msgid "%s px/s, %d px by the line's end"
+msgstr "%s 像素/秒，行结束时移动 %d 像素"
+
+#: ../src/subs_edit_box.cpp
+msgid "Banner / Scroll Effect..."
+msgstr "横幅 / 滚动特效…"
+
+#: ../src/dialog_scroll_effect.cpp
+msgctxt "scroll effect"
+msgid "&None"
+msgstr "无(&N)"
+
+#: ../src/dialog_scroll_effect.cpp
+msgid "&Banner"
+msgstr "横幅(&B)"
+
+#: ../src/dialog_scroll_effect.cpp
+msgid "Scroll &up"
+msgstr "向上滚动(&U)"
+
+#: ../src/dialog_scroll_effect.cpp
+msgid "Scroll &down"
+msgstr "向下滚动(&D)"
+
+#: ../src/dialog_scroll_effect.cpp
+msgid "Right to &left"
+msgstr "从右往左(&L)"
+
+#: ../src/dialog_scroll_effect.cpp
+msgid "Left to &right"
+msgstr "从左往右(&R)"
+
+#: ../src/dialog_scroll_effect.cpp
+msgctxt "scroll effect"
+msgid "Top"
+msgstr "上边"
+
+#: ../src/dialog_scroll_effect.cpp
+msgctxt "scroll effect"
+msgid "Bottom"
+msgstr "下边"
+
+#: ../src/dialog_scroll_effect.cpp
+msgid "Delay"
+msgstr "延迟"
+
+#: ../src/dialog_scroll_effect.cpp
+msgid "Milliseconds the text takes to move one pixel of the script's resolution"
+msgstr "文字移动一个脚本像素所用的毫秒数"
+
+#: ../src/dialog_scroll_effect.cpp
+msgid "&Fade at the edges (VSFilter only)"
+msgstr "边缘淡出（仅 VSFilter）(&F)"
+
+#: ../src/dialog_scroll_effect.cpp
+msgctxt "scroll effect"
+msgid "Fade"
+msgstr "淡出"
+
+#: ../src/dialog_scroll_effect.cpp
+msgid "The Effect field holds something else, which this replaces"
+msgstr "特效栏已有其他内容，确定后会被替换"
+
+#: ../src/dialog_scroll_effect.cpp
+msgid "Area"
+msgstr "区域"
+
+#: ../src/dialog_scroll_effect.cpp
+msgid "Speed"
+msgstr "速度"
+
+#: ../src/command/keyframe.cpp
+msgid "&Detect Scene Changes..."
+msgstr "检测画面切换(&D)..."
+
+#: ../src/command/keyframe.cpp ../src/dialog_timing_processor.cpp
+msgid "Detect Scene Changes"
+msgstr "检测画面切换"
+
+#: ../src/command/keyframe.cpp ../src/dialog_timing_processor.cpp
+msgid "Find the frames where the picture cuts to another shot and use them as the keyframes, to snap the lines' times to"
+msgstr "找出画面切到另一个镜头的帧，用作关键帧，供字幕时间吸附"
+
+#: ../src/command/keyframe.cpp
+msgid "Reading every frame of the video..."
+msgstr "正在逐帧读取视频..."
+
+#: ../src/command/keyframe.cpp
+#, c-format
+msgid "Found %d scene change"
+msgid_plural "Found %d scene changes"
+msgstr[0] "找到 %d 处画面切换"
+
+#: ../src/command/time.cpp
+msgid "Snap to &Nearby Scene Changes"
+msgstr "吸附到附近的画面切换(&N)"
+
+#: ../src/command/time.cpp
+msgid "Snap to Nearby Scene Changes"
+msgstr "吸附到附近的画面切换"
+
+#: ../src/command/time.cpp
+msgid "snap to scene changes"
+msgstr "吸附到画面切换"
+
+#: ../src/dialog_timing_processor.cpp
+msgid "&Detect Scene Changes"
+msgstr "检测画面切换(&D)"
+
+#: ../src/dialog_timing_processor.cpp
+msgid "The video's own keyframes are not always scene changes"
+msgstr "视频自带的关键帧不一定是画面切换"
+
+#: ../src/preferences.cpp
+msgid "Low: only clear cuts"
+msgstr "低：只认明显的切换"
+
+#: ../src/preferences.cpp
+msgctxt "scene detection"
+msgid "Medium"
+msgstr "中"
+
+#: ../src/preferences.cpp
+msgid "High: also cuts between similar shots"
+msgstr "高：相似镜头之间的切换也认"
+
+#: ../src/preferences.cpp
+msgid "Scene change detection"
+msgstr "画面切换检测"
+
+#: ../src/preferences.cpp
+msgid "How readily Detect Scene Changes takes a change of picture for a cut. Higher finds more cuts, and more that are not."
+msgstr "“检测画面切换”把画面变化当作切换的灵敏度。越高找到的切换越多，误判也越多。"
+
+#: ../src/preferences.cpp
+msgid "Snap to scene changes within (ms)"
+msgstr "吸附画面切换的最大距离 (毫秒)"
+
+#: ../src/preferences.cpp
+msgid "How far Snap to Nearby Scene Changes moves a line's start or end, before or after it, to land on a scene change"
+msgstr "“吸附到附近的画面切换”最多把行的开始或结束往前、往后移动多远，去对齐画面切换"
+
+#: ../src/command/time.cpp
+msgid "Move the selected lines' starts and ends onto the keyframes near them, as far as the distance set in Preferences > Timing"
+msgstr "把选中行的开始和结束时间移到附近的关键帧上，最大距离在“首选项 → 时间”里设置"
+
+#: ../src/command/time.cpp
+#, c-format
+msgid "No scene change within %d ms of the selected lines' starts or ends: the distance is set in Preferences > Timing"
+msgstr "选中行的开始和结束 %d 毫秒内都没有画面切换。最大距离可在“首选项 → 时间”里调整"
+
+#: ../src/command/time.cpp
+#, c-format
+msgid "Snapped %d starts and %d ends to scene changes"
+msgstr "已把 %d 处开始、%d 处结束对齐到画面切换"
+
+#: ../src/animation_page.cpp
+msgid "set scroll effect"
+msgstr "设置滚动特效"
+
+msgid "Scroll"
+msgstr "滚动"
+
+msgid "Banner"
+msgstr "横幅"
+
+msgid "Effect field"
+msgstr "特效栏"
+
+msgid "Changes here go to the selected lines with an effect of this kind, as the video's scroll tool's do"
+msgstr "这里的修改作用于选中行里同类特效的行，和视频上的滚动工具一样"
+
+msgid "Drag the area and the speed on the video, with the scroll tool"
+msgstr "用滚动工具在视频上拖动区域和速度"
+
+msgid "A banner crosses the screen; a scroll goes up or down through an area"
+msgstr "横幅横穿画面；滚动在区域内向上或向下移动"
+
+msgid "The area's top edge, in the script's pixels: the text shows only below it"
+msgstr "区域的上边，脚本像素：文字只在它下面显示"
+
+msgid "The area's bottom edge, in the script's pixels: the text shows only above it"
+msgstr "区域的下边，脚本像素：文字只在它上面显示"
+
+msgid "Right to left"
+msgstr "从右往左"
+
+msgid "Left to right"
+msgstr "从左往右"
+
+msgid "Milliseconds the text takes to move one pixel of the script's resolution: more is slower"
+msgstr "文字移动一个脚本像素所用的毫秒数：越大越慢"
+
+msgid "Through the area"
+msgstr "走完区域"
+
+msgid "Across the screen"
+msgstr "横穿画面"
+
+msgid "The speed that takes each selected line's text through the area by its end"
+msgstr "设成每个选中行结束时文字刚好走完区域的速度"
+
+msgid "The speed that takes each selected line's text across the screen by its end"
+msgstr "设成每个选中行结束时文字刚好横穿画面的速度"
+
+msgid "How far in from the edges the text fades, in the script's pixels; VSFilter only"
+msgstr "文字在离边缘多远的范围内淡出，脚本像素；仅 VSFilter"
+
+msgid "No fade"
+msgstr "去掉淡出"
+
+msgid "Take the fade at the edges away"
+msgstr "去掉边缘淡出"
+
+msgid "Fade at the edges (VSFilter only)"
+msgstr "边缘淡出（仅 VSFilter）"
+
+msgid "Fade the text in and out near the edges; libass and so most players ignore it"
+msgstr "文字在边缘附近淡入淡出；libass 以及大多数播放器不支持"
+
+msgid "Its \\pos or \\move sets only where it is across"
+msgstr "\\pos 或 \\move 只决定横向位置"
+
+msgid "Its \\pos or \\move sets only how high it is"
+msgstr "\\pos 或 \\move 只决定纵向位置"
+
+msgid "With a scroll, libass takes only the across position from \\pos or \\move: the scroll sets the height"
+msgstr "滚动时，libass 只从 \\pos 或 \\move 取横向位置，纵向由滚动决定"
+
+msgid "With a banner, libass takes only the height from \\pos or \\move: the banner sets where it is across"
+msgstr "横幅时，libass 只从 \\pos 或 \\move 取纵向位置，横向由横幅决定"
+
+msgid "add scroll effect"
+msgstr "添加滚动特效"
+
+msgid "Scroll or banner (the Effect field holds something else)"
+msgstr "滚动 / 横幅（特效栏已有其他内容）"
+
+msgid "Scroll or banner (Effect field)"
+msgstr "滚动 / 横幅（特效栏）"
+
+msgctxt "scroll effect"
+msgid "Banner"
+msgstr "横幅"
+
+msgctxt "scroll effect"
+msgid "Up"
+msgstr "向上"
+
+msgctxt "scroll effect"
+msgid "Down"
+msgstr "向下"
+
+msgid "Changes the %d selected line that scrolls"
+msgid_plural "Changes the %d selected lines that scroll"
+msgstr[0] "只改选中行里滚动的 %d 行"
+
+msgid "Changes the %d selected line with a banner"
+msgid_plural "Changes the %d selected lines with a banner"
+msgstr[0] "只改选中行里横幅的 %d 行"
+
+#: ../src/flat_controls.cpp
+msgctxt "button"
+msgid "&OK"
+msgstr "确定"
+
+msgctxt "button"
+msgid "&Apply"
+msgstr "应用(&A)"
+
+msgctxt "button"
+msgid "&Cancel"
+msgstr "取消"
+
+msgctxt "button"
+msgid "&Close"
+msgstr "关闭(&C)"
+
+msgctxt "button"
+msgid "&Yes"
+msgstr "是(&Y)"
+
+msgctxt "button"
+msgid "&No"
+msgstr "否(&N)"
+
+msgctxt "button"
+msgid "&Help"
+msgstr "帮助(&H)"
+
+msgctxt "button"
+msgid "&Save"
+msgstr "保存(&S)"
+
+msgctxt "button"
+msgid "&Open"
+msgstr "打开(&O)"
+
+msgctxt "button"
+msgid "&Delete"
+msgstr "删除(&D)"
+
+msgctxt "button"
+msgid "&Add"
+msgstr "添加(&A)"
+
+msgctxt "button"
+msgid "&Remove"
+msgstr "移除(&R)"
+
+msgctxt "button"
+msgid "&Edit"
+msgstr "编辑(&E)"
+
+msgctxt "button"
+msgid "&New"
+msgstr "新建(&N)"
+
+msgctxt "button"
+msgid "&Clear"
+msgstr "清除(&C)"
+
+msgctxt "button"
+msgid "&Reset"
+msgstr "重置(&R)"
+
+msgctxt "button"
+msgid "&Find"
+msgstr "查找(&F)"
+
+msgctxt "button"
+msgid "Rep&lace"
+msgstr "替换(&L)"
+
+msgctxt "button"
+msgid "&Copy"
+msgstr "复制(&C)"
+
+msgctxt "button"
+msgid "&Paste"
+msgstr "粘贴(&P)"
+
+msgctxt "button"
+msgid "&Undo"
+msgstr "撤销(&U)"
+
+msgctxt "button"
+msgid "&Redo"
+msgstr "重做(&R)"
+
+msgctxt "button"
+msgid "&Stop"
+msgstr "停止(&S)"
+
+msgctxt "button"
+msgid "&Abort"
+msgstr "中止(&A)"
+
+msgctxt "button"
+msgid "&Retry"
+msgstr "重试(&R)"
+
+msgctxt "button"
+msgid "&Ignore"
+msgstr "忽略(&I)"
+
+msgctxt "button"
+msgid "&Up"
+msgstr "上移(&U)"
+
+msgctxt "button"
+msgid "&Down"
+msgstr "下移(&D)"
+
+msgctxt "button"
+msgid "&Back"
+msgstr "后退(&B)"
+
+msgctxt "button"
+msgid "&Forward"
+msgstr "前进(&F)"
+
+msgctxt "button"
+msgid "&Preferences"
+msgstr "首选项(&P)"
+
+msgctxt "button"
+msgid "&Properties"
+msgstr "属性(&P)"
+
+msgctxt "button"
+msgid "Select &All"
+msgstr "全选(&A)"
+
+msgctxt "button"
+msgid "&Refresh"
+msgstr "刷新(&R)"
+
+
+#: ../src/command/tool.cpp
+msgid "Time &Hardsubs with MagiaTimeline..."
+msgstr "用 MagiaTimeline 给硬字幕打轴(&H)..."
+
+#: ../src/command/tool.cpp
+msgid "Time Hardsubs with MagiaTimeline"
+msgstr "用 MagiaTimeline 给硬字幕打轴"
+
+#: ../src/command/tool.cpp
+msgid "Run MagiaTimeline on the video to find when the subtitles burnt into it show, and add an empty line for each, to be filled in"
+msgstr "用 MagiaTimeline 找出视频里硬字幕出现的时间段，为每一段添加一行空字幕，留待填写"
+
+#: ../src/command/tool.cpp
+msgid "Choose the folder MagiaTimeline is installed in"
+msgstr "选择 MagiaTimeline 的安装文件夹"
+
+#: ../src/command/tool.cpp
+msgid "There is no MagiaTimeline in that folder: it should hold MagiaTimeline.py (set up with its install script) or MagiaTimeline.exe."
+msgstr "这个文件夹里没有 MagiaTimeline：里面应该有 MagiaTimeline.py（并已用它的安装脚本装好环境），或者 MagiaTimeline.exe。"
+
+#: ../src/command/tool.cpp
+#, c-format
+msgid "MagiaTimeline's config.yml could not be read in %s."
+msgstr "无法读取 %s 里 MagiaTimeline 的 config.yml。"
+
+#: ../src/command/tool.cpp
+msgid "MagiaTimeline's config.yml has no source and destination to fill in."
+msgstr "MagiaTimeline 的 config.yml 里没有可以填写的 source 和 destination。"
+
+#: ../src/command/tool.cpp
+msgid "MagiaTimeline did not finish. The last of what it said:"
+msgstr "MagiaTimeline 没有运行完。它最后输出的内容："
+
+#: ../src/command/tool.cpp
+msgid "MagiaTimeline found no subtitles in the video."
+msgstr "MagiaTimeline 在视频里没有找到字幕。"
+
+#: ../src/command/tool.cpp ../src/preferences.cpp
+msgid "MagiaTimeline"
+msgstr "MagiaTimeline"
+
+#: ../src/command/tool.cpp
+#, c-format
+msgid "Added %d line timed by MagiaTimeline"
+msgid_plural "Added %d lines timed by MagiaTimeline"
+msgstr[0] "已添加 %d 行由 MagiaTimeline 打轴的字幕"
+
+#: ../src/magia_timeline.cpp
+msgid "Starting MagiaTimeline..."
+msgstr "正在启动 MagiaTimeline..."
+
+#: ../src/preferences.cpp
+msgid "Installed in"
+msgstr "安装位置"
+
+#: ../src/preferences.cpp
+msgid "Strategy (empty: as its config.yml says)"
+msgstr "策略（留空则按它的 config.yml）"
+
+msgctxt "page"
+msgid "Timing"
+msgstr "时间"
+
+msgid "Style: what the text looks like. Animation: make it move and change over time, as \\move does. Timing: when it shows and goes"
+msgstr "样式：文字的样子。动画：让文字移动、随时间变化，如 \\move。时间：什么时候出现、什么时候消失"
+
+msgid "%d characters per second"
+msgstr "每秒 %d 字"
+
+msgid "Too short to count characters per second"
+msgstr "太短，不计算阅读速度"
+
+msgid "Characters per second, counted as the subtitle grid's CPS column does, with its thresholds (Preferences > Interface > Character Counter)"
+msgstr "阅读速度（每秒字数），算法和阈值与字幕表格的 CPS 列相同（首选项 > 界面 > 字数统计）"
+
+msgid "No line before it"
+msgstr "没有上一行"
+
+msgid "No line after it"
+msgstr "没有下一行"
+
+msgid "Starts as the line before ends"
+msgstr "与上一行首尾相接"
+
+msgid "Ends as the line after starts"
+msgstr "与下一行首尾相接"
+
+msgid "%d ms after the line before"
+msgstr "距上一行 %d ms"
+
+msgid "%d ms before the line after"
+msgstr "距下一行 %d ms"
+
+msgid "Overlaps the line before by %d ms"
+msgstr "与上一行重叠 %d ms"
+
+msgid "Overlaps the line after by %d ms"
+msgstr "与下一行重叠 %d ms"
+
+msgctxt "time"
+msgid "Start"
+msgstr "开始"
+
+msgctxt "time"
+msgid "End"
+msgstr "结束"
+
+msgid "A time of the video, h:mm:ss.cc: drag sideways or click and type. Snapped to the video's frames unless Shift is held. Each selected line moves as much as the current one"
+msgstr "视频中的时间，h:mm:ss.cc：左右拖动，或点开后输入。吸附到视频的帧，按住 Shift 不吸附。选中的每一行都和当前行移动同样的量"
+
+msgid "Start at the video's current frame"
+msgstr "开始设为视频当前帧"
+
+msgid "End at the video's current frame"
+msgstr "结束设为视频当前帧"
+
+msgid "A frame earlier"
+msgstr "提前一帧"
+
+msgid "A frame later"
+msgstr "推后一帧"
+
+msgid "How long the line shows: the end moves. Each selected line gets the same length, ending on a frame unless Shift is held"
+msgstr "这一行显示多久：改的是结束时间。选中的每一行都设为同样的时长，结束吸附到帧，按住 Shift 不吸附"
+
+msgid "set start"
+msgstr "设置开始时间"
+
+msgid "set end"
+msgstr "设置结束时间"
+
+msgid "set duration"
+msgstr "设置时长"
+
+msgid "move start by a frame"
+msgstr "开始时间移动一帧"
+
+msgid "move end by a frame"
+msgstr "结束时间移动一帧"
+
+msgid "Scene changes"
+msgstr "画面切换"
+
+msgid "Start: none within %d ms"
+msgstr "开始：%d ms 内没有"
+
+msgid "End: none within %d ms"
+msgstr "结束：%d ms 内没有"
+
+msgid "Start on a scene change"
+msgstr "开始在切换点上"
+
+msgid "End on a scene change"
+msgstr "结束在切换点上"
+
+msgid "Start %d frame early"
+msgid_plural "Start %d frames early"
+msgstr[0] "开始早 %d 帧"
+
+msgid "Start %d frame late"
+msgid_plural "Start %d frames late"
+msgstr[0] "开始晚 %d 帧"
+
+msgid "End %d frame early"
+msgid_plural "End %d frames early"
+msgstr[0] "结束早 %d 帧"
+
+msgid "End %d frame late"
+msgid_plural "End %d frames late"
+msgstr[0] "结束晚 %d 帧"
+
+msgid "Snap"
+msgstr "吸附"
+
+msgid "Snap both"
+msgstr "两端都吸附"
+
+msgid "Move the selected lines' starts onto the nearest scene change, if it is within the distance"
+msgstr "把选中行的开始时间吸附到最近的画面切换（在距离之内时）"
+
+msgid "Move the selected lines' ends to the frame before the nearest scene change, if it is within the distance"
+msgstr "把选中行的结束时间吸附到最近的画面切换的前一帧（在距离之内时）"
+
+msgid "How far a start or end may move to a scene change, here and for Snap to Nearby Scene Changes (Preferences > Timing)"
+msgstr "开始或结束最多移动多远去对齐画面切换，这里和“吸附到附近的画面切换”共用（首选项 > 时间）"
+
+msgid "No scene changes are known for this video"
+msgstr "没有这个视频的画面切换"
+
+msgctxt "lead"
+msgid "In"
+msgstr "前留"
+
+msgctxt "lead"
+msgid "Out"
+msgstr "后留"
+
+msgid "How much earlier the selected lines start, as the timing post-processor adds it"
+msgstr "选中行的开始往前留多少，与时间后处理器共用"
+
+msgid "How much later the selected lines end, as the timing post-processor adds it"
+msgstr "选中行的结束往后留多少，与时间后处理器共用"
+
+msgid "+ Lead-in"
+msgstr "+ 前留"
+
+msgid "+ Lead-out"
+msgstr "+ 后留"
+
+msgid "+ Both"
+msgstr "+ 两头"
+
+msgid "Not over a line it did not already overlap: it stops at the line's edge, as the timing post-processor does"
+msgstr "不越过原本不重叠的相邻行，碰到就停在那一行的边上，与时间后处理器相同"
+
+msgid "add lead in"
+msgstr "加前留"
+
+msgid "add lead out"
+msgstr "加后留"
+
+msgid "add lead in and out"
+msgstr "加前后余量"
+
+msgid "Show the style panel: click a page's name to open it on that page"
+msgstr "显示样式面板：点页名直接打开那一页"
+
+msgid "Join adjacent lines"
+msgstr "连接相邻行"
+
+msgid "Gap"
+msgstr "间隔"
+
+msgid "Overlap"
+msgstr "重叠"
+
+msgid "Lines this far apart or closer are joined; the timing post-processor uses the same"
+msgstr "间隔不超过这么多的两行会连上，与时间后处理器共用"
+
+msgid "Lines overlapping by this much or less are joined; the timing post-processor uses the same"
+msgstr "重叠不超过这么多的两行会连上，与时间后处理器共用"
+
+msgid "Where two lines meet: 0% at the first one's end, 100% at the second one's start"
+msgstr "两行接在哪里：0% 在前一行的结束处，100% 在后一行的开始处"
+
+msgid "Join"
+msgstr "连接"
+
+msgid "Join each selected line to the selected one before it, where they are close enough, in one step"
+msgstr "把选中的行里离得够近的前后两行接在一起，一步撤销"
+
+msgid "Select two or more lines to join them"
+msgstr "选中两行以上才能连接"
+
+msgid "%d place to join among the selected lines"
+msgid_plural "%d places to join among the selected lines"
+msgstr[0] "选中的行里有 %d 处可以连接"
+
+msgid "None of the selected lines is close enough to the next to join"
+msgstr "选中的行之间都离得太远，没有可以连接的"
+
+msgid "join adjacent lines"
+msgstr "连接相邻行"
+
+msgid "Shift"
+msgstr "平移"
+
+msgctxt "shift"
+msgid "Time"
+msgstr "时间"
+
+msgctxt "shift"
+msgid "Frames"
+msgstr "帧"
+
+msgctxt "shift"
+msgid "frames"
+msgstr "帧"
+
+msgctxt "shift"
+msgid "By"
+msgstr "偏移"
+
+msgid "Shift by milliseconds or by frames, as Shift Times does"
+msgstr "按毫秒或按帧平移，与“平移时间”相同"
+
+msgid "Shifting by frames needs a video or timecodes"
+msgstr "按帧平移需要先打开视频或时间码"
+
+msgid "How far the selected lines move; Shift Times keeps the same amount"
+msgstr "选中的行移动多少，与“平移时间”共用"
+
+msgid "Earlier"
+msgstr "提前"
+
+msgid "Later"
+msgstr "推后"
+
+msgid "Move the selected lines earlier, start and end, in one step"
+msgstr "把选中的行整体提前（开始和结束一起），一步撤销"
+
+msgid "Move the selected lines later, start and end, in one step"
+msgstr "把选中的行整体推后（开始和结束一起），一步撤销"

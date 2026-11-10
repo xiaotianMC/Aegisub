@@ -48,7 +48,7 @@
 class VideoController;
 class VideoOutGL;
 class VisualToolBase;
-class wxComboBox;
+class VideoZoomControl;
 class wxTextCtrl;
 class wxToolBar;
 struct FrameReadyEvent;
@@ -111,6 +111,9 @@ class VideoDisplay final : public wxGLCanvas {
 	/// @see viewportSize
 	double pan_x = 0;
 	double pan_y = 0;
+	wxMouseButton pan_button = wxMOUSE_BTN_NONE;
+	/// The sidebar pan button is active; left-dragging the preview moves the view
+	bool pan_mode = false;
 
 	/// The video renderer
 	std::unique_ptr<VideoOutGL> videoOut;
@@ -126,7 +129,7 @@ class VideoDisplay final : public wxGLCanvas {
 	std::unique_ptr<wxGLContext> glContext;
 
 	/// The dropdown box for selecting window zoom levels
-	wxComboBox *zoomBox;
+	VideoZoomControl *zoomBox;
 
 	/// Whether the display can be freely resized by the user
 	bool freeSize;
@@ -166,10 +169,6 @@ class VideoDisplay final : public wxGLCanvas {
 	///
 	/// @param preserveContentSize Should content zoom be adjusted to maintain current content size?
 	void PositionVideo(bool preserveContentSize = false);
-	/// Set the window zoom level to that indicated by the dropdown
-	void SetWindowZoomFromBox(wxCommandEvent&);
-	/// Set the window zoom level to that indicated by the text
-	void SetWindowZoomFromBoxText(wxCommandEvent&);
 
 	/// @brief Key event handler
 	void OnKeyDown(wxKeyEvent &event);
@@ -185,7 +184,8 @@ class VideoDisplay final : public wxGLCanvas {
 	/// @brief Pan the video by delta
 	/// @param delta Delta in logical pixels
 	void Pan(Vector2D delta);
-
+	void UpdateVideoCursor();
+	void StopPanning();
 	/// @brief Transforms a client position into a zoom anchor point
 	///
 	/// The anchor point is a position in the video frame that should always be anchored to the center
@@ -216,7 +216,7 @@ public:
 	VideoDisplay(
 		wxToolBar *visualSubToolBar,
 		bool isDetached,
-		wxComboBox *zoomBox,
+		VideoZoomControl *zoomBox,
 		wxWindow* parent,
 		agi::Context *context);
 	~VideoDisplay();
@@ -233,6 +233,14 @@ public:
 	/// @brief Reset content zoom and pan
 	void ResetContentZoom();
 	bool IsContentZoomActive() { return contentZoomValue != 1 || pan_x != 0 || pan_y != 0; }
+
+	/// @brief Turn the sidebar pan mode on or off
+	///
+	/// Turning it off stops any drag in progress and restores the original
+	/// fitted size of the preview.
+	void SetPanMode(bool enabled);
+	bool IsPanMode() const { return pan_mode; }
+	void TogglePanMode();
 
 	/// Get the last seen position of the mouse in script coordinates
 	Vector2D GetMousePosition() const;

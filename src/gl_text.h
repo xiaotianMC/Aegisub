@@ -77,6 +77,8 @@ public:
 	/// @param bold    Should the font be bold?
 	/// @param italics Should the font be italic?
 	void SetFont(std::string const& face, int size, bool bold, bool italics);
+	/// Use @p new_font, such as the system's interface font
+	void SetFont(wxFont const& new_font);
 	/// @brief Set the text color
 	/// @param col   Color
 	void SetColour(agi::Color col);
@@ -84,7 +86,11 @@ public:
 	/// @param text String to print
 	/// @param x    x coordinate
 	/// @param y    y coordinate
-	void Print(const std::string &text,int x,int y);
+	/// Draw @p text at @p x, @p y, with a black outline unless @p outline is false
+	void Print(const std::string &text, int x, int y, bool outline = true);
+	/// The characters of UTF-8 @p text, each drawn as one glyph; a byte
+	/// that isn't UTF-8 stands for itself, as in Latin-1
+	static std::vector<int> CodePoints(std::string const& text);
 	/// @brief Get the extents of a string printed with the current font in pixels
 	/// @param text String to get extends of
 	/// @param[out] w    Width

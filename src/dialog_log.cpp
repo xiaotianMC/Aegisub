@@ -28,7 +28,10 @@
 // Aegisub Project http://www.aegisub.org/
 
 #include "compat.h"
+#include "utils.h"
 #include "dialog_manager.h"
+#include "flat_dialog.h"
+#include "theme.h"
 #include "format.h"
 #include "include/aegisub/context.h"
 
@@ -36,10 +39,8 @@
 #include <libaegisub/log.h>
 
 #include <ctime>
-#include <wx/button.h>
 #include <wx/dialog.h>
 #include <wx/sizer.h>
-#include <wx/stattext.h>
 #include <wx/textctrl.h>
 
 namespace {
@@ -99,12 +100,15 @@ public:
 LogWindow::LogWindow(agi::Context *c)
 : wxDialog(c->parent, -1, _("Log window"), wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX | wxRESIZE_BORDER)
 {
-	wxTextCtrl *text_ctrl = new wxTextCtrl(this, -1, "", wxDefaultPosition, wxSize(700,300), wxTE_MULTILINE|wxTE_READONLY);
+	wxTextCtrl *text_ctrl = new wxTextCtrl(this, -1, "", wxDefaultPosition, DipSize(700,300), wxTE_MULTILINE|wxTE_READONLY);
 	text_ctrl->SetDefaultStyle(wxTextAttr(wxNullColour, wxNullColour, wxFont(8, wxFONTFAMILY_MODERN, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_NORMAL)));
 
+	theme::UseSurface(this);
+	int gap = FromDIP(10);
+
 	wxSizer *sizer = new wxBoxSizer(wxVERTICAL);
-	sizer->Add(text_ctrl, wxSizerFlags(1).Expand().Border());
-	sizer->Add(new wxButton(this, wxID_OK), wxSizerFlags(0).Border().Right());
+	sizer->Add(text_ctrl, wxSizerFlags(1).Expand().Border(wxLEFT | wxRIGHT | wxTOP, gap));
+	sizer->Add(new flat::DialogButtons(this, wxOK), wxSizerFlags().Expand().Border(wxALL, gap));
 	SetSizerAndFit(sizer);
 
 	agi::log::log->Subscribe(std::unique_ptr<agi::log::Emitter>(emit_log = new EmitLog(text_ctrl)));

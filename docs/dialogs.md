@@ -1,0 +1,105 @@
+# 对话框
+
+弹窗统一改成和主窗口一样的自绘控件。已完成的对话框在各自的小节里说明；公共部分如下。
+
+## 公共控件
+
+- **底部按钮** `flat::DialogButtons`（`src/flat_dialog.{h,cpp}`）：代替 `CreateStdDialogButtonSizer`。
+  - 按钮是 `FlatButton`，带标准 id（`wxID_OK`、`wxID_CANCEL`、`wxID_APPLY`、`wxID_HELP`、`wxID_CLOSE`、`wxID_YES`、`wxID_NO`）和标签，所以对话框自己的处理和 wxDialog 的默认处理（确定接受并关闭、应用写入、取消关闭）照常工作。
+  - 标签用本程序自己的翻译（`flat::StockLabel`，上下文 `button`），不用 wxWidgets 的 `wxstd.mo`：Windows 版没有带这个文件时，“OK”“Apply”会显示英文。中文按 Windows 对话框的习惯写：确定、取消、应用(&A)、帮助(&H)；括号里的字母不显示，Alt + 字母照样按按钮。Lua 脚本对话框里没写文字的标准按钮也用它。
+  - 帮助和其他附加按钮（`AddLeft`）在左边；标准按钮在右边，顺序按系统：GTK 和 macOS 是“应用、取消、确定”，确定在最右；Windows 是“确定、取消、应用”。`AddRight` 加在标准按钮之前。
+  - 对话框为之而来的按钮（确定、是；只有关闭时是关闭）用强调色填充，文字白色；聚焦时填充内加一圈浅色环。
+  - 只有关闭时，关闭是确认 id，和 `CreateStdDialogButtonSizer` 一样。
+- **按键**（`flat::UseFlatButtonKeys`，`DialogButtons` 自动装上；自己排按钮的对话框单独调用）：系统按钮的按键行为不变。
+  - Esc 和标题栏的关闭按钮：按取消（或对话框 escape id 对应的按钮；escape id 是 `wxID_ANY` 时依次找取消、关闭、确认按钮）。按钮不可用时不按。
+  - 回车：焦点在单行输入框（没有 `wxTE_PROCESS_ENTER`）、勾选框、或面板本身时，按确认按钮；多行文本、自己处理回车的输入框、列表、按钮、下拉框里的回车归它们自己。
+  - Alt + 按钮标签里带下划线的字母：按该按钮。
+  - 不是对话框的页面（比较页）没有这套按键，自己在按键处理里调用 `flat::PressMnemonic`，Alt + 字母照样按按钮、勾勾选框、选开关的段。
+- **数字框** `flat::NumberField`：名称写在框内的 `FlatFrame`，代替 `wxSpinCtrl`。可以输入（超出范围不采用，离开或回车时显示实际采用的值）、滚轮一步步改、按住名称左右拖动连续调整；`precision` 是保留的小数位。`SetValue` 不触发 `on_change`。样式编辑器的数字框就是它。
+- **列表** `FlatList`（`src/flat_list.{h,cpp}`）：代替 `wxListBox` / `wxCheckListBox`。
+  - 圆角的输入框底色上一行行文字；任何一行有副文字时每行两行高，副文字灰色在下；右侧可以有灰色备注。
+  - 选择和 `wxListBox` 一样：单击、Ctrl / Shift 加单击、方向键、Home/End、翻页，多选时 Ctrl+A；发 `wxEVT_LISTBOX`、双击或回车发 `wxEVT_LISTBOX_DCLICK`。
+  - 可勾选的每行前有勾选框（和样式面板同一种画法），点框或按空格勾选（空格对所有选中行），发 `wxEVT_CHECKLISTBOX`；点框不改变选择。
+  - 设置类方法（`SetSelection`、`Check` 等）都不发事件。
+  - 行的 `warn` 为真时，右侧备注画成警告徽章（错误色的圆角底，和 `FlatBadge` 的警告一样）。
+  - 有副文字的行，鼠标停在上面时提示里是这一行的全文（文字和副文字），副文字太长被截断时可以看全；离开后恢复列表自己的提示。
+- **分段开关** `FlatSwitch`（`src/flat_controls.{h,cpp}`）：代替单选按钮和 `wxRadioBox`。一排等宽的段，选中的一段用强调色填充；方向键逐段移动，点击不抢焦点；单段可以停用（变暗、点不动）、带提示；Alt + 段标签的下划线字母选中它。`Choose` 像用户那样选（调 `on_choose`），`SetSelection` 不调。
+- 勾选框 `FlatCheck` 的标签和按钮一样可以带 `&`，Alt + 该字母勾选；标签里的 `&` 画的时候去掉（中文的“延后(&W)”画成“延后(W)”）。
+- 文字小工具（`flat_controls.h`）：`flat::DimLabel` 是灰色标签，换主题时跟着变色；`flat::WithoutColon` 去掉翻译后标签末尾的冒号（半角或全角）和空格，用于把旧的“名称：”标签放进框内；`flat::OneLine` 把多行说明合成一行，作为列表的副文字。
+- 底部按钮的最小尺寸用 `FlatButton::SetLeastSize`，标签变长（如改名）时按钮跟着变宽。
+- 其余沿用已有的：`FlatFrame`（框内带名称的输入框；名称为空时不画）、`FlatChoice`、`FlatButton`、`flat::SectionTitle`。
+
+## 规则
+
+- 不用静态框；分组用 `SectionTitle`（粗体标题加细线），组少时不加标题。
+- 输入框的名称写在框内；四周 8–10 DIP，行距 4 DIP。
+- 对话框底色用 `theme::UseSurface`。
+- 一行一组选项时，灰色的名称在左、控件在右（两列的 `wxFlexGridSizer`），代替静态框。
+
+## 已改的对话框
+
+- **平移时间**（`dialog_shift_times.cpp`）：时间或帧数用分段开关选，下面只显示对应的一个框（时间框或数字框）；方向、影响范围、时间字段各一个开关。没有视频帧率时“帧”停用，没有选中行时“选中行”“选中行及之后”停用。右侧历史是 `FlatList`，单击一条载入它的平移，“清除”清空；确定后列表立刻加上这一次。
+- **查找 / 替换**（`dialog_search_replace.{h,cpp}`）：查找和替换各是一个 `FlatFrame`，右端的箭头弹出最近用过的内容；四个勾选框两列；字段和范围是分段开关。右侧一列按钮，“查找下一个”是强调色（在查找框里回车也是它），最下是“关闭”（Esc）。
+- **跳转**（`dialog_jumpto.cpp`）：帧和时间两个框并排，名称在框内，改一个另一个跟着变；底部确定 / 取消。
+- **选择行**（`dialog_selection.cpp`）：匹配 / 不匹配、模式、字段、动作都是分段开关（动作的段写短，完整说法在提示里），对话行和注释行两个勾选框至少留一个；底部帮助、应用、取消、确定。
+- **覆盖粘贴**（`dialog_paste_over.cpp`）：十一个字段是三列勾选框，按行里的位置排（注释、层、开始、结束 / 样式、说话人、特效、文本 / 三个边距）；下面一排快捷按钮：全部、无、时间、文本。
+- **翻译助手**（`dialog_translation.{h,cpp}`）：原文、译文、按键各用小节标题分开，当前行号灰色写在原文标题右侧；按键四列（名称灰色）；“播放音频”“播放视频”放在底部取消按钮之前。
+- **时间后处理**（`dialog_timing_processor.cpp`）：左边是可勾选的样式列表和全部 / 无；右边按小节排：只处理选中行、提前 / 延后、相邻行连续、对齐关键帧。每个毫秒数是数字框，后面灰色的 ms，勾上对应的框才可用；相邻行的偏向原来是滑块，现在是 0–100 的数字框（越大越偏向调整前一行的结束时间）。没有关键帧和时间码时关键帧的勾选框停用并说明原因。一个样式都没勾或一项处理都没开时确定不可用。
+- **重采样分辨率**（`dialog_resample.cpp`）：源和目标各一行“宽 × 高”数字框加“从字幕 / 从视频”按钮，下一行是 YCbCr 矩阵下拉框（第一项“—”表示不转换颜色）。宽高比处理是分段开关，宽高比不变时停用；边距是四个数字框围着“对称”勾选框，对称时右和下跟着左和上。
+- **拼写检查**（`dialog_spellchecker.cpp`）：拼错的词和替换为是两个带名称的框，建议是 `FlatList`（单击填入替换框，双击直接替换），下面是词典语言下拉框；右侧两个勾选框和一列按钮，“替换”是强调色；底部帮助和关闭。
+- **字体收集**（`dialog_fonts_collector.cpp`）：动作是下拉框；字幕文件没有所在文件夹时不列出“复制到字幕文件所在文件夹”（下拉框不能单项停用）。目标是带名称的框加“浏览”，下面一行灰色说明；日志在小节标题下；底部“开始！”是强调色，取消改名“关闭”。
+- **导出**（`dialog_export.cpp`、`ass_exporter.cpp`、`export_framerate.cpp`）：滤镜是可勾选的 `FlatList`，每个滤镜的说明作为副文字写在名称下（不再有单独的说明框），上移 / 下移连同勾选一起移动；文本编码是下拉框。勾选的滤镜的设置在右侧，标题是小节标题；帧率转换的设置是输入帧率框加“从视频”、输出用“可变 / 固定”开关加帧率框（可变时帧率框停用）、反向转换勾选框。
+- **文本导入**（`dialog_text_import.cpp`）：说话人分隔符和注释前缀两个带名称的框并排，下面是“包括空白行”勾选框。
+- **虚拟视频**（`dialog_dummy_video.cpp`）：灰色名称在左；分辨率预设是下拉框，下面“宽 × 高”两个数字框，改数字时预设跟着显示对应的一项（没有对应的就空着）；颜色按钮和棋盘格勾选框一行；帧率框；时长是帧数框，后面灰字写出换算的时长。帧率无法解析时确定不可用。
+- **视频详情**（`dialog_video_details.cpp`）：去掉静态框；每项名称灰色在左，值在右侧只读框里（可以选中复制）；底部确定。
+- **视频属性提示**（`dialog_video_properties.cpp`，分辨率、布局分辨率、YCbCr 矩阵不一致时问怎么处理）：说明文字下是 `FlatList`，选中上次的选择；双击一项或确定选它，取消或 Esc 不选（按“不改”处理，也不记住）；底部帮助、取消、确定。
+- **打开自动保存文件**（`dialog_autosave.cpp`）：文件和版本两个 `FlatList` 并排，各有小节标题；文件按最新版本排序，右侧灰字是最新版本的时间；选中文件后右边列出它的版本，双击版本直接打开。没有文件时列表写“没有自动保存的文件”，打开不可用。
+- **附件**（`dialog_attachments.cpp`）：附件是可多选的 `FlatList`，文件名下灰字是分组（Fonts / Graphics），右侧是大小；列表下一排按钮，左边附加字体、附加图片，右边提取、删除（选中后才可用）；底部帮助和关闭。
+- **自动化脚本管理**（`dialog_automation.cpp`）：脚本是 `FlatList`，名称下灰字是文件名和描述（多行描述合成一行），右侧写全局 / 本地；载入失败或有警告时右侧改成警告徽章（“载入失败”“载入成功但存在警告”）。列表下一排按钮：添加、移除（只对本地脚本可用）、重新载入、显示信息，最右是重新扫描自动载入目录；双击脚本也显示信息。底部帮助和关闭（Esc、回车都关闭）。列表重建后原来选中的脚本仍选中。
+- **EBU STL 导出**（`dialog_export_ebu3264.cpp`）：去掉单选框组和静态框；名称灰色在左，三组的名称列一样宽。第一组不加标题：电视制式和文字编码是下拉框（按最长的选项定宽），显示标准是“开放字幕 / 一级图文电视”开关（原来的下拉框也只有这两项；设置里存的是二级图文电视时保留，除非另选）。“文本格式”一组是最大行长数字框、换行方式下拉框、转换对齐勾选框；“时间码”一组是偏移框和“出点包含在内”勾选框。确定时偏移不是四组两位数字就提示并留在对话框里。赞助说明灰字在按钮上方。
+- **卡拉OK 时间复制**（`dialog_kara_timing_copy.cpp`，汉字计时器）：中间自绘的音节匹配显示不变；去掉四个静态框，改成“文本”“样式”“快捷键”“命令”四个小节标题。源样式、目标样式是下拉框，插值是勾选框，快捷键说明是灰字。右侧一列命令按钮，“接受此行”是强调色；底部帮助和关闭（关闭会应用已接受的行，不用强调色）。Esc 和标题栏关闭按钮一样是不应用直接离开，不会按“关闭”。
+- **关于**（`dialog_about.cpp`）：启动图下是致谢文字（对话框底色上的只读文字，可以复制），去掉两条分隔线；底部确定。
+- **日志窗口**（`dialog_log.cpp`）：日志文本框不变，对话框底色和四周边距同其他对话框；底部确定。
+- **多项选择**（`dialog_selected_choices.cpp`，`GetSelectedChoices`，导入样式时选样式用）：不再借用 `wxMultiChoiceDialog`；说明文字下是可勾选的 `FlatList`，勾上传入的选择；全选、全不选在底部左侧，右侧取消、确定。返回勾选的项。
+- **进度**（`dialog_progress.cpp`）：对话框底色，标题、进度条、灰色的说明、取消按钮（`FlatButton`，Esc 按它）；取消后按钮显示“正在取消...”并停用；任务写了日志时不自动关闭，按钮改为“关闭”，下面显示日志。进度条仍是系统的 `wxGauge`。
+- **版本检查结果**（`dialog_version_check.cpp`）：每个更新用小节标题写名称，下面是说明（对话框底色上的只读文字）和链接，去掉分隔线；“自动检查更新”是勾选框；底部“一周后再提醒”（有更新时）和“关闭”。只能通过联网检查打开，没有自动测试。
+- **选择颜色**（`dialog_colorpicker.cpp`）：去掉四个静态框。左边“色谱”小节：模式是五段开关（RGB/R、RGB/G、RGB/B、HSL/L、HSV/H，选中的模式照旧记住），右侧是颜色预览；下面色谱和两个滑条不变。右边“RGB 颜色”“HSL 颜色”“HSV 颜色”三个小节，每个值是 0–255 的数字框（名称在框内，可以输入、滚轮、拖动）；ASS 和 HTML 代码是带名称的输入框，和透明度一行。吸管和最近用过的颜色在下面；底部帮助、取消、确定。
+- **比较页**（`dialog_compare.cpp`，主窗口的比较标签页）：两侧差异视图、中间的行号条和每行的接受 / 拒绝不变，周围的控件换成新控件，页面用块的底色。
+  - 工具栏：上一个、下一个、计数、接受更改、拒绝更改在左；交换两侧、撤销、重做在右。都是 `FlatButton`，高度一致（箭头字符来自更高的字体）；Alt+A / Alt+R 照旧接受 / 拒绝当前差异。
+  - 筛选行：灰色的“显示”“忽略”名称不带冒号；类别按钮选中的那个是强调色；忽略的字段组是勾选框。右端是“同步滚动”勾选框和“仅差异 / 全部”两段开关（原来在工具栏，挤不下）。
+  - 批量行：“选择全部差异”勾选框、灰色的已选数和统计、四个批量按钮。提示行用灰色。结果说明框不变。
+  - 底部：取消、“完成 / 写入项目”（强调色），顺序同 `DialogButtons`。
+
+
+## 测试
+
+- `ordinary_edit.dialog_buttons_are_drawn_and_answer_the_keys_the_system_buttons_do`：标准 id 和标签、确定按钮是强调色；Esc 按取消，回车在单行输入框里按确定、在多行文本里不按，Ctrl+回车不算；Alt+字母；不可用的按钮不按；标题栏关闭按钮按取消；没有自己的处理时取消关闭对话框；只有关闭时关闭是确认 id。
+- `ordinary_edit.number_field_is_typed_stepped_and_dragged_in_range`：输入、保留小数位、超范围不采用、滚轮、拖动从按下时的值起算并夹在范围内、`SetValue` 不算用户修改、格式化。
+- `ordinary_edit.flat_list_is_chosen_and_ticked_as_the_system_lists_are`：单击、Shift、Ctrl、勾选框不改变选择、双击、事件顺序、设置不发事件；单选列表忽略 Ctrl / Shift。
+- `ordinary_edit.shift_times_is_drawn_switches_and_a_history_list`：没有帧率和选中行时对应的段停用、上次的选择、Alt+字母选段、按帧平移后历史加一条、单击历史载入。
+- `ordinary_edit.search_and_replace_is_drawn_fields_checks_and_switches`：两个输入框、四个勾选框、两个开关；Alt+字母勾选；全部替换并保存选择；Esc 关闭。
+- `ordinary_edit.select_lines_is_drawn_switches_and_checks`：开关和勾选框载入上次的选择；对话行和注释行至少留一个；Alt+字母选段；确定后选中匹配的行、关闭并保存。
+- `ordinary_edit.paste_over_ticks_fields_in_the_columns_of_a_line`：十一个勾选框载入设置、“时间”只勾开始和结束、确定后保存。
+- `ordinary_edit.jump_to_names_its_fields_and_jumps`：两个带名称的框、输入帧数时间跟着变、确定后跳到该帧。
+- `ordinary_edit.translation_assistant_is_drawn_with_titles_and_foot_buttons`：预览勾选框、底部四个按钮、没有音视频时播放按钮停用、Esc 按取消。
+- `ordinary_edit.timing_processor_is_drawn_ticks_and_millisecond_fields`：样式默认全勾、没有关键帧时停用、数字框随勾选框可用、全部 / 无决定确定是否可用、确定后保存。
+- `ordinary_edit.resample_is_drawn_number_fields_a_switch_and_even_margins`：宽高比不变时开关停用、改目标宽度后可用、手动时边距可用且对称、取消不改动。
+- `ordinary_edit.spell_checker_is_drawn_fields_a_list_and_buttons`：拼错的词、单击建议填入替换框、Esc 关闭（没有词典时跳过）。
+- `ordinary_edit.fonts_collector_chooses_an_action_from_a_list`：没有字幕文件夹时不列出对应动作、选择动作保存并启用目标框。
+- `flat_text.labels_lose_their_colon_however_translated`：半角、全角、没有冒号、带 `&` 的标签；多行合成一行。
+- `ordinary_edit.export_lists_filters_with_their_descriptions`：每个滤镜有说明、勾选后显示它的设置、鼠标停在行上提示全文、移动时勾选跟着走。
+- `ordinary_edit.text_import_names_its_fields_and_saves_them`：两个框和勾选框载入设置，确定后保存。
+- `ordinary_edit.dummy_video_follows_its_size_shortcuts_and_frame_rate`：输入尺寸时预设跟着变、没有对应预设时空着、选预设填入尺寸、帧率为空时确定不可用、确定后生成的文件名和保存的设置。
+- `ordinary_edit.video_details_names_each_detail_in_grey`：九个只读值、名称不带冒号、确定是强调色。
+- `visual_edit.video_properties_prompt_chooses_from_a_flat_list`：选中上次的选择、Esc 不改也不记住、双击选择并记住。
+- `ordinary_edit.autosave_lists_files_then_their_versions`：文件按新旧排、带最新时间，选文件换版本列表，双击版本打开它。
+- `ordinary_edit.autosave_with_nothing_to_open_says_so`：没有文件时列表为空、打开不可用。
+- `ordinary_edit.attachments_list_names_groups_and_sizes`：每行的分组和大小、选中后提取和删除可用、删除全部选中的、关闭。
+- `ordinary_edit.automation_manager_lists_scripts_with_their_state`：本地在前、全局 / 本地备注、多行描述合成一行、警告和失败的徽章、移除只对本地可用、移除后列表更新、关闭。
+- `ordinary_edit.ebu_export_is_drawn_choices_a_switch_and_a_time_code`：载入设置、错误的时间码不被接受、确定后写回每一项。
+- `ordinary_edit.ebu_export_keeps_level_2_teletext_unless_another_is_chosen`：二级图文电视不改选时保留。
+- `ordinary_edit.kanji_timer_is_drawn_choices_checks_and_flat_buttons`：两个样式下拉框列出样式、没有系统按钮、“接受此行”是强调色、Esc 离开且不应用。
+- `ordinary_edit.selected_choices_are_ticked_in_a_flat_list`：传入的选择已勾、全选、全不选、确定返回勾选的项、取消返回 -1。
+- `ordinary_edit.progress_cancels_with_a_flat_button_and_stays_for_its_log`：Esc 按取消、任务看到取消后对话框自己结束并抛出取消；写了日志时留着、按钮变“关闭”。
+- `ordinary_edit.color_picker_is_drawn_number_fields_a_mode_switch_and_code_fields`：模式开关、输入数字更新代码、输入代码更新数字、选模式后保存、确定返回颜色。
+- `ordinary_edit.compare_page_is_drawn_flat_buttons_checks_and_a_view_switch`：页面上没有系统按钮、勾选框、单选框；完成是强调色；视图开关和同步滚动；Alt+A 接受当前差异。原有的比较页测试改为按 `FlatButton` / `FlatCheck` 找控件。
