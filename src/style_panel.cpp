@@ -5,6 +5,7 @@
 #include "style_panel_parts.h"
 
 #include "animation_page.h"
+#include "timing_page.h"
 
 #include "ass_dialogue.h"
 #include "ass_file.h"
@@ -116,9 +117,9 @@ StylePanel::StylePanel(wxWindow *parent, agi::Context *c)
 	{
 		const int pad = FromDIP(12);
 		auto line = new wxBoxSizer(wxHORIZONTAL);
-		auto pages = Add<PageSwitch>("page", std::vector<wxString>{_("Style"), _("Animation")});
-		pages->SetToolTip(_("Style: what the text looks like. Animation: make it move and change over time, as \\move does"));
-		pages->on_choose = [this](int index) { ShowPage(index ? Page::Animation : Page::Style); };
+		auto pages = Add<PageSwitch>("page", std::vector<wxString>{_("Style"), _("Animation"), wxGETTEXT_IN_CONTEXT("page", "Timing")});
+		pages->SetToolTip(_("Style: what the text looks like. Animation: make it move and change over time, as \\move does. Timing: when it shows and goes"));
+		pages->on_choose = [this](int index) { ShowPage(static_cast<Page>(index)); };
 		line->AddSpacer(pad);
 		line->Add(pages, 1, wxALIGN_CENTER_VERTICAL);
 		auto collapse = Add<IconButton>("collapse", IconButton::Glyph::Collapse, _("Hide the style panel"));
@@ -273,12 +274,26 @@ StylePanel::StylePanel(wxWindow *parent, agi::Context *c)
 	outer->Add(animation_body, 0, wxEXPAND);
 	outer->Show(animation_body, false);
 
+	// The timing page: the current line's times, scene changes and lead
+	timing_body = new wxBoxSizer(wxVERTICAL);
+	timing = new TimingPage(this, c);
+	timing->on_layout = [this] {
+		if (page != Page::Timing) return;
+		Layout();
+		FitInside();
+	};
+	timing_body->Add(timing, 0, wxEXPAND);
+	outer->Add(timing_body, 0, wxEXPAND);
+	outer->Show(timing_body, false);
+
 	SetSizer(outer);
 	ShowSection("transform", false);
 	SetSectionVisible("shape", false);
 	FitInside();
 	BindEditing();
 	SetMinSize(wxSize(FromDIP(min_width), -1));
+	// Back on the page last shown
+	ShowPage(static_cast<Page>(std::clamp<int>(OPT_GET("App/Style Panel/Page")->GetInt(), 0, 2)));
 
 	connections.push_back(c->subtitleAccess->Read().AddCommitListener("style_panel.AddCommitListener",
 		[this](int, AssDialogue const*, SubtitleModelRebindTicket ticket) { ScheduleUpdate(); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); },
@@ -733,10 +748,13 @@ bool StylePanel::ShowScrollEffect() {
 void StylePanel::ShowPage(Page new_page) {
 	if (page == new_page) return;
 	page = new_page;
-	static_cast<PageSwitch*>(parts["page"])->Select(page == Page::Animation ? 1 : 0);
+	static_cast<PageSwitch*>(parts["page"])->Select(static_cast<int>(page));
+	OPT_SET("App/Style Panel/Page")->SetInt(static_cast<int>(page));
 	Freeze();
 	for (auto const& [name, section] : sections) ApplySection(section);
 	GetSizer()->Show(animation_body, page == Page::Animation, true);
+	GetSizer()->Show(timing_body, page == Page::Timing, true);
+	if (page == Page::Timing) timing->UpdateNow();
 	Layout();
 	FitInside();
 	Scroll(0, 0);

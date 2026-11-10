@@ -81,8 +81,6 @@ public:
 	static std::vector<TargetKind> const& TargetKinds();
 
 	class Timeline;
-	class TextButton;
-	class CardTitle;
 	class ColourTarget;
 
 	/// Called when the cards change, for the panel to lay out again

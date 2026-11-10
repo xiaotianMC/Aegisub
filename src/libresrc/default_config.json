@@ -24,6 +24,7 @@
 		"Show Toolbar" : true,
 		"Style Panel" : {
 			"Lock Shape Proportions" : false,
+			"Page" : 0,
 			"Show" : true,
 			"Width" : 280
 		},

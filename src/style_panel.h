@@ -27,6 +27,7 @@ struct StyleLook;
 class wxSizer;
 class wxTextCtrl;
 class AnimationPage;
+class TimingPage;
 
 class StylePanel final : public wxScrolledWindow {
 protected:
@@ -71,13 +72,15 @@ public:
 	/// Make a style from the current line, as + does once it has a name
 	bool NewStyle(wxString const& name);
 
-	/// Which page the panel shows: the style's sections, or animation
-	/// (\move, \fad, \t and \org of the current line). The switch at the
-	/// top chooses.
-	enum class Page { Style, Animation };
+	/// Which page the panel shows: the style's sections, animation
+	/// (\move, \fad, \t and \org of the current line) or timing (its
+	/// times, scene changes and lead). The switch at the top chooses; the
+	/// panel opens on the one last shown (App/Style Panel/Page).
+	enum class Page { Style, Animation, Timing };
 	void ShowPage(Page page);
 	Page ShownPage() const { return page; }
 	AnimationPage *Animation() const { return animation; }
+	TimingPage *Timing() const { return timing; }
 	/// Show the current line's Banner or Scroll on the animation page,
 	/// adding a scroll where its Effect field is empty, if the panel is on
 	/// the screen. @return Whether it is
@@ -110,6 +113,8 @@ public:
 	class Header;
 	class IconButton;
 	class PageSwitch;
+	class TextButton;
+	class CardTitle;
 
 private:
 	agi::Context *c;
@@ -134,6 +139,8 @@ private:
 	Page page = Page::Style;
 	wxSizer *animation_body = nullptr;
 	AnimationPage *animation = nullptr;
+	wxSizer *timing_body = nullptr;
+	TimingPage *timing = nullptr;
 	/// Show or hide a section's title and body for its state and the page
 	void ApplySection(Section const& section);
 	std::map<std::string, Part*> parts;

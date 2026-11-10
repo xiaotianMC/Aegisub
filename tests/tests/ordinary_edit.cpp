@@ -77,6 +77,8 @@
 #include "style_look.h"
 #include "style_panel.h"
 #include "style_panel_parts.h"
+#include "timing_adjust.h"
+#include "timing_page.h"
 #include "video_controller.h"
 #include "async_video_provider.h"
 #include "video_frame.h"
@@ -6145,6 +6147,156 @@ TEST_F(ordinary_edit, animation_page_edits_the_selected_lines_effects_in_times_o
     EXPECT_EQ("{\\fad(1000,300)}World", text(1));
     panel->Destroy();
 }
+TEST(timing_adjust, lead_stops_at_lines_it_did_not_overlap_and_moves_only_its_targets) {
+    auto line=[](int start,int end){auto d=std::make_unique<AssDialogue>();d->Start=start;d->End=end;return d;};
+    auto a=line(1000,2000), b=line(2100,3000), c=line(2900,4000);
+    // Only b: held by a before it, not by c, which it already overlapped
+    AddLead({b.get()},{a.get(),b.get(),c.get()},300,300);
+    EXPECT_EQ(2000,int(b->Start)); EXPECT_EQ(3300,int(b->End));
+    EXPECT_EQ(1000,int(a->Start)); EXPECT_EQ(2000,int(a->End)) << "lines that are not targets stay";
+    EXPECT_EQ(2900,int(c->Start)); EXPECT_EQ(4000,int(c->End));
+    // All of them, as the timing post-processor has it: lead-ins first
+    a=line(1000,2000); b=line(2100,3000); c=line(2900,4000);
+    std::vector<AssDialogue*> all{a.get(),b.get(),c.get()};
+    AddLead(all,all,300,300);
+    EXPECT_EQ(700,int(a->Start)); EXPECT_EQ(2000,int(a->End));
+    EXPECT_EQ(2000,int(b->Start)); EXPECT_EQ(3300,int(b->End));
+    EXPECT_EQ(2600,int(c->Start)); EXPECT_EQ(4300,int(c->End));
+    // Counted as the grid's column does
+    EXPECT_EQ(-1,CharactersPerSecond("Hello",100,true,true));
+    EXPECT_EQ(5,CharactersPerSecond("Hello, world",2000,true,true));
+    EXPECT_EQ(6,CharactersPerSecond("Hello, world",2000,false,false));
+}
+
+TEST_F(ordinary_edit, timing_page_edits_times_snaps_to_scene_changes_and_adds_lead) {
+    c->project->LoadVideo("?dummy:25:250:64:48:64:64:64:");
+    ASSERT_NE(nullptr,c->project->VideoProvider());
+    PumpFirstFrame(c.get(),window);
+    agi::fs::path kf((std::filesystem::current_path()/"timing-page-keyframes.txt").wstring());
+    agi::keyframe::Save(kf,{0,50,150});
+    c->project->LoadKeyframes(kf);
+    BOOST_SCOPE_EXIT_ALL(&){ c->project->CloseKeyframes(); c->project->CloseVideo(); OPT_SET("App/Style Panel/Page")->SetInt(0); };
+    int first, second;
+    {auto write=c->subtitleAccess->TryWrite();auto &file=LiveWriteForTest(*c);
+     auto &row=file.Events.front();row.Text="Hello, world";row.Start=1600;row.End=5600;
+     auto other=new AssDialogue(row);other->Start=7000;other->End=8000;other->Text="Next";
+     file.Events.push_back(*other);
+     file.Commit("fixture",AssFile::COMMIT_NEW);
+     first=file.Events.front().Id; second=file.Events.back().Id;}
+    auto times=[&](int which){auto it=LiveRead(*c).Events.begin();if(which)++it;return std::pair<int,int>(it->Start,it->End);};
+    c->selectionController->SetSelectionAndActiveIDs({first},first);
+    auto panel=new StylePanel(window,c.get());
+    panel->ShowPage(StylePanel::Page::Timing);
+    EXPECT_EQ(2,OPT_GET("App/Style Panel/Page")->GetInt());
+    auto page=panel->Timing();
+    auto shown=[&]{page->UpdateNow();return page->Shown();};
+    auto vc=c->videoController.get();
+    auto description=c->subsController->GetUndoDescription();
+
+    EXPECT_EQ("time scene lead",shown()["cards"]);
+    EXPECT_EQ(wxS("0:00:01.60 → 0:00:05.60"),shown()["line"]);
+    EXPECT_EQ(fmt_tl("%d characters per second",CharactersPerSecond("Hello, world",4000,true,true)),shown()["summary.cps"]);
+    EXPECT_EQ(_("No line before it"),shown()["summary.prev"]);
+    EXPECT_EQ(fmt_tl("%d ms before the line after",1400),shown()["summary.next"]);
+    // Over the grid's thresholds
+    OPT_SET("Subtitle/Character Counter/CPS Warning Threshold")->SetInt(1);
+    OPT_SET("Subtitle/Character Counter/CPS Error Threshold")->SetInt(5);
+    BOOST_SCOPE_EXIT_ALL(&){ OPT_SET("Subtitle/Character Counter/CPS Warning Threshold")->SetInt(15); OPT_SET("Subtitle/Character Counter/CPS Error Threshold")->SetInt(30); };
+    EXPECT_EQ(wxS(" warning"),shown()["summary.cps"].Right(8));
+    OPT_SET("Subtitle/Character Counter/CPS Error Threshold")->SetInt(2);
+    EXPECT_EQ(wxS(" error"),shown()["summary.cps"].Right(6));
+
+    // Scene changes: frame 50 is 10 frames after the start, frame 150 ends
+    // the scene the end is in
+    EXPECT_EQ(fmt_plural(10,"Start %d frame early","Start %d frames early",10),shown()["scene.start"]);
+    page->Press("scene.snap_start");
+    EXPECT_EQ(c->project->Timecodes().TimeAtFrame(50,agi::vfr::START),times(0).first);
+    EXPECT_EQ(5600,times(0).second) << "only the start";
+    EXPECT_EQ(_("Start on a scene change"),shown()["scene.start"]);
+    EXPECT_EQ(wxS(" disabled"),shown()["scene.snap_start"].Right(9));
+    page->Press("scene.snap_end");
+    EXPECT_EQ(c->project->Timecodes().TimeAtFrame(149,agi::vfr::END),times(0).second);
+    c->subsController->Undo(); c->subsController->Undo();
+    EXPECT_EQ(std::make_pair(1600,5600),times(0));
+    EXPECT_EQ(description,c->subsController->GetUndoDescription());
+    // The distance is the one Snap to Nearby Scene Changes keeps
+    shown(); page->EnterNumber("scene.distance",100,true);
+    BOOST_SCOPE_EXIT_ALL(&){ OPT_SET("Timing/Scene Snap Distance")->SetInt(500); };
+    EXPECT_EQ(100,OPT_GET("Timing/Scene Snap Distance")->GetInt());
+    EXPECT_EQ(fmt_tl("Start: none within %d ms",100),shown()["scene.start"]);
+    EXPECT_EQ(wxS(" disabled"),shown()["scene.snap_start"].Right(9));
+    OPT_SET("Timing/Scene Snap Distance")->SetInt(500);
+    shown(); page->Press("scene.both");
+    EXPECT_EQ(std::make_pair(c->project->Timecodes().TimeAtFrame(50,agi::vfr::START),c->project->Timecodes().TimeAtFrame(149,agi::vfr::END)),times(0));
+    c->subsController->Undo();
+    EXPECT_EQ(std::make_pair(1600,5600),times(0));
+
+    // A drag is one step, snapped to the video's frames: at 25 fps a
+    // frame's start time is 20 ms before its timestamp
+    shown(); page->EnterNumber("time.start",1630,false); page->EnterNumber("time.start",1690,true);
+    EXPECT_EQ(1700,times(0).first);
+    c->subsController->Undo();
+    EXPECT_EQ(std::make_pair(1600,5600),times(0));
+    EXPECT_EQ(description,c->subsController->GetUndoDescription());
+    EXPECT_TRUE(page->TypeInto("time.end","0:00:06.00"));
+    EXPECT_EQ(5980,times(0).second);
+    c->subsController->Undo();
+    // Two lines: the same move for each, the same length for each
+    c->selectionController->SetSelectionAndActiveIDs({first,second},first);
+    shown(); page->EnterNumber("time.start",2000,true);
+    EXPECT_EQ(1980,times(0).first); EXPECT_EQ(7380,times(1).first);
+    c->subsController->Undo();
+    shown(); page->EnterNumber("time.duration",1000,true);
+    EXPECT_EQ(std::make_pair(1600,2580),times(0)); EXPECT_EQ(std::make_pair(7000,7980),times(1));
+    c->subsController->Undo();
+    EXPECT_EQ(std::make_pair(1600,5600),times(0)); EXPECT_EQ(std::make_pair(7000,8000),times(1));
+
+    // A frame on and back; the video's frame
+    c->selectionController->SetSelectionAndActiveIDs({first},first);
+    shown(); page->Press("time.start_next");
+    EXPECT_EQ(1620,times(0).first);
+    shown(); page->Press("time.end_prev");
+    EXPECT_EQ(vc->TimeAtFrame(vc->FrameAtTime(5600,agi::vfr::END)-1,agi::vfr::END),times(0).second);
+    c->subsController->Undo(); c->subsController->Undo();
+    vc->JumpToFrame(30);
+    shown(); page->Press("time.start_now");
+    EXPECT_EQ(vc->TimeAtFrame(30,agi::vfr::START),times(0).first);
+    c->subsController->Undo();
+    EXPECT_EQ(std::make_pair(1600,5600),times(0));
+
+    // Lead: the post-processor's lengths, not over the line after
+    {auto write=c->subtitleAccess->TryWrite();auto &file=LiveWriteForTest(*c);
+     auto it=file.Events.begin();++it;it->Start=5700;file.Commit("closer",AssFile::COMMIT_DIAG_TIME);}
+    auto lead_in=OPT_GET("Tool/Timing Post Processor/Lead/IN")->GetInt(), lead_out=OPT_GET("Tool/Timing Post Processor/Lead/OUT")->GetInt();
+    BOOST_SCOPE_EXIT_ALL(&){ OPT_SET("Tool/Timing Post Processor/Lead/IN")->SetInt(lead_in); OPT_SET("Tool/Timing Post Processor/Lead/OUT")->SetInt(lead_out); };
+    shown(); page->EnterNumber("lead.in",200,true); page->EnterNumber("lead.out",300,true);
+    EXPECT_EQ(200,OPT_GET("Tool/Timing Post Processor/Lead/IN")->GetInt());
+    EXPECT_EQ(300,OPT_GET("Tool/Timing Post Processor/Lead/OUT")->GetInt());
+    EXPECT_EQ(wxS("200"),shown()["lead.in"]);
+    auto before_lead=c->subsController->GetUndoDescription();
+    page->Press("lead.add_both");
+    EXPECT_EQ(std::make_pair(1400,5700),times(0));
+    EXPECT_EQ(std::make_pair(5700,8000),times(1)) << "not selected, not moved";
+    c->subsController->Undo();
+    EXPECT_EQ(std::make_pair(1600,5600),times(0));
+    EXPECT_EQ(before_lead,c->subsController->GetUndoDescription());
+    shown(); page->Press("lead.add_in");
+    EXPECT_EQ(std::make_pair(1400,5600),times(0));
+    c->subsController->Undo();
+
+    // Without the detected scene changes, a way to find them
+    c->project->CloseKeyframes();
+    EXPECT_EQ(1u,shown().count("scene.detect"));
+
+    // The panel opens on the page last shown
+    auto again=new StylePanel(window,c.get());
+    EXPECT_EQ(StylePanel::Page::Timing,again->ShownPage());
+    again->ShowPage(StylePanel::Page::Style);
+    EXPECT_EQ(0,OPT_GET("App/Style Panel/Page")->GetInt());
+    again->Destroy();
+    panel->Destroy();
+}
+
 TEST_F(ordinary_edit, compare_tab_is_one_at_a_time_and_refuses_drops_while_open) {
     Input("current");
     auto path = WriteBaseline(*c, "compare-one.ass", [](AssFile& f) { f.Events.front().Text = "baseline"; });

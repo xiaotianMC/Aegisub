@@ -19,14 +19,12 @@ KeyframeSnapThresholds KeyframeSnapThresholds::FromOptions() {
 	return t;
 }
 
-namespace {
 int ClosestKeyframe(std::vector<int> const& kf, int frame) {
 	auto const pos = std::upper_bound(kf.begin(), kf.end(), frame);
 	// The last keyframe if this is after it
 	if (pos == kf.end()) return kf.back();
 	// *pos is after frame, and *(pos - 1) at or before it
 	return (pos == kf.begin() || *pos - frame < frame - *(pos - 1)) ? *pos : *(pos - 1);
-}
 }
 
 KeyframeSnapResult SnapToKeyframes(std::vector<AssDialogueBase*> const& rows, std::vector<int> kf, int frame_count,

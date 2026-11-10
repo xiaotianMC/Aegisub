@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: ISC
 // The drawn parts the style panel is made of (docs/style-panel.md): flat
 // on the block colour, as the controls below the video are. Shared by its
-// pages: the style's sections and the animation page.
+// pages: the style's sections, the animation page and the timing page.
 #pragma once
 
 #include "compat.h"
@@ -16,6 +16,8 @@
 #include <cmath>
 #include <functional>
 #include <optional>
+
+#include <libaegisub/ass/time.h>
 
 #include <wx/bmpbndl.h>
 #include <wx/dcbuffer.h>
@@ -68,6 +70,21 @@ inline void DrawChevron(wxDC &dc, wxColour const& colour, int x, int cy, int siz
 }
 
 inline const wxString mixed = wxS("—");
+
+/// A time of the video as h:mm:ss.cc
+inline wxString TimeText(double ms) {
+	return to_wx(agi::Time(static_cast<int>(std::lround(std::max(0., ms)))).GetAssFormatted());
+}
+/// A typed time: h:mm:ss.cc, or fewer parts (s, m:ss)
+inline bool ReadTime(wxString const& text, double &ms) {
+	if (!text.IsNumber() && text.find_first_of("0123456789") == wxString::npos) return false;
+	for (auto ch : text)
+		if (!wxIsdigit(ch) && ch != ':' && ch != '.' && ch != ',' && ch != ' ') return false;
+	wxString normal = text;
+	normal.Replace(",", ".");
+	ms = agi::Time(from_wx(normal));
+	return true;
+}
 }
 
 using style_parts::Palette;
@@ -569,7 +586,7 @@ public:
 /// A small button with a drawn symbol: the style row's actions
 class StylePanel::IconButton final : public StylePanel::Part {
 public:
-	enum class Glyph { Up, Down, Plus, More, Collapse, Close, Now, Pick, Swap };
+	enum class Glyph { Up, Down, Plus, More, Collapse, Close, Now, Pick, Swap, Earlier, Later };
 
 private:
 	Glyph glyph;
@@ -648,6 +665,18 @@ private:
 				dc.DrawLine(centre.x, centre.y, centre.x + r - FromDIP(3), centre.y);
 				break;
 			}
+			case Glyph::Earlier:
+			case Glyph::Later: {
+				// ‹ › : a frame back or on
+				int half = FromDIP(4), dir = glyph == Glyph::Later ? 1 : -1;
+				int x = centre.x - dir * half / 2;
+				wxPen pen(p.text, thick);
+				pen.SetCap(wxCAP_ROUND);
+				dc.SetPen(pen);
+				dc.DrawLine(x, centre.y - half, x + dir * half, centre.y);
+				dc.DrawLine(x + dir * half, centre.y, x, centre.y + half);
+				break;
+			}
 			case Glyph::Pick: {
 				// ⌖ : a point on the video
 				dc.SetBrush(*wxTRANSPARENT_BRUSH);
@@ -678,6 +707,73 @@ public:
 	}
 
 	wxString Shown() const override { return IsEnabled() ? "enabled" : "disabled"; }
+};
+
+/// A button with words on it, as the fields are drawn
+class StylePanel::TextButton final : public StylePanel::Part {
+	wxString label;
+	bool pressed = false;
+
+	void Draw(wxDC &dc, Palette const& p) override {
+		wxSize size = GetClientSize();
+		dc.SetBrush(wxBrush(hover && IsEnabled() ? theme::Mix(p.field, p.text, pressed ? 0.1 : 0.05) : p.field));
+		dc.SetPen(wxPen(p.line, std::max(1, FromDIP(1))));
+		dc.DrawRoundedRectangle(wxRect(wxPoint(0, 0), size), FromDIP(5));
+		wxString text = Ellipsize(dc, label, size.x - FromDIP(8));
+		wxSize extent = dc.GetTextExtent(text);
+		dc.SetTextForeground(IsEnabled() ? p.text : p.dim);
+		dc.DrawText(text, (size.x - extent.x) / 2, (size.y - extent.y) / 2);
+	}
+
+public:
+	std::function<void()> on_click;
+
+	TextButton(wxWindow *parent, wxString label, wxString const& tip)
+	: Part(parent, wxSize(40, 26)), label(std::move(label))
+	{
+		SetToolTip(tip);
+		SetCursor(wxCursor(wxCURSOR_HAND));
+		wxClientDC dc(this);
+		dc.SetFont(GetFont());
+		SetMinSize(wxSize(dc.GetTextExtent(this->label).x + FromDIP(16), FromDIP(26)));
+		Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent &) {
+			if (!IsEnabled()) return;
+			pressed = true;
+			Refresh(false);
+			if (on_click) CallAfter([this] { pressed = false; Refresh(false); if (on_click) on_click(); });
+		});
+	}
+
+	wxString Shown() const override { return label; }
+};
+
+/// A card's title over a line across the page: bold, with the tag it
+/// writes after it, dim
+class StylePanel::CardTitle final : public StylePanel::Part {
+	wxString title, tag;
+
+	void Draw(wxDC &dc, Palette const& p) override {
+		wxSize size = GetClientSize();
+		dc.SetBrush(wxBrush(p.line));
+		dc.DrawRectangle(0, 0, size.x, std::max(1, FromDIP(1)));
+		wxFont font = GetFont();
+		font.MakeBold();
+		dc.SetFont(font);
+		dc.SetTextForeground(p.text);
+		int y = (size.y - dc.GetCharHeight()) / 2 + FromDIP(2);
+		int left = FromDIP(12);
+		dc.DrawText(title, left, y);
+		int x = left + dc.GetTextExtent(title).x + FromDIP(8);
+		dc.SetFont(GetFont());
+		dc.SetTextForeground(p.dim);
+		dc.DrawText(Ellipsize(dc, tag, std::max(0, size.x - x)), x, y + (dc.GetCharHeight() < size.y ? 0 : 0));
+	}
+
+public:
+	CardTitle(wxWindow *parent, wxString title, wxString tag)
+	: Part(parent, wxSize(40, 34)), title(std::move(title)), tag(std::move(tag)) { }
+	void SetTag(wxString const& new_tag) { Set(tag, new_tag); }
+	wxString Shown() const override { return title + " " + tag; }
 };
 
 /// Dim text: what the panel describes
@@ -721,8 +817,10 @@ class StylePanel::PageSwitch final : public StylePanel::Part {
 			}
 			wxColour mark = theme::IsDark() ? wxColour(20, 20, 20) : *wxWHITE;
 			dc.SetTextForeground(on ? mark : hover ? p.text : p.dim);
-			wxSize extent = dc.GetTextExtent(labels[i]);
-			dc.DrawText(labels[i], half.x + (half.width - extent.x) / 2, half.y + (half.height - extent.y) / 2);
+			// Cut short rather than over its neighbour, in a narrow panel
+			wxString label = Ellipsize(dc, labels[i], half.width - FromDIP(4));
+			wxSize extent = dc.GetTextExtent(label);
+			dc.DrawText(label, half.x + (half.width - extent.x) / 2, half.y + (half.height - extent.y) / 2);
 		}
 	}
 

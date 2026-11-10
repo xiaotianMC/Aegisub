@@ -16,6 +16,10 @@ struct KeyframeSnapThresholds {
 	static KeyframeSnapThresholds FromOptions();
 };
 
+/// The keyframe in @p keyframes (sorted, not empty) nearest @p frame: the
+/// earlier one when two are as near
+int ClosestKeyframe(std::vector<int> const& keyframes, int frame);
+
 /// Move each line's start to a keyframe and its end to the frame before one,
 /// when the nearest is within @p limits. A line's frames between its start
 /// and end are left as they are: it is not split at a keyframe inside it.

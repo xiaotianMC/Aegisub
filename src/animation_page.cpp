@@ -34,6 +34,10 @@ using Field = StylePanel::Field;
 using IconButton = StylePanel::IconButton;
 using Caption = StylePanel::Caption;
 using PageSwitch = StylePanel::PageSwitch;
+using TextButton = StylePanel::TextButton;
+using CardTitle = StylePanel::CardTitle;
+using style_parts::TimeText;
+using style_parts::ReadTime;
 
 namespace {
 /// The number a target's value holds
@@ -55,20 +59,6 @@ int AlphaOfOpacity(double opacity) {
 	return static_cast<int>(std::lround((100 - std::clamp(opacity, 0., 100.)) * 255 / 100));
 }
 std::string AlphaValue(int alpha) { return agi::format("&H%02X&", std::clamp(alpha, 0, 255)); }
-
-wxString TimeText(double ms) {
-	return to_wx(agi::Time(static_cast<int>(std::lround(std::max(0., ms)))).GetAssFormatted());
-}
-/// A typed time: h:mm:ss.cc, or fewer parts (s, m:ss)
-bool ReadTime(wxString const& text, double &ms) {
-	if (!text.IsNumber() && text.find_first_of("0123456789") == wxString::npos) return false;
-	for (auto ch : text)
-		if (!wxIsdigit(ch) && ch != ':' && ch != '.' && ch != ',' && ch != ' ') return false;
-	wxString normal = text;
-	normal.Replace(",", ".");
-	ms = agi::Time(from_wx(normal));
-	return true;
-}
 
 /// Which tags a card writes, from its name
 enum class Kind { Move, Fade, Transforms, Origin };
@@ -290,73 +280,6 @@ public:
 		for (int point : points) shown += wxString::Format(shown.empty() ? "%d" : ",%d", point);
 		return shown + wxString::Format("/%d", duration);
 	}
-};
-
-/// A button with words on it, as the fields are drawn
-class AnimationPage::TextButton final : public StylePanel::Part {
-	wxString label;
-	bool pressed = false;
-
-	void Draw(wxDC &dc, Palette const& p) override {
-		wxSize size = GetClientSize();
-		dc.SetBrush(wxBrush(hover && IsEnabled() ? theme::Mix(p.field, p.text, pressed ? 0.1 : 0.05) : p.field));
-		dc.SetPen(wxPen(p.line, std::max(1, FromDIP(1))));
-		dc.DrawRoundedRectangle(wxRect(wxPoint(0, 0), size), FromDIP(5));
-		wxString text = Ellipsize(dc, label, size.x - FromDIP(8));
-		wxSize extent = dc.GetTextExtent(text);
-		dc.SetTextForeground(IsEnabled() ? p.text : p.dim);
-		dc.DrawText(text, (size.x - extent.x) / 2, (size.y - extent.y) / 2);
-	}
-
-public:
-	std::function<void()> on_click;
-
-	TextButton(wxWindow *parent, wxString label, wxString const& tip)
-	: Part(parent, wxSize(40, 26)), label(std::move(label))
-	{
-		SetToolTip(tip);
-		SetCursor(wxCursor(wxCURSOR_HAND));
-		wxClientDC dc(this);
-		dc.SetFont(GetFont());
-		SetMinSize(wxSize(dc.GetTextExtent(this->label).x + FromDIP(16), FromDIP(26)));
-		Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent &) {
-			if (!IsEnabled()) return;
-			pressed = true;
-			Refresh(false);
-			if (on_click) CallAfter([this] { pressed = false; Refresh(false); if (on_click) on_click(); });
-		});
-	}
-
-	wxString Shown() const override { return label; }
-};
-
-/// A card's title over a line across the page: bold, with the tag it
-/// writes after it, dim
-class AnimationPage::CardTitle final : public StylePanel::Part {
-	wxString title, tag;
-
-	void Draw(wxDC &dc, Palette const& p) override {
-		wxSize size = GetClientSize();
-		dc.SetBrush(wxBrush(p.line));
-		dc.DrawRectangle(0, 0, size.x, std::max(1, FromDIP(1)));
-		wxFont font = GetFont();
-		font.MakeBold();
-		dc.SetFont(font);
-		dc.SetTextForeground(p.text);
-		int y = (size.y - dc.GetCharHeight()) / 2 + FromDIP(2);
-		int left = FromDIP(12);
-		dc.DrawText(title, left, y);
-		int x = left + dc.GetTextExtent(title).x + FromDIP(8);
-		dc.SetFont(GetFont());
-		dc.SetTextForeground(p.dim);
-		dc.DrawText(Ellipsize(dc, tag, std::max(0, size.x - x)), x, y + (dc.GetCharHeight() < size.y ? 0 : 0));
-	}
-
-public:
-	CardTitle(wxWindow *parent, wxString title, wxString tag)
-	: Part(parent, wxSize(40, 34)), title(std::move(title)), tag(std::move(tag)) { }
-	void SetTag(wxString const& new_tag) { Set(tag, new_tag); }
-	wxString Shown() const override { return title + " " + tag; }
 };
 
 /// A colour a \t goes to: its name, and the colour, which opens the picker

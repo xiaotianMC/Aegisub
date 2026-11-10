@@ -24,6 +24,7 @@
 #include "include/aegisub/context.h"
 #include "options.h"
 #include "subtitle_binding.h"
+#include "timing_adjust.h"
 #include "video_controller.h"
 
 #include <libaegisub/character_count.h>
@@ -348,19 +349,7 @@ public:
 	}
 
 	int CPS(const AssDialogue *d) const {
-		int duration = d->End - d->Start;
-		auto const& text = d->Text.get();
-
-		if (duration <= 100 || text.size() > static_cast<size_t>(duration))
-			return -1;
-
-		int ignore = agi::IGNORE_BLOCKS;
-		if (ignore_whitespace->GetBool())
-			ignore |= agi::IGNORE_WHITESPACE;
-		if (ignore_punctuation->GetBool())
-			ignore |= agi::IGNORE_PUNCTUATION;
-
-		return agi::CharacterCount(text, ignore) * 1000 / duration;
+		return CharactersPerSecond(d->Text.get(), d->End - d->Start, ignore_whitespace->GetBool(), ignore_punctuation->GetBool());
 	}
 
 	int Width(const agi::Context *, WidthHelper &helper) const override {

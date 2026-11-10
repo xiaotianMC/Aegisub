@@ -10204,3 +10204,168 @@ msgctxt "button"
 msgid "&Refresh"
 msgstr "刷新(&R)"
 
+
+msgctxt "page"
+msgid "Timing"
+msgstr "时间"
+
+msgid "Style: what the text looks like. Animation: make it move and change over time, as \\move does. Timing: when it shows and goes"
+msgstr "样式：文字的样子。动画：让文字移动、随时间变化，如 \\move。时间：什么时候出现、什么时候消失"
+
+msgid "%d characters per second"
+msgstr "每秒 %d 字"
+
+msgid "Too short to count characters per second"
+msgstr "太短，不计算阅读速度"
+
+msgid "Characters per second, counted as the subtitle grid's CPS column does, with its thresholds (Preferences > Interface > Character Counter)"
+msgstr "阅读速度（每秒字数），算法和阈值与字幕表格的 CPS 列相同（首选项 > 界面 > 字数统计）"
+
+msgid "No line before it"
+msgstr "没有上一行"
+
+msgid "No line after it"
+msgstr "没有下一行"
+
+msgid "Starts as the line before ends"
+msgstr "与上一行首尾相接"
+
+msgid "Ends as the line after starts"
+msgstr "与下一行首尾相接"
+
+msgid "%d ms after the line before"
+msgstr "距上一行 %d ms"
+
+msgid "%d ms before the line after"
+msgstr "距下一行 %d ms"
+
+msgid "Overlaps the line before by %d ms"
+msgstr "与上一行重叠 %d ms"
+
+msgid "Overlaps the line after by %d ms"
+msgstr "与下一行重叠 %d ms"
+
+msgctxt "time"
+msgid "Start"
+msgstr "开始"
+
+msgctxt "time"
+msgid "End"
+msgstr "结束"
+
+msgid "A time of the video, h:mm:ss.cc: drag sideways or click and type. Snapped to the video's frames unless Shift is held. Each selected line moves as much as the current one"
+msgstr "视频中的时间，h:mm:ss.cc：左右拖动，或点开后输入。吸附到视频的帧，按住 Shift 不吸附。选中的每一行都和当前行移动同样的量"
+
+msgid "Start at the video's current frame"
+msgstr "开始设为视频当前帧"
+
+msgid "End at the video's current frame"
+msgstr "结束设为视频当前帧"
+
+msgid "A frame earlier"
+msgstr "提前一帧"
+
+msgid "A frame later"
+msgstr "推后一帧"
+
+msgid "How long the line shows: the end moves. Each selected line gets the same length, ending on a frame unless Shift is held"
+msgstr "这一行显示多久：改的是结束时间。选中的每一行都设为同样的时长，结束吸附到帧，按住 Shift 不吸附"
+
+msgid "set start"
+msgstr "设置开始时间"
+
+msgid "set end"
+msgstr "设置结束时间"
+
+msgid "set duration"
+msgstr "设置时长"
+
+msgid "move start by a frame"
+msgstr "开始时间移动一帧"
+
+msgid "move end by a frame"
+msgstr "结束时间移动一帧"
+
+msgid "Scene changes"
+msgstr "画面切换"
+
+msgid "Start: none within %d ms"
+msgstr "开始：%d ms 内没有"
+
+msgid "End: none within %d ms"
+msgstr "结束：%d ms 内没有"
+
+msgid "Start on a scene change"
+msgstr "开始在切换点上"
+
+msgid "End on a scene change"
+msgstr "结束在切换点上"
+
+msgid "Start %d frame early"
+msgid_plural "Start %d frames early"
+msgstr[0] "开始早 %d 帧"
+
+msgid "Start %d frame late"
+msgid_plural "Start %d frames late"
+msgstr[0] "开始晚 %d 帧"
+
+msgid "End %d frame early"
+msgid_plural "End %d frames early"
+msgstr[0] "结束早 %d 帧"
+
+msgid "End %d frame late"
+msgid_plural "End %d frames late"
+msgstr[0] "结束晚 %d 帧"
+
+msgid "Snap"
+msgstr "吸附"
+
+msgid "Snap both"
+msgstr "两端都吸附"
+
+msgid "Move the selected lines' starts onto the nearest scene change, if it is within the distance"
+msgstr "把选中行的开始时间吸附到最近的画面切换（在距离之内时）"
+
+msgid "Move the selected lines' ends to the frame before the nearest scene change, if it is within the distance"
+msgstr "把选中行的结束时间吸附到最近的画面切换的前一帧（在距离之内时）"
+
+msgid "How far a start or end may move to a scene change, here and for Snap to Nearby Scene Changes (Preferences > Timing)"
+msgstr "开始或结束最多移动多远去对齐画面切换，这里和“吸附到附近的画面切换”共用（首选项 > 时间）"
+
+msgid "No scene changes are known for this video"
+msgstr "没有这个视频的画面切换"
+
+msgctxt "lead"
+msgid "In"
+msgstr "提前"
+
+msgctxt "lead"
+msgid "Out"
+msgstr "延后"
+
+msgid "How much earlier the selected lines start, as the timing post-processor adds it"
+msgstr "选中行的开始提前多少，与时间后处理器共用"
+
+msgid "How much later the selected lines end, as the timing post-processor adds it"
+msgstr "选中行的结束延后多少，与时间后处理器共用"
+
+msgid "+ Lead-in"
+msgstr "+ 提前"
+
+msgid "+ Lead-out"
+msgstr "+ 延后"
+
+msgid "+ Both"
+msgstr "+ 两头"
+
+msgid "Not over a line it did not already overlap: it stops at the line's edge, as the timing post-processor does"
+msgstr "不越过原本不重叠的相邻行，碰到就停在那一行的边上，与时间后处理器相同"
+
+msgid "add lead in"
+msgstr "添加开始提前"
+
+msgid "add lead out"
+msgstr "添加结束延后"
+
+msgid "add lead in and out"
+msgstr "添加开始提前及结束延后"

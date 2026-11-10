@@ -40,6 +40,7 @@
 #include "flat_list.h"
 #include "include/aegisub/context.h"
 #include "keyframe_snap.h"
+#include "timing_adjust.h"
 #include "libresrc/libresrc.h"
 #include "options.h"
 #include "project.h"
@@ -359,38 +360,14 @@ std::vector<AssDialogue*> DialogTimingProcessor::SortDialogues(SubtitleRowEdit c
 	return sorted;
 }
 
-template<class Iter, class Field>
-static int safe_time(Iter begin, Iter end, AssDialogue *comp, int initial, Field field, int const& (*cmp)(int const&, int const&)) {
-	// Compare to every previous line (yay for O(n^2)!) to see if it's OK to add lead-in
-	for (; begin != end; ++begin) {
-		// If the line doesn't already collide with this line, extend it only
-		// to the edge of the line
-		if (!comp->CollidesWith(*begin))
-			initial = cmp(initial, (*begin)->*field);
-	}
-	return initial;
-}
-
 void DialogTimingProcessor::Process() {
 	auto scope=c->subtitleAccess->TryWrite();if(!scope)return;
     SubtitleRowEdit staged(c,true);
     std::vector<AssDialogue*> sorted = SortDialogues(staged);
 	if (sorted.empty()) return;
 
-	// Add lead-in/out
-	if (hasLeadIn->IsChecked() && leadIn) {
-		for (size_t i = 0; i < sorted.size(); ++i)
-			sorted[i]->Start = safe_time(sorted.rend() - i, sorted.rend(),
-				sorted[i], sorted[i]->Start - leadIn,
-				&AssDialogue::End, &std::max<int>);
-	}
-
-	if (hasLeadOut->IsChecked() && leadOut) {
-		for (size_t i = 0; i < sorted.size(); ++i)
-			sorted[i]->End = safe_time(sorted.begin() + i + 1, sorted.end(),
-				sorted[i], sorted[i]->End + leadOut,
-				&AssDialogue::Start, &std::min<int>);
-	}
+	// Add lead-in/out, not over the lines around
+	AddLead(sorted, sorted, hasLeadIn->IsChecked() ? leadIn : 0, hasLeadOut->IsChecked() ? leadOut : 0);
 
 	// Make adjacent
 	if (adjsEnable->IsChecked()) {
