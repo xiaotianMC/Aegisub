@@ -239,6 +239,8 @@ void Audio(PreferencesBook *book, Preferences *parent) {
 	p->OptionAdd(timing, _("Automatically link nearby subtitles"), "Timing/Link Adjacent Lines",
 		{.help = _("Dragging the boundary between two lines that touch moves both")});
 	p->OptionAdd(timing, _("Link subtitle gaps under (s)"), "Timing/Adjacent Line Gap", {.min = 0, .max = 10, .inc = 0.1});
+	p->OptionAdd(timing, _("Snap to scene changes within (ms)"), "Timing/Scene Snap Distance", {.min = 0, .max = 10000, .inc = 50,
+		.help = _("How far Snap to Nearby Scene Changes moves a line's start or end, before or after it, to land on a scene change")});
 
 	auto snapping = p->PageSizer(_("Snapping"));
 	p->OptionAdd(snapping, _("Snap markers by default"), "Audio/Snap/Enable");

@@ -9908,10 +9908,6 @@ msgid "Snap to Nearby Scene Changes"
 msgstr "吸附到附近的画面切换"
 
 #: ../src/command/time.cpp
-msgid "Move the selected lines' starts and ends onto the keyframes near them, within the timing post-processor's thresholds"
-msgstr "把选中行的开始和结束时间移到附近的关键帧上，距离限制沿用时间后处理器的设置"
-
-#: ../src/command/time.cpp
 msgid "snap to scene changes"
 msgstr "吸附到画面切换"
 
@@ -9943,3 +9939,25 @@ msgstr "画面切换检测"
 #: ../src/preferences.cpp
 msgid "How readily Detect Scene Changes takes a change of picture for a cut. Higher finds more cuts, and more that are not."
 msgstr "“检测画面切换”把画面变化当作切换的灵敏度。越高找到的切换越多，误判也越多。"
+
+#: ../src/preferences.cpp
+msgid "Snap to scene changes within (ms)"
+msgstr "吸附画面切换的最大距离 (毫秒)"
+
+#: ../src/preferences.cpp
+msgid "How far Snap to Nearby Scene Changes moves a line's start or end, before or after it, to land on a scene change"
+msgstr "“吸附到附近的画面切换”最多把行的开始或结束往前、往后移动多远，去对齐画面切换"
+
+#: ../src/command/time.cpp
+msgid "Move the selected lines' starts and ends onto the keyframes near them, as far as the distance set in Preferences > Timing"
+msgstr "把选中行的开始和结束时间移到附近的关键帧上，最大距离在“首选项 → 时间”里设置"
+
+#: ../src/command/time.cpp
+#, c-format
+msgid "No scene change within %d ms of the selected lines' starts or ends: the distance is set in Preferences > Timing"
+msgstr "选中行的开始和结束 %d 毫秒内都没有画面切换。最大距离可在“首选项 → 时间”里调整"
+
+#: ../src/command/time.cpp
+#, c-format
+msgid "Snapped %d starts and %d ends to scene changes"
+msgstr "已把 %d 处开始、%d 处结束对齐到画面切换"

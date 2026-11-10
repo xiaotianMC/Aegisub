@@ -6985,6 +6985,28 @@ TEST(keyframe_snap, moves_near_ends_onto_scene_changes) {
     EXPECT_EQ(1500,int(far_start.Start));EXPECT_EQ(3000,int(far_start.End));
     EXPECT_EQ(fps.TimeAtFrame(50,agi::vfr::START),int(across.Start));
     EXPECT_EQ(fps.TimeAtFrame(149,agi::vfr::END),int(across.End)) << "not split at frame 100";
+
+    // A long shot with lines all through it: only the ends near its cuts
+    // move, each line by itself; those in its middle stay
+    AssDialogue first,middle,last;
+    first.Start=fps.TimeAtFrame(50,agi::vfr::START)-300;first.End=2900; // starts just before the cut at 50
+    middle.Start=3000;middle.End=3400;                                 // 600 ms and more from either cut
+    last.Start=3500;last.End=fps.TimeAtFrame(99,agi::vfr::END)+300;     // ends just after the cut at 100
+    auto moved=SnapToKeyframes({&first,&middle,&last},{0,50,100,150},0,fps,{500,500,500,500});
+    EXPECT_EQ(fps.TimeAtFrame(50,agi::vfr::START),int(first.Start));EXPECT_EQ(2900,int(first.End));
+    EXPECT_EQ(3000,int(middle.Start));EXPECT_EQ(3400,int(middle.End));
+    EXPECT_EQ(3500,int(last.Start));EXPECT_EQ(fps.TimeAtFrame(99,agi::vfr::END),int(last.End));
+    EXPECT_EQ(1,moved.starts);EXPECT_EQ(1,moved.ends);
+
+    // A short line about one cut: moving both its ends onto the cut would
+    // leave nothing, so only the one keeping more of it moves
+    int const cut=fps.TimeAtFrame(50,agi::vfr::START);
+    AssDialogue mostly_before,mostly_after;
+    mostly_before.Start=cut-180;mostly_before.End=cut+100;
+    mostly_after.Start=cut-100;mostly_after.End=cut+180;
+    SnapToKeyframes({&mostly_before,&mostly_after},{0,50,100,150},0,fps,{500,500,500,500});
+    EXPECT_EQ(cut-180,int(mostly_before.Start));EXPECT_EQ(fps.TimeAtFrame(49,agi::vfr::END),int(mostly_before.End)) << "ends at the cut";
+    EXPECT_EQ(cut,int(mostly_after.Start)) << "starts at the cut";EXPECT_EQ(cut+180,int(mostly_after.End));
 }
 
 TEST_F(ordinary_edit, detect_scene_changes_loads_them_as_keyframes_and_keeps_them) {
@@ -7016,10 +7038,10 @@ TEST_F(ordinary_edit, snap_to_nearby_scene_changes_moves_the_selected_lines_in_o
     agi::keyframe::Save(kf,{0,50,150});
     c->project->LoadKeyframes(kf);
     BOOST_SCOPE_EXIT_ALL(&){ c->project->CloseKeyframes(); c->project->CloseVideo(); };
-    OPT_SET("Tool/Timing Post Processor/Threshold/Key Start Before")->SetInt(100);
-    OPT_SET("Tool/Timing Post Processor/Threshold/Key End Before")->SetInt(100);
+    // Timed to the audio, a line starts and ends further from the cuts than
+    // the timing post-processor's few frames: the default distance reaches
     {auto write=c->subtitleAccess->TryWrite();auto& row=LiveWriteForTest(*c).Events.front();
-     row.Start=1950;row.End=5950;LiveWriteForTest(*c).Commit("times",AssFile::COMMIT_DIAG_TIME);}
+     row.Start=1600;row.End=5600;LiveWriteForTest(*c).Commit("times",AssFile::COMMIT_DIAG_TIME);}
     {auto id=LiveRead(*c).Events.front().Id;c->selectionController->SetSelectionAndActiveIDs({id},id);}
     auto description=c->subsController->GetUndoDescription();
     ASSERT_TRUE(cmd::get("time/snap/scene_nearby")->Validate(c.get()));
@@ -7028,6 +7050,12 @@ TEST_F(ordinary_edit, snap_to_nearby_scene_changes_moves_the_selected_lines_in_o
     EXPECT_EQ(c->project->Timecodes().TimeAtFrame(50,agi::vfr::START),int(row.Start));
     EXPECT_EQ(c->project->Timecodes().TimeAtFrame(149,agi::vfr::END),int(row.End));
     c->subsController->Undo();
-    EXPECT_EQ(1950,int(LiveRead(*c).Events.front().Start));EXPECT_EQ(5950,int(LiveRead(*c).Events.front().End));
+    EXPECT_EQ(1600,int(LiveRead(*c).Events.front().Start));EXPECT_EQ(5600,int(LiveRead(*c).Events.front().End));
+    EXPECT_EQ(description,c->subsController->GetUndoDescription());
+    // Nothing within the distance: nothing changed, no empty undo step
+    OPT_SET("Timing/Scene Snap Distance")->SetInt(100);
+    BOOST_SCOPE_EXIT_ALL(&){ OPT_SET("Timing/Scene Snap Distance")->SetInt(500); };
+    cmd::call("time/snap/scene_nearby",c.get());
+    EXPECT_EQ(1600,int(LiveRead(*c).Events.front().Start));EXPECT_EQ(5600,int(LiveRead(*c).Events.front().End));
     EXPECT_EQ(description,c->subsController->GetUndoDescription());
 }

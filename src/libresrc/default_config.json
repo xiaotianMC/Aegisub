@@ -507,7 +507,8 @@
 	"Timing" : {
 		"Default Duration" : 3000,
 		"Link Adjacent Lines" : true,
-		"Adjacent Line Gap" : 0.3
+		"Adjacent Line Gap" : 0.3,
+		"Scene Snap Distance" : 500
 	},
 
 	"Tool" : {

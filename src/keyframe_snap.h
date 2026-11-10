@@ -20,5 +20,7 @@ struct KeyframeSnapThresholds {
 /// when the nearest is within @p limits. A line's frames between its start
 /// and end are left as they are: it is not split at a keyframe inside it.
 /// @p frame_count, if positive, ends the last scene.
-void SnapToKeyframes(std::vector<AssDialogueBase*> const& rows, std::vector<int> keyframes, int frame_count,
+/// @return How many starts and how many ends were moved
+struct KeyframeSnapResult { int starts = 0, ends = 0; };
+KeyframeSnapResult SnapToKeyframes(std::vector<AssDialogueBase*> const& rows, std::vector<int> keyframes, int frame_count,
 	agi::vfr::Framerate const& fps, KeyframeSnapThresholds const& limits);
