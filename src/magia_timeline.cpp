@@ -12,6 +12,8 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
+#include <cstdio>
 #include <thread>
 
 #include <wx/intl.h>
@@ -72,15 +74,31 @@ bool Continues(std::string const& line) {
 	return line.empty() || line[0] == ' ' || line[0] == '\t' || line[0] == '-' || line[0] == '#' || line[0] == '\r';
 }
 
-/// A string as YAML reads it back unchanged: in single quotes, which only
-/// a single quote is special in
+/// A string as YAML reads it back unchanged, in ASCII alone: in double
+/// quotes, with everything else written as an escape. MagiaTimeline 1.0
+/// reads its config in the system's code page (GBK in Chinese Windows) and
+/// its packaged program ignores PYTHONUTF8, so a path in UTF-8 would not be
+/// read; escapes read the same whatever the code page.
 std::string Quote(std::string const& s) {
-	std::string out = "'";
-	for (char c : s) {
-		if (c == '\'') out += "''";
-		else out += c;
+	std::string out = "\"";
+	char buf[16];
+	auto const* p = reinterpret_cast<unsigned char const*>(s.data());
+	auto const* end = p + s.size();
+	while (p < end) {
+		uint32_t c = *p;
+		int extra = c < 0x80 ? 0 : c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : c >= 0xC0 ? 1 : -1;
+		if (extra < 0 || end - p <= extra) { ++p; continue; } // not UTF-8: dropped
+		if (extra) c &= 0x3F >> extra;
+		for (int i = 1; i <= extra; ++i) c = (c << 6) | (p[i] & 0x3F);
+		p += extra + 1;
+		if (c == '"' || c == '\\') { out += '\\'; out += static_cast<char>(c); }
+		else if (c >= 0x20 && c < 0x7F) out += static_cast<char>(c);
+		else {
+			snprintf(buf, sizeof buf, c > 0xFFFF ? "\\U%08X" : c > 0xFF ? "\\u%04X" : "\\x%02X", c);
+			out += buf;
+		}
 	}
-	return out + "'";
+	return out + "\"";
 }
 }
 
@@ -154,6 +172,14 @@ std::vector<Interval> ReadTimeline(AssFile const& output) {
 bool ReportsError(std::string const& output) {
 	return output.find("Exception caught") != std::string::npos ||
 		output.find("Traceback (most recent call last)") != std::string::npos;
+}
+
+std::string Readable(std::string const& output) {
+	if (output.empty() || !wxString::FromUTF8(output.data(), output.size()).empty())
+		return output;
+	// Not UTF-8: from a program that ignored PYTHONIOENCODING (the packaged
+	// one), in the system's code page
+	return wxString(output.data(), wxConvLibc, output.size()).utf8_string();
 }
 
 std::string LastLines(std::string const& output, size_t count) {
@@ -235,7 +261,7 @@ Outcome Run(Launch const& launch, agi::fs::path const& config, wxWindow *parent)
 				bool const ended = process->ended;
 				Drain(process->GetInputStream(), outcome.output);
 				Drain(process->GetErrorStream(), outcome.output);
-				auto last = LastLines(outcome.output, 1);
+				auto last = Readable(LastLines(outcome.output, 1));
 				if (!last.empty()) last.pop_back();
 				if (!last.empty() && last != shown) {
 					ps->SetMessage(last);
@@ -257,6 +283,7 @@ Outcome Run(Launch const& launch, agi::fs::path const& config, wxWindow *parent)
 		delete process;
 	else
 		process->abandoned = true;
+	outcome.output = Readable(outcome.output);
 	outcome.reported_error = ReportsError(outcome.output);
 	return outcome;
 }

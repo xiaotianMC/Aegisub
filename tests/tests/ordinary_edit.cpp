@@ -7592,13 +7592,20 @@ std::string ReadText(agi::fs::path const& p) {
 TEST(magia_timeline, config_is_given_the_video_and_where_to_write_and_keeps_the_rest) {
     auto out=magia_timeline::WriteConfig(MagiaConfig(),"/videos/ep 01's.mkv","/tmp/out","");
     ASSERT_TRUE(out);
-    EXPECT_NE(std::string::npos,out->find("source:\n- '/videos/ep 01''s.mkv'\n")) << *out;
-    EXPECT_NE(std::string::npos,out->find("destination:\n- '/tmp/out'\n")) << *out;
+    EXPECT_NE(std::string::npos,out->find("source:\n- \"/videos/ep 01's.mkv\"\n")) << *out;
+    EXPECT_NE(std::string::npos,out->find("destination:\n- \"/tmp/out\"\n")) << *out;
     EXPECT_EQ(std::string::npos,out->find("src.mp4")) << "the old list and its commented items are gone";
     EXPECT_EQ(std::string::npos,out->find("MagiaTimelineOutput2"));
     EXPECT_NE(std::string::npos,out->find("strategy: dtd\n")) << "its own strategy, none being chosen";
     EXPECT_NE(std::string::npos,out->find("outputSrt: false\n"));
     EXPECT_NE(std::string::npos,out->find("    dialogRect: [0.00, 1.00, 0.75, 1.00]\n")) << "the strategies' settings untouched";
+    auto chinese=magia_timeline::WriteConfig(MagiaConfig(),"C:\\视频\\第1话 \"终\".mkv","C:\\Users\\小明\\out\U0001F600","");
+    ASSERT_TRUE(chinese);
+    EXPECT_NE(std::string::npos,chinese->find("source:\n- \"C:\\\\\\u89C6\\u9891\\\\\\u7B2C1\\u8BDD \\\"\\u7EC8\\\".mkv\"\n")) << *chinese;
+    EXPECT_NE(std::string::npos,chinese->find("destination:\n- \"C:\\\\Users\\\\\\u5C0F\\u660E\\\\out\\U0001F600\"\n")) << *chinese;
+    for(unsigned char ch:*chinese) EXPECT_LT(ch,0x80) << "ASCII alone, read alike in any code page";
+    EXPECT_EQ("abc\n",magia_timeline::Readable("abc\n"));
+    EXPECT_EQ("视频",magia_timeline::Readable("视频"));
     auto chosen=magia_timeline::WriteConfig(MagiaConfig(),"v.mkv","o","bcs");
     ASSERT_TRUE(chosen);
     EXPECT_NE(std::string::npos,chosen->find("strategy: bcs\n"));
@@ -7648,8 +7655,8 @@ std::string const fake_magia=R"SH(#!/bin/sh
 cfg=""
 while [ $# -gt 0 ]; do if [ "$1" = "--config" ]; then cfg="$2"; shift; fi; shift; done
 if [ ! -f config.yml ]; then echo "Exception caught:  not run in its own folder"; exit 0; fi
-dest=$(sed -n "/^destination:/{n;s/^- '\(.*\)'$/\1/p}" "$cfg")
-src=$(sed -n "/^source:/{n;s/^- '\(.*\)'$/\1/p}" "$cfg")
+dest=$(sed -n "/^destination:/{n;s/^- \"\(.*\)\"$/\1/p}" "$cfg")
+src=$(sed -n "/^source:/{n;s/^- \"\(.*\)\"$/\1/p}" "$cfg")
 echo "src=$src" > seen.txt
 sed -n 's/^strategy: /strategy=/p' "$cfg" >> seen.txt
 echo "Task 0: $src -> $dest"

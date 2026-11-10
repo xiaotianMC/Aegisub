@@ -67,6 +67,10 @@ struct Outcome {
 /// catches its errors, prints them and ends as if nothing were wrong
 bool ReportsError(std::string const& output);
 
+/// @p output as UTF-8: kept if it is, otherwise taken to be in the
+/// system's code page
+std::string Readable(std::string const& output);
+
 /// The last @p count lines of @p output, for telling what went wrong
 std::string LastLines(std::string const& output, size_t count);
 
