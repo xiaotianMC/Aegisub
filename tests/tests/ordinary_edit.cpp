@@ -1001,6 +1001,17 @@ TEST_F(ordinary_edit, preferences_search_highlights_labels_and_shows_a_matching_
     EXPECT_TRUE(prefs.MatchingPages().empty());
     EXPECT_TRUE(prefs.SearchStatus().empty());
     for (size_t page = 0; page < 20; ++page) EXPECT_TRUE(prefs.MatchingControls(page).empty());
+
+    // The box is drawn as the other fields are; Escape empties it first
+    auto box = dynamic_cast<wxTextCtrl*>(wxWindow::FindWindowByName("preferences_search", &prefs));
+    ASSERT_NE(nullptr, box);
+    EXPECT_NE(nullptr, dynamic_cast<FlatFrame*>(box->GetParent()));
+    box->SetValue("undo");
+    EXPECT_FALSE(prefs.MatchingPages().empty()) << "typing searches";
+    wxKeyEvent escape(wxEVT_CHAR_HOOK); escape.m_keyCode = WXK_ESCAPE; escape.SetEventObject(box);
+    box->GetEventHandler()->ProcessEvent(escape);
+    EXPECT_TRUE(box->IsEmpty());
+    EXPECT_TRUE(prefs.MatchingPages().empty());
 }
 
 TEST_F(ordinary_edit, preferences_rows_are_drawn_controls_that_set_their_options) {
@@ -1937,7 +1948,8 @@ TEST_F(ordinary_edit, dialog_buttons_are_drawn_and_answer_the_keys_the_system_bu
     // The standard ids and labels, the affirmative one filled
     for(int id:{int(wxID_OK),int(wxID_CANCEL),int(wxID_APPLY),int(wxID_HELP)}) ASSERT_NE(nullptr,bar->Get(id));
     EXPECT_TRUE(bar->Get(wxID_OK)->IsAccent()); EXPECT_FALSE(bar->Get(wxID_CANCEL)->IsAccent());
-    EXPECT_EQ(wxGetStockLabel(wxID_OK),bar->Get(wxID_OK)->GetLabel());
+    EXPECT_EQ(flat::StockLabel(wxID_OK),bar->Get(wxID_OK)->GetLabel());
+    EXPECT_EQ(wxGETTEXT_IN_CONTEXT("button","&Apply"),bar->Get(wxID_APPLY)->GetLabel()) << "our own words, which are translated even where wxWidgets' are not installed";
     EXPECT_EQ(dynamic_cast<FlatButton*>(dialog.FindWindow(wxID_OK)),bar->Get(wxID_OK));
     dialog.Show(); for(int i=0;i<10;++i) wxYield();
     auto key=[&](int code,int modifiers=0){wxKeyEvent e(wxEVT_CHAR_HOOK);e.m_keyCode=code;e.m_altDown=modifiers&wxMOD_ALT;e.m_controlDown=modifiers&wxMOD_CONTROL;e.SetEventObject(&dialog);dialog.GetEventHandler()->ProcessEvent(e);};
@@ -3796,7 +3808,7 @@ TEST_F(ordinary_edit, timing_processor_is_drawn_ticks_and_millisecond_fields) {
             EXPECT_EQ("100",leads[0]->GetValue()); EXPECT_FALSE(leads[1]->IsEnabled());
             lead_out->Toggle(); EXPECT_TRUE(leads[1]->IsEnabled()) << "a field is used while its box is ticked";
             // Nothing to process, nothing to accept
-            auto ok=button_labelled(dialog,wxGetStockLabel(wxID_OK)); ASSERT_NE(nullptr,ok);
+            auto ok=button_labelled(dialog,flat::StockLabel(wxID_OK)); ASSERT_NE(nullptr,ok);
             button_labelled(dialog,_("&None"))->Press(); EXPECT_FALSE(ok->IsEnabled());
             button_labelled(dialog,_("&All"))->Press(); EXPECT_TRUE(ok->IsEnabled());
             leads[0]->SetValue("200");
@@ -5893,6 +5905,23 @@ TEST(animation_tags, read_and_write_move_fade_transform_and_origin) {
     // \org
     EXPECT_EQ((Origin{3,4}), *Read("{\\org(3,4)}x", 1).origin);
     EXPECT_EQ("{\\b1\\org(7,8)}x", WriteOrigin("{\\org(1,2)\\b1}x", Origin{7,8}));
+}
+TEST(libresrc, dialog_icons_are_the_monochrome_ones_unless_classic_icons_are_chosen) {
+    bool was=libresrc_classic();
+    BOOST_SCOPE_EXIT_ALL(&){libresrc_set_classic(was);};
+    libresrc_set_classic(false);
+    auto modern=GETICONS(options_button);
+    // Drawn for each size, 20 px among them, which the bitmaps don't have
+    EXPECT_TRUE(modern.GetIcon(wxSize(20,20),wxIconBundle::FALLBACK_NONE).IsOk());
+    auto drawn=modern.GetIcon(wxSize(32,32),wxIconBundle::FALLBACK_NONE);
+    ASSERT_TRUE(drawn.IsOk());
+    wxBitmap expected=libresrc_modern_bundle(libresrc_modern_icon("options_button"),32).GetBitmap(wxSize(32,32));
+    wxBitmap got; got.CopyFromIcon(drawn);
+    auto a=expected.ConvertToImage(), b=got.ConvertToImage();
+    ASSERT_EQ(a.GetSize(),b.GetSize());
+    EXPECT_EQ(0,memcmp(a.GetData(),b.GetData(),a.GetWidth()*a.GetHeight()*3)) << "the toolbar's icon";
+    libresrc_set_classic(true);
+    EXPECT_FALSE(GETICONS(options_button).GetIcon(wxSize(20,20),wxIconBundle::FALLBACK_NONE).IsOk()) << "the coloured bitmaps";
 }
 TEST(gl_text, draws_each_character_of_utf8_once) {
     // "行结束" is three characters of three bytes each: one glyph apiece

@@ -5,7 +5,8 @@
 ## 公共控件
 
 - **底部按钮** `flat::DialogButtons`（`src/flat_dialog.{h,cpp}`）：代替 `CreateStdDialogButtonSizer`。
-  - 按钮是 `FlatButton`，带标准 id（`wxID_OK`、`wxID_CANCEL`、`wxID_APPLY`、`wxID_HELP`、`wxID_CLOSE`、`wxID_YES`、`wxID_NO`）和系统的标签，所以对话框自己的处理和 wxDialog 的默认处理（确定接受并关闭、应用写入、取消关闭）照常工作。
+  - 按钮是 `FlatButton`，带标准 id（`wxID_OK`、`wxID_CANCEL`、`wxID_APPLY`、`wxID_HELP`、`wxID_CLOSE`、`wxID_YES`、`wxID_NO`）和标签，所以对话框自己的处理和 wxDialog 的默认处理（确定接受并关闭、应用写入、取消关闭）照常工作。
+  - 标签用本程序自己的翻译（`flat::StockLabel`，上下文 `button`），不用 wxWidgets 的 `wxstd.mo`：Windows 版没有带这个文件时，“OK”“Apply”会显示英文。中文按 Windows 对话框的习惯写：确定、取消、应用(&A)、帮助(&H)；括号里的字母不显示，Alt + 字母照样按按钮。Lua 脚本对话框里没写文字的标准按钮也用它。
   - 帮助和其他附加按钮（`AddLeft`）在左边；标准按钮在右边，顺序按系统：GTK 和 macOS 是“应用、取消、确定”，确定在最右；Windows 是“确定、取消、应用”。`AddRight` 加在标准按钮之前。
   - 对话框为之而来的按钮（确定、是；只有关闭时是关闭）用强调色填充，文字白色；聚焦时填充内加一圈浅色环。
   - 只有关闭时，关闭是确认 id，和 `CreateStdDialogButtonSizer` 一样。

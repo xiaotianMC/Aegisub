@@ -4,6 +4,9 @@
 #include "flat_controls.h"
 
 #include "theme.h"
+#include "libresrc/libresrc.h"
+
+#include <libaegisub/format.h>
 
 #include <algorithm>
 #include <cctype>
@@ -286,8 +289,15 @@ FlatFrame::FlatFrame(wxWindow *parent, wxString label)
 }
 
 int FlatFrame::LabelWidth() const {
-	if (label.empty() || !label_shown) return 0;
-	return GetTextExtent(label).x + FromDIP(6);
+	int icon = make_icon ? FromDIP(16) + FromDIP(6) : 0;
+	if (label.empty() || !label_shown) return icon;
+	return icon + GetTextExtent(label).x + FromDIP(6);
+}
+
+void FlatFrame::SetIcon(std::function<wxBitmapBundle()> make) {
+	make_icon = std::move(make);
+	Arrange();
+	Refresh(false);
 }
 
 wxRect FlatFrame::ChevronRect() const {
@@ -366,9 +376,19 @@ void FlatFrame::OnPaint(wxPaintEvent &) {
 	bool focused = content && content->HasFocus();
 	DrawField(dc, this, p, focused, false);
 	dc.SetFont(GetFont());
+	int label_x = FromDIP(8);
+	if (make_icon) {
+		int size = FromDIP(16);
+		wxBitmap icon = make_icon().GetBitmapFor(this);
+		// Drawn at its size in DIP, whatever the scale of the bitmap
+		wxImage image = icon.ConvertToImage();
+		if (image.GetWidth() != size) image.Rescale(size, size, wxIMAGE_QUALITY_HIGH);
+		dc.DrawBitmap(wxBitmap(image), label_x, (GetClientSize().y - size) / 2, true);
+		label_x += size + FromDIP(6);
+	}
 	if (!label.empty() && label_shown) {
 		dc.SetTextForeground(p.dim);
-		dc.DrawText(label, FromDIP(8), (GetClientSize().y - dc.GetCharHeight()) / 2);
+		dc.DrawText(label, label_x, (GetClientSize().y - dc.GetCharHeight()) / 2);
 	}
 	if (on_chevron) {
 		int size = FromDIP(7);
@@ -991,7 +1011,7 @@ void FlatCheck::OnPaint(wxPaintEvent &) {
 
 FlatButton::FlatButton(wxWindow *parent, wxString const& label, int id, bool accent)
 : wxWindow(parent, id, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE | wxWANTS_CHARS)
-, label(label.empty() && wxIsStockID(id) ? wxGetStockLabel(id) : label)
+, label(label.empty() && wxIsStockID(id) ? flat::StockLabel(id) : label)
 , accent(accent)
 {
 	SetBackgroundStyle(wxBG_STYLE_PAINT);
@@ -1221,4 +1241,61 @@ void FlatSuggest::OnPaint(wxPaintEvent &) {
 		dc.SetTextForeground(theme::Mix(back, p.text, 0.7));
 		dc.DrawText(tail, x + dc.GetTextExtent(head).x, y);
 	}
+}
+
+wxString flat::StockLabel(int id) {
+	switch (id) {
+		case wxID_OK: return wxGETTEXT_IN_CONTEXT("button", "&OK");
+		case wxID_APPLY: return wxGETTEXT_IN_CONTEXT("button", "&Apply");
+		case wxID_CANCEL: return wxGETTEXT_IN_CONTEXT("button", "&Cancel");
+		case wxID_CLOSE: return wxGETTEXT_IN_CONTEXT("button", "&Close");
+		case wxID_YES: return wxGETTEXT_IN_CONTEXT("button", "&Yes");
+		case wxID_NO: return wxGETTEXT_IN_CONTEXT("button", "&No");
+		case wxID_HELP: return wxGETTEXT_IN_CONTEXT("button", "&Help");
+		case wxID_SAVE: return wxGETTEXT_IN_CONTEXT("button", "&Save");
+		case wxID_OPEN: return wxGETTEXT_IN_CONTEXT("button", "&Open");
+		case wxID_DELETE: return wxGETTEXT_IN_CONTEXT("button", "&Delete");
+		case wxID_ADD: return wxGETTEXT_IN_CONTEXT("button", "&Add");
+		case wxID_REMOVE: return wxGETTEXT_IN_CONTEXT("button", "&Remove");
+		case wxID_EDIT: return wxGETTEXT_IN_CONTEXT("button", "&Edit");
+		case wxID_NEW: return wxGETTEXT_IN_CONTEXT("button", "&New");
+		case wxID_CLEAR: return wxGETTEXT_IN_CONTEXT("button", "&Clear");
+		case wxID_RESET: return wxGETTEXT_IN_CONTEXT("button", "&Reset");
+		case wxID_FIND: return wxGETTEXT_IN_CONTEXT("button", "&Find");
+		case wxID_REPLACE: return wxGETTEXT_IN_CONTEXT("button", "Rep&lace");
+		case wxID_COPY: return wxGETTEXT_IN_CONTEXT("button", "&Copy");
+		case wxID_PASTE: return wxGETTEXT_IN_CONTEXT("button", "&Paste");
+		case wxID_UNDO: return wxGETTEXT_IN_CONTEXT("button", "&Undo");
+		case wxID_REDO: return wxGETTEXT_IN_CONTEXT("button", "&Redo");
+		case wxID_STOP: return wxGETTEXT_IN_CONTEXT("button", "&Stop");
+		case wxID_ABORT: return wxGETTEXT_IN_CONTEXT("button", "&Abort");
+		case wxID_RETRY: return wxGETTEXT_IN_CONTEXT("button", "&Retry");
+		case wxID_IGNORE: return wxGETTEXT_IN_CONTEXT("button", "&Ignore");
+		case wxID_UP: return wxGETTEXT_IN_CONTEXT("button", "&Up");
+		case wxID_DOWN: return wxGETTEXT_IN_CONTEXT("button", "&Down");
+		case wxID_BACKWARD: return wxGETTEXT_IN_CONTEXT("button", "&Back");
+		case wxID_FORWARD: return wxGETTEXT_IN_CONTEXT("button", "&Forward");
+		case wxID_PREFERENCES: return wxGETTEXT_IN_CONTEXT("button", "&Preferences");
+		case wxID_PROPERTIES: return wxGETTEXT_IN_CONTEXT("button", "&Properties");
+		case wxID_SELECTALL: return wxGETTEXT_IN_CONTEXT("button", "Select &All");
+		case wxID_REFRESH: return wxGETTEXT_IN_CONTEXT("button", "&Refresh");
+	}
+	return wxIsStockID(id) ? wxGetStockLabel(id, wxSTOCK_NOFLAGS) : wxString();
+}
+
+FlatFrame *flat::SearchField(wxWindow *parent, wxString const& hint, wxTextCtrl *&text, int width) {
+	auto frame = new FlatFrame(parent, "");
+	text = new wxTextCtrl(frame, -1, "", wxDefaultPosition, wxDefaultSize, wxTE_PROCESS_ENTER | wxBORDER_NONE);
+	text->SetHint(hint);
+	frame->SetContent(text, width);
+	frame->SetIcon([] { return GETBUNDLE(find_button, 16); });
+	auto box = text;
+	box->Bind(wxEVT_CHAR_HOOK, [box](wxKeyEvent &e) {
+		if (e.GetKeyCode() == WXK_ESCAPE && !box->IsEmpty()) box->Clear();
+		else e.Skip();
+	});
+	// The frame shows the box has the keyboard
+	box->Bind(wxEVT_SET_FOCUS, [frame](wxFocusEvent &e) { frame->Refresh(false); e.Skip(); });
+	box->Bind(wxEVT_KILL_FOCUS, [frame](wxFocusEvent &e) { frame->Refresh(false); e.Skip(); });
+	return frame;
 }

@@ -10,6 +10,7 @@
 #include <functional>
 #include <vector>
 
+#include <wx/bmpbndl.h>
 #include <wx/popupwin.h>
 #include <wx/window.h>
 
@@ -60,6 +61,11 @@ wxStaticText *DimLabel(wxWindow *parent, wxString const& text);
 wxString WithoutColon(wxString label);
 /// @p text on one line: its line breaks spaces, as a list row shows it
 wxString OneLine(wxString text);
+
+/// The words of a stock button (wxID_OK, wxID_APPLY…) with the mnemonics
+/// wxWidgets gives them, from our own translations: wxWidgets' are not
+/// always installed. Empty for an id that isn't a stock one.
+wxString StockLabel(int id);
 }
 
 /// A rounded field holding one borderless control (text, a time), with a
@@ -72,6 +78,7 @@ class FlatFrame final : public wxWindow {
 	int content_width = 0;
 	bool dim_content = false;
 	bool label_shown = true;
+	std::function<wxBitmapBundle()> make_icon;
 	std::function<void()> on_chevron;
 	std::function<void(int, bool)> on_scrub;
 	std::function<void(int)> on_wheel;
@@ -104,6 +111,9 @@ public:
 	/// Leave the label out where there is no room for it
 	void ShowLabel(bool show);
 	bool IsLabelShown() const { return label_shown; }
+	/// An icon before the label, made again as it is drawn so that it
+	/// follows the appearance
+	void SetIcon(std::function<wxBitmapBundle()> make);
 	/// A chevron after the control, opening a list
 	void SetChevron(std::function<void()> open);
 	/// Dragging the label sideways: @p change gets whole steps since the
@@ -121,6 +131,13 @@ public:
 	bool AcceptsFocusFromKeyboard() const override { return false; }
 	bool Enable(bool enable = true) override;
 };
+
+namespace flat {
+/// A search box as the other fields are drawn: a magnifier, @p hint while
+/// it is empty, and Escape emptying it before it closes the dialog.
+/// @p text is the box typed in.
+FlatFrame *SearchField(wxWindow *parent, wxString const& hint, wxTextCtrl *&text, int width = 160);
+}
 
 /// A drawn list to choose from, as the style panel's style field: click,
 /// Space or Enter opens it, the arrow keys and the wheel go through it.

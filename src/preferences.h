@@ -53,7 +53,8 @@ private:
 		wxColour colour;           ///< Explicitly set colour, invalid if none
 		bool matched = false;
 	};
-	wxSearchCtrl *search;
+	wxTextCtrl *search;
+	wxWindow *search_frame;
 	wxStaticText *search_status;
 	std::vector<SearchEntry> search_entries;
 	std::vector<size_t> matching_pages;

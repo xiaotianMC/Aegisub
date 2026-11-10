@@ -10066,3 +10066,141 @@ msgstr[0] "只改选中行里滚动的 %d 行"
 msgid "Changes the %d selected line with a banner"
 msgid_plural "Changes the %d selected lines with a banner"
 msgstr[0] "只改选中行里横幅的 %d 行"
+
+#: ../src/flat_controls.cpp
+msgctxt "button"
+msgid "&OK"
+msgstr "确定"
+
+msgctxt "button"
+msgid "&Apply"
+msgstr "应用(&A)"
+
+msgctxt "button"
+msgid "&Cancel"
+msgstr "取消"
+
+msgctxt "button"
+msgid "&Close"
+msgstr "关闭(&C)"
+
+msgctxt "button"
+msgid "&Yes"
+msgstr "是(&Y)"
+
+msgctxt "button"
+msgid "&No"
+msgstr "否(&N)"
+
+msgctxt "button"
+msgid "&Help"
+msgstr "帮助(&H)"
+
+msgctxt "button"
+msgid "&Save"
+msgstr "保存(&S)"
+
+msgctxt "button"
+msgid "&Open"
+msgstr "打开(&O)"
+
+msgctxt "button"
+msgid "&Delete"
+msgstr "删除(&D)"
+
+msgctxt "button"
+msgid "&Add"
+msgstr "添加(&A)"
+
+msgctxt "button"
+msgid "&Remove"
+msgstr "移除(&R)"
+
+msgctxt "button"
+msgid "&Edit"
+msgstr "编辑(&E)"
+
+msgctxt "button"
+msgid "&New"
+msgstr "新建(&N)"
+
+msgctxt "button"
+msgid "&Clear"
+msgstr "清除(&C)"
+
+msgctxt "button"
+msgid "&Reset"
+msgstr "重置(&R)"
+
+msgctxt "button"
+msgid "&Find"
+msgstr "查找(&F)"
+
+msgctxt "button"
+msgid "Rep&lace"
+msgstr "替换(&L)"
+
+msgctxt "button"
+msgid "&Copy"
+msgstr "复制(&C)"
+
+msgctxt "button"
+msgid "&Paste"
+msgstr "粘贴(&P)"
+
+msgctxt "button"
+msgid "&Undo"
+msgstr "撤销(&U)"
+
+msgctxt "button"
+msgid "&Redo"
+msgstr "重做(&R)"
+
+msgctxt "button"
+msgid "&Stop"
+msgstr "停止(&S)"
+
+msgctxt "button"
+msgid "&Abort"
+msgstr "中止(&A)"
+
+msgctxt "button"
+msgid "&Retry"
+msgstr "重试(&R)"
+
+msgctxt "button"
+msgid "&Ignore"
+msgstr "忽略(&I)"
+
+msgctxt "button"
+msgid "&Up"
+msgstr "上移(&U)"
+
+msgctxt "button"
+msgid "&Down"
+msgstr "下移(&D)"
+
+msgctxt "button"
+msgid "&Back"
+msgstr "后退(&B)"
+
+msgctxt "button"
+msgid "&Forward"
+msgstr "前进(&F)"
+
+msgctxt "button"
+msgid "&Preferences"
+msgstr "首选项(&P)"
+
+msgctxt "button"
+msgid "&Properties"
+msgstr "属性(&P)"
+
+msgctxt "button"
+msgid "Select &All"
+msgstr "全选(&A)"
+
+msgctxt "button"
+msgid "&Refresh"
+msgstr "刷新(&R)"
+

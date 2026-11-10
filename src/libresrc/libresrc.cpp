@@ -487,19 +487,30 @@ wxBitmapBundle libresrc_getbitmapbundle(const char *name, const LibresrcBlob *im
 	return bundle;
 }
 
-wxIconBundle libresrc_geticonbundle(const LibresrcBlob *images, size_t count) {
-	thread_local std::map<const LibresrcBlob *, wxIconBundle> cache;
+wxIconBundle libresrc_geticonbundle(const char *name, const LibresrcBlob *images, size_t count) {
+	thread_local std::map<std::tuple<const LibresrcBlob *, bool, bool>, wxIconBundle> cache;
+	auto key = std::make_tuple(images, dark_mode, classic_icons);
 
-	if (auto cached = cache.find(images); cached != cache.end()) {
+	if (auto cached = cache.find(key); cached != cache.end()) {
 		return cached->second;
 	}
 
 	wxIconBundle bundle;
-	for (size_t i = 0; i < count; i++) {
-		bundle.AddIcon(libresrc_geticon(images[i].data, images[i].size));
+	if (auto body = classic_icons ? nullptr : libresrc_modern_icon(name)) {
+		// Each size drawn for itself, as the toolbars' are
+		for (int px : {16, 20, 24, 32, 48, 64}) {
+			wxIcon icon;
+			icon.CopyFromBitmap(libresrc_modern_bundle(body, px).GetBitmap(wxSize(px, px)));
+			bundle.AddIcon(icon);
+		}
+	}
+	else {
+		for (size_t i = 0; i < count; i++) {
+			bundle.AddIcon(libresrc_geticon(images[i].data, images[i].size));
+		}
 	}
 
-	cache[images] = bundle;
+	cache[key] = bundle;
 
 	return bundle;
 }

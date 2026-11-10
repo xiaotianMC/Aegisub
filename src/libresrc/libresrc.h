@@ -48,7 +48,9 @@ wxIcon libresrc_geticon(const unsigned char *image, size_t size);
 // icons_modern.cpp replaces the bitmaps (docs/icons.md).
 wxBitmapBundle libresrc_getbitmapbundle(const char *name, const LibresrcBlob *images, size_t count, int height, int dir=0);
 
-wxIconBundle libresrc_geticonbundle(const LibresrcBlob *images, size_t count);
+// A window's icon: the monochrome one of @p name unless classic icons are
+// chosen or it has none, else the coloured bitmaps
+wxIconBundle libresrc_geticonbundle(const char *name, const LibresrcBlob *images, size_t count);
 
 // Bitmap bundles made after this are adapted for a dark background: dark
 // glyphs (bold, play, arrows...) and black parts reaching the icon's edge are
@@ -78,4 +80,4 @@ bool libresrc_is_glyph(wxImage const& image);
 
 #define GETBUNDLE(a, h) libresrc_getbitmapbundle(#a, a, sizeof(a) / sizeof(*a), h)
 #define GETBUNDLEDIR(a, h, d) libresrc_getbitmapbundle(#a, a, sizeof(a) / sizeof(*a), h, d)
-#define GETICONS(a) libresrc_geticonbundle(a, sizeof(a) / sizeof(*a))
+#define GETICONS(a) libresrc_geticonbundle(#a, a, sizeof(a) / sizeof(*a))

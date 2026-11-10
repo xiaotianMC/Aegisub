@@ -58,7 +58,6 @@
 #include <wx/listctrl.h>
 #include <wx/msgdlg.h>
 #include <wx/settings.h>
-#include <wx/srchctrl.h>
 #include <wx/sizer.h>
 #include <wx/spinctrl.h>
 #include <wx/statbox.h>
@@ -705,7 +704,7 @@ static void edit_item(wxDataViewCtrl *dvc, wxDataViewItem item) {
 class Interface_Hotkeys final : public OptionPage {
 	wxDataViewCtrl *dvc;
 	wxObjectDataPtr<HotkeyDataViewModel> model;
-	wxSearchCtrl *quick_search;
+	wxTextCtrl *quick_search;
 
 	void OnNewButton(wxCommandEvent&);
 	void OnUpdateFilter(wxCommandEvent&);
@@ -718,8 +717,7 @@ Interface_Hotkeys::Interface_Hotkeys(PreferencesBook *book, Preferences *parent)
 : OptionPage(book, parent, _("Hotkeys"))
 , model(new HotkeyDataViewModel(parent))
 {
-	quick_search = new wxSearchCtrl(this, -1);
-	quick_search->SetDescriptiveText(_("Search"));
+	auto quick_search_frame = flat::SearchField(this, _("Search"), quick_search);
 
 	auto new_button = new FlatButton(this, _("&New"));
 	auto edit_button = new FlatButton(this, _("&Edit"));
@@ -730,7 +728,6 @@ Interface_Hotkeys::Interface_Hotkeys(PreferencesBook *book, Preferences *parent)
 	delete_button->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { model->Delete(dvc->GetSelection()); });
 
 	quick_search->Bind(wxEVT_TEXT, &Interface_Hotkeys::OnUpdateFilter, this);
-	quick_search->Bind(wxEVT_SEARCHCTRL_CANCEL_BTN, [this](wxCommandEvent&) { quick_search->SetValue(""); });
 
 	dvc = new wxDataViewCtrl(this, -1);
 	dvc->AssociateModel(model.get());
@@ -746,7 +743,7 @@ Interface_Hotkeys::Interface_Hotkeys(PreferencesBook *book, Preferences *parent)
 	dvc->AppendTextColumn(_("Description"), 2, wxDATAVIEW_CELL_INERT, 300, wxALIGN_LEFT, wxCOL_SORTABLE | wxCOL_RESIZABLE);
 
 	wxSizer *buttons = new wxBoxSizer(wxHORIZONTAL);
-	buttons->Add(quick_search, wxSizerFlags(1).CenterVertical().Border());
+	buttons->Add(quick_search_frame, wxSizerFlags(1).CenterVertical().Border());
 	buttons->Add(new_button, wxSizerFlags().Border());
 	buttons->Add(edit_button, wxSizerFlags().Border());
 	buttons->Add(delete_button, wxSizerFlags().Border());
@@ -841,13 +838,14 @@ Preferences::Preferences(wxWindow *parent): wxDialog(parent, -1, _("Preferences"
 
 	// The list of pages on the left, the search box above it
 	book = new PreferencesBook(this);
-	search = new wxSearchCtrl(book, -1, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(180), -1), wxTE_PROCESS_ENTER);
+	search_frame = flat::SearchField(book, _("Search settings (name or pinyin)"), search, 160);
 	search->SetName("preferences_search");
-	search->SetDescriptiveText(_("Search settings (name or pinyin)"));
-	search->ShowCancelButton(true);
+	// What the search found: shown only while searching, so the list
+	// starts right under the box
 	search_status = new wxStaticText(book, -1, wxEmptyString);
 	search_status->SetForegroundColour(flat::Colours(this).dim);
-	book->AddAboveList(search);
+	search_status->Hide();
+	book->AddAboveList(search_frame);
 	book->AddAboveList(search_status);
 
 	General(book, this);
@@ -868,8 +866,6 @@ Preferences::Preferences(wxWindow *parent): wxDialog(parent, -1, _("Preferences"
 	IndexPages();
 	search->Bind(wxEVT_TEXT, [this](wxCommandEvent&) { Search(search->GetValue()); });
 	search->Bind(wxEVT_TEXT_ENTER, [this](wxCommandEvent&) { NextMatchingPage(); });
-	search->Bind(wxEVT_SEARCHCTRL_SEARCH_BTN, [this](wxCommandEvent&) { NextMatchingPage(); });
-	search->Bind(wxEVT_SEARCHCTRL_CANCEL_BTN, [this](wxCommandEvent&) { search->Clear(); });
 
 	book->ChangeSelection(OPT_GET("Tool/Preferences/Page")->GetInt());
 	book->on_change = [this](size_t page) {
@@ -1005,7 +1001,8 @@ void Preferences::ShowMatches() {
 	book->SetMatches(counts);
 
 	search_status->SetLabel(SearchStatus());
-	search_status->Wrap(search->GetSize().x);
+	search_status->Wrap(search_frame->GetSize().x);
+	search_status->Show(!search_status->GetLabel().empty());
 	book->Layout();
 	Layout();
 }
