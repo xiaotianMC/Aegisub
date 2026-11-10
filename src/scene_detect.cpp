@@ -7,11 +7,16 @@
 #include "video_frame.h"
 
 #include <libaegisub/background_runner.h>
+#include <libaegisub/fs.h>
+#include <libaegisub/io.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
+#include <istream>
 #include <limits>
+#include <ostream>
 
 namespace scene_detect {
 
@@ -104,10 +109,16 @@ std::vector<int> FindCuts(std::vector<double> const& diffs, std::vector<double> 
 	return frames;
 }
 
-std::vector<int> Detect(VideoProvider &video, agi::ProgressSink *ps, Params const& params) {
+Measures Measure(VideoProvider &video, agi::ProgressSink *ps, int flash_span) {
 	int const n = video.GetFrameCount();
-	if (n <= 0) return {0};
-	int const span = std::max(params.flash_span, 1);
+	int const span = std::max(flash_span, 1);
+	Measures result;
+	result.flash_span = span;
+	if (n <= 0) {
+		result.diffs.assign(1, 0.);
+		result.across.assign(1, std::numeric_limits<double>::infinity());
+		return result;
+	}
 	// The signatures of the last span + 2 frames, frame j at j % ring
 	int const ring = span + 2;
 	std::vector<Signature> recent(ring);
@@ -133,10 +144,69 @@ std::vector<int> Detect(VideoProvider &video, agi::ProgressSink *ps, Params cons
 			across[j] = std::min(across[j], Difference(recent[(j - m) % ring], sig));
 	}
 	if (ps) ps->SetProgress(n, n);
+	result.diffs = std::move(diffs);
+	result.across = std::move(across);
+	return result;
+}
+
+std::vector<int> Cuts(Measures const& measures, Params const& params) {
 	std::vector<int> result{0};
-	auto cuts = FindCuts(diffs, across, params);
+	auto cuts = FindCuts(measures.diffs, measures.across, params);
 	result.insert(result.end(), cuts.begin(), cuts.end());
 	return result;
+}
+
+std::vector<int> Detect(VideoProvider &video, agi::ProgressSink *ps, Params const& params) {
+	auto measures = Measure(video, ps, params.flash_span);
+	if (measures.empty()) return {};
+	return Cuts(measures, params);
+}
+
+namespace {
+// The file: this tag, then the flash span and the frame count as 32-bit
+// integers, then each frame's difference and across as 32-bit floats. It
+// is read back only on the computer that wrote it.
+char const measures_tag[8] = {'A', 'g', 'S', 'c', 'n', 'M', '0', '1'};
+}
+
+void SaveMeasures(agi::fs::path const& file, Measures const& measures) {
+	agi::io::Save save(file, true);
+	auto &out = save.Get();
+	out.write(measures_tag, sizeof measures_tag);
+	int32_t const head[2] = {measures.flash_span, static_cast<int32_t>(measures.diffs.size())};
+	out.write(reinterpret_cast<char const*>(head), sizeof head);
+	std::vector<float> row(2 * measures.diffs.size());
+	for (size_t i = 0; i < measures.diffs.size(); ++i) {
+		row[2 * i] = static_cast<float>(measures.diffs[i]);
+		row[2 * i + 1] = static_cast<float>(i < measures.across.size() ? measures.across[i] : std::numeric_limits<double>::infinity());
+	}
+	out.write(reinterpret_cast<char const*>(row.data()), static_cast<std::streamsize>(row.size() * sizeof(float)));
+}
+
+Measures LoadMeasures(agi::fs::path const& file) {
+	try {
+		if (!agi::fs::FileExists(file)) return {};
+		auto in = agi::io::Open(file, true);
+		char tag[sizeof measures_tag];
+		int32_t head[2];
+		if (!in->read(tag, sizeof tag) || std::memcmp(tag, measures_tag, sizeof tag)) return {};
+		if (!in->read(reinterpret_cast<char*>(head), sizeof head)) return {};
+		if (head[0] < 1 || head[1] < 1) return {};
+		std::vector<float> row(2 * static_cast<size_t>(head[1]));
+		if (!in->read(reinterpret_cast<char*>(row.data()), static_cast<std::streamsize>(row.size() * sizeof(float)))) return {};
+		Measures m;
+		m.flash_span = head[0];
+		m.diffs.resize(head[1]);
+		m.across.resize(head[1]);
+		for (int32_t i = 0; i < head[1]; ++i) {
+			m.diffs[i] = row[2 * i];
+			m.across[i] = row[2 * i + 1];
+		}
+		return m;
+	}
+	catch (agi::Exception const&) {
+		return {};
+	}
 }
 
 }

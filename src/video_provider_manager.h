@@ -28,5 +28,7 @@ namespace agi { class BackgroundRunner; }
 struct VideoProviderFactory {
 	static std::vector<std::string> GetClasses();
 	static std::vector<std::string> GetFileExtensions();
-	static std::unique_ptr<VideoProvider> GetProvider(agi::fs::path const& video_file, agi::ycbcr::Header colormatrix, agi::BackgroundRunner *br);
+	/// @param cached Keep recent frames for going back to them. A video read
+	///               through once, start to end, does not want the copies.
+	static std::unique_ptr<VideoProvider> GetProvider(agi::fs::path const& video_file, agi::ycbcr::Header colormatrix, agi::BackgroundRunner *br, bool cached = true);
 };

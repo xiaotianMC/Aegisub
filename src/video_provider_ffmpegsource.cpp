@@ -42,6 +42,8 @@
 
 #include <libaegisub/fs.h>
 
+#include <algorithm>
+#include <cmath>
 #include <string_view>
 
 using agi::ycbcr_matrix;
@@ -126,6 +128,19 @@ public:
 	std::string GetDecoderName() const override    { return "FFmpegSource"; }
 	bool WantsCaching() const override             { return true; }
 	bool HasAudio() const override                 { return has_audio; }
+
+	bool ScaleDownForAnalysis(int max_width) override {
+		if (max_width <= 0 || Width <= max_width) return false;
+		int const w = max_width;
+		int const h = std::max(1, static_cast<int>(std::lround(double(Height) * w / Width)));
+		const int TargetFormat[] = { FFMS_GetPixFmt("bgra"), -1 };
+		// Area averaging: each small pixel the mean of the ones it covers
+		if (FFMS_SetOutputFormatV2(VideoSource, TargetFormat, w, h, FFMS_RESIZER_AREA, &ErrInfo))
+			return false;
+		Width = w;
+		Height = h;
+		return true;
+	}
 };
 
 FFmpegSourceVideoProvider::FFmpegSourceVideoProvider(agi::fs::path const& filename, ycbcr::Header colormatrix, agi::BackgroundRunner *br) try

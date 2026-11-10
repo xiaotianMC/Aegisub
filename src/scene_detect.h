@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <libaegisub/fs.h>
+
 #include <array>
 #include <cstdint>
 #include <vector>
@@ -55,8 +57,32 @@ double Difference(Signature const& a, Signature const& b);
 ///               i - 1 is a flash, the picture being the same either side
 std::vector<int> FindCuts(std::vector<double> const& diffs, std::vector<double> const& across, Params const& params);
 
-/// Read every frame of @p video in order and find its cuts. Frame 0 first,
-/// then each cut. Nothing if @p ps is cancelled.
+/// Frames are read this wide where the video can hand them out smaller:
+/// five source pixels to each of the thumbnail's, averaged
+constexpr int analysis_width = thumb_w * 5;
+
+/// What reading a video through finds, before any frame is called a cut.
+/// Only the flash span enters into it, so a change of sensitivity is
+/// answered from it without reading the video again.
+struct Measures {
+	int flash_span = 0;
+	/// As FindCuts takes them
+	std::vector<double> diffs, across;
+	bool empty() const { return diffs.empty(); }
+};
+
+/// Read every frame of @p video in order. Nothing if @p ps is cancelled.
+Measures Measure(VideoProvider &video, agi::ProgressSink *ps, int flash_span);
+
+/// Frame 0 first, then each cut
+std::vector<int> Cuts(Measures const& measures, Params const& params);
+
+/// Measure then Cuts. Nothing if @p ps is cancelled.
 std::vector<int> Detect(VideoProvider &video, agi::ProgressSink *ps, Params const& params);
+
+/// Kept on disk for the next time. Saving throws as agi::io::Save does.
+void SaveMeasures(agi::fs::path const& file, Measures const& measures);
+/// Nothing when the file is missing, unreadable or of another form
+Measures LoadMeasures(agi::fs::path const& file);
 
 }

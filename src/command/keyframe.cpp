@@ -116,19 +116,39 @@ struct keyframe_save final : public Command {
 	}
 };
 
-/// Where a video's cuts found at a sensitivity are kept, so that they are
-/// found once
-agi::fs::path SceneCachePath(agi::fs::path const& video, int sensitivity) {
-	std::string key = video.string() + "|" + std::to_string(sensitivity);
+/// What names a video's files in the scene cache: its path, and its size
+/// and time of change so that a file replaced in place is read again
+std::string SceneCacheKey(agi::fs::path const& video) {
+	std::string key = video.string();
 	try {
 		if (agi::fs::FileExists(video))
 			key += "|" + std::to_string(agi::fs::Size(video)) + "|" +
 				std::to_string(agi::fs::ModifiedTime(video).time_since_epoch().count());
 	}
 	catch (agi::fs::FileSystemError const&) { }
-	char name[32];
-	snprintf(name, sizeof name, "%016zx.key.txt", std::hash<std::string>{}(key));
+	return key;
+}
+
+agi::fs::path SceneCacheFile(std::string const& key, const char *suffix) {
+	char name[48];
+	snprintf(name, sizeof name, "%016zx%s", std::hash<std::string>{}(key), suffix);
 	return config::path->Decode("?user/scenes/") / name;
+}
+
+/// Where a video's cuts found at a sensitivity are kept, so that they are
+/// found once
+agi::fs::path SceneCachePath(agi::fs::path const& video, int sensitivity) {
+	auto key = SceneCacheKey(video);
+	// Built as before measures were kept too, so lists found then still count
+	std::string full = video.string() + "|" + std::to_string(sensitivity) + key.substr(video.string().size());
+	return SceneCacheFile(full, ".key.txt");
+}
+
+/// Where what reading a video through found is kept, whatever the
+/// sensitivity: another sensitivity's cuts come from it without reading the
+/// video again
+agi::fs::path SceneMeasuresPath(agi::fs::path const& video) {
+	return SceneCacheFile(SceneCacheKey(video), ".measures");
 }
 
 struct keyframe_detect final : public Command {
@@ -146,6 +166,7 @@ struct keyframe_detect final : public Command {
 		auto const& video = c->project->VideoName();
 		if (video.empty()) return;
 		int sensitivity = OPT_GET("Tool/Scene Detection/Sensitivity")->GetInt();
+		auto params = scene_detect::ForSensitivity(sensitivity);
 		auto cache = SceneCachePath(video, sensitivity);
 
 		std::vector<int> cuts;
@@ -153,22 +174,31 @@ struct keyframe_detect final : public Command {
 		catch (agi::Exception const&) { cuts.clear(); }
 
 		if (cuts.empty()) {
-			// A provider of its own, read through from the start, so the
-			// video shown is not moved about
-			DialogProgress progress(c->parent, _("Detect Scene Changes"), _("Reading every frame of the video..."));
-			try {
-				auto provider = VideoProviderFactory::GetProvider(video, c->subtitleAccess->Read().GetYCbCrMatrix(), &progress);
-				auto params = scene_detect::ForSensitivity(sensitivity);
-				progress.Run([&](agi::ProgressSink *ps) { cuts = scene_detect::Detect(*provider, ps, params); });
+			auto measures_file = SceneMeasuresPath(video);
+			auto measures = scene_detect::LoadMeasures(measures_file);
+			if (measures.flash_span != params.flash_span) measures = {};
+			bool const read_video = measures.empty();
+			if (read_video) {
+				// A provider of its own, read through from the start, so the
+				// video shown is not moved about; with no frames kept for
+				// going back, and the frames small
+				DialogProgress progress(c->parent, _("Detect Scene Changes"), _("Reading every frame of the video..."));
+				try {
+					auto provider = VideoProviderFactory::GetProvider(video, c->subtitleAccess->Read().GetYCbCrMatrix(), &progress, false);
+					provider->ScaleDownForAnalysis(scene_detect::analysis_width);
+					progress.Run([&](agi::ProgressSink *ps) { measures = scene_detect::Measure(*provider, ps, params.flash_span); });
+				}
+				catch (agi::UserCancelException const&) { return; }
+				catch (agi::Exception const& e) {
+					wxMessageBox(to_wx(e.GetMessage()), _("Detect Scene Changes"), wxOK | wxICON_ERROR, c->parent);
+					return;
+				}
+				if (measures.empty()) return;
 			}
-			catch (agi::UserCancelException const&) { return; }
-			catch (agi::Exception const& e) {
-				wxMessageBox(to_wx(e.GetMessage()), _("Detect Scene Changes"), wxOK | wxICON_ERROR, c->parent);
-				return;
-			}
-			if (cuts.empty()) return;
+			cuts = scene_detect::Cuts(measures, params);
 			try {
 				agi::fs::CreateDirectory(cache.parent_path());
+				if (read_video) scene_detect::SaveMeasures(measures_file, measures);
 				agi::keyframe::Save(cache, cuts);
 			}
 			catch (agi::Exception const& e) {

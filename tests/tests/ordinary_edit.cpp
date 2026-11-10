@@ -83,6 +83,8 @@
 #include "include/aegisub/video_provider.h"
 #include "keyframe_snap.h"
 #include "scene_detect.h"
+#include <libaegisub/io.h>
+#include <limits>
 #include "visual_tool_drag.h"
 #include "visual_tool_cross.h"
 #include "visual_tool_scale.h"
@@ -7103,6 +7105,27 @@ TEST(scene_detect, close_cuts_keep_the_strongest_and_the_start_is_not_one) {
     EXPECT_EQ((std::vector<int>{23}),scene_detect::FindCuts(diffs,across,scene_detect::ForSensitivity(0))) << "low sensitivity misses the weak cut";
 }
 
+TEST(scene_detect, measures_are_kept_and_read_back) {
+    scene_detect::Measures m;
+    m.flash_span=3;
+    m.diffs={0.,0.25,0.5};
+    m.across={std::numeric_limits<double>::infinity(),0.125,1.};
+    agi::fs::path file((std::filesystem::current_path()/"kept.measures").wstring());
+    scene_detect::SaveMeasures(file,m);
+    auto back=scene_detect::LoadMeasures(file);
+    EXPECT_EQ(3,back.flash_span);
+    EXPECT_EQ(m.diffs,back.diffs);
+    EXPECT_EQ(m.across,back.across);
+    EXPECT_EQ((std::vector<int>{0}),scene_detect::Cuts(back,scene_detect::Params{})) << "frames too near the start";
+    {agi::io::Save junk(file);junk.Get()<<"not measures";}
+    EXPECT_TRUE(scene_detect::LoadMeasures(file).empty());
+    EXPECT_TRUE(scene_detect::LoadMeasures(agi::fs::path("no-such.measures")).empty());
+
+    DrawnVideo video(10,640,360);
+    video.draw=[](int,int,int,unsigned char*){};
+    EXPECT_FALSE(video.ScaleDownForAnalysis(scene_detect::analysis_width)) << "a provider that cannot keeps its frames whole";
+}
+
 TEST(keyframe_snap, moves_near_ends_onto_scene_changes) {
     agi::vfr::Framerate fps(25,1);
     AssDialogue near_both,far_start,across;
@@ -7150,13 +7173,30 @@ TEST_F(ordinary_edit, detect_scene_changes_loads_them_as_keyframes_and_keeps_the
     cmd::call("keyframe/detect",c.get());
     EXPECT_EQ((std::vector<int>{0}),c->project->Keyframes()) << "one plain shot";
     EXPECT_TRUE(c->project->CanCloseKeyframes());
-    std::vector<agi::fs::path> cached;
-    for(auto const& f:std::filesystem::directory_iterator(std::filesystem::path(config::path->Decode("?user/scenes").wstring())))cached.push_back(agi::fs::path(f.path().wstring()));
+    std::vector<agi::fs::path> cached,measured;
+    for(auto const& f:std::filesystem::directory_iterator(std::filesystem::path(config::path->Decode("?user/scenes").wstring()))){
+        agi::fs::path file(f.path().wstring());
+        auto name=file.filename().string();
+        if(name.ends_with(".key.txt"))cached.push_back(file);
+        else if(name.ends_with(".measures"))measured.push_back(file);
+    }
     ASSERT_EQ(1u,cached.size());
+    ASSERT_EQ(1u,measured.size()) << "what reading the video found is kept too";
     // Found once: the next time is the kept list
     agi::keyframe::Save(cached[0],{0,10,20});
     cmd::call("keyframe/detect",c.get());
     EXPECT_EQ((std::vector<int>{0,10,20}),c->project->Keyframes());
+    // Another sensitivity: its cuts come from the kept measures, the video
+    // (one plain shot, no cuts in it) not read again
+    auto measures=scene_detect::LoadMeasures(measured[0]);
+    ASSERT_EQ(250u,measures.diffs.size());
+    measures.diffs[100]=0.9;measures.across[100]=1.;
+    scene_detect::SaveMeasures(measured[0],measures);
+    int const sensitivity=OPT_GET("Tool/Scene Detection/Sensitivity")->GetInt();
+    BOOST_SCOPE_EXIT_ALL(&){ OPT_SET("Tool/Scene Detection/Sensitivity")->SetInt(sensitivity); };
+    OPT_SET("Tool/Scene Detection/Sensitivity")->SetInt(sensitivity==2?0:2);
+    cmd::call("keyframe/detect",c.get());
+    EXPECT_EQ((std::vector<int>{0,100}),c->project->Keyframes());
     c->project->CloseKeyframes();
     EXPECT_FALSE(c->project->CanCloseKeyframes());
 }
