@@ -134,8 +134,9 @@ public:
 		int const w = max_width;
 		int const h = std::max(1, static_cast<int>(std::lround(double(Height) * w / Width)));
 		const int TargetFormat[] = { FFMS_GetPixFmt("bgra"), -1 };
-		// Area averaging: each small pixel the mean of the ones it covers
-		if (FFMS_SetOutputFormatV2(VideoSource, TargetFormat, w, h, FFMS_RESIZER_AREA, &ErrInfo))
+		// Picked out, not averaged: the small frame's pixels are some of
+		// the whole one's, as they are
+		if (FFMS_SetOutputFormatV2(VideoSource, TargetFormat, w, h, FFMS_RESIZER_POINT, &ErrInfo))
 			return false;
 		Width = w;
 		Height = h;

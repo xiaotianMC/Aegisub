@@ -7109,6 +7109,33 @@ TEST(scene_detect, finds_cuts_but_not_motion_flashes_or_fades) {
     EXPECT_TRUE(scene_detect::Detect(video,&cancelled,scene_detect::Params{}).empty());
 }
 
+TEST(scene_detect, another_angle_in_the_same_colours_is_a_cut_and_a_flat_dissolve_is_not) {
+    // Drawn as cartoons are: flat colours, a sky and the ground, a few
+    // shapes. The second shot is the same place from elsewhere: the same
+    // colours in much the same amounts, laid out otherwise
+    auto place=[](int layout,int x,int y,unsigned char *bgr){
+        static const unsigned char sky[3]={230,190,120},ground[3]={70,150,90},house[3]={60,60,200},tree[3]={40,110,40};
+        int const horizon=layout?60:110;
+        unsigned char const *c=y<horizon?sky:ground;
+        if(layout==0&&x>40&&x<120&&y>60&&y<110)c=house;
+        if(layout==0&&x>220&&x<260&&y>30&&y<110)c=tree;
+        if(layout==1&&x>180&&x<290&&y>20&&y<60)c=house;
+        if(layout==1&&x>30&&x<60&&y>10&&y<60)c=tree;
+        for(int i=0;i<3;++i)bgr[i]=c[i];
+    };
+    DrawnVideo video(120,320,180);
+    video.draw=[&](int n,int x,int y,unsigned char *bgr){
+        if(n<40)return place(0,x+n/4,y,bgr);
+        if(n<80)return place(1,x+n/4,y,bgr);     // cut to another angle
+        unsigned char a[3],b[3];                   // dissolves back over 20 frames
+        place(1,x+n/4,y,a);place(0,x+n/4,y,b);
+        double t=std::min(1.,(n-79)/21.);
+        for(int i=0;i<3;++i)bgr[i]=static_cast<unsigned char>(a[i]*(1-t)+b[i]*t);
+    };
+    auto cuts=scene_detect::Detect(video,nullptr,scene_detect::ForSensitivity(1));
+    EXPECT_EQ((std::vector<int>{0,40}),cuts) << "medium sensitivity";
+}
+
 TEST(scene_detect, signature_reads_any_pitch_and_flipped_frames) {
     VideoFrame plain{{},50,30,200,false},padded{{},50,30,232,false},flipped{{},50,30,200,true};
     plain.data.resize(200*30);padded.data.resize(232*30);flipped.data.resize(200*30);
@@ -7129,9 +7156,52 @@ TEST(scene_detect, close_cuts_keep_the_strongest_and_the_start_is_not_one) {
     diffs[3]=0.9;                  // too near the start
     diffs[20]=0.5;diffs[23]=0.8;   // three frames apart: the stronger
     diffs[40]=0.6;across[40]=0.05; // the picture came back: a flash
-    diffs[50]=0.3;
+    diffs[50]=0.2;
     EXPECT_EQ((std::vector<int>{23,50}),scene_detect::FindCuts(diffs,across,p));
     EXPECT_EQ((std::vector<int>{23}),scene_detect::FindCuts(diffs,across,scene_detect::ForSensitivity(0))) << "low sensitivity misses the weak cut";
+}
+
+TEST(scene_detect, parts_read_on_their_own_find_what_one_reading_finds) {
+    int const n=4*scene_detect::min_part_frames+7;
+    auto draw=[](int f,int x,int y,unsigned char *bgr){
+        if(f%97==50){bgr[0]=bgr[1]=bgr[2]=255;return;} // flashes, some at the parts' edges
+        Shot((f/131)%5,f,x,y,bgr);                      // a cut every 131 frames
+    };
+    std::vector<std::unique_ptr<DrawnVideo>> videos;std::vector<VideoProvider*> raw;
+    for(int k=0;k<4;++k){videos.push_back(std::make_unique<DrawnVideo>(n,64,36));videos.back()->draw=draw;raw.push_back(videos.back().get());}
+    auto whole=scene_detect::Measure(*raw[0],nullptr,3);
+    videos[0]->reads=0;
+    auto parts=scene_detect::Measure(raw,nullptr,3);
+    EXPECT_EQ(whole.diffs,parts.diffs);
+    EXPECT_EQ(whole.across,parts.across);
+    int reads=0;for(auto const& v:videos){EXPECT_GT(v->reads,0) << "each reader has a part";reads+=v->reads;}
+    EXPECT_LE(reads,n+3*(2*3+1)) << "each frame read once, but for a few each side of a part";
+    EXPECT_EQ(scene_detect::Cuts(whole,scene_detect::Params{}),scene_detect::Cuts(parts,scene_detect::Params{}));
+
+    // Too short to be worth cutting up: one reader
+    DrawnVideo shortv(scene_detect::min_part_frames+10,64,36),other(scene_detect::min_part_frames+10,64,36);
+    shortv.draw=other.draw=draw;
+    scene_detect::Measure(std::vector<VideoProvider*>{&shortv,&other},nullptr,3);
+    EXPECT_EQ(0,other.reads);
+
+    CancelledSink cancelled;
+    EXPECT_TRUE(scene_detect::Measure(raw,&cancelled,3).empty());
+
+    // A reader that fails: the error, once all have stopped
+    struct Failing final : VideoProvider {
+        int n;explicit Failing(int n):n(n){}
+        void GetFrame(int,VideoFrame&) override { throw VideoDecodeError("broken"); }
+        void SetColorSpace(agi::ycbcr::Header) override {}
+        int GetFrameCount() const override { return n; }
+        int GetWidth() const override { return 64; }
+        int GetHeight() const override { return 36; }
+        double GetDAR() const override { return 16./9; }
+        agi::vfr::Framerate GetFPS() const override { return agi::vfr::Framerate(25,1); }
+        std::vector<int> GetKeyFrames() const override { return {}; }
+        agi::ycbcr::header_colorspace GetColorSpace() const override { return agi::ycbcr::header_colorspace::unspecified(); }
+        std::string GetDecoderName() const override { return "failing"; }
+    } failing(n);
+    EXPECT_THROW(scene_detect::Measure(std::vector<VideoProvider*>{raw[0],&failing},nullptr,3),VideoDecodeError);
 }
 
 TEST(scene_detect, measures_are_kept_and_read_back) {

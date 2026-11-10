@@ -49,7 +49,9 @@
 #include <libaegisub/keyframe.h>
 #include <libaegisub/path.h>
 
+#include <algorithm>
 #include <functional>
+#include <thread>
 #include <wx/msgdlg.h>
 
 namespace {
@@ -129,6 +131,10 @@ std::string SceneCacheKey(agi::fs::path const& video) {
 	return key;
 }
 
+/// Raised when frames are compared another way: what an earlier way found
+/// is not kept on as if it had been found by this one
+constexpr const char *scene_method = "cells2";
+
 agi::fs::path SceneCacheFile(std::string const& key, const char *suffix) {
 	char name[48];
 	snprintf(name, sizeof name, "%016zx%s", std::hash<std::string>{}(key), suffix);
@@ -139,16 +145,14 @@ agi::fs::path SceneCacheFile(std::string const& key, const char *suffix) {
 /// found once
 agi::fs::path SceneCachePath(agi::fs::path const& video, int sensitivity) {
 	auto key = SceneCacheKey(video);
-	// Built as before measures were kept too, so lists found then still count
-	std::string full = video.string() + "|" + std::to_string(sensitivity) + key.substr(video.string().size());
-	return SceneCacheFile(full, ".key.txt");
+	return SceneCacheFile(key + "|" + scene_method + "|" + std::to_string(sensitivity), ".key.txt");
 }
 
 /// Where what reading a video through found is kept, whatever the
 /// sensitivity: another sensitivity's cuts come from it without reading the
 /// video again
 agi::fs::path SceneMeasuresPath(agi::fs::path const& video) {
-	return SceneCacheFile(SceneCacheKey(video), ".measures");
+	return SceneCacheFile(SceneCacheKey(video) + "|" + scene_method, ".measures");
 }
 
 struct keyframe_detect final : public Command {
@@ -184,9 +188,22 @@ struct keyframe_detect final : public Command {
 				// going back, and the frames small
 				DialogProgress progress(c->parent, _("Detect Scene Changes"), _("Reading every frame of the video..."));
 				try {
-					auto provider = VideoProviderFactory::GetProvider(video, c->subtitleAccess->Read().GetYCbCrMatrix(), &progress, false);
-					provider->ScaleDownForAnalysis(scene_detect::analysis_width);
-					progress.Run([&](agi::ProgressSink *ps) { measures = scene_detect::Measure(*provider, ps, params.flash_span); });
+					auto matrix = c->subtitleAccess->Read().GetYCbCrMatrix();
+					// A long video in parts, each read by a decoder of its
+					// own; a core is left to the decoders' own threads
+					std::vector<std::unique_ptr<VideoProvider>> providers;
+					std::vector<VideoProvider*> readers;
+					auto open = [&] {
+						providers.push_back(VideoProviderFactory::GetProvider(video, matrix, &progress, false));
+						providers.back()->ScaleDownForAnalysis(scene_detect::analysis_width);
+						readers.push_back(providers.back().get());
+					};
+					open();
+					int const cores = static_cast<int>(std::thread::hardware_concurrency());
+					int const length = readers[0]->GetFrameCount();
+					int const parts = std::clamp(std::min(cores - 1, length / scene_detect::min_part_frames), 1, 4);
+					while (static_cast<int>(readers.size()) < parts) open();
+					progress.Run([&](agi::ProgressSink *ps) { measures = scene_detect::Measure(readers, ps, params.flash_span); });
 				}
 				catch (agi::UserCancelException const&) { return; }
 				catch (agi::Exception const& e) {

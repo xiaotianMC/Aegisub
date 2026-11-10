@@ -90,7 +90,7 @@ public:
 	/// frame down as it is converted costs much less than converting it
 	/// whole. False when the frames stay as they were, the provider not
 	/// being able to or the video being no wider already.
-	virtual bool ScaleDownForAnalysis(int max_width) { return false; }
+	virtual bool ScaleDownForAnalysis(int /*max_width*/) { return false; }
 };
 
 DEFINE_EXCEPTION(VideoProviderError, agi::Exception);

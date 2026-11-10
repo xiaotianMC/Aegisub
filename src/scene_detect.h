@@ -19,8 +19,9 @@ struct VideoFrame;
 namespace scene_detect {
 
 struct Params {
-	/// How different two frames must be, 0–1, to be a cut
-	double threshold = 0.25;
+	/// How different two frames must be, 0–1, to be a cut: the medium
+	/// sensitivity's
+	double threshold = 0.15;
 	/// ... and how many times the difference around it
 	double ratio = 3.0;
 	/// Frames each side the difference around a frame is taken over
@@ -34,19 +35,25 @@ struct Params {
 /// The sensitivity option's three steps: low, medium, high
 Params ForSensitivity(int sensitivity);
 
-constexpr int thumb_w = 64, thumb_h = 36, hist_bins = 16;
+constexpr int thumb_w = 64, thumb_h = 36;
 
-/// What a frame is compared by: a small grey picture and its colours
+/// A cell whose colour moved this far, out of 255, in any channel changed
+constexpr int changed_level = 20;
+
+/// What a frame is compared by: the colour of each cell of a small picture
 struct Signature {
-	std::array<uint8_t, thumb_w * thumb_h> luma{};
-	/// Per channel (B, G, R) a histogram summing to 1
-	std::array<float, 3 * hist_bins> hist{};
+	/// B, G, R of each cell, row by row
+	std::array<uint8_t, thumb_w * thumb_h * 3> colour{};
 };
 
 /// A BGRA frame's signature, whatever its pitch and however it is stored
 Signature Sign(VideoFrame const& frame);
 
-/// 0 for the same picture, 1 for wholly unlike ones
+/// The share of the cells whose colour changed: 0 for the same picture, 1
+/// when every part of it is another colour. Motion moves only the cells
+/// along the edges of what moves; a dissolve moves every cell a little each
+/// frame; another shot moves much of the picture at once, even when it is
+/// of the same place in the same colours.
 double Difference(Signature const& a, Signature const& b);
 
 /// The cuts among frames, frame 0 not included.
@@ -57,9 +64,10 @@ double Difference(Signature const& a, Signature const& b);
 ///               i - 1 is a flash, the picture being the same either side
 std::vector<int> FindCuts(std::vector<double> const& diffs, std::vector<double> const& across, Params const& params);
 
-/// Frames are read this wide where the video can hand them out smaller:
-/// five source pixels to each of the thumbnail's, averaged
-constexpr int analysis_width = thumb_w * 5;
+/// Frames are read this wide where the video can hand them out smaller,
+/// picked out rather than averaged: the pixels the thumbnail's cells are
+/// made from, as they are in the full frame
+constexpr int analysis_width = thumb_w * 6;
 
 /// What reading a video through finds, before any frame is called a cut.
 /// Only the flash span enters into it, so a change of sensitivity is
@@ -73,6 +81,16 @@ struct Measures {
 
 /// Read every frame of @p video in order. Nothing if @p ps is cancelled.
 Measures Measure(VideoProvider &video, agi::ProgressSink *ps, int flash_span);
+
+/// A part shorter than this many frames is not worth a reader of its own
+constexpr int min_part_frames = 240;
+
+/// The same, the video cut into as many parts as there are @p videos (all
+/// of them the same video, each with its own decoder), each read through
+/// on a thread of its own. The parts overlap by a few frames, so that
+/// what is found is just what reading it through in one piece finds. A
+/// reader's error is thrown once all have stopped.
+Measures Measure(std::vector<VideoProvider*> const& videos, agi::ProgressSink *ps, int flash_span);
 
 /// Frame 0 first, then each cut
 std::vector<int> Cuts(Measures const& measures, Params const& params);
