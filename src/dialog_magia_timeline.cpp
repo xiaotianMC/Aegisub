@@ -638,7 +638,18 @@ public:
 		CenterOnParent();
 	}
 
-	Values const& Chosen() const { return values; }
+	/// What it is run with: the OCR engine as shown, the other one off.
+	/// 1.0's config has both on, shown as PaddleOCR: left so, it would
+	/// run Tesseract too, which may not be installed.
+	Values Chosen() const {
+		Values chosen = values;
+		if (ocr_engine && ocr && ocr->IsEnabled() && ocr->GetValue()) {
+			bool const tesseract = Tesseract();
+			chosen["ocr/doPaddle"] = tesseract ? "false" : "true";
+			chosen["ocr/doTesseract"] = tesseract ? "true" : "false";
+		}
+		return chosen;
+	}
 };
 }
 

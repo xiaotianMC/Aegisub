@@ -471,6 +471,23 @@ std::string Readable(std::string const& output) {
 	return wxString(output.data(), wxConvLibc, output.size()).utf8_string();
 }
 
+std::string WithoutProgress(std::string const& output) {
+	std::string out;
+	size_t pos = 0;
+	while (pos < output.size()) {
+		size_t end = output.find_first_of("\r\n", pos);
+		if (end == std::string::npos) end = output.size();
+		auto line = output.substr(pos, end - pos);
+		pos = end + 1;
+		// A number, a percent sign and the bar's edge
+		size_t i = line.find_first_not_of(' ');
+		size_t digits = i == std::string::npos ? i : line.find_first_not_of("0123456789", i);
+		bool const bar = digits != std::string::npos && digits > i && line.compare(digits, 2, "%|") == 0;
+		if (!bar && !line.empty()) out += line + "\n";
+	}
+	return out;
+}
+
 std::string LastLines(std::string const& output, size_t count) {
 	std::vector<std::string> lines;
 	size_t pos = 0;

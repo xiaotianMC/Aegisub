@@ -25,7 +25,7 @@ MagiaTimeline 的作者希望用它打轴的视频注明“自动打轴：MagiaT
 - **帧**：分段开关“跳过不变的帧 / 逐帧”（`engine: speculative / framewise`）。只有 `bcs`、`dtd`、`otl`、`prk` 能跳过不变的帧；选了其他策略时这一段停用，自动改成逐帧。逐帧时可以设“每 N 帧”（`framewise/sampleInterval`）。
 - **最大尺寸**（`maxResWidth` × `maxResHeight`，1.1 起才有）、**使用显卡**（`enableOpenCL`）。
 - **识别文字（OCR）**：把 `ocr` 加进 `extraJobs`。只有 `bcs`、`dtd`、`otl` 能做，且只能在跳过不变的帧时做（它自己的限制），不满足时勾选框停用，旁边灰字说明原因。
-  - 有 `ocr/doPaddle` 和 `ocr/doTesseract` 时，用分段开关选 PaddleOCR 或 Tesseract（一个设 true、另一个设 false）。1.0 默认两个都开，显示为 PaddleOCR。
+  - 有 `ocr/doPaddle` 和 `ocr/doTesseract` 时，用分段开关选 PaddleOCR 或 Tesseract。勾了识别文字时，运行时总是按开关上显示的写：选中的设 true、另一个设 false。1.0 默认两个都开，显示为 PaddleOCR；不这样写的话它还会去跑 Tesseract，没装 Tesseract 就报 `tesseract is not installed`。
   - 语言框对应所选引擎的语言键：Tesseract 是 `ocr/tesseractLang`，PaddleOCR 是 `ocr/paddleLang`（只有 1.0 有）；没有对应的键时不显示。
   - 新版默认把识别结果写进输出的 ASS（`standaloneOutput: false`），勾了识别文字时本软件强制这样设。1.0 把文字写到单独的 `<输出名>-ocr.txt`（`ocr/suffix`），每行 `名称,文字`，本软件按名称把文字填到对应的行上（`magia_timeline::AddReadText`）。
 - **画面和区域**（左侧，`MagiaRectPicker`）：显示视频的一帧，在上面用鼠标拖出要识别的框。
@@ -48,7 +48,7 @@ MagiaTimeline 的作者希望用它打轴的视频注明“自动打轴：MagiaT
 - **工作目录**是它的文件夹：它配置里的 `template.asst`、`ConfigSchema.json` 等都是相对路径。
 - **结束时的“按回车继续”**：1.0 版每次运行结束都会等回车；1.1 版可以用 `--no-pause` 关掉，但 1.0 不认这个参数。所以不传这个参数，而是一启动就往它的标准输入写一个换行再关闭，两个版本都能正常退出。
 - **输出编码**：设置 `PYTHONIOENCODING=utf-8`、`PYTHONUTF8=1`、`PYTHONUNBUFFERED=1`，让它的输出是 UTF-8 且即时可读，不受 Windows 代码页影响。打包版不认这些变量，输出仍是系统代码页，所以读回来的内容如果不是合法的 UTF-8，就按系统代码页转换后再显示。
-- **判断失败**：它会捕获自己的异常，打印 `Exception caught` 后照常退出，退出码说明不了问题。所以只要输出里出现 `Exception caught` 或 Python 的 `Traceback`，或者没有写出结果文件，就算失败，并把它最后 15 行输出显示出来。
+- **判断失败**：它会捕获自己的异常，打印 `Exception caught` 后照常退出，退出码说明不了问题。所以只要输出里出现 `Exception caught` 或 Python 的 `Traceback`，或者没有写出结果文件，就算失败，并把它最后 15 行输出显示出来。显示前去掉它画的进度条行（`18%|██   | 1714/9740 [...]`，以“数字%|”开头），免得把真正的错误挤到最后。
 
 ## 实现
 
@@ -66,10 +66,10 @@ MagiaTimeline 的作者希望用它打轴的视频注明“自动打轴：MagiaT
 - `magia_timeline.text_read_by_1_0_is_put_on_the_stretches_of_its_names`：1.0 的 `-ocr.txt` 按名称填到对应的段上。
 - `magia_timeline.config_is_given_the_video_and_where_to_write_and_keeps_the_rest`：按 1.1 版 `config.yml` 的结构改写，旧的列表（连同注释掉的项）被替换，其余不变；中文路径、引号、反斜杠和 BMP 以外的字符都写成转义，整个文件只有 ASCII；指定策略和不指定策略。
 - `magia_timeline.found_by_its_folder_its_script_or_its_program`：有 `venv`、没有 `venv`、只有打包的 exe、什么都没有、直接给脚本路径。
-- `magia_timeline.its_errors_are_read_from_what_it_prints`。
+- `magia_timeline.its_errors_are_read_from_what_it_prints`：报错的识别；进度条行被去掉，其余输出和单独的百分数保留。
 - `ordinary_edit.magiatimeline_adds_an_empty_line_for_each_subtitle_it_finds_in_one_step`：用一个假的 MagiaTimeline（`venv/bin/python3` 是一个 shell 脚本：检查工作目录、读 `--config`、打印输出、等回车、写出 `.ass`）真正启动一个进程。检查它收到的视频和策略；结果按时间排好、正文为空、样式与当前行相同、被选中、一步撤销。它报错时不添加任何行，并显示它说的话。
 - `ordinary_edit.magiatimeline_cancelled_stops_it_and_what_it_started_and_adds_nothing`：取消时它和它启动的子进程都被结束，字幕不变。去掉“连子进程一起结束”时这个测试会失败。
-- `ordinary_edit.magiatimeline_is_run_as_chosen_in_its_dialog_and_the_choice_kept`：对话框列出配置里的策略并选中它的默认；在画面上拖出新框、拖上边、从框里整体移动（不出画面），写进 `bcs/default/dialogRect`，别的策略的同名键不变；拖动阈值写进配置；选专用策略时只能逐帧、不能识别文字；换策略后预设跟着换；选 `bcs`、跳过不变的帧、勾识别文字后运行，假程序收到的配置里是这些值，并且 `standaloneOutput: false`；识别出的文字填进行里，编号不保留；只保存和配置不同的选择。下次打开时显示上次的选择，“恢复它的设置”回到配置里的值；取消时不运行、不改字幕、不改保存的选择。换成 1.0 的配置：没有 `dtd` 和最大尺寸，保存的 `dtd` 退回它自己的 `bcs`；两个 OCR 引擎可选，改成 Tesseract 和语言后写进配置；先拖“画面范围”去掉上下黑边，再拖字幕区域，写进配置的字幕区域是相对去掉黑边后画面的比例；这个预设没有灵敏度的键，灵敏度不显示；文字从 `-ocr.txt` 按名称读回。
+- `ordinary_edit.magiatimeline_is_run_as_chosen_in_its_dialog_and_the_choice_kept`：对话框列出配置里的策略并选中它的默认；在画面上拖出新框、拖上边、从框里整体移动（不出画面），写进 `bcs/default/dialogRect`，别的策略的同名键不变；拖动阈值写进配置；选专用策略时只能逐帧、不能识别文字；换策略后预设跟着换；选 `bcs`、跳过不变的帧、勾识别文字后运行，假程序收到的配置里是这些值，并且 `standaloneOutput: false`；识别出的文字填进行里，编号不保留；只保存和配置不同的选择。下次打开时显示上次的选择，“恢复它的设置”回到配置里的值；取消时不运行、不改字幕、不改保存的选择。换成 1.0 的配置：没有 `dtd` 和最大尺寸，保存的 `dtd` 退回它自己的 `bcs`；两个 OCR 引擎可选，改成 Tesseract 和语言后写进配置；先拖“画面范围”去掉上下黑边，再拖字幕区域，写进配置的字幕区域是相对去掉黑边后画面的比例；这个预设没有灵敏度的键，灵敏度不显示；文字从 `-ocr.txt` 按名称读回；只勾识别文字、不动引擎开关时，写入的是 PaddleOCR 开、Tesseract 关。
 
 还没有做的：
 

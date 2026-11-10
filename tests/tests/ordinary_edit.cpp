@@ -7752,6 +7752,10 @@ TEST(magia_timeline, its_errors_are_read_from_what_it_prints) {
     EXPECT_TRUE(magia_timeline::ReportsError("Exception caught:  bad config\n"));
     EXPECT_TRUE(magia_timeline::ReportsError("Traceback (most recent call last):\n  File x\n"));
     EXPECT_EQ("50%\nd\n",magia_timeline::LastLines("a\nb\r\nc\r50%\rd\n",2)) << "a progress bar redrawn with \\r: each drawing a line";
+    EXPECT_EQ("download x\nException caught:  tesseract is not installed\n",
+        magia_timeline::WithoutProgress(" 18%|\xe2\x96\x88   | 1714/9740 [00:00<00:01, 5515.30it/s]\r100%|\xe2\x96\x88\xe2\x96\x88| 9740/9740\ndownload x\n  0%|          | 0/2138\nException caught:  tesseract is not installed\n"))
+        << "its progress bars dropped, what it said kept";
+    EXPECT_EQ("50% done\n",magia_timeline::WithoutProgress("50% done\n")) << "a percentage alone is not a bar";
 }
 
 namespace {
@@ -8090,4 +8094,20 @@ TEST_F(ordinary_edit, magiatimeline_is_run_as_chosen_in_its_dialog_and_the_choic
     ASSERT_EQ(before+2,again.size());
     EXPECT_EQ("文字",again.back().Text.get()) << "read from 1.0's own file, by the name";
     EXPECT_EQ("",std::next(again.begin(),before)->Text.get());
+
+    // OCR turned on and the engine left as shown: 1.0 has both on, which
+    // is shown as PaddleOCR and run so, Tesseract off
+    c->subsController->Undo();
+    OPT_SET("Tool/MagiaTimeline/Settings")->SetString("");
+    {
+        MagiaDialog run([&](wxDialog* d) {
+            auto engine=MagiaControl<FlatSwitch>(d,"ocrEngine");
+            ASSERT_NE(nullptr,engine);
+            MagiaControl<FlatCheck>(d,"ocr")->Toggle();
+            EXPECT_EQ(0,engine->GetSelection());
+        });
+        cmd::call("tool/magiatimeline",c.get());
+    }
+    used=ReadText(folder/"used.yml");
+    EXPECT_NE(std::string::npos,used.find("  doPaddle: true\n  paddleLang: \"japan\"\n  doTesseract: false\n")) << used;
 }

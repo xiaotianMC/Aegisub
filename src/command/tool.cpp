@@ -166,7 +166,7 @@ struct tool_magiatimeline final : public Command {
 		bool const wrote = agi::fs::FileExists(output);
 		if (outcome.reported_error || !wrote) {
 			Fail(c, _("MagiaTimeline did not finish. The last of what it said:") + "\n\n" +
-				to_wx(magia_timeline::LastLines(outcome.output, 15)));
+				to_wx(magia_timeline::LastLines(magia_timeline::WithoutProgress(outcome.output), 15)));
 			return;
 		}
 

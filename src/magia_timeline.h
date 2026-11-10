@@ -139,6 +139,10 @@ bool ReportsError(std::string const& output);
 /// system's code page
 std::string Readable(std::string const& output);
 
+/// @p output without the progress bars it draws (" 18%|██   | 1714/9740 [...]"),
+/// which would push what went wrong out of sight
+std::string WithoutProgress(std::string const& output);
+
 /// The last @p count lines of @p output, for telling what went wrong
 std::string LastLines(std::string const& output, size_t count);
 
