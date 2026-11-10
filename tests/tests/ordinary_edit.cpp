@@ -7568,9 +7568,36 @@ std::string MagiaConfig() {
            "destination:\n- ...\n# - MagiaTimelineOutput2\n"
            "outputSrt: false\n"
            "assTemplate: template.asst\n"
+           "enableOpenCL: false\n"
+           "maxResWidth: 2000\nmaxResHeight: 1200\n"
            "strategy: dtd\n"
            "preset: default\n"
-           "bcs:\n  default:\n    dialogRect: [0.00, 1.00, 0.75, 1.00]\n";
+           "mr:\n  default:\n    dialogOutlineRect: [0.25, 0.75, 0.60, 0.95]\n  narrow:\n    dialogOutlineRect: [0.21, 0.79, 0.60, 0.97]\n"
+           "otl:\n  hotelzdm:\n    dialogRect: [0.00, 1.00, 0.75, 1.00]\n    textHSVRanges:\n      - [0, 0, 240, 180, 16, 255]\n    sobelThreshold: 200\n"
+           "bcs:\n  default:\n    dialogRect: [0.00, 1.00, 0.75, 1.00]\n    featureThreshold: 0.3\n"
+           "dtd:\n  default:\n    dialogRect: [0.00, 1.00, 0.75, 1.00]\n    featureThreshold: 2 # how much must change\n"
+           "engine: speculative\n"
+           "framewise:\n  # sampleInterval: in how many frames to sample a frame\n  sampleInterval: 1\n  debug: true\n"
+           "speculative:\n  emptyGapForceCheck: 1000\n"
+           "extraJobs: []\n"
+           "ocr:\n  standaloneOutput: true\n  standaloneOutputSuffix: \"-ocr.txt\"\n  doPaddle: true\n  doTesseract: false\n  tesseractLang: \"jpn\"\n";
+}
+std::string Magia10Config() {
+    // 1.0's: no dtd, no size limit, its OCR written to a file of its own
+    return "source:\n- src.mp4\n"
+           "destination:\n- MagiaTimelineOutput\n"
+           "assTemplate: template.asst\n"
+           "enableOpenCL: false\n"
+           "contentRect: [0.0, 1.0, 0.0, 1.0]\n"
+           "strategy: bcs\n"
+           "preset: default\n"
+           "bcs:\n  default:\n    dialogRect: [0.00, 1.00, 0.75, 1.00]\n"
+           "otl:\n  default:\n    dialogRect: [0.00, 1.00, 0.75, 1.00]\n"
+           "engine: speculative\n"
+           "framewise:\n  sampleInterval: 1\n"
+           "speculative:\n  emptyGapForceCheck: 1000\n"
+           "extraJobs:\n"
+           "ocr:\n  suffix: \"-ocr.txt\"\n  separator: \"@\"\n  doPaddle: true\n  paddleLang: \"japan\"\n  doTesseract: true\n  tesseractLang: \"jpn\"\n";
 }
 agi::fs::path MagiaFolder(std::string const& name) {
     auto dir=std::filesystem::current_path()/name;
@@ -7611,6 +7638,84 @@ TEST(magia_timeline, config_is_given_the_video_and_where_to_write_and_keeps_the_
     EXPECT_NE(std::string::npos,chosen->find("strategy: bcs\n"));
     EXPECT_EQ(std::string::npos,chosen->find("strategy: dtd"));
     EXPECT_FALSE(magia_timeline::WriteConfig("strategy: bcs\n","v","o",""));
+}
+
+TEST(magia_timeline, its_config_is_read_for_what_it_offers) {
+    auto in=magia_timeline::Inspect(MagiaConfig());
+    EXPECT_EQ((std::vector<std::string>{"mr","otl","bcs","dtd"}),in.strategies) << "the keys holding presets, in its order";
+    EXPECT_EQ((std::vector<std::string>{"default","narrow"}),in.presets["mr"]);
+    EXPECT_EQ("dtd",in.Get("strategy"));
+    EXPECT_EQ("2",in.Get("dtd/default/featureThreshold")) << "without the comment after it";
+    EXPECT_EQ("[[0, 0, 240, 180, 16, 255]]",in.Get("otl/hotelzdm/textHSVRanges")) << "a list an item a line";
+    EXPECT_EQ("1",in.Get("framewise/sampleInterval")) << "past the comment above it";
+    EXPECT_EQ("\"jpn\"",in.Get("ocr/tesseractLang"));
+    EXPECT_EQ("[]",in.Get("extraJobs"));
+    EXPECT_TRUE(in.Has("maxResWidth"));
+    EXPECT_FALSE(in.Has("ocr/suffix"));
+    EXPECT_FALSE(in.Has("framewise")) << "a key holding others has no value of its own";
+
+    auto old=magia_timeline::Inspect(Magia10Config());
+    EXPECT_EQ((std::vector<std::string>{"bcs","otl"}),old.strategies);
+    EXPECT_FALSE(old.Has("maxResWidth"));
+    EXPECT_TRUE(old.Has("ocr/suffix"));
+    EXPECT_TRUE(old.Has("extraJobs")) << "there, with nothing after it";
+    EXPECT_EQ("",old.Get("extraJobs"));
+
+    auto rect=magia_timeline::ParseRect("[0.00, 1.00, 0.75, 1.00]");
+    ASSERT_TRUE(rect);
+    EXPECT_DOUBLE_EQ(0.75,rect->top);
+    EXPECT_EQ("[0.0, 1.0, 0.75, 1.0]",magia_timeline::FormatRect(*rect));
+    EXPECT_FALSE(magia_timeline::ParseRect("[0.0, 1.0, 0.5]"));
+    EXPECT_FALSE(magia_timeline::ParseRect("[0.0, 1.0, x, 1.0]"));
+    EXPECT_EQ("jpn",magia_timeline::Unquote("\"jpn\""));
+
+    // What was chosen before, over what is installed
+    magia_timeline::Values saved{{"strategy","dtd"},{"maxResWidth","1000"},{"bcs/default/dialogRect","[0.1, 0.9, 0.8, 1.0]"},{"preset","narrow"}};
+    EXPECT_EQ(saved,magia_timeline::ParseSaved(magia_timeline::FormatSaved(saved)));
+    auto on_old=magia_timeline::Effective(old,saved);
+    EXPECT_EQ("bcs",on_old["strategy"]) << "a strategy it has not: its own";
+    EXPECT_EQ("default",on_old["preset"]) << "a preset the strategy has not: its own";
+    EXPECT_EQ(0u,on_old.count("maxResWidth")) << "a setting it has not is not given to it";
+    EXPECT_EQ("[0.1, 0.9, 0.8, 1.0]",on_old["bcs/default/dialogRect"]);
+    auto on_new=magia_timeline::Effective(in,saved);
+    EXPECT_EQ("dtd",on_new["strategy"]);
+    EXPECT_EQ("default",on_new["preset"]) << "dtd has no narrow";
+    EXPECT_EQ("1000",on_new["maxResWidth"]);
+    EXPECT_EQ((magia_timeline::Values{{"bcs/default/dialogRect","[0.1, 0.9, 0.8, 1.0]"},{"maxResWidth","1000"}}),magia_timeline::Changes(in,on_new))
+        << "only what is not as installed is kept";
+    EXPECT_TRUE(magia_timeline::Changes(in,in.values).empty());
+
+    EXPECT_TRUE(magia_timeline::CanSkipFrames("bcs"));
+    EXPECT_FALSE(magia_timeline::CanSkipFrames("mr"));
+    EXPECT_TRUE(magia_timeline::CanReadText("dtd"));
+    EXPECT_FALSE(magia_timeline::CanReadText("prk"));
+}
+
+TEST(magia_timeline, config_is_written_with_what_was_chosen_where_it_is_and_nothing_added) {
+    magia_timeline::Values chosen{{"strategy","bcs"},{"bcs/default/dialogRect","[0.1, 0.9, 0.8, 1.0]"},
+        {"framewise/sampleInterval","3"},{"extraJobs","[ocr]"},{"otl/hotelzdm/textHSVRanges","[[1, 2, 3, 4, 5, 6]]"}};
+    auto out=magia_timeline::WriteConfig(MagiaConfig(),"v.mkv","o",chosen);
+    ASSERT_TRUE(out);
+    EXPECT_NE(std::string::npos,out->find("strategy: bcs\n"));
+    EXPECT_NE(std::string::npos,out->find("bcs:\n  default:\n    dialogRect: [0.1, 0.9, 0.8, 1.0]\n    featureThreshold: 0.3\n")) << *out;
+    EXPECT_NE(std::string::npos,out->find("dtd:\n  default:\n    dialogRect: [0.00, 1.00, 0.75, 1.00]\n")) << "the same key of another strategy untouched";
+    EXPECT_NE(std::string::npos,out->find("  # sampleInterval: in how many frames to sample a frame\n  sampleInterval: 3\n  debug: true\n")) << *out;
+    EXPECT_NE(std::string::npos,out->find("    textHSVRanges: [[1, 2, 3, 4, 5, 6]]\n    sobelThreshold: 200\n")) << "its old items gone, what follows kept: " << *out;
+    EXPECT_NE(std::string::npos,out->find("extraJobs: [ocr]\nocr:\n"));
+    EXPECT_NE(std::string::npos,out->find("featureThreshold: 2 # how much must change\n")) << "a line not chosen is left as it was";
+
+    auto old=magia_timeline::WriteConfig(Magia10Config(),"v.mkv","o",magia_timeline::Values{{"maxResWidth","999"},{"extraJobs","[ocr]"}});
+    ASSERT_TRUE(old);
+    EXPECT_EQ(std::string::npos,old->find("maxResWidth")) << "not added to a version that has it not";
+    EXPECT_NE(std::string::npos,old->find("extraJobs: [ocr]\nocr:\n")) << *old;
+}
+
+TEST(magia_timeline, text_read_by_1_0_is_put_on_the_stretches_of_its_names) {
+    std::vector<magia_timeline::Interval> intervals{{0,1000,"","Subtitle_Dialog_0"},{1000,2000,"","Subtitle_Dialog_1"},{2000,3000,"あ","Subtitle_Dialog_2"}};
+    magia_timeline::AddReadText(intervals,"Subtitle_Dialog_0,こんにちは@世界\r\nSubtitle_Dialog_2,ignored\nbroken line\n");
+    EXPECT_EQ("こんにちは@世界",intervals[0].text);
+    EXPECT_EQ("",intervals[1].text);
+    EXPECT_EQ("あ",intervals[2].text) << "text already read kept";
 }
 
 TEST(magia_timeline, found_by_its_folder_its_script_or_its_program) {
@@ -7659,10 +7764,16 @@ dest=$(sed -n "/^destination:/{n;s/^- \"\(.*\)\"$/\1/p}" "$cfg")
 src=$(sed -n "/^source:/{n;s/^- \"\(.*\)\"$/\1/p}" "$cfg")
 echo "src=$src" > seen.txt
 sed -n 's/^strategy: /strategy=/p' "$cfg" >> seen.txt
+cp "$cfg" used.yml
 echo "Task 0: $src -> $dest"
 if [ "$(cat mode.txt 2>/dev/null)" = "hang" ]; then sleep 30 & echo $! > pid.txt; wait; fi
 if [ "$(cat mode.txt 2>/dev/null)" = "fail" ]; then echo "Exception caught:  the video could not be opened"; read x; exit 0; fi
-cat > "$dest.ass" <<'ASS'
+t0=Subtitle_Dialog_0; t1=Subtitle_Dialog_1
+if grep -q '^extraJobs: \[ocr\]' "$cfg"; then
+  if grep -q '^  suffix:' "$cfg"; then printf 'Subtitle_Dialog_1,\346\226\207\345\255\227\n' > "$dest-ocr.txt"
+  else t1=$(printf '\346\226\207\345\255\227'); fi
+fi
+cat > "$dest.ass" <<ASS
 [Script Info]
 ScriptType: v4.00+
 PlayResX: 1280
@@ -7674,8 +7785,8 @@ Style: Default,Microsoft YaHei,40,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-Dialogue: 0,0:00:03.00,0:00:05.50,Default,,0,0,0,,Subtitle_Dialog_1
-Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,Subtitle_Dialog_0
+Dialogue: 0,0:00:03.00,0:00:05.50,Default,,0,0,0,,$t1
+Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,$t0
 ASS
 echo "==== IIR to ASS ===="
 read x
@@ -7683,18 +7794,39 @@ echo "Overall Elapsed 1 s"
 )SH";
 }
 
+namespace {
+/// Answers the dialog it is run with: does @p act in it, then runs or cancels
+struct MagiaDialog : wxModalDialogHook {
+    std::function<void(wxDialog*)> act;
+    int answer=wxID_OK, shown=0;
+    explicit MagiaDialog(std::function<void(wxDialog*)> act={}):act(std::move(act)){Register();}
+    int Enter(wxDialog* dialog) override {
+        if(dynamic_cast<wxMessageDialog*>(dialog) || dialog->GetTitle()!=_("Time Hardsubs with MagiaTimeline"))return wxID_NONE;
+        ++shown;
+        if(act)act(dialog);
+        return answer;
+    }
+    void Exit(wxDialog*) override {}
+};
+template<class T> T* MagiaControl(wxWindow* parent,wxString const& name) {
+    for(auto w:descendants(parent))if(w->GetName()==name)if(auto t=dynamic_cast<T*>(w))return t;
+    return nullptr;
+}
+}
+
 TEST_F(ordinary_edit, magiatimeline_adds_an_empty_line_for_each_subtitle_it_finds_in_one_step) {
     c->project->LoadVideo("?dummy:25:250:64:48:64:64:64:");
     ASSERT_NE(nullptr,c->project->VideoProvider());
     PumpFirstFrame(c.get(),window);
-    BOOST_SCOPE_EXIT_ALL(&){ c->project->CloseVideo(); OPT_SET("Tool/MagiaTimeline/Path")->SetString(""); OPT_SET("Tool/MagiaTimeline/Strategy")->SetString(""); };
+    BOOST_SCOPE_EXIT_ALL(&){ c->project->CloseVideo(); OPT_SET("Tool/MagiaTimeline/Path")->SetString(""); OPT_SET("Tool/MagiaTimeline/Settings")->SetString(""); };
     auto folder=MagiaFolder("magia-fake");
     WriteText(folder/"MagiaTimeline.py","");
     WriteText(folder/"config.yml",MagiaConfig());
     WriteText(folder/"venv/bin/python3",fake_magia,true);
     OPT_SET("Tool/MagiaTimeline/Path")->SetString(folder.string());
-    OPT_SET("Tool/MagiaTimeline/Strategy")->SetString("bcs");
+    OPT_SET("Tool/MagiaTimeline/Settings")->SetString("strategy=bcs\n");
     ASSERT_TRUE(cmd::get("tool/magiatimeline")->Validate(c.get()));
+    MagiaDialog run;
 
     size_t const before=LiveRead(*c).Events.size();
     std::string const style=LiveRead(*c).Events.front().Style;
@@ -7730,6 +7862,7 @@ TEST_F(ordinary_edit, magiatimeline_cancelled_stops_it_and_what_it_started_and_a
     ASSERT_NE(nullptr,c->project->VideoProvider());
     PumpFirstFrame(c.get(),window);
     BOOST_SCOPE_EXIT_ALL(&){ c->project->CloseVideo(); OPT_SET("Tool/MagiaTimeline/Path")->SetString(""); };
+    MagiaDialog run;
     auto folder=MagiaFolder("magia-hang");
     WriteText(folder/"MagiaTimeline.py","");
     WriteText(folder/"config.yml",MagiaConfig());
@@ -7761,4 +7894,129 @@ TEST_F(ordinary_edit, magiatimeline_cancelled_stops_it_and_what_it_started_and_a
     bool gone=false;
     for(int i=0;i<50&&!gone;++i){gone=::kill(pid,0)!=0;if(!gone)wxMilliSleep(50);}
     EXPECT_TRUE(gone) << "what it started is killed with it";
+}
+
+TEST_F(ordinary_edit, magiatimeline_is_run_as_chosen_in_its_dialog_and_the_choice_kept) {
+    c->project->LoadVideo("?dummy:25:250:64:48:64:64:64:");
+    ASSERT_NE(nullptr,c->project->VideoProvider());
+    PumpFirstFrame(c.get(),window);
+    BOOST_SCOPE_EXIT_ALL(&){ c->project->CloseVideo(); OPT_SET("Tool/MagiaTimeline/Path")->SetString(""); OPT_SET("Tool/MagiaTimeline/Settings")->SetString(""); };
+    auto folder=MagiaFolder("magia-dialog");
+    WriteText(folder/"MagiaTimeline.py","");
+    WriteText(folder/"config.yml",MagiaConfig());
+    WriteText(folder/"venv/bin/python3",fake_magia,true);
+    OPT_SET("Tool/MagiaTimeline/Path")->SetString(folder.string());
+    OPT_SET("Tool/MagiaTimeline/Settings")->SetString("");
+    size_t const before=LiveRead(*c).Events.size();
+
+    {
+        MagiaDialog run([&](wxDialog* d) {
+            auto strategy=MagiaControl<FlatChoice>(d,"strategy");
+            auto preset=MagiaControl<FlatChoice>(d,"preset");
+            auto engine=MagiaControl<FlatSwitch>(d,"engine");
+            auto ocr=MagiaControl<FlatCheck>(d,"ocr");
+            ASSERT_TRUE(strategy&&preset&&engine&&ocr);
+            ASSERT_EQ(4u,strategy->GetItems().size()) << "the strategies its config has";
+            EXPECT_EQ(3,strategy->GetSelection()) << "its own, dtd";
+            EXPECT_NE(nullptr,MagiaControl<FlatFrame>(d,"maxResWidth")) << "1.1 has a size limit";
+            EXPECT_NE(nullptr,MagiaControl<FlatSwitch>(d,"ocrEngine"));
+            EXPECT_FALSE(ocr->GetValue());
+            EXPECT_TRUE(ocr->IsEnabled());
+
+            strategy->Choose(0); // mr: every frame, no OCR
+            EXPECT_EQ(2u,preset->GetItems().size());
+            EXPECT_EQ(1,engine->GetSelection()) << "a strategy for one game looks at every frame";
+            EXPECT_FALSE(engine->IsItemEnabled(0));
+            EXPECT_FALSE(ocr->IsEnabled());
+            preset->Choose(1);
+
+            strategy->Choose(2); // bcs
+            EXPECT_TRUE(engine->IsItemEnabled(0));
+            EXPECT_FALSE(ocr->IsEnabled()) << "OCR only when frames are skipped";
+            engine->Choose(0);
+            EXPECT_TRUE(ocr->IsEnabled());
+            ocr->Toggle();
+            EXPECT_TRUE(ocr->GetValue());
+            auto language=MagiaControl<FlatFrame>(d,"ocrLanguage");
+            ASSERT_NE(nullptr,language);
+            EXPECT_FALSE(language->IsEnabled()) << "PaddleOCR's language is not set in 1.1";
+        });
+        cmd::call("tool/magiatimeline",c.get());
+        EXPECT_EQ(1,run.shown);
+    }
+    auto used=ReadText(folder/"used.yml");
+    EXPECT_NE(std::string::npos,used.find("strategy: bcs\n")) << used;
+    EXPECT_NE(std::string::npos,used.find("preset: default\n")) << "mr's narrow is not bcs's: " << used;
+    EXPECT_NE(std::string::npos,used.find("engine: speculative\n"));
+    EXPECT_NE(std::string::npos,used.find("extraJobs: [ocr]\n"));
+    EXPECT_NE(std::string::npos,used.find("  standaloneOutput: false\n")) << "its text put in the lines it writes";
+    auto const& events=LiveRead(*c).Events;
+    ASSERT_EQ(before+2,events.size());
+    auto it=events.begin();std::advance(it,before);
+    EXPECT_EQ("",it->Text.get()) << "a name is not text";
+    ++it;
+    EXPECT_EQ("文字",it->Text.get()) << "the text it read";
+    auto kept=magia_timeline::ParseSaved(OPT_GET("Tool/MagiaTimeline/Settings")->GetString());
+    EXPECT_EQ("bcs",kept["strategy"]);
+    EXPECT_EQ("[ocr]",kept["extraJobs"]);
+    EXPECT_EQ(0u,kept.count("engine")) << "as its own: not kept";
+
+    // Next time it starts from the choice; its own settings brought back,
+    // and cancelled: not run, nothing kept
+    c->subsController->Undo();
+    {
+        MagiaDialog run([&](wxDialog* d) {
+            auto strategy=MagiaControl<FlatChoice>(d,"strategy");
+            auto ocr=MagiaControl<FlatCheck>(d,"ocr");
+            ASSERT_TRUE(strategy&&ocr);
+            EXPECT_EQ(2,strategy->GetSelection());
+            EXPECT_TRUE(ocr->GetValue());
+            auto restore=MagiaControl<FlatButton>(d,"restore");
+            ASSERT_NE(nullptr,restore);
+            restore->Press();
+            EXPECT_EQ(3,strategy->GetSelection());
+            EXPECT_FALSE(ocr->GetValue());
+        });
+        run.answer=wxID_CANCEL;
+        std::filesystem::remove(std::filesystem::path((folder/"used.yml").wstring()));
+        cmd::call("tool/magiatimeline",c.get());
+        EXPECT_EQ(1,run.shown);
+    }
+    EXPECT_FALSE(std::filesystem::exists(std::filesystem::path((folder/"used.yml").wstring()))) << "not run";
+    EXPECT_EQ(before,LiveRead(*c).Events.size());
+    EXPECT_EQ("bcs",magia_timeline::ParseSaved(OPT_GET("Tool/MagiaTimeline/Settings")->GetString())["strategy"]);
+
+    // 1.0: what it has not is not offered; its OCR read from its own file
+    WriteText(folder/"config.yml",Magia10Config());
+    OPT_SET("Tool/MagiaTimeline/Settings")->SetString("strategy=dtd\nmaxResWidth=1000\n");
+    {
+        MagiaDialog run([&](wxDialog* d) {
+            auto strategy=MagiaControl<FlatChoice>(d,"strategy");
+            ASSERT_NE(nullptr,strategy);
+            EXPECT_EQ(2u,strategy->GetItems().size());
+            EXPECT_EQ(0,strategy->GetSelection()) << "dtd it has not: its own bcs";
+            EXPECT_EQ(nullptr,MagiaControl<FlatFrame>(d,"maxResWidth"));
+            auto engine=MagiaControl<FlatSwitch>(d,"ocrEngine");
+            ASSERT_NE(nullptr,engine) << "1.0 can use either";
+            MagiaControl<FlatCheck>(d,"ocr")->Toggle();
+            EXPECT_EQ(0,engine->GetSelection()) << "both on in 1.0: PaddleOCR shown";
+            auto language=MagiaControl<FlatFrame>(d,"ocrLanguage");
+            ASSERT_NE(nullptr,language);
+            EXPECT_TRUE(language->IsEnabled());
+            engine->Choose(1);
+            auto text=dynamic_cast<wxTextCtrl*>(language->GetContent());
+            ASSERT_NE(nullptr,text);
+            EXPECT_EQ("jpn",text->GetValue());
+            text->SetValue("chi_sim");
+        });
+        cmd::call("tool/magiatimeline",c.get());
+    }
+    used=ReadText(folder/"used.yml");
+    EXPECT_EQ(std::string::npos,used.find("maxResWidth"));
+    EXPECT_NE(std::string::npos,used.find("extraJobs: [ocr]\n")) << used;
+    EXPECT_NE(std::string::npos,used.find("  doPaddle: false\n  paddleLang: \"japan\"\n  doTesseract: true\n  tesseractLang: \"chi_sim\"\n")) << used;
+    auto const& again=LiveRead(*c).Events;
+    ASSERT_EQ(before+2,again.size());
+    EXPECT_EQ("文字",again.back().Text.get()) << "read from 1.0's own file, by the name";
+    EXPECT_EQ("",std::next(again.begin(),before)->Text.get());
 }

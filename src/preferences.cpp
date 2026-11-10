@@ -281,7 +281,6 @@ void Video(PreferencesBook *book, Preferences *parent) {
 
 	auto magia = p->PageSizer(_("MagiaTimeline"));
 	p->OptionBrowse(magia, _("Installed in"), "Tool/MagiaTimeline/Path");
-	p->OptionAdd(magia, _("Strategy (empty: as its config.yml says)"), "Tool/MagiaTimeline/Strategy");
 
 	auto video_display = p->PageSizer(_("Video Display"));
 	p->OptionAdd(video_display, _("Only show visual tools when mouse is over video"), "Tool/Visual/Autohide");

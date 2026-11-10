@@ -614,7 +614,7 @@
 		},
 		"MagiaTimeline" : {
 			"Path" : "",
-			"Strategy" : ""
+			"Settings" : ""
 		},
 		"Scene Detection" : {
 			"Sensitivity" : 1

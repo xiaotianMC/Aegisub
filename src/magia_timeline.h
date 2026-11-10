@@ -5,6 +5,7 @@
 
 #include <libaegisub/fs.h>
 
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -37,22 +38,89 @@ std::optional<Launch> FindLaunch(agi::fs::path const& setting);
 /// The arguments that run @p launch on @p config
 std::vector<std::string> Arguments(Launch const& launch, agi::fs::path const& config);
 
+/// The values in a config.yml by their path: "strategy",
+/// "framewise/sampleInterval", "bcs/default/dialogRect". A value is its
+/// text as written, without a comment after it; a list written one item
+/// a line is given as "[a, b]".
+using Values = std::map<std::string, std::string>;
+
+/// What a config.yml holds: its values, and the strategies (the top-level
+/// keys holding presets of settings) with their presets, in its order.
+/// Which keys are there tells what the installed version can do: 1.0 has
+/// no maxResWidth, no dtd and writes its OCR to a file of its own.
+struct Installed {
+	Values values;
+	std::vector<std::string> strategies;
+	std::map<std::string, std::vector<std::string>> presets;
+
+	bool Has(std::string const& path) const { return values.count(path) > 0; }
+	/// The value at @p path, or empty
+	std::string Get(std::string const& path) const;
+};
+
+/// Read @p config, a config.yml
+Installed Inspect(std::string const& config);
+
 /// @p config, MagiaTimeline's own config.yml, made to read @p video and
 /// write @p destination (a path without its extension, .ass being added),
-/// with @p strategy if not empty. Everything else is left as it is: the
-/// strategies' settings are the user's. Nothing when the file has no
-/// top-level source or destination to replace.
+/// with the values at the paths of @p overrides replaced. Everything else
+/// is left as it is, and a path the file does not have is not added: an
+/// earlier version would refuse what it does not know. Nothing when the
+/// file has no top-level source or destination to replace.
+std::optional<std::string> WriteConfig(std::string const& config, std::string const& video,
+                                       std::string const& destination, Values const& overrides);
+/// As above, with only @p strategy chosen, if not empty
 std::optional<std::string> WriteConfig(std::string const& config, std::string const& video,
                                        std::string const& destination, std::string const& strategy);
+
+/// A rectangle as its config gives one: [left, right, top, bottom], each a
+/// share of the frame's width or height
+struct Rect {
+	double left = 0, right = 1, top = 0, bottom = 1;
+};
+std::optional<Rect> ParseRect(std::string const& value);
+std::string FormatRect(Rect const& rect);
+
+/// The items of a list value, "[a, b]"
+std::vector<std::string> ParseList(std::string const& value);
+std::string FormatList(std::vector<std::string> const& items);
+/// A string value without its quotes; and one put in them
+std::string Unquote(std::string const& value);
+std::string QuoteValue(std::string const& text);
+
+/// The strategies that can skip the frames where nothing changes (the
+/// speculative engine) and run extra jobs such as OCR: the others look at
+/// every frame
+bool CanSkipFrames(std::string const& strategy);
+bool CanReadText(std::string const& strategy);
+
+/// The choices kept between runs, one "path=value" a line
+Values ParseSaved(std::string const& saved);
+std::string FormatSaved(Values const& saved);
+/// What a run starts from: what is installed with @p saved over it. A
+/// saved value at a path the config no longer has is dropped, and a
+/// strategy or preset it no longer has falls back to its own.
+Values Effective(Installed const& installed, Values const& saved);
+/// Of @p chosen, the values that are not as installed: what is kept, and
+/// what the config is written with
+Values Changes(Installed const& installed, Values const& chosen);
 
 /// A stretch of time MagiaTimeline found a subtitle shown in
 struct Interval {
 	int start = 0, end = 0;
+	/// What it read there with OCR; empty without it
+	std::string text;
+	/// Its name for the stretch, Subtitle_<kind>_<n>
+	std::string name;
 };
 
-/// The stretches in what it wrote, in order of their start. Its lines carry
-/// no text, only a name for each of them, which is not kept.
+/// The stretches in what it wrote, in order of their start. Without OCR a
+/// line's text is only its name, which is not kept as text.
 std::vector<Interval> ReadTimeline(AssFile const& output);
+
+/// Put the text 1.0 read with OCR, which it wrote to a file of its own
+/// ("name,text" a line), on the stretches of those names
+void AddReadText(std::vector<Interval> &intervals, std::string const& ocr_file);
 
 /// What became of a run
 struct Outcome {

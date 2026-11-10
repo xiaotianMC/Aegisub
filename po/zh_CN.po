@@ -10214,8 +10214,8 @@ msgid "Time Hardsubs with MagiaTimeline"
 msgstr "用 MagiaTimeline 给硬字幕打轴"
 
 #: ../src/command/tool.cpp
-msgid "Run MagiaTimeline on the video to find when the subtitles burnt into it show, and add an empty line for each, to be filled in"
-msgstr "用 MagiaTimeline 找出视频里硬字幕出现的时间段，为每一段添加一行空字幕，留待填写"
+msgid "Run MagiaTimeline on the video to find when the subtitles burnt into it show, and add a line for each, with the text it reads if it is set to"
+msgstr "用 MagiaTimeline 找出视频里硬字幕出现的时间段，每段添加一行；设置了识别文字时填入识别出的文字"
 
 #: ../src/command/tool.cpp
 msgid "Choose the folder MagiaTimeline is installed in"
@@ -10256,13 +10256,154 @@ msgstr[0] "已添加 %d 行由 MagiaTimeline 打轴的字幕"
 msgid "Starting MagiaTimeline..."
 msgstr "正在启动 MagiaTimeline..."
 
+#: ../src/dialog_magia_timeline.cpp
+msgid "General purpose (recommended)"
+msgstr "通用（推荐）"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "General purpose, experimental"
+msgstr "通用（实验性）"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Outlined text"
+msgstr "描边文字"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Magia Record quests"
+msgstr "魔法纪录 剧情关卡"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Magia Record Scene0 film"
+msgstr "魔法纪录 Scene0 电影"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Magia Exedra quests"
+msgstr "Magia Exedra 剧情关卡"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Limbus Company quests"
+msgstr "边狱公司 剧情关卡"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Limbus Company mechanics"
+msgstr "边狱公司 机制介绍"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Pokemon Emerald"
+msgstr "宝可梦 绿宝石"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Parako anime storyboards"
+msgstr "Parako 动画分镜"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "BanG Dream stories"
+msgstr "BanG Dream 剧情"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Only when unchanged frames are skipped"
+msgstr "只能在“跳过不变的帧”时使用"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Not with this strategy"
+msgstr "这个策略不支持"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "The way it finds subtitles"
+msgstr "它找字幕的方法"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Strategy"
+msgstr "策略"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "The set of its settings for the strategy"
+msgstr "这个策略的一套参数"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Preset"
+msgstr "预设"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "&Skip Unchanged Frames"
+msgstr "跳过不变的帧(&S)"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "&Every Frame"
+msgstr "逐帧(&E)"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Look again only where the picture may have changed: much faster"
+msgstr "只在画面可能变化的地方重新查看，快得多"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Look at every frame, or every few, as set below: the only way for most of the strategies made for one game"
+msgstr "每帧（或按下面的设置每几帧）都查看；为某个游戏专门做的策略大多只能这样"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Every"
+msgstr "每"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Look at one frame in this many when looking at every frame"
+msgstr "逐帧查看时，每这么多帧看一帧"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "frames"
+msgstr "帧"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "A larger video is halved until it fits, which is faster; 0 leaves that side be"
+msgstr "视频超过这个大小就减半直到不超过，速度更快；0 表示这一边不限制"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Largest Size"
+msgstr "最大尺寸"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Use the &graphics card (OpenCL)"
+msgstr "使用显卡(&G)（OpenCL）"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "May be faster with a graphics card; turn it off if it is slower or fails"
+msgstr "有显卡时可能更快；变慢或出错就关掉"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "&Read the text (OCR)"
+msgstr "识别文字(&R)（OCR）"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Fill the lines with the text it reads, which needs its OCR installed; without it the lines are empty"
+msgstr "把识别出的文字填进字幕行，需要装好它的 OCR；不勾时字幕行为空"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "As the OCR names it: jpn, chi_sim... for Tesseract; japan, ch... for PaddleOCR"
+msgstr "按 OCR 自己的写法：Tesseract 用 jpn、chi_sim……；PaddleOCR 用 japan、ch……"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "&Run"
+msgstr "运行(&R)"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Open &config.yml"
+msgstr "打开 config.yml(&C)"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Its other settings are there"
+msgstr "其他设置都在这个文件里"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Its &Own Settings"
+msgstr "恢复它的设置(&O)"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Back to what its config.yml says"
+msgstr "回到它 config.yml 里的设置"
+
 #: ../src/preferences.cpp
 msgid "Installed in"
 msgstr "安装位置"
 
-#: ../src/preferences.cpp
-msgid "Strategy (empty: as its config.yml says)"
-msgstr "策略（留空则按它的 config.yml）"
 
 msgctxt "page"
 msgid "Timing"

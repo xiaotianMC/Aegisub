@@ -125,6 +125,7 @@ aegisub_src = files(
     'resolution_resampler.cpp',
     'keyframe_snap.cpp',
     'magia_timeline.cpp',
+    'dialog_magia_timeline.cpp',
     'scene_detect.cpp',
     'scroll_effect.cpp',
     'search_replace_engine.cpp',
