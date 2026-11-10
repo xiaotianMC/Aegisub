@@ -36,6 +36,41 @@ void AddLead(std::vector<AssDialogue*> const& targets, std::vector<AssDialogue*>
 	}
 }
 
+namespace {
+bool Joins(int dist, int max_gap, int max_overlap) {
+	return (dist < 0 && -dist <= max_overlap) || (dist > 0 && dist <= max_gap);
+}
+}
+
+int JoinAdjacent(std::vector<AssDialogue*> const& sorted, int max_gap, int max_overlap, double bias) {
+	int joined = 0;
+	for (size_t i = 1; i < sorted.size(); ++i) {
+		AssDialogue *prev = sorted[i - 1];
+		AssDialogue *cur = sorted[i];
+		int dist = cur->Start - prev->End;
+		if (Joins(dist, max_gap, max_overlap)) {
+			int at = prev->End + int(dist * bias);
+			cur->Start = at;
+			prev->End = at;
+			++joined;
+		}
+	}
+	return joined;
+}
+
+int CountJoins(std::vector<std::pair<int, int>> const& sorted, int max_gap, int max_overlap) {
+	int count = 0;
+	for (size_t i = 1; i < sorted.size(); ++i)
+		count += Joins(sorted[i].first - sorted[i - 1].second, max_gap, max_overlap);
+	return count;
+}
+
+int ShiftTime(int ms, int shift, bool by_time, agi::vfr::Framerate const& fps, int type) {
+	if (by_time) return ms + shift;
+	auto const t = static_cast<agi::vfr::Time>(type);
+	return fps.TimeAtFrame(shift + fps.FrameAtTime(ms, t), t);
+}
+
 int CharactersPerSecond(std::string_view text, int duration_ms, bool ignore_whitespace, bool ignore_punctuation) {
 	if (duration_ms <= 100 || text.size() > static_cast<size_t>(duration_ms))
 		return -1;

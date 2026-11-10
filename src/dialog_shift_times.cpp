@@ -14,6 +14,7 @@
 //
 // Aegisub Project http://www.aegisub.org/
 
+#include "timing_adjust.h"
 #include "ass_dialogue.h"
 #include "utils.h"
 #include "ass_file.h"
@@ -418,10 +419,7 @@ void DialogShiftTimes::Process(wxCommandEvent &) {
 }
 
 int DialogShiftTimes::Shift(int initial_time, int shift, bool by_time, agi::vfr::Time type) {
-	if (by_time)
-		return initial_time + shift;
-	else
-		return fps.TimeAtFrame(shift + fps.FrameAtTime(initial_time, type), type);
+	return ShiftTime(initial_time, shift, by_time, fps, type);
 }
 }
 

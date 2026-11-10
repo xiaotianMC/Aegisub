@@ -33,6 +33,7 @@ using IconButton = StylePanel::IconButton;
 using Caption = StylePanel::Caption;
 using TextButton = StylePanel::TextButton;
 using CardTitle = StylePanel::CardTitle;
+using PageSwitch = StylePanel::PageSwitch;
 using style_parts::TimeText;
 using style_parts::ReadTime;
 
@@ -119,7 +120,9 @@ TimingPage::TimingPage(wxWindow *parent, agi::Context *c)
 	// Set here or in Preferences and the timing post-processor alike
 	for (const char *option : {"Timing/Scene Snap Distance", "Tool/Timing Post Processor/Lead/IN", "Tool/Timing Post Processor/Lead/OUT",
 		"Subtitle/Character Counter/CPS Warning Threshold", "Subtitle/Character Counter/CPS Error Threshold",
-		"Subtitle/Character Counter/Ignore Whitespace", "Subtitle/Character Counter/Ignore Punctuation"})
+		"Subtitle/Character Counter/Ignore Whitespace", "Subtitle/Character Counter/Ignore Punctuation",
+		"Tool/Timing Post Processor/Threshold/Adjacent Gap", "Tool/Timing Post Processor/Threshold/Adjacent Overlap",
+		"Tool/Timing Post Processor/Adjacent Bias", "Tool/Shift Times/Time", "Tool/Shift Times/Frames", "Tool/Shift Times/ByTime"})
 		connections.push_back(OPT_SUB(option, [this](agi::OptionValue const&) { ScheduleUpdate(); }));
 	UpdateNow();
 }
@@ -241,6 +244,37 @@ void TimingPage::Lead(bool in, bool out) {
 	auto edit = c->subtitleAccess->Edit(scope->Lease());
 	edit.UpdateRows(updates);
 	edit.Commit(in && out ? _("add lead in and out") : in ? _("add lead in") : _("add lead out"), AssFile::COMMIT_DIAG_TIME);
+}
+
+void TimingPage::Join() {
+	int const gap = OPT_GET("Tool/Timing Post Processor/Threshold/Adjacent Gap")->GetInt();
+	int const overlap = OPT_GET("Tool/Timing Post Processor/Threshold/Adjacent Overlap")->GetInt();
+	double const bias = OPT_GET("Tool/Timing Post Processor/Adjacent Bias")->GetDouble();
+	Write(_("join adjacent lines"), [=](std::vector<AssDialogue*> const& rows, AssDialogue &) {
+		// As the timing post-processor has them: comments left out, in
+		// the order they show
+		std::vector<AssDialogue*> sorted;
+		for (auto row : rows)
+			if (!row->Comment) sorted.push_back(row);
+		std::stable_sort(sorted.begin(), sorted.end(), [](AssDialogue const* a, AssDialogue const* b) { return a->Start < b->Start; });
+		JoinAdjacent(sorted, gap, overlap, bias);
+	});
+}
+
+void TimingPage::Shift(int direction) {
+	auto const& fps = c->project->Timecodes();
+	bool const by_time = OPT_GET("Tool/Shift Times/ByTime")->GetBool() || !fps.IsLoaded();
+	int const amount = by_time ? OPT_GET("Tool/Shift Times/Time")->GetInt() : OPT_GET("Tool/Shift Times/Frames")->GetInt();
+	if (!amount) return;
+	// Shift Times opens the way it last went
+	OPT_SET("Tool/Shift Times/Direction")->SetBool(direction < 0);
+	int const shift = direction * amount;
+	Write(_("shifting"), [&](std::vector<AssDialogue*> const& rows, AssDialogue &) {
+		for (auto row : rows) {
+			row->Start = ShiftTime(row->Start, shift, by_time, fps, agi::vfr::START);
+			row->End = ShiftTime(row->End, shift, by_time, fps, agi::vfr::END);
+		}
+	});
 }
 
 void TimingPage::AddCardTitle(std::string const& card, wxString const& title) {
@@ -459,6 +493,91 @@ void TimingPage::BuildLead() {
 	AddRow(buttons);
 }
 
+void TimingPage::BuildJoin() {
+	AddCardTitle("join", _("Join adjacent lines"));
+	auto add_field = [this](wxSizer *row, const char *name, wxString const& label, wxString const& unit, const char *option,
+		double max, double step, double scale, wxString const& tip, bool first) {
+		auto field = Add<Field>(name, label, unit, false, tip);
+		field->SetNumberHandler({0, max, step}, [option, scale](double v, bool) {
+			if (scale == 1) OPT_SET(option)->SetInt(static_cast<int>(std::lround(v)));
+			else OPT_SET(option)->SetDouble(v / scale);
+		});
+		row->Add(field, 1, wxEXPAND | (first ? 0 : wxLEFT), FromDIP(4));
+		refreshers.push_back([field, option, scale] {
+			field->SetNumber(scale == 1 ? OPT_GET(option)->GetInt() : std::round(OPT_GET(option)->GetDouble() * scale), true);
+		});
+	};
+	auto limits = new wxBoxSizer(wxHORIZONTAL);
+	add_field(limits, "join.gap", _("Gap"), "ms", "Tool/Timing Post Processor/Threshold/Adjacent Gap", 5000, 10, 1,
+		_("Lines this far apart or closer are joined; the timing post-processor uses the same"), true);
+	add_field(limits, "join.overlap", _("Overlap"), "ms", "Tool/Timing Post Processor/Threshold/Adjacent Overlap", 5000, 10, 1,
+		_("Lines overlapping by this much or less are joined; the timing post-processor uses the same"), false);
+	AddRow(limits, true);
+
+	auto row = new wxBoxSizer(wxHORIZONTAL);
+	add_field(row, "join.bias", _("Bias"), "%", "Tool/Timing Post Processor/Adjacent Bias", 100, 5, 100,
+		_("Where two lines meet: 0% at the first one's end, 100% at the second one's start"), true);
+	auto join = Add<TextButton>("join.apply", _("Join"),
+		_("Join each selected line to the selected one before it, where they are close enough, in one step"));
+	join->on_click = [this] { Join(); };
+	row->Add(join, 0, wxEXPAND | wxLEFT, FromDIP(4));
+	AddRow(row);
+
+	auto note = Add<Caption>("join.note");
+	card_body->Add(note, 0, wxEXPAND | wxTOP, FromDIP(3));
+	refreshers.push_back([this, join, note] {
+		if (selected_times.size() < 2) {
+			note->SetText(_("Select two or more lines to join them"));
+			join->Enable(false);
+			return;
+		}
+		int n = CountJoins(selected_times, OPT_GET("Tool/Timing Post Processor/Threshold/Adjacent Gap")->GetInt(),
+			OPT_GET("Tool/Timing Post Processor/Threshold/Adjacent Overlap")->GetInt());
+		note->SetText(n ? fmt_plural(n, "%d place to join among the selected lines", "%d places to join among the selected lines", n)
+			: _("None of the selected lines is close enough to the next to join"));
+		join->Enable(n > 0);
+	});
+}
+
+void TimingPage::BuildShift() {
+	AddCardTitle("shift", _("Shift"));
+	bool const frames_known = c->project->Timecodes().IsLoaded();
+	auto unit = Add<PageSwitch>("shift.unit", std::vector<wxString>{wxGETTEXT_IN_CONTEXT("shift", "Time"), wxGETTEXT_IN_CONTEXT("shift", "Frames")});
+	unit->SetToolTip(frames_known ? _("Shift by milliseconds or by frames, as Shift Times does") : _("Shifting by frames needs a video or timecodes"));
+	unit->on_choose = [this, frames_known](int index) {
+		if (index == 1 && !frames_known) return;
+		OPT_SET("Tool/Shift Times/ByTime")->SetBool(index == 0);
+	};
+	AddRow([&] { auto r = new wxBoxSizer(wxHORIZONTAL); r->Add(unit, 1, wxEXPAND); return r; }(), true);
+
+	auto row = new wxBoxSizer(wxHORIZONTAL);
+	auto amount = Add<Field>("shift.amount", wxGETTEXT_IN_CONTEXT("shift", "By"), "ms", false,
+		_("How far the selected lines move; Shift Times keeps the same amount"));
+	row->Add(amount, 1, wxEXPAND);
+	auto earlier = Add<TextButton>("shift.earlier", _("Earlier"), _("Move the selected lines earlier, start and end, in one step"));
+	earlier->on_click = [this] { Shift(-1); };
+	row->Add(earlier, 0, wxEXPAND | wxLEFT, FromDIP(4));
+	auto later = Add<TextButton>("shift.later", _("Later"), _("Move the selected lines later, start and end, in one step"));
+	later->on_click = [this] { Shift(1); };
+	row->Add(later, 0, wxEXPAND | wxLEFT, FromDIP(4));
+	AddRow(row);
+
+	refreshers.push_back([this, frames_known, unit, amount, earlier, later] {
+		bool by_time = OPT_GET("Tool/Shift Times/ByTime")->GetBool() || !frames_known;
+		unit->Select(by_time ? 0 : 1);
+		// The same field for either: its unit, range and option follow
+		const char *option = by_time ? "Tool/Shift Times/Time" : "Tool/Shift Times/Frames";
+		amount->SetNumberHandler(by_time ? Field::Range{0, max_time, 10} : Field::Range{0, 100000, 1}, [option](double v, bool) {
+			OPT_SET(option)->SetInt(static_cast<int>(std::lround(v)));
+		});
+		amount->SetUnit(by_time ? wxS("ms") : wxGETTEXT_IN_CONTEXT("shift", "frames"));
+		amount->SetNumber(OPT_GET(option)->GetInt(), true);
+		bool can = line_id != 0 && OPT_GET(option)->GetInt() != 0;
+		earlier->Enable(can);
+		later->Enable(can);
+	});
+}
+
 void TimingPage::Build() {
 	Freeze();
 	refreshers.clear();
@@ -470,6 +589,8 @@ void TimingPage::Build() {
 		BuildTimes();
 		BuildScene();
 		BuildLead();
+		BuildJoin();
+		BuildShift();
 	}
 	Layout();
 	Thaw();
@@ -491,6 +612,11 @@ void TimingPage::UpdateNow() {
 	start = line ? static_cast<int>(line->Start) : 0;
 	end = line ? std::max(start, static_cast<int>(line->End)) : 0;
 	text = line ? line->Text.get() : std::string();
+
+	selected_times.clear();
+	for (auto row : selected)
+		if (!row->Comment) selected_times.emplace_back(static_cast<int>(row->Start), static_cast<int>(row->End));
+	std::stable_sort(selected_times.begin(), selected_times.end(), [](auto const& a, auto const& b) { return a.first < b.first; });
 
 	// The lines either side of it in the file, comments left out
 	has_before = has_after = false;
@@ -561,4 +687,10 @@ void TimingPage::Press(std::string const& name) {
 	if (it == parts.end() || !it->second->IsEnabled()) return;
 	if (auto icon = dynamic_cast<IconButton*>(it->second); icon && icon->on_click) icon->on_click();
 	else if (auto button = dynamic_cast<TextButton*>(it->second); button && button->on_click) button->on_click();
+}
+
+void TimingPage::Choose(std::string const& name, int index) {
+	auto it = parts.find(name);
+	if (it == parts.end()) return;
+	if (auto choice = dynamic_cast<PageSwitch*>(it->second); choice && choice->on_choose) choice->on_choose(index);
 }

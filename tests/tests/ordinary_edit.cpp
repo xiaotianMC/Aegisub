@@ -2171,6 +2171,23 @@ TEST_F(ordinary_edit, style_panel_folds_away_in_narrow_windows_and_opens_from_it
     ASSERT_TRUE(edge->Folded());
     panel->EditShape();
     EXPECT_FALSE(edge->Folded());
+    // Folded, the strip names the pages: each opens the panel on its own
+    OPT_SET("App/Style Panel/Show")->SetBool(false);
+    ASSERT_TRUE(edge->Folded());
+    int x=edge->GetClientSize().x-edge->FromDIP(10);
+    int style_at=edge->PageAt(wxPoint(x,edge->FromDIP(40)));
+    EXPECT_EQ(0,style_at) << "the first name, Style";
+    int timing_at=-1, animation_at=-1;
+    for(int y=0;y<edge->FromDIP(400);y+=2){int p=edge->PageAt(wxPoint(x,y));if(p==1&&animation_at<0)animation_at=y;if(p==2&&timing_at<0)timing_at=y;}
+    ASSERT_GT(animation_at,0); ASSERT_GT(timing_at,animation_at) << "Style, Animation, Timing down the strip";
+    EXPECT_EQ(-1,edge->PageAt(wxPoint(x,edge->FromDIP(500)))) << "below the names: none";
+    edge->Open(StylePanel::Page::Timing);
+    EXPECT_FALSE(edge->Folded());
+    EXPECT_EQ(StylePanel::Page::Timing,panel->ShownPage());
+    OPT_SET("App/Style Panel/Show")->SetBool(false);
+    edge->Open();
+    EXPECT_EQ(StylePanel::Page::Timing,panel->ShownPage()) << "elsewhere on the strip: the page last shown";
+    panel->ShowPage(StylePanel::Page::Style);
     delete frame; // now: it watches an option the next test changes
 }
 
@@ -6168,6 +6185,19 @@ TEST(timing_adjust, lead_stops_at_lines_it_did_not_overlap_and_moves_only_its_ta
     EXPECT_EQ(-1,CharactersPerSecond("Hello",100,true,true));
     EXPECT_EQ(5,CharactersPerSecond("Hello, world",2000,true,true));
     EXPECT_EQ(6,CharactersPerSecond("Hello, world",2000,false,false));
+    // Joined where close, meeting a share of the way across the gap
+    a=line(1000,2000); b=line(2100,3000); c=line(2960,4000);
+    std::vector<AssDialogue*> close{a.get(),b.get(),c.get()};
+    EXPECT_EQ(2,CountJoins({{1000,2000},{2100,3000},{2960,4000}},100,50));
+    EXPECT_EQ(1,CountJoins({{1000,2000},{2100,3000},{2960,4000}},99,50)) << "a gap over the limit";
+    EXPECT_EQ(2,JoinAdjacent(close,100,50,0.5));
+    EXPECT_EQ(2050,int(a->End)); EXPECT_EQ(2050,int(b->Start));
+    EXPECT_EQ(2980,int(b->End)); EXPECT_EQ(2980,int(c->Start));
+    // Shifted by time, or by frames as a start or an end
+    agi::vfr::Framerate fps(25,1);
+    EXPECT_EQ(1500,ShiftTime(1000,500,true,fps,agi::vfr::START));
+    EXPECT_EQ(fps.TimeAtFrame(fps.FrameAtTime(1000,agi::vfr::START)+2,agi::vfr::START),ShiftTime(1000,2,false,fps,agi::vfr::START));
+    EXPECT_EQ(fps.TimeAtFrame(fps.FrameAtTime(1000,agi::vfr::END)-2,agi::vfr::END),ShiftTime(1000,-2,false,fps,agi::vfr::END));
 }
 
 TEST_F(ordinary_edit, timing_page_edits_times_snaps_to_scene_changes_and_adds_lead) {
@@ -6195,7 +6225,7 @@ TEST_F(ordinary_edit, timing_page_edits_times_snaps_to_scene_changes_and_adds_le
     auto vc=c->videoController.get();
     auto description=c->subsController->GetUndoDescription();
 
-    EXPECT_EQ("time scene lead",shown()["cards"]);
+    EXPECT_EQ("time scene lead join shift",shown()["cards"]);
     EXPECT_EQ(wxS("0:00:01.60 → 0:00:05.60"),shown()["line"]);
     EXPECT_EQ(fmt_tl("%d characters per second",CharactersPerSecond("Hello, world",4000,true,true)),shown()["summary.cps"]);
     EXPECT_EQ(_("No line before it"),shown()["summary.prev"]);
@@ -6285,6 +6315,52 @@ TEST_F(ordinary_edit, timing_page_edits_times_snaps_to_scene_changes_and_adds_le
     shown(); page->Press("lead.add_in");
     EXPECT_EQ(std::make_pair(1400,5600),times(0));
     c->subsController->Undo();
+
+    // Joining: the post-processor's limits, the selected lines only
+    auto gap=OPT_GET("Tool/Timing Post Processor/Threshold/Adjacent Gap")->GetInt();
+    auto overlap=OPT_GET("Tool/Timing Post Processor/Threshold/Adjacent Overlap")->GetInt();
+    auto bias=OPT_GET("Tool/Timing Post Processor/Adjacent Bias")->GetDouble();
+    BOOST_SCOPE_EXIT_ALL(&){ OPT_SET("Tool/Timing Post Processor/Threshold/Adjacent Gap")->SetInt(gap); OPT_SET("Tool/Timing Post Processor/Threshold/Adjacent Overlap")->SetInt(overlap); OPT_SET("Tool/Timing Post Processor/Adjacent Bias")->SetDouble(bias); };
+    EXPECT_EQ(_("Select two or more lines to join them"),shown()["join.note"]);
+    EXPECT_EQ(wxS(" disabled"),shown()["join.apply"].Right(9));
+    c->selectionController->SetSelectionAndActiveIDs({first,second},first);
+    shown(); page->EnterNumber("join.gap",200,true); page->EnterNumber("join.bias",50,true);
+    EXPECT_EQ(200,OPT_GET("Tool/Timing Post Processor/Threshold/Adjacent Gap")->GetInt());
+    EXPECT_DOUBLE_EQ(0.5,OPT_GET("Tool/Timing Post Processor/Adjacent Bias")->GetDouble());
+    EXPECT_EQ(fmt_plural(1,"%d place to join among the selected lines","%d places to join among the selected lines",1),shown()["join.note"]);
+    auto before_join=c->subsController->GetUndoDescription();
+    page->Press("join.apply");
+    EXPECT_EQ(std::make_pair(1600,5650),times(0)); EXPECT_EQ(std::make_pair(5650,8000),times(1));
+    c->subsController->Undo();
+    EXPECT_EQ(std::make_pair(1600,5600),times(0)); EXPECT_EQ(std::make_pair(5700,8000),times(1));
+    EXPECT_EQ(before_join,c->subsController->GetUndoDescription());
+    shown(); page->EnterNumber("join.gap",50,true);
+    EXPECT_EQ(_("None of the selected lines is close enough to the next to join"),shown()["join.note"]);
+    EXPECT_EQ(wxS(" disabled"),shown()["join.apply"].Right(9));
+
+    // Shifting: by Shift Times' amount, in milliseconds or frames
+    auto by_time=OPT_GET("Tool/Shift Times/ByTime")->GetBool(); auto shift_ms=OPT_GET("Tool/Shift Times/Time")->GetInt();
+    auto shift_frames=OPT_GET("Tool/Shift Times/Frames")->GetInt(); auto shift_back=OPT_GET("Tool/Shift Times/Direction")->GetBool();
+    BOOST_SCOPE_EXIT_ALL(&){ OPT_SET("Tool/Shift Times/ByTime")->SetBool(by_time); OPT_SET("Tool/Shift Times/Time")->SetInt(shift_ms); OPT_SET("Tool/Shift Times/Frames")->SetInt(shift_frames); OPT_SET("Tool/Shift Times/Direction")->SetBool(shift_back); };
+    shown(); page->Choose("shift.unit",0); shown(); page->EnterNumber("shift.amount",500,true);
+    EXPECT_EQ(500,OPT_GET("Tool/Shift Times/Time")->GetInt());
+    EXPECT_EQ(wxS("500"),shown()["shift.amount"]);
+    page->Press("shift.later");
+    EXPECT_EQ(std::make_pair(2100,6100),times(0)); EXPECT_EQ(std::make_pair(6200,8500),times(1)) << "both selected lines";
+    EXPECT_FALSE(OPT_GET("Tool/Shift Times/Direction")->GetBool()) << "Shift Times opens going forward";
+    c->subsController->Undo();
+    EXPECT_EQ(std::make_pair(1600,5600),times(0));
+    c->selectionController->SetSelectionAndActiveIDs({first},first);
+    shown(); page->Choose("shift.unit",1);
+    EXPECT_FALSE(OPT_GET("Tool/Shift Times/ByTime")->GetBool());
+    shown(); page->EnterNumber("shift.amount",2,true);
+    EXPECT_EQ(2,OPT_GET("Tool/Shift Times/Frames")->GetInt());
+    shown(); page->Press("shift.earlier");
+    auto const& fps=c->project->Timecodes();
+    EXPECT_EQ(std::make_pair(ShiftTime(1600,-2,false,fps,agi::vfr::START),ShiftTime(5600,-2,false,fps,agi::vfr::END)),times(0));
+    EXPECT_TRUE(OPT_GET("Tool/Shift Times/Direction")->GetBool());
+    c->subsController->Undo();
+    EXPECT_EQ(std::make_pair(1600,5600),times(0));
 
     // Without the detected scene changes, a way to find them
     c->project->CloseKeyframes();

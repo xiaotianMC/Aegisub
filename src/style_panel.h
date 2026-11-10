@@ -164,15 +164,19 @@ private:
 /// between it and the editing area, which sets its width when dragged.
 /// It also shows and hides the panel: as "App/Style Panel/Show" says, and
 /// folded away while the window is narrower than narrow_width, leaving a
-/// wider strip with an arrow that opens it again.
+/// wider strip with an arrow and the pages' names down it: a name opens
+/// the panel on its page, anywhere else on the page last shown.
 class StylePanelEdge final : public wxWindow {
 	StylePanel *panel;
 	agi::signal::Connection option_changed, theme_changed;
 	bool opened = false; ///< Opened by hand while the window is narrow
 	bool hover = false;
+	int hover_page = -1; ///< The page whose name is under the pointer
 	int start_x = 0, start_width = 0;
 
 	void SetWidth(int width);
+	/// The pages' names down the folded strip, and where each is
+	std::vector<std::pair<wxString, wxRect>> PageNames() const;
 
 public:
 	/// Below this window width, in DIP, the panel folds away
@@ -186,6 +190,11 @@ public:
 	bool Folded() const;
 	/// Act as clicking the folded strip does
 	void Open();
+	/// Act as clicking a page's name on the folded strip does: open the
+	/// panel on that page
+	void Open(StylePanel::Page page);
+	/// The page whose name is at @p point of the folded strip, -1 for none
+	int PageAt(wxPoint point) const;
 	/// Fold the panel away, as its » button does
 	void Collapse();
 };

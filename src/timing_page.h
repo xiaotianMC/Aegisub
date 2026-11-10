@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: ISC
 // The style panel's timing page (docs/style-panel.md#时间页): when the
 // current line shows and goes, how fast it reads, how far its ends are
-// from the scene changes, and its lead-in and lead-out. Changes go to
+// from the scene changes, its lead-in and lead-out, joining the lines next
+// to each other and shifting them. Changes go to
 // every selected line; the commands and dialogs doing the same are kept.
 #pragma once
 
@@ -41,8 +42,11 @@ public:
 	/// Act as typing @p text into a field and pressing Enter does
 	bool TypeInto(std::string const& name, wxString const& text);
 	/// Act as clicking a button does: "time.start_now", "time.start_next",
-	/// "scene.snap_start", "scene.both", "lead.add_in"…
+	/// "scene.snap_start", "scene.both", "lead.add_in", "join.apply",
+	/// "shift.later"…
 	void Press(std::string const& name);
+	/// Act as choosing @p index of a switch does: "shift.unit" (time, frames)
+	void Choose(std::string const& name, int index);
 
 	class Readout;
 
@@ -72,6 +76,8 @@ private:
 	/// out: negative for an overlap; whether there is one
 	int gap_before = 0, gap_after = 0;
 	bool has_before = false, has_after = false;
+	/// The selected lines' times, comments left out, sorted by start
+	std::vector<std::pair<int, int>> selected_times;
 
 	/// Change the selected lines' times: @p change is given them and the
 	/// line read among them, and says whether it changed anything.
@@ -98,6 +104,12 @@ private:
 	void SnapEnd(bool end);
 	/// Add lead-in, lead-out or both to the selected lines
 	void Lead(bool in, bool out);
+	/// Join the selected lines next to each other, as the timing
+	/// post-processor does
+	void Join();
+	/// Move the selected lines later (@p direction 1) or earlier (-1) by
+	/// the amount Shift Times keeps
+	void Shift(int direction);
 
 	template<class T, class... Args> T *Add(std::string const& name, Args&&... args);
 	void AddCardTitle(std::string const& card, wxString const& title);
@@ -106,6 +118,8 @@ private:
 	void BuildTimes();
 	void BuildScene();
 	void BuildLead();
+	void BuildJoin();
+	void BuildShift();
 	/// A time of the line, with the video's time and a frame back and on
 	void AddTimeRow(bool end);
 };

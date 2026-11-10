@@ -370,21 +370,8 @@ void DialogTimingProcessor::Process() {
 	AddLead(sorted, sorted, hasLeadIn->IsChecked() ? leadIn : 0, hasLeadOut->IsChecked() ? leadOut : 0);
 
 	// Make adjacent
-	if (adjsEnable->IsChecked()) {
-		double bias = adjacentBias->GetInt() / 100.0;
-
-		for (size_t i = 1; i < sorted.size(); ++i) {
-			AssDialogue *prev = sorted[i - 1];
-			AssDialogue *cur = sorted[i];
-
-			int dist = cur->Start - prev->End;
-			if ((dist < 0 && -dist <= adjOverlap) || (dist > 0 && dist <= adjGap)) {
-				int setPos = prev->End + int(dist * bias);
-				cur->Start = setPos;
-				prev->End = setPos;
-			}
-		}
-	}
+	if (adjsEnable->IsChecked())
+		JoinAdjacent(sorted, adjGap, adjOverlap, adjacentBias->GetInt() / 100.0);
 
 	// Keyframe snapping
 	if (keysEnable->IsChecked()) {

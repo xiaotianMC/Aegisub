@@ -330,6 +330,7 @@ public:
 	}
 
 	void SetValue(wxString const& new_value) { Set(value, new_value); }
+	void SetUnit(wxString const& new_unit) { Set(unit, new_unit); }
 	/// Show a number, or "—" when @p is_known is false
 	void SetNumber(double number, bool is_known) {
 		current = number;

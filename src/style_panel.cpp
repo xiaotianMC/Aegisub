@@ -1029,19 +1029,32 @@ StylePanelEdge::StylePanelEdge(wxWindow *parent, StylePanel *panel)
 			dc.DrawLine(x - arm / 2, top, x + arm / 2, top + arm);
 		}
 
-		wxFont font = GetFont();
-		dc.SetFont(font);
-		dc.SetTextForeground(ink);
-		wxString label = _("Style");
-		wxSize extent = dc.GetTextExtent(label);
-		// Read from the top down, as a folded side bar's name is
-		dc.DrawRotatedText(label, cx + extent.y / 2, top + FromDIP(14), 270);
+		// The pages' names, read from the top down as a folded side bar's
+		// name is: the one the panel shows in the accent colour and bold,
+		// the one under the pointer in the accent colour
+		dc.SetFont(GetFont());
+		wxColour plain = theme::Mix(surface, text, 0.75);
+		int current = static_cast<int>(this->panel->ShownPage());
+		auto names = PageNames();
+		for (int i = 0; i < static_cast<int>(names.size()); ++i) {
+			auto const& [label, rect] = names[i];
+			wxFont font = GetFont();
+			if (i == current) font.MakeBold();
+			dc.SetFont(font);
+			dc.SetTextForeground(i == current || i == hover_page ? accent : plain);
+			int height = dc.GetTextExtent(label).y;
+			dc.DrawRotatedText(label, cx + height / 2, rect.y, 270);
+		}
 	});
 	Bind(wxEVT_ENTER_WINDOW, [this](wxMouseEvent &) { hover = true; Refresh(false); });
-	Bind(wxEVT_LEAVE_WINDOW, [this](wxMouseEvent &) { hover = false; Refresh(false); });
+	Bind(wxEVT_LEAVE_WINDOW, [this](wxMouseEvent &) { hover = false; hover_page = -1; Refresh(false); });
 	Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent &event) {
 		if (Folded()) {
-			CallAfter([this] { Open(); });
+			int page = PageAt(event.GetPosition());
+			CallAfter([this, page] {
+				if (page < 0) Open();
+				else Open(static_cast<StylePanel::Page>(page));
+			});
 			return;
 		}
 		start_x = ClientToScreen(event.GetPosition()).x;
@@ -1049,6 +1062,14 @@ StylePanelEdge::StylePanelEdge(wxWindow *parent, StylePanel *panel)
 		CaptureMouse();
 	});
 	Bind(wxEVT_MOTION, [this](wxMouseEvent &event) {
+		if (Folded()) {
+			int page = PageAt(event.GetPosition());
+			if (page != hover_page) {
+				hover_page = page;
+				Refresh(false);
+			}
+			return;
+		}
 		if (!HasCapture() || !event.LeftIsDown()) return;
 		SetWidth(start_width - (ClientToScreen(event.GetPosition()).x - start_x));
 		GetParent()->Layout();
@@ -1059,6 +1080,35 @@ StylePanelEdge::StylePanelEdge(wxWindow *parent, StylePanel *panel)
 		OPT_SET("App/Style Panel/Width")->SetInt(this->panel->ToDIP(this->panel->GetSize().x));
 	});
 	Bind(wxEVT_MOUSE_CAPTURE_LOST, [](wxMouseCaptureLostEvent &) { });
+}
+
+std::vector<std::pair<wxString, wxRect>> StylePanelEdge::PageNames() const {
+	std::vector<std::pair<wxString, wxRect>> names;
+	wxClientDC dc(const_cast<StylePanelEdge*>(this));
+	wxFont font = GetFont();
+	font.MakeBold(); // as long as the one shown is
+	dc.SetFont(font);
+	int gap = theme::BlockGap(GetParent());
+	int y = FromDIP(40); // below the «
+	for (wxString const& label : {_("Style"), _("Animation"), wxGETTEXT_IN_CONTEXT("page", "Timing")}) {
+		int length = dc.GetTextExtent(label).x;
+		// Taller than the text, for an easier aim
+		names.emplace_back(label, wxRect(gap, y, std::max(0, GetClientSize().x - gap), length));
+		y += length + FromDIP(16);
+	}
+	return names;
+}
+
+int StylePanelEdge::PageAt(wxPoint point) const {
+	auto names = PageNames();
+	for (int i = 0; i < static_cast<int>(names.size()); ++i)
+		if (names[i].second.Inflate(0, FromDIP(7)).Contains(point)) return i;
+	return -1;
+}
+
+void StylePanelEdge::Open(StylePanel::Page page) {
+	panel->ShowPage(page);
+	if (Folded()) Open();
 }
 
 void StylePanelEdge::SetWidth(int width) {
@@ -1080,7 +1130,7 @@ void StylePanelEdge::Update() {
 	if (show == panel->IsShown() && GetMinSize().x == strip) return;
 	SetMinSize(wxSize(strip, -1));
 	SetCursor(show ? wxCursor(wxCURSOR_SIZEWE) : wxCursor(wxCURSOR_HAND));
-	SetToolTip(show ? _("Drag to change the width of the style panel") : _("Show the style panel"));
+	SetToolTip(show ? _("Drag to change the width of the style panel") : _("Show the style panel: click a page's name to open it on that page"));
 	if (auto sizer = GetContainingSizer()) sizer->Show(panel, show);
 	else panel->Show(show);
 	GetParent()->Layout();

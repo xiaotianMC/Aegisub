@@ -2057,27 +2057,27 @@ msgstr "对齐关键帧"
 
 #: ../src/command/time.cpp:239 ../src/command/time.cpp:240
 msgid "Add lead in and out"
-msgstr "添加开始提前及结束延后"
+msgstr "加前后余量"
 
 #: ../src/command/time.cpp:241
 msgid "Add both lead in and out to the selected lines"
-msgstr "同时开始提前、结束延后所选行"
+msgstr "给所选行加上前留和后留"
 
 #: ../src/command/time.cpp:253 ../src/command/time.cpp:254
 msgid "Add lead in"
-msgstr "添加开始提前"
+msgstr "加前留"
 
 #: ../src/command/time.cpp:255
 msgid "Add the lead in time to the selected lines"
-msgstr "为所选行的开始时间提前指定的时间"
+msgstr "所选行的开始时间往前留出指定的时长"
 
 #: ../src/command/time.cpp:265 ../src/command/time.cpp:266
 msgid "Add lead out"
-msgstr "添加结束延后"
+msgstr "加后留"
 
 #: ../src/command/time.cpp:267
 msgid "Add the lead out time to the selected lines"
-msgstr "为所选行的结束时间延后指定的时间"
+msgstr "所选行的结束时间往后留出指定的时长"
 
 #: ../src/command/time.cpp:276 ../src/command/time.cpp:277
 msgid "Increase length"
@@ -2322,7 +2322,7 @@ msgstr "时轴后处理器"
 msgid ""
 "Post-process the subtitle timing to add lead-ins and lead-outs, snap timing "
 "to scene changes, etc."
-msgstr "运行时轴后处理器来处理时间开始提前、结束延后以及对齐转场等。"
+msgstr "运行时轴后处理器：加前后余量、对齐画面切换等。"
 
 #: ../src/command/tool.cpp:186
 msgid "&Translation Assistant..."
@@ -4823,11 +4823,11 @@ msgstr "仅应用于所选行"
 
 #: ../src/dialog_timing_processor.cpp:175
 msgid "Lead-in/Lead-out"
-msgstr "提前开始/延后结束"
+msgstr "前后余量"
 
 #: ../src/dialog_timing_processor.cpp:177
 msgid "Add lead &in:"
-msgstr "开始提前(&I)"
+msgstr "前留(&I)"
 
 #: ../src/dialog_timing_processor.cpp:179
 msgid "Enable adding of lead-ins to lines"
@@ -4839,7 +4839,7 @@ msgstr "提前的时长 (ms)"
 
 #: ../src/dialog_timing_processor.cpp:182
 msgid "Add lead &out:"
-msgstr "结束延后:"
+msgstr "后留"
 
 #: ../src/dialog_timing_processor.cpp:184
 msgid "Enable adding of lead-outs to lines"
@@ -5814,11 +5814,11 @@ msgstr "字幕间隔小于此值时自动衔接（秒）"
 
 #: ../src/preferences.cpp:174
 msgid "Default lead-in length (ms)"
-msgstr "默认提前开始时间长度 (ms)"
+msgstr "默认前留时长 (ms)"
 
 #: ../src/preferences.cpp:175
 msgid "Default lead-out length (ms)"
-msgstr "默认延后结束时间长度 (ms)"
+msgstr "默认后留时长 (ms)"
 
 #: ../src/preferences.cpp:177
 msgid "Marker drag-start sensitivity (px)"
@@ -10396,23 +10396,23 @@ msgstr "没有这个视频的画面切换"
 
 msgctxt "lead"
 msgid "In"
-msgstr "提前"
+msgstr "前留"
 
 msgctxt "lead"
 msgid "Out"
-msgstr "延后"
+msgstr "后留"
 
 msgid "How much earlier the selected lines start, as the timing post-processor adds it"
-msgstr "选中行的开始提前多少，与时间后处理器共用"
+msgstr "选中行的开始往前留多少，与时间后处理器共用"
 
 msgid "How much later the selected lines end, as the timing post-processor adds it"
-msgstr "选中行的结束延后多少，与时间后处理器共用"
+msgstr "选中行的结束往后留多少，与时间后处理器共用"
 
 msgid "+ Lead-in"
-msgstr "+ 提前"
+msgstr "+ 前留"
 
 msgid "+ Lead-out"
-msgstr "+ 延后"
+msgstr "+ 后留"
 
 msgid "+ Both"
 msgstr "+ 两头"
@@ -10421,10 +10421,90 @@ msgid "Not over a line it did not already overlap: it stops at the line's edge, 
 msgstr "不越过原本不重叠的相邻行，碰到就停在那一行的边上，与时间后处理器相同"
 
 msgid "add lead in"
-msgstr "添加开始提前"
+msgstr "加前留"
 
 msgid "add lead out"
-msgstr "添加结束延后"
+msgstr "加后留"
 
 msgid "add lead in and out"
-msgstr "添加开始提前及结束延后"
+msgstr "加前后余量"
+
+msgid "Show the style panel: click a page's name to open it on that page"
+msgstr "显示样式面板：点页名直接打开那一页"
+
+msgid "Join adjacent lines"
+msgstr "连接相邻行"
+
+msgid "Gap"
+msgstr "间隔"
+
+msgid "Overlap"
+msgstr "重叠"
+
+msgid "Lines this far apart or closer are joined; the timing post-processor uses the same"
+msgstr "间隔不超过这么多的两行会连上，与时间后处理器共用"
+
+msgid "Lines overlapping by this much or less are joined; the timing post-processor uses the same"
+msgstr "重叠不超过这么多的两行会连上，与时间后处理器共用"
+
+msgid "Where two lines meet: 0% at the first one's end, 100% at the second one's start"
+msgstr "两行接在哪里：0% 在前一行的结束处，100% 在后一行的开始处"
+
+msgid "Join"
+msgstr "连接"
+
+msgid "Join each selected line to the selected one before it, where they are close enough, in one step"
+msgstr "把选中的行里离得够近的前后两行接在一起，一步撤销"
+
+msgid "Select two or more lines to join them"
+msgstr "选中两行以上才能连接"
+
+msgid "%d place to join among the selected lines"
+msgid_plural "%d places to join among the selected lines"
+msgstr[0] "选中的行里有 %d 处可以连接"
+
+msgid "None of the selected lines is close enough to the next to join"
+msgstr "选中的行之间都离得太远，没有可以连接的"
+
+msgid "join adjacent lines"
+msgstr "连接相邻行"
+
+msgid "Shift"
+msgstr "平移"
+
+msgctxt "shift"
+msgid "Time"
+msgstr "时间"
+
+msgctxt "shift"
+msgid "Frames"
+msgstr "帧"
+
+msgctxt "shift"
+msgid "frames"
+msgstr "帧"
+
+msgctxt "shift"
+msgid "By"
+msgstr "偏移"
+
+msgid "Shift by milliseconds or by frames, as Shift Times does"
+msgstr "按毫秒或按帧平移，与“平移时间”相同"
+
+msgid "Shifting by frames needs a video or timecodes"
+msgstr "按帧平移需要先打开视频或时间码"
+
+msgid "How far the selected lines move; Shift Times keeps the same amount"
+msgstr "选中的行移动多少，与“平移时间”共用"
+
+msgid "Earlier"
+msgstr "提前"
+
+msgid "Later"
+msgstr "推后"
+
+msgid "Move the selected lines earlier, start and end, in one step"
+msgstr "把选中的行整体提前（开始和结束一起），一步撤销"
+
+msgid "Move the selected lines later, start and end, in one step"
+msgstr "把选中的行整体推后（开始和结束一起），一步撤销"
