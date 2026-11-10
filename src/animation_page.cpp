@@ -807,7 +807,7 @@ void AnimationPage::BuildMove() {
 void AnimationPage::BuildScroll() {
 	const wxString undo = _("set scroll effect");
 	bool const scrolling = scroll->IsScroll();
-	AddCardTitle("scroll", scrolling ? _("Scroll") : _("Banner"), _("Effect field"));
+	auto title = AddCardTitle("scroll", scrolling ? _("Scroll") : _("Banner"), _("Effect field"));
 
 	if (scroll_count < line_count) {
 		auto lines = Add<Caption>("scroll.lines");
@@ -826,6 +826,8 @@ void AnimationPage::BuildScroll() {
 		if (auto cmd = cmd::get("video/tool/scroll"); cmd && cmd->Validate(c)) cmd::call("video/tool/scroll", c);
 	};
 	refreshers.push_back([this, pick] { pick->Enable(VideoTime().has_value()); });
+	// In the title, where it stays whichever kind is chosen
+	title->Insert(1, pick, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT | wxTOP, FromDIP(6));
 
 	// Banner, up or down: turning a scroll about keeps its area and speed,
 	// a banner made a scroll or the other way starts anew
@@ -835,7 +837,6 @@ void AnimationPage::BuildScroll() {
 	kind->SetToolTip(_("A banner crosses the screen; a scroll goes up or down through an area"));
 	kind->on_choose = [this](int index) { Choose("scroll.kind", index); };
 	kind_row->Add(kind, 1, wxEXPAND);
-	if (scrolling) kind_row->Add(pick, 0, wxLEFT, FromDIP(2));
 	AddRow(kind_row, true);
 	refreshers.push_back([this, kind] {
 		kind->Select(scroll->kind == ScrollEffect::Kind::Banner ? 0 : scroll->kind == ScrollEffect::Kind::ScrollUp ? 1 : 2);
@@ -867,7 +868,6 @@ void AnimationPage::BuildScroll() {
 		auto direction = Add<PageSwitch>("scroll.direction", std::vector<wxString>{_("Right to left"), _("Left to right")});
 		direction->on_choose = [this](int index) { Choose("scroll.direction", index); };
 		row->Add(direction, 1, wxEXPAND);
-		row->Add(pick, 0, wxLEFT, FromDIP(2));
 		AddRow(row);
 		refreshers.push_back([this, direction] { direction->Select(scroll->left_to_right ? 1 : 0); });
 	}

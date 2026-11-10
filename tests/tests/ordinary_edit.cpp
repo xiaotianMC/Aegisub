@@ -92,6 +92,7 @@
 #include "visual_tool_vector_clip.h"
 #include "visual_tool_scroll.h"
 #include "scroll_effect.h"
+#include "gl_text.h"
 #include "dialog_scroll_effect.h"
 #include "visual_tool_rectangle.h"
 #include "subtitle_format.h"
@@ -5890,6 +5891,14 @@ TEST(animation_tags, read_and_write_move_fade_transform_and_origin) {
     // \org
     EXPECT_EQ((Origin{3,4}), *Read("{\\org(3,4)}x", 1).origin);
     EXPECT_EQ("{\\b1\\org(7,8)}x", WriteOrigin("{\\org(1,2)\\b1}x", Origin{7,8}));
+}
+TEST(gl_text, draws_each_character_of_utf8_once) {
+    // "行结束" is three characters of three bytes each: one glyph apiece
+    EXPECT_EQ((std::vector<int>{'1','0',' ',0x884C,0x7ED3,0x675F}),OpenGLText::CodePoints("10 \xE8\xA1\x8C\xE7\xBB\x93\xE6\x9D\x9F"));
+    EXPECT_EQ((std::vector<int>{0x1F600}),OpenGLText::CodePoints("\xF0\x9F\x98\x80"));
+    // Bytes that aren't UTF-8 are drawn as themselves
+    EXPECT_EQ((std::vector<int>{0xE9,'x'}),OpenGLText::CodePoints("\xE9x"));
+    EXPECT_EQ((std::vector<int>{0xE8,0xA1}),OpenGLText::CodePoints("\xE8\xA1"));
 }
 TEST_F(ordinary_edit, animation_page_edits_scroll_and_banner_effects) {
     int w,h; LiveRead(*c).GetResolution(w,h);
