@@ -1678,7 +1678,7 @@ TEST_F(ordinary_edit, style_panel_moves_scales_turns_and_fades_lines) {
     c->textSelectionController->SetSelection(0,0);
     auto panel=new StylePanel(window,c.get());
     auto shown=[&] { panel->UpdateNow(); return panel->Shown(); };
-    EXPECT_FALSE(panel->IsSectionShown("transform")) << "folded at first";
+    EXPECT_TRUE(panel->IsSectionShown("transform")) << "open at first";
 
     // Without \pos: where alignment and margins put it
     auto s=shown();
@@ -5862,7 +5862,8 @@ TEST_F(ordinary_edit, style_panel_switches_between_its_style_and_animation_pages
     EXPECT_EQ(StylePanel::Page::Style, panel->ShownPage());
     EXPECT_EQ("Style", panel->Shown()["page"]);
     EXPECT_TRUE(panel->IsSectionVisible("text"));
-    EXPECT_FALSE(panel->IsSectionShown("transform")); // folded at the start
+    EXPECT_TRUE(panel->IsSectionShown("transform")); // open at the start
+    panel->ShowSection("transform", false);
     auto visible=[&] {
         int shown = 0;
         for (auto child : panel->GetChildren()) if (child->IsShown()) ++shown;

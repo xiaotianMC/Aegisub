@@ -287,7 +287,6 @@ StylePanel::StylePanel(wxWindow *parent, agi::Context *c)
 	outer->Show(timing_body, false);
 
 	SetSizer(outer);
-	ShowSection("transform", false);
 	SetSectionVisible("shape", false);
 	FitInside();
 	BindEditing();
