@@ -10400,6 +10400,63 @@ msgstr "恢复它的设置(&O)"
 msgid "Back to what its config.yml says"
 msgstr "回到它 config.yml 里的设置"
 
+#: ../src/dialog_magia_timeline.cpp
+msgid "Picture (without black bars)"
+msgstr "画面范围（去掉黑边）"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Drag a rectangle round where the subtitles are, or its sides to move them; MagiaTimeline looks only inside it"
+msgstr "在字幕所在的位置拖出一个框，或拖动框的边调整；MagiaTimeline 只看框里的内容"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "The rectangle to drag"
+msgstr "要拖动的框"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "A frame with subtitles shows best where they are: drag the name to go through the video"
+msgstr "选一帧有字幕的画面最容易框准：按住“帧”字左右拖动可以浏览视频"
+
+#: ../src/dialog_magia_timeline.cpp
+msgctxt "region"
+msgid "Subtitles"
+msgstr "字幕区域"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Region"
+msgstr "区域"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Sensitivity"
+msgstr "灵敏度"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Threshold"
+msgstr "阈值"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "How much must be there to count as a subtitle: higher finds fewer"
+msgstr "要有多少特征才算字幕：越大找到的越少"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Colour Tolerance"
+msgstr "颜色容差"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "How far a colour may be from the text's and still count as it"
+msgstr "颜色和字幕文字颜色相差多少以内仍算作文字"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Shortest"
+msgstr "最短"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "ms"
+msgstr "毫秒"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "A subtitle shown for less than this is taken for noise and dropped"
+msgstr "显示时间短于这个值的字幕当作噪声丢掉"
+
 #: ../src/preferences.cpp
 msgid "Installed in"
 msgstr "安装位置"

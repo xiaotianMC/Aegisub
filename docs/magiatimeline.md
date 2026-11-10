@@ -26,8 +26,14 @@ MagiaTimeline 的作者希望用它打轴的视频注明“自动打轴：MagiaT
 - **最大尺寸**（`maxResWidth` × `maxResHeight`，1.1 起才有）、**使用显卡**（`enableOpenCL`）。
 - **识别文字（OCR）**：把 `ocr` 加进 `extraJobs`。只有 `bcs`、`dtd`、`otl` 能做，且只能在跳过不变的帧时做（它自己的限制），不满足时勾选框停用，旁边灰字说明原因。
   - 有 `ocr/doPaddle` 和 `ocr/doTesseract` 时，用分段开关选 PaddleOCR 或 Tesseract（一个设 true、另一个设 false）。1.0 默认两个都开，显示为 PaddleOCR。
-  - 语言框对应所选引擎的语言键：Tesseract 是 `ocr/tesseractLang`，PaddleOCR 是 `ocr/paddleLang`（只有 1.0 有）；没有对应的键时停用。
+  - 语言框对应所选引擎的语言键：Tesseract 是 `ocr/tesseractLang`，PaddleOCR 是 `ocr/paddleLang`（只有 1.0 有）；没有对应的键时不显示。
   - 新版默认把识别结果写进输出的 ASS（`standaloneOutput: false`），勾了识别文字时本软件强制这样设。1.0 把文字写到单独的 `<输出名>-ocr.txt`（`ocr/suffix`），每行 `名称,文字`，本软件按名称把文字填到对应的行上（`magia_timeline::AddReadText`）。
+- **画面和区域**（左侧，`MagiaRectPicker`）：显示视频的一帧，在上面用鼠标拖出要识别的框。
+  - 下方“区域”下拉框选要拖的框：“字幕区域”（所选预设的 `dialogRect`，排在第一个）、“画面范围（去掉黑边）”（`contentRect`），以及预设里其他名字以 `Rect` 结尾的区域（专用策略的 `dialogBgRect`、`blackscreenRect` 等，显示键名）。其他框用虚线画在画面上作参考。
+  - 在框外按下拖动画一个新框；在框里拖动整体移动（不出画面）；拖边或角调整大小，拖过对边时两边对调。太小的框（小于 4 像素）不算，恢复原来的框。框外部分压暗，表示不会被识别。
+  - 坐标按 MagiaTimeline 的规定换算：预设里的区域是相对 `contentRect`（去掉黑边后的画面）的比例，`contentRect` 本身是相对整帧的比例。保存时保留三位小数。
+  - 右下“帧”是要显示的帧号，从视频当前帧开始；可以输入，也可以按住“帧”字左右拖动浏览视频。选一帧有字幕的画面最容易框准。显示的是不带字幕渲染的原始画面。
+- **灵敏度**：所选预设里有这些键时才显示：阈值（`featureThreshold`）、颜色容差（`colourTolerance`）、最短（`iirPassDenoiseMinTime`，毫秒）。是数字框，可以输入、滚轮、拖动名称。
 - **底部按钮**：左边“打开 config.yml”（用系统默认程序打开，其余设置都在里面）、“恢复它的设置”（回到 `config.yml` 里的值）；右边取消、运行。
 
 **保存**：对话框里的选择只保存和 `config.yml` 不同的部分（`magia_timeline::Changes`），存在选项 `Tool/MagiaTimeline/Settings` 里，每行 `路径=值`，如 `strategy=bcs`、`bcs/default/dialogRect=[0.1, 0.9, 0.8, 1.0]`。下次打开时从 `config.yml` 的值出发，再叠加保存的选择（`magia_timeline::Effective`）；`config.yml` 里已经没有的键、没有的策略或预设会被忽略。用户的 `config.yml` 本身从不修改。
@@ -63,7 +69,7 @@ MagiaTimeline 的作者希望用它打轴的视频注明“自动打轴：MagiaT
 - `magia_timeline.its_errors_are_read_from_what_it_prints`。
 - `ordinary_edit.magiatimeline_adds_an_empty_line_for_each_subtitle_it_finds_in_one_step`：用一个假的 MagiaTimeline（`venv/bin/python3` 是一个 shell 脚本：检查工作目录、读 `--config`、打印输出、等回车、写出 `.ass`）真正启动一个进程。检查它收到的视频和策略；结果按时间排好、正文为空、样式与当前行相同、被选中、一步撤销。它报错时不添加任何行，并显示它说的话。
 - `ordinary_edit.magiatimeline_cancelled_stops_it_and_what_it_started_and_adds_nothing`：取消时它和它启动的子进程都被结束，字幕不变。去掉“连子进程一起结束”时这个测试会失败。
-- `ordinary_edit.magiatimeline_is_run_as_chosen_in_its_dialog_and_the_choice_kept`：对话框列出配置里的策略并选中它的默认；选专用策略时只能逐帧、不能识别文字；换策略后预设跟着换；选 `bcs`、跳过不变的帧、勾识别文字后运行，假程序收到的配置里是这些值，并且 `standaloneOutput: false`；识别出的文字填进行里，编号不保留；只保存和配置不同的选择。下次打开时显示上次的选择，“恢复它的设置”回到配置里的值；取消时不运行、不改字幕、不改保存的选择。换成 1.0 的配置：没有 `dtd` 和最大尺寸，保存的 `dtd` 退回它自己的 `bcs`；两个 OCR 引擎可选，改成 Tesseract 和语言后写进配置；文字从 `-ocr.txt` 按名称读回。
+- `ordinary_edit.magiatimeline_is_run_as_chosen_in_its_dialog_and_the_choice_kept`：对话框列出配置里的策略并选中它的默认；在画面上拖出新框、拖上边、从框里整体移动（不出画面），写进 `bcs/default/dialogRect`，别的策略的同名键不变；拖动阈值写进配置；选专用策略时只能逐帧、不能识别文字；换策略后预设跟着换；选 `bcs`、跳过不变的帧、勾识别文字后运行，假程序收到的配置里是这些值，并且 `standaloneOutput: false`；识别出的文字填进行里，编号不保留；只保存和配置不同的选择。下次打开时显示上次的选择，“恢复它的设置”回到配置里的值；取消时不运行、不改字幕、不改保存的选择。换成 1.0 的配置：没有 `dtd` 和最大尺寸，保存的 `dtd` 退回它自己的 `bcs`；两个 OCR 引擎可选，改成 Tesseract 和语言后写进配置；先拖“画面范围”去掉上下黑边，再拖字幕区域，写进配置的字幕区域是相对去掉黑边后画面的比例；这个预设没有灵敏度的键，灵敏度不显示；文字从 `-ocr.txt` 按名称读回。
 
 还没有做的：
 

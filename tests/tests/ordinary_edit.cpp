@@ -86,6 +86,7 @@
 #include "keyframe_snap.h"
 #include "scene_detect.h"
 #include "magia_timeline.h"
+#include "dialog_magia_timeline.h"
 #include <signal.h>
 #include <libaegisub/io.h>
 #include <limits>
@@ -7939,7 +7940,38 @@ TEST_F(ordinary_edit, magiatimeline_is_run_as_chosen_in_its_dialog_and_the_choic
             EXPECT_TRUE(ocr->GetValue());
             auto language=MagiaControl<FlatFrame>(d,"ocrLanguage");
             ASSERT_NE(nullptr,language);
-            EXPECT_FALSE(language->IsEnabled()) << "PaddleOCR's language is not set in 1.1";
+            EXPECT_FALSE(language->IsShown()) << "PaddleOCR's language is not set in 1.1";
+
+            // The subtitles' rectangle dragged on the frame
+            auto picker=MagiaControl<MagiaRectPicker>(d,"picker");
+            auto region=MagiaControl<FlatChoice>(d,"region");
+            ASSERT_TRUE(picker&&region);
+            ASSERT_EQ(1u,region->GetItems().size()) << "bcs's default has dialogRect alone; 1.1's config here has no contentRect";
+            EXPECT_EQ(wxGETTEXT_IN_CONTEXT("region","Subtitles"),region->GetStringSelection());
+            EXPECT_TRUE(picker->IsEditing());
+            auto area=picker->ImageArea();
+            auto at=[&](double x,double y){return wxPoint(area.x+int(std::lround(x*area.width)),area.y+int(std::lround(y*area.height)));};
+            picker->Press(at(0.1,0.5));
+            picker->Drag(at(0.5,0.7));
+            picker->Release(at(0.9,0.9));
+            auto r=picker->GetRect();
+            EXPECT_NEAR(0.1,r.left,0.01);EXPECT_NEAR(0.9,r.right,0.01);EXPECT_NEAR(0.5,r.top,0.01);EXPECT_NEAR(0.9,r.bottom,0.01);
+            // Its top side dragged down
+            picker->Press(at(0.5,0.5));
+            picker->Release(at(0.5,0.6));
+            EXPECT_NEAR(0.6,picker->GetRect().top,0.01);
+            EXPECT_NEAR(0.9,picker->GetRect().bottom,0.01) << "the other sides stay";
+            // Moved from inside, kept in the frame
+            picker->Press(at(0.5,0.75));
+            picker->Release(at(0.5,0.95));
+            EXPECT_NEAR(0.7,picker->GetRect().top,0.01);
+            EXPECT_NEAR(1.0,picker->GetRect().bottom,0.01);
+
+            // The sensitivity bcs has, scrubbed
+            auto threshold=MagiaControl<FlatFrame>(d,"featureThreshold");
+            ASSERT_NE(nullptr,threshold);
+            EXPECT_TRUE(threshold->IsShown());
+            threshold->Scrub(2,true);
         });
         cmd::call("tool/magiatimeline",c.get());
         EXPECT_EQ(1,run.shown);
@@ -7950,6 +7982,17 @@ TEST_F(ordinary_edit, magiatimeline_is_run_as_chosen_in_its_dialog_and_the_choic
     EXPECT_NE(std::string::npos,used.find("engine: speculative\n"));
     EXPECT_NE(std::string::npos,used.find("extraJobs: [ocr]\n"));
     EXPECT_NE(std::string::npos,used.find("  standaloneOutput: false\n")) << "its text put in the lines it writes";
+    auto bcs_rect=[](std::string const& yml){
+        auto at=yml.find("bcs:\n  default:\n    dialogRect: ");
+        if(at==std::string::npos)return std::optional<magia_timeline::Rect>();
+        at+=std::string("bcs:\n  default:\n    dialogRect: ").size();
+        return magia_timeline::ParseRect(yml.substr(at,yml.find('\n',at)-at));
+    };
+    auto rect=bcs_rect(used);
+    ASSERT_TRUE(rect) << used;
+    EXPECT_NEAR(0.1,rect->left,0.01);EXPECT_NEAR(0.9,rect->right,0.01);EXPECT_NEAR(0.7,rect->top,0.01);EXPECT_NEAR(1.0,rect->bottom,0.01);
+    EXPECT_NE(std::string::npos,used.find("]\n    featureThreshold: 0.5\n")) << used;
+    EXPECT_NE(std::string::npos,used.find("dtd:\n  default:\n    dialogRect: [0.00, 1.00, 0.75, 1.00]\n")) << "another strategy's untouched";
     auto const& events=LiveRead(*c).Events;
     ASSERT_EQ(before+2,events.size());
     auto it=events.begin();std::advance(it,before);
@@ -7996,6 +8039,30 @@ TEST_F(ordinary_edit, magiatimeline_is_run_as_chosen_in_its_dialog_and_the_choic
             EXPECT_EQ(2u,strategy->GetItems().size());
             EXPECT_EQ(0,strategy->GetSelection()) << "dtd it has not: its own bcs";
             EXPECT_EQ(nullptr,MagiaControl<FlatFrame>(d,"maxResWidth"));
+            // Its black bars cut away first: the subtitles' rectangle is in
+            // shares of what is left
+            auto picker=MagiaControl<MagiaRectPicker>(d,"picker");
+            auto region=MagiaControl<FlatChoice>(d,"region");
+            ASSERT_TRUE(picker&&region);
+            ASSERT_EQ(2u,region->GetItems().size());
+            region->Choose(1);
+            EXPECT_EQ(_("Picture (without black bars)"),region->GetStringSelection());
+            auto area=picker->ImageArea();
+            auto at=[&](double x,double y){return wxPoint(area.x+int(std::lround(x*area.width)),area.y+int(std::lround(y*area.height)));};
+            picker->Press(at(0.5,0.0));
+            picker->Release(at(0.5,0.1));
+            picker->Press(at(0.5,1.0));
+            picker->Release(at(0.5,0.9));
+            region->Choose(0);
+            picker->Press(at(0.02,0.5));
+            picker->Release(at(0.98,0.9));
+            auto r=picker->GetRect();
+            EXPECT_NEAR(0.5,r.top,0.01) << "half way down what is left";
+            EXPECT_NEAR(1.0,r.bottom,0.01);
+            // A strategy without them: none of the sensitivity shown
+            auto threshold=MagiaControl<FlatFrame>(d,"featureThreshold");
+            ASSERT_NE(nullptr,threshold);
+            EXPECT_FALSE(threshold->IsShown()) << "1.0's bcs here has no featureThreshold";
             auto engine=MagiaControl<FlatSwitch>(d,"ocrEngine");
             ASSERT_NE(nullptr,engine) << "1.0 can use either";
             MagiaControl<FlatCheck>(d,"ocr")->Toggle();
@@ -8013,6 +8080,10 @@ TEST_F(ordinary_edit, magiatimeline_is_run_as_chosen_in_its_dialog_and_the_choic
     }
     used=ReadText(folder/"used.yml");
     EXPECT_EQ(std::string::npos,used.find("maxResWidth"));
+    EXPECT_NE(std::string::npos,used.find("contentRect: [0.0, 1.0, 0.1, 0.9]\n")) << used;
+    rect=bcs_rect(used);
+    ASSERT_TRUE(rect) << used;
+    EXPECT_NEAR(0.02,rect->left,0.01);EXPECT_NEAR(0.98,rect->right,0.01);EXPECT_NEAR(0.5,rect->top,0.01);EXPECT_NEAR(1.0,rect->bottom,0.01);
     EXPECT_NE(std::string::npos,used.find("extraJobs: [ocr]\n")) << used;
     EXPECT_NE(std::string::npos,used.find("  doPaddle: false\n  paddleLang: \"japan\"\n  doTesseract: true\n  tesseractLang: \"chi_sim\"\n")) << used;
     auto const& again=LiveRead(*c).Events;
