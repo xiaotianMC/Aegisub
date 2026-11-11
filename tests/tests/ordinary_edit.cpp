@@ -7318,6 +7318,37 @@ TEST_F(ordinary_edit, progress_cancels_with_a_flat_button_and_stays_for_its_log)
         EXPECT_NO_THROW(progress.Run([](agi::ProgressSink *ps){ ps->Log("written"); }));
     }
     EXPECT_TRUE(ran);
+    ran=false;
+    {
+        // The bar is drawn: it glides to how far the task has got, the per
+        // cent under it; not known how far, a piece sweeps and no number
+        std::atomic<int> step{0};
+        RunModal hook("Working",[&](wxDialog *dialog){
+            ProgressBar *bar=nullptr; for(auto child:descendants(dialog))if(auto b=dynamic_cast<ProgressBar*>(child))bar=b;
+            ASSERT_NE(nullptr,bar);
+            for(int i=0;i<400 && bar->GetValue()!=0.5;++i){wxYield();wxMilliSleep(5);}
+            EXPECT_DOUBLE_EQ(0.5,bar->GetValue());
+            auto has_label=[&](wxString const& label){ for(auto child:descendants(dialog))if(auto t=dynamic_cast<wxStaticText*>(child))if(t->GetLabel()==label)return true; return false; };
+            EXPECT_TRUE(has_label("50%"));
+            for(int i=0;i<400 && bar->GetShown()!=0.5;++i){wxYield();wxMilliSleep(5);}
+            EXPECT_DOUBLE_EQ(0.5,bar->GetShown()) << "it glides all the way there";
+            step=1;
+            for(int i=0;i<400 && !bar->IsIndeterminate();++i){wxYield();wxMilliSleep(5);}
+            EXPECT_TRUE(bar->IsIndeterminate());
+            EXPECT_FALSE(has_label("50%"));
+            ran=true;
+            wxKeyEvent esc(wxEVT_CHAR_HOOK);esc.m_keyCode=WXK_ESCAPE;esc.SetEventObject(dialog);dialog->GetEventHandler()->ProcessEvent(esc);
+            for(int i=0;i<400 && dialog->IsShown();++i){wxYield();wxMilliSleep(5);}
+        });
+        DialogProgress progress(window,"Working","Something long");
+        EXPECT_THROW(progress.Run([&](agi::ProgressSink *ps){
+            ps->SetProgress(50,100);
+            while(step==0 && !ps->IsCancelled())wxMilliSleep(5);
+            ps->SetIndeterminate();
+            while(!ps->IsCancelled())wxMilliSleep(5);
+        }),agi::UserCancelException);
+    }
+    EXPECT_TRUE(ran);
 }
 TEST_F(ordinary_edit, color_picker_is_drawn_number_fields_a_mode_switch_and_code_fields) {
     OPT_SET("Tool/Colour Picker/Mode")->SetInt(0);

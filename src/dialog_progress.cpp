@@ -29,9 +29,12 @@
 #include <libaegisub/exception.h>
 #include <libaegisub/util_osx.h>
 
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 
-#include <wx/gauge.h>
+#include <wx/dcbuffer.h>
+#include <wx/dcgraph.h>
 #include <wx/sizer.h>
 #include <wx/stattext.h>
 #include <wx/textctrl.h>
@@ -67,6 +70,110 @@ namespace {
 		taskbar->Release();
 #endif
 	}
+
+	/// About how long @p seconds is, as minutes and seconds
+	wxString Duration(int seconds) {
+		if (seconds < 60) return wxString::Format(_("%d s"), std::max(1, seconds));
+		return wxString::Format(_("%d min %d s"), seconds / 60, seconds % 60);
+	}
+
+	/// A sweep across the bar while not known how far
+	constexpr double sweep_seconds = 1.6;
+	/// How quickly the bar glides to a new value: most of the way in this
+	constexpr double glide_seconds = 0.18;
+}
+
+ProgressBar::ProgressBar(wxWindow *parent)
+: wxWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE)
+, timer(this)
+{
+	SetBackgroundStyle(wxBG_STYLE_PAINT);
+	SetMinSize(GetBestSize());
+	Bind(wxEVT_PAINT, &ProgressBar::OnPaint, this);
+	Bind(wxEVT_TIMER, &ProgressBar::OnTimer, this);
+	theme_changed = theme::AddChangeListener([this] { Refresh(); });
+}
+
+wxSize ProgressBar::DoGetBestClientSize() const {
+	return FromDIP(wxSize(360, 6));
+}
+
+void ProgressBar::SetValue(double share) {
+	share = std::clamp(share, 0.0, 1.0);
+	bool was_sweeping = indeterminate;
+	indeterminate = false;
+	if (share < target || was_sweeping) shown = share;
+	target = share;
+	Animate();
+	Refresh();
+}
+
+void ProgressBar::SetIndeterminate() {
+	if (indeterminate) return;
+	indeterminate = true;
+	sweep_start = std::chrono::steady_clock::now();
+	Animate();
+	Refresh();
+}
+
+void ProgressBar::Animate() {
+	bool moving = indeterminate || std::abs(target - shown) > 0.0005;
+	if (moving && !timer.IsRunning()) {
+		last_tick = std::chrono::steady_clock::now();
+		timer.Start(16);
+	}
+	else if (!moving)
+		timer.Stop();
+}
+
+void ProgressBar::OnTimer(wxTimerEvent &) {
+	auto now = std::chrono::steady_clock::now();
+	double dt = std::chrono::duration<double>(now - last_tick).count();
+	last_tick = now;
+	if (!indeterminate) {
+		shown += (target - shown) * (1 - std::exp(-dt / glide_seconds * 3));
+		if (std::abs(target - shown) <= 0.0005) shown = target;
+	}
+	Animate();
+	Refresh();
+}
+
+void ProgressBar::OnPaint(wxPaintEvent &) {
+	wxAutoBufferedPaintDC buffered(this);
+	wxGCDC dc(buffered);
+	auto p = flat::Colours(this);
+	wxSize size = GetClientSize();
+	dc.SetPen(*wxTRANSPARENT_PEN);
+	dc.SetBrush(wxBrush(p.surface));
+	dc.DrawRectangle(wxPoint(0, 0), size);
+
+	int h = std::min(size.y, FromDIP(6));
+	wxRect track(0, (size.y - h) / 2, size.x, h);
+	double radius = h / 2.0;
+	dc.SetBrush(wxBrush(theme::Mix(p.surface, p.text, theme::IsDark() ? 0.16 : 0.1)));
+	dc.DrawRoundedRectangle(track, radius);
+
+	dc.SetBrush(wxBrush(p.accent));
+	if (indeterminate) {
+		// A piece a third of the track long, easing in and out as it goes
+		// from wholly off its left end to wholly off its right
+		double t = std::chrono::duration<double>(std::chrono::steady_clock::now() - sweep_start).count();
+		double phase = std::fmod(t / sweep_seconds, 1.0);
+		double eased = phase < 0.5 ? 2 * phase * phase : 1 - 2 * (1 - phase) * (1 - phase);
+		int piece = track.width / 3;
+		int x = int(-piece + (track.width + piece) * eased);
+		int left = std::max(0, x), right = std::min(track.width, x + piece);
+		if (right - left > 0) {
+			dc.SetClippingRegion(track);
+			dc.DrawRoundedRectangle(wxRect(left, track.y, right - left, h), radius);
+			dc.DestroyClippingRegion();
+		}
+		return;
+	}
+	if (shown <= 0) return;
+	// Never narrower than its rounded ends
+	int width = std::max(h, int(std::lround(track.width * shown)));
+	dc.DrawRoundedRectangle(wxRect(track.x, track.y, width, h), radius);
 }
 
 class DialogProgressSink final : public agi::ProgressSink {
@@ -106,38 +213,58 @@ public:
 	}
 
 	void SetIndeterminate() override {
-		Main().Async([this]{ dialog->pulse_timer.Start(1000); });
+		Main().Async([this]{ dialog->SetIndeterminate(); });
 	}
 };
 
 DialogProgress::DialogProgress(wxWindow *parent, wxString const& title_text, wxString const& message)
 : wxDialog(parent, -1, title_text, wxDefaultPosition, wxDefaultSize, theme::Border(wxBORDER_RAISED))
-, pulse_timer(GetEventHandler())
 {
-	title = new wxStaticText(this, -1, title_text, wxDefaultPosition, wxDefaultSize, wxALIGN_CENTRE | wxST_NO_AUTORESIZE);
-	gauge = new wxGauge(this, -1, 300, wxDefaultPosition, DipSize(300,20));
-	text = new wxStaticText(this, -1, message, wxDefaultPosition, wxDefaultSize, wxALIGN_CENTRE | wxST_NO_AUTORESIZE);
+	title = new wxStaticText(this, -1, title_text, wxDefaultPosition, wxDefaultSize, wxST_NO_AUTORESIZE | wxST_ELLIPSIZE_END);
+	text = new wxStaticText(this, -1, message, wxDefaultPosition, wxDefaultSize, wxST_NO_AUTORESIZE | wxST_ELLIPSIZE_MIDDLE);
+	bar = new ProgressBar(this);
+	percent = new wxStaticText(this, -1, "", wxDefaultPosition, wxDefaultSize, wxST_NO_AUTORESIZE);
+	remaining = new wxStaticText(this, -1, "", wxDefaultPosition, wxDefaultSize, wxALIGN_RIGHT | wxST_NO_AUTORESIZE);
 	cancel_button = new FlatButton(this, _("Cancel"), wxID_CANCEL);
-	cancel_button->SetLeastSize(wxSize(FromDIP(76), FromDIP(28)));
+	cancel_button->SetLeastSize(wxSize(FromDIP(84), FromDIP(30)));
 	log_output = new wxTextCtrl(this, -1, "", wxDefaultPosition, DipSize(600, 240), wxTE_MULTILINE | wxTE_READONLY);
 
-	// make the title a slightly larger font
+	// The title a little larger and bold; the rest smaller and dim
 	wxFont title_font = title->GetFont();
-	int fontsize = title_font.GetPointSize();
-	title_font.SetPointSize(fontsize * 1.375);
-	title_font.SetWeight(wxFONTWEIGHT_BOLD);
+	title_font.SetFractionalPointSize(title_font.GetFractionalPointSize() * 1.2);
+	title_font.SetWeight(wxFONTWEIGHT_SEMIBOLD);
 	title->SetFont(title_font);
+	wxFont small = percent->GetFont();
+	small.SetFractionalPointSize(small.GetFractionalPointSize() * 0.92);
+	percent->SetFont(small);
+	remaining->SetFont(small);
 
 	theme::UseSurface(this);
-	text->SetForegroundColour(flat::Colours(this).dim);
-	int gap = FromDIP(10), row = FromDIP(6);
+	auto dim = flat::Colours(this).dim;
+	text->SetForegroundColour(dim);
+	percent->SetForegroundColour(dim);
+	remaining->SetForegroundColour(dim);
+	// Room for the longest that is written there
+	percent->SetMinSize(wxSize(GetTextExtent("100%").x + FromDIP(8), -1));
+	int pad = FromDIP(20);
+
+	auto numbers = new wxBoxSizer(wxHORIZONTAL);
+	numbers->Add(percent, wxSizerFlags().CenterVertical());
+	numbers->Add(remaining, wxSizerFlags(1).CenterVertical());
+
+	auto buttons = new wxBoxSizer(wxHORIZONTAL);
+	buttons->AddStretchSpacer();
+	buttons->Add(cancel_button);
 
 	wxSizer *sizer = new wxBoxSizer(wxVERTICAL);
-	sizer->Add(title, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxTOP, gap));
-	sizer->Add(gauge, wxSizerFlags(1).Expand().Border(wxLEFT | wxRIGHT | wxTOP, gap));
-	sizer->Add(text, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxTOP, row));
-	sizer->Add(cancel_button, wxSizerFlags().Center().Border(wxALL, gap));
-	sizer->Add(log_output, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxBOTTOM, gap));
+	sizer->Add(title, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxTOP, pad));
+	sizer->Add(text, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxTOP, FromDIP(4)).Border(wxLEFT | wxRIGHT, pad));
+	sizer->AddSpacer(FromDIP(16));
+	sizer->Add(bar, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT, pad));
+	sizer->AddSpacer(FromDIP(6));
+	sizer->Add(numbers, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT, pad));
+	sizer->Add(buttons, wxSizerFlags().Expand().Border(wxALL, pad));
+	sizer->Add(log_output, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxBOTTOM, pad));
 	sizer->Hide(log_output);
 
 	SetSizerAndFit(sizer);
@@ -146,7 +273,6 @@ DialogProgress::DialogProgress(wxWindow *parent, wxString const& title_text, wxS
 	// Escape presses Cancel, as it did the system's button
 	flat::UseFlatButtonKeys(this);
 	Bind(wxEVT_SHOW, &DialogProgress::OnShow, this);
-	Bind(wxEVT_TIMER, [this](wxTimerEvent&) { gauge->Pulse(); });
 }
 
 void DialogProgress::Run(std::function<void(agi::ProgressSink*)> task) {
@@ -164,7 +290,6 @@ void DialogProgress::Run(std::function<void(agi::ProgressSink*)> task) {
 		}
 
 		Main().Async([this]{
-			pulse_timer.Stop();
 			Unbind(wxEVT_IDLE, &DialogProgress::OnIdle, this);
 
 			// Unbind the cancel handler so that the default behavior happens (i.e. the
@@ -183,7 +308,9 @@ void DialogProgress::Run(std::function<void(agi::ProgressSink*)> task) {
 					OnIdle(evt);
 				}
 				cancel_button->SetLabel(_("Close"));
-				gauge->SetValue(300);
+				bar->SetValue(1);
+				percent->SetLabelText("100%");
+				remaining->SetLabelText("");
 			}
 			set_taskbar_progress(0);
 		});
@@ -202,6 +329,11 @@ void DialogProgress::OnShow(wxShowEvent& evt) {
 	Bind(wxEVT_IDLE, &DialogProgress::OnIdle, this);
 	cancel_button->SetLabel(_("Cancel"));
 	cancel_button->Enable();
+	progress = 0;
+	progress_start = std::chrono::steady_clock::now();
+	bar->SetValue(0);
+	percent->SetLabelText("");
+	remaining->SetLabelText("");
 
 	wxSizer *sizer = GetSizer();
 	if (sizer->IsShown(log_output)) {
@@ -213,23 +345,6 @@ void DialogProgress::OnShow(wxShowEvent& evt) {
 }
 
 void DialogProgress::OnIdle(wxIdleEvent&) {
-	if (progress_current > progress_target) {
-		progress_current = progress_target;
-		gauge->SetValue(progress_current);
-		set_taskbar_progress(progress_current / 3);
-	}
-	else if (progress_current < progress_target) {
-		using namespace std::chrono;
-		auto now = steady_clock::now();
-		int ms = mid<int>(0, duration_cast<milliseconds>(now - progress_anim_start_time).count(), progress_anim_duration);
-		int dist = (progress_target - progress_anim_start_value) * ms / progress_anim_duration;
-		if (dist) {
-			progress_current = progress_anim_start_value + dist;
-			gauge->SetValue(progress_current);
-			set_taskbar_progress(progress_current / 3);
-		}
-	}
-
 	if (!pending_log) return;
 
 	if (log_output->IsEmpty()) {
@@ -252,17 +367,28 @@ void DialogProgress::OnCancel(wxCommandEvent &) {
 }
 
 void DialogProgress::SetProgress(int target) {
-	pulse_timer.Stop();
-
-	if (target == progress_target) return;
 	using namespace std::chrono;
-
-	progress_anim_start_value = progress_current;
 	auto now = steady_clock::now();
-	if (progress_target == 0)
-		progress_anim_duration = 1000;
+	// Starting over (a task's next stage): the time left is counted afresh
+	if (target < progress || bar->IsIndeterminate()) progress_start = now;
+	progress = target;
+	bar->SetValue(target / 300.0);
+	set_taskbar_progress(target / 3);
+	percent->SetLabelText(wxString::Format("%d%%", target / 3));
+
+	// How long the rest takes, at the pace so far, once there is enough of
+	// it to go by
+	double share = target / 300.0;
+	double seconds = duration<double>(now - progress_start).count();
+	if (share >= 0.03 && share < 1 && seconds >= 2)
+		remaining->SetLabelText(wxString::Format(_("About %s left"), Duration(int(std::lround(seconds * (1 - share) / share)))));
 	else
-		progress_anim_duration = std::max<int>(100, duration_cast<milliseconds>(now - progress_anim_start_time).count() * 11 / 10);
-	progress_anim_start_time = now;
-	progress_target = target;
+		remaining->SetLabelText("");
+}
+
+void DialogProgress::SetIndeterminate() {
+	bar->SetIndeterminate();
+	percent->SetLabelText("");
+	remaining->SetLabelText("");
+	set_taskbar_progress(-1);
 }

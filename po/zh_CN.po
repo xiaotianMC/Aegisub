@@ -10775,3 +10775,15 @@ msgstr "没对齐 %d"
 
 msgid "No timing problems found"
 msgstr "没有发现问题"
+
+#: ../src/dialog_progress.cpp
+msgid "%d s"
+msgstr "%d 秒"
+
+#: ../src/dialog_progress.cpp
+msgid "%d min %d s"
+msgstr "%d 分 %d 秒"
+
+#: ../src/dialog_progress.cpp
+msgid "About %s left"
+msgstr "剩余约 %s"
