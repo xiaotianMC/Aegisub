@@ -29,9 +29,19 @@
 #include <libaegisub/exception.h>
 #include <libaegisub/util_osx.h>
 
+#include <wx/app.h>
+#include <wx/dcclient.h>
+#include <wx/graphics.h>
+
+#ifdef __WXMSW__
+#include <dwmapi.h>
+#pragma comment(lib, "dwmapi.lib")
+#endif
+
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <memory>
 
 #include <wx/dcbuffer.h>
 #include <wx/dcgraph.h>
@@ -218,8 +228,24 @@ public:
 };
 
 DialogProgress::DialogProgress(wxWindow *parent, wxString const& title_text, wxString const& message)
-: wxDialog(parent, -1, title_text, wxDefaultPosition, wxDefaultSize, theme::Border(wxBORDER_RAISED))
 {
+	// A card with round corners: where the system composites windows, the
+	// window sees through about it and the card casts a shadow; elsewhere
+	// it is the window, with a thin line round it (and on Windows 11 the
+	// system's own round corners and shadow)
+	// Asked of a window made already: this one has to know before it is
+	wxWindow *made = parent ? parent : wxTheApp ? wxTheApp->GetTopWindow() : nullptr;
+	see_through = made && made->IsTransparentBackgroundSupported();
+	SetBackgroundStyle(see_through ? wxBG_STYLE_TRANSPARENT : wxBG_STYLE_PAINT);
+	Create(parent, -1, title_text, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+#ifdef __WXMSW__
+	// DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND: ignored before Windows 11
+	DWORD round = 2;
+	DwmSetWindowAttribute(GetHWND(), 33, &round, sizeof(round));
+#endif
+	if (see_through) shadow = FromDIP(18);
+	Bind(wxEVT_PAINT, &DialogProgress::OnPaint, this);
+
 	title = new wxStaticText(this, -1, title_text, wxDefaultPosition, wxDefaultSize, wxST_NO_AUTORESIZE | wxST_ELLIPSIZE_END);
 	text = new wxStaticText(this, -1, message, wxDefaultPosition, wxDefaultSize, wxST_NO_AUTORESIZE | wxST_ELLIPSIZE_MIDDLE);
 	bar = new ProgressBar(this);
@@ -256,7 +282,7 @@ DialogProgress::DialogProgress(wxWindow *parent, wxString const& title_text, wxS
 	buttons->AddStretchSpacer();
 	buttons->Add(cancel_button);
 
-	wxSizer *sizer = new wxBoxSizer(wxVERTICAL);
+	wxSizer *sizer = content = new wxBoxSizer(wxVERTICAL);
 	sizer->Add(title, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxTOP, pad));
 	sizer->Add(text, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxTOP, FromDIP(4)).Border(wxLEFT | wxRIGHT, pad));
 	sizer->AddSpacer(FromDIP(16));
@@ -267,7 +293,9 @@ DialogProgress::DialogProgress(wxWindow *parent, wxString const& title_text, wxS
 	sizer->Add(log_output, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxBOTTOM, pad));
 	sizer->Hide(log_output);
 
-	SetSizerAndFit(sizer);
+	auto outer = new wxBoxSizer(wxVERTICAL);
+	outer->Add(sizer, wxSizerFlags(1).Expand().Border(wxALL, shadow));
+	SetSizerAndFit(outer);
 	CenterOnParent();
 
 	// Escape presses Cancel, as it did the system's button
@@ -335,23 +363,71 @@ void DialogProgress::OnShow(wxShowEvent& evt) {
 	percent->SetLabelText("");
 	remaining->SetLabelText("");
 
-	wxSizer *sizer = GetSizer();
-	if (sizer->IsShown(log_output)) {
-		sizer->Hide(log_output);
-		Layout();
-		sizer->Fit(this);
+	if (content->IsShown(log_output)) {
+		content->Hide(log_output);
+		Refit();
 		log_output->Clear();
 	}
+}
+
+void DialogProgress::Refit() {
+	Layout();
+	GetSizer()->Fit(this);
+	Refresh();
+}
+
+void DialogProgress::OnPaint(wxPaintEvent&) {
+	wxPaintDC dc(this);
+	auto p = flat::Colours(this);
+	bool const dark = theme::IsDark();
+	wxColour const edge = theme::Mix(p.surface, p.text, dark ? 0.16 : 0.12);
+	wxRect card(GetClientSize());
+	card.Deflate(shadow);
+	int const thick = std::max(1, FromDIP(1));
+	std::unique_ptr<wxGraphicsContext> gc(wxGraphicsContext::Create(dc));
+	if (!gc) {
+		dc.SetPen(wxPen(edge, thick));
+		dc.SetBrush(wxBrush(p.surface));
+		dc.DrawRectangle(card);
+		return;
+	}
+	gc->SetPen(wxNullGraphicsPen);
+	// Square where the window is the card: the system rounds it, if anything
+	double const radius = see_through ? FromDIP(12) : 0;
+
+	if (see_through) {
+		// Soft, and a little below the card: rings each adding a little
+		// dark, closer together near the card, so it is deepest there and
+		// fades out a long way
+		int const steps = 24;
+		double const drop = FromDIP(5);
+		int const alpha = std::max(1, static_cast<int>(std::lround(255 * (dark ? 0.45 : 0.13) / steps)));
+		gc->SetBrush(wxBrush(wxColour(0, 0, 0, alpha)));
+		for (int i = steps; i > 0; --i) {
+			double const t = static_cast<double>(i) / steps;
+			double const grow = shadow * std::pow(t, 1.7);
+			gc->DrawRoundedRectangle(card.x - grow, card.y - grow + drop * (1 - t) + FromDIP(2),
+				card.width + 2 * grow, card.height + 2 * grow, radius + grow);
+		}
+	}
+
+	gc->SetBrush(wxBrush(p.surface));
+	gc->DrawRoundedRectangle(card.x, card.y, card.width, card.height, radius);
+	// A hairline round it, all inside, so the card stands off a background
+	// of its own colour
+	auto ring = gc->CreatePath();
+	ring.AddRoundedRectangle(card.x, card.y, card.width, card.height, radius);
+	ring.AddRoundedRectangle(card.x + thick, card.y + thick, card.width - 2 * thick, card.height - 2 * thick, std::max(0., radius - thick));
+	gc->SetBrush(wxBrush(edge));
+	gc->FillPath(ring, wxODDEVEN_RULE);
 }
 
 void DialogProgress::OnIdle(wxIdleEvent&) {
 	if (!pending_log) return;
 
 	if (log_output->IsEmpty()) {
-		wxSizer *sizer = GetSizer();
-		sizer->Show(log_output);
-		Layout();
-		sizer->Fit(this);
+		content->Show(log_output);
+		Refit();
 		CenterOnParent();
 	}
 

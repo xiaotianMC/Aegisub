@@ -76,6 +76,13 @@ class DialogProgress final : public wxDialog, public agi::BackgroundRunner {
 	wxStaticText *remaining;
 	FlatButton *cancel_button;
 	wxTextCtrl *log_output;
+	/// What is laid out on the card, inside the room left for its shadow
+	wxSizer *content = nullptr;
+	/// The window's corners see through to what is behind it, and a soft
+	/// shadow falls about the card, where the system can show that
+	bool see_through = false;
+	/// How far the shadow reaches out from the card, 0 without one
+	int shadow = 0;
 
 	wxString pending_log;
 	/// Of 300; the time the task was last seen at its start, to tell how
@@ -86,6 +93,9 @@ class DialogProgress final : public wxDialog, public agi::BackgroundRunner {
 	void OnShow(wxShowEvent&);
 	void OnCancel(wxCommandEvent &);
 	void OnIdle(wxIdleEvent&);
+	void OnPaint(wxPaintEvent&);
+	/// Lay the content out again and fit the window round it
+	void Refit();
 
 	void SetProgress(int target);
 	void SetIndeterminate();

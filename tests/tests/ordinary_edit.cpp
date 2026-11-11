@@ -25,6 +25,7 @@
 #include "options.h"
 #include "command/command.h"
 #include "include/aegisub/hotkey.h"
+#include <typeinfo>
 #include "flat_dialog.h"
 #include "flat_list.h"
 #include "command/edit.h"
@@ -1431,6 +1432,47 @@ TEST_F(ordinary_edit, style_look_applies_the_tags_before_a_point_of_the_line) {
     line.Style="Base"; line.Text="{\\t(\\fs99\\b1)}x";
     EXPECT_EQ(40,at(0).size); EXPECT_EQ(400,at(0).weight);
     EXPECT_EQ(0,PlainPosition("{\\b1}abc",5)); EXPECT_EQ(2,PlainPosition("{\\b1}abc",7)); EXPECT_EQ(3,PlainPosition("a{b",3));
+}
+
+TEST_F(ordinary_edit, ctrl_z_from_anywhere_in_the_style_panel_undoes) {
+    {auto write=c->subtitleAccess->TryWrite();auto &file=LiveWriteForTest(*c);
+     file.Events.front().Text="Hello world";
+     file.Commit("fixture",AssFile::COMMIT_NEW);}
+    auto line=[&] { return std::string(LiveRead(*c).Events.front().Text.get()); };
+    auto id=LiveRead(*c).Events.front().Id;
+    c->selectionController->SetSelectionAndActiveIDs({id},id);
+    c->textSelectionController->SetSelection(0,0);
+    // As the main window has its hotkeys
+    auto frame_keys=[&](wxKeyEvent &e){ hotkey::check("Main Frame",c.get(),e); };
+    window->Bind(wxEVT_CHAR_HOOK,frame_keys);
+    BOOST_SCOPE_EXIT_ALL(&){ window->Unbind(wxEVT_CHAR_HOOK,frame_keys); };
+    auto panel=new StylePanel(window,c.get());
+    window->SetSize(500,900); window->Show(); window->Layout(); panel->SetSize(window->GetClientSize());
+    BOOST_SCOPE_EXIT_ALL(&){ window->Hide(); };
+    panel->UpdateNow(); wxYield();
+    auto ctrl_z=[&](wxWindow *at){
+        wxKeyEvent e(wxEVT_CHAR_HOOK); e.m_keyCode='Z'; e.SetControlDown(true); e.SetEventObject(at);
+        at->GetEventHandler()->ProcessEvent(e);
+    };
+    // From each part Tab stops at, on every page
+    for(int page=0;page<3;++page){
+        panel->ShowPage(static_cast<StylePanel::Page>(page)); panel->UpdateNow(); wxYield();
+        auto parts=panel->KeyboardParts();
+        ASSERT_FALSE(parts.empty());
+        for(auto part:parts){
+            panel->EnterNumber("size",52,true);
+            ASSERT_EQ("{\\fs52}Hello world",line());
+            ctrl_z(part);
+            EXPECT_EQ("Hello world",line()) << "page " << page << ": " << typeid(*part).name();
+            panel->UpdateNow();
+        }
+        panel->ShowPage(StylePanel::Page::Style);
+    }
+    // From the box a number is typed in
+    panel->UpdateNow();
+    panel->EnterNumber("size",52,true);
+    ctrl_z(panel);
+    EXPECT_EQ("Hello world",line()) << "from the panel itself";
 }
 
 TEST_F(ordinary_edit, style_panel_changes_the_text_through_its_controls) {
@@ -7866,6 +7908,49 @@ TEST_F(ordinary_edit, detect_scene_changes_loads_them_as_keyframes_and_keeps_the
     EXPECT_FLOAT_EQ(0.9f,static_cast<float>(banded.far_difference[200])) << "the first band's are as they were";
     c->project->CloseKeyframes();
     EXPECT_FALSE(c->project->CanCloseKeyframes());
+}
+
+TEST_F(ordinary_edit, detect_scene_changes_times_empty_subtitles_a_line_a_shot) {
+    c->project->LoadVideo("?dummy:25:250:64:48:64:64:64:");
+    ASSERT_NE(nullptr,c->project->VideoProvider());
+    PumpFirstFrame(c.get(),window);
+    BOOST_SCOPE_EXIT_ALL(&){ c->project->CloseKeyframes(); c->project->CloseVideo(); };
+    auto const& fps=c->project->Timecodes();
+    std::filesystem::remove_all(std::filesystem::path(config::path->Decode("?user/scenes").wstring()));
+    // A new file: its one empty line makes way for one a shot
+    ASSERT_EQ(1u,LiveRead(*c).Events.size());
+    cmd::call("keyframe/detect",c.get());
+    ASSERT_EQ(1u,LiveRead(*c).Events.size()) << "one plain shot";
+    EXPECT_EQ(0,int(LiveRead(*c).Events.front().Start));
+    EXPECT_EQ(fps.TimeAtFrame(249,agi::vfr::END),int(LiveRead(*c).Events.front().End));
+
+    agi::fs::path cached;
+    for(auto const& f:std::filesystem::directory_iterator(std::filesystem::path(config::path->Decode("?user/scenes").wstring())))
+        if(f.path().filename().string().ends_with(".key.txt"))cached=agi::fs::path(f.path().wstring());
+    ASSERT_FALSE(cached.empty());
+    agi::keyframe::Save(cached,{0,100,200});
+    // Still all empty: timed again, from each cut to the frame before the next
+    cmd::call("keyframe/detect",c.get());
+    ASSERT_EQ(3u,LiveRead(*c).Events.size());
+    std::vector<std::pair<int,int>> times;
+    for(auto const& line:LiveRead(*c).Events){ times.emplace_back(line.Start,line.End); EXPECT_EQ("",line.Text.get()); }
+    EXPECT_EQ((std::vector<std::pair<int,int>>{
+        {0,fps.TimeAtFrame(99,agi::vfr::END)},
+        {fps.TimeAtFrame(100,agi::vfr::START),fps.TimeAtFrame(199,agi::vfr::END)},
+        {fps.TimeAtFrame(200,agi::vfr::START),fps.TimeAtFrame(249,agi::vfr::END)}}),times);
+    EXPECT_EQ(3u,c->selectionController->ReadSelectedLines().size()) << "the lines made are selected";
+    // One undo step back to the one line
+    c->subsController->Undo();
+    EXPECT_EQ(1u,LiveRead(*c).Events.size());
+    c->subsController->Redo();
+    ASSERT_EQ(3u,LiveRead(*c).Events.size());
+
+    // Something written: the lines are left as they are
+    { auto write=c->subtitleAccess->TryWrite(); LiveWriteForTest(*c).Events.front().Text="hello"; LiveWriteForTest(*c).Commit("type",AssFile::COMMIT_DIAG_TEXT); }
+    agi::keyframe::Save(cached,{0,50});
+    cmd::call("keyframe/detect",c.get());
+    EXPECT_EQ(3u,LiveRead(*c).Events.size());
+    EXPECT_EQ((std::vector<int>{0,50}),c->project->Keyframes()) << "the keyframes are still loaded";
 }
 
 TEST_F(ordinary_edit, snap_to_nearby_scene_changes_moves_the_selected_lines_in_one_step) {

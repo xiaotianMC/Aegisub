@@ -37,7 +37,10 @@
 #include "../dialog_progress.h"
 #include "../frame_main.h"
 #include "../include/aegisub/video_provider.h"
+#include "../ass_dialogue.h"
+#include "../async_video_provider.h"
 #include "../scene_detect.h"
+#include "../subtitle_row_list_edit.h"
 #include "../subtitle_project_access.h"
 #include "../video_provider_manager.h"
 #include "../include/aegisub/context.h"
@@ -48,9 +51,12 @@
 
 #include <libaegisub/keyframe.h>
 #include <libaegisub/path.h>
+#include <libaegisub/vfr.h>
 
 #include <algorithm>
 #include <functional>
+#include <memory>
+#include <set>
 #include <thread>
 #include <wx/msgdlg.h>
 
@@ -160,6 +166,52 @@ agi::fs::path SceneMeasuresPath(agi::fs::path const& video, int subtitle_band) {
 	return SceneCacheFile(SceneCacheKey(video) + "|" + SceneArea(subtitle_band), ".measures");
 }
 
+/// Whether the subtitles hold nothing yet: no lines, or only lines with no
+/// text, as a new file's one empty line
+bool NothingWritten(agi::Context *c) {
+	for (auto const& line : c->subtitleAccess->Read().Events)
+		if (line.Text.get().find_first_not_of(" \t\r\n") != std::string::npos) return false;
+	return true;
+}
+
+/// With nothing written yet, a blank line for each shot found: from its
+/// first frame to the frame before the next cut, in one undo step. The
+/// lines there were, all empty, make way for them. @return How many
+size_t FillEmptyTimeline(agi::Context *c, std::vector<int> const& cuts) {
+	auto provider = c->project->VideoProvider();
+	auto const& fps = c->project->Timecodes();
+	if (!provider || !fps.IsLoaded() || !NothingWritten(c)) return 0;
+	int const frames = provider->GetFrameCount();
+	if (frames <= 0) return 0;
+	std::vector<int> starts;
+	for (int cut : cuts)
+		if (cut >= 0 && cut < frames && (starts.empty() || cut > starts.back())) starts.push_back(cut);
+	if (starts.empty() || starts.front() != 0) starts.insert(starts.begin(), 0);
+
+	auto scope = c->subtitleAccess->TryWrite();
+	if (!scope) return 0;
+	SubtitleRowListEdit staged(c);
+	std::string style = "Default";
+	if (!staged.file.Events.empty()) style = staged.file.Events.front().Style.get();
+	std::vector<std::unique_ptr<AssDialogue>> removed;
+	staged.file.Events.clear_and_dispose([&](AssDialogue *line) { removed.emplace_back(line); });
+	std::set<AssDialogue*> added;
+	AssDialogue *first = nullptr;
+	for (size_t i = 0; i < starts.size(); ++i) {
+		int const last_frame = (i + 1 < starts.size() ? starts[i + 1] : frames) - 1;
+		auto line = new AssDialogue;
+		line->Start = fps.TimeAtFrame(starts[i], agi::vfr::START);
+		line->End = std::max<int>(fps.TimeAtFrame(last_frame, agi::vfr::END), line->Start);
+		line->Style = style;
+		staged.file.Events.push_back(*line);
+		added.insert(line);
+		if (!first) first = line;
+	}
+	staged.Commit(_("timeline from scene changes"), AssFile::COMMIT_DIAG_ADDREM);
+	staged.Select(added, first);
+	return added.size();
+}
+
 struct keyframe_detect final : public Command {
 	CMD_NAME("keyframe/detect")
 	STR_MENU("&Detect Scene Changes...")
@@ -236,7 +288,11 @@ struct keyframe_detect final : public Command {
 			}
 		}
 		c->project->LoadKeyframes(cache);
-		if (c->frame)
+		size_t const lines = FillEmptyTimeline(c, c->project->Keyframes());
+		if (!c->frame) return;
+		if (lines)
+			c->frame->StatusTimeout(fmt_plural(lines, "Found %d shot and added an empty line for each", "Found %d shots and added an empty line for each", static_cast<int>(lines)));
+		else
 			c->frame->StatusTimeout(fmt_plural(cuts.size() - 1, "Found %d scene change", "Found %d scene changes", static_cast<int>(cuts.size() - 1)));
 	}
 };

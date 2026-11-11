@@ -9899,6 +9899,16 @@ msgid "Found %d scene change"
 msgid_plural "Found %d scene changes"
 msgstr[0] "找到 %d 处画面切换"
 
+#: ../src/command/keyframe.cpp
+#, c-format
+msgid "Found %d shot and added an empty line for each"
+msgid_plural "Found %d shots and added an empty line for each"
+msgstr[0] "找到 %d 个镜头，已为每个镜头添加一行空字幕"
+
+#: ../src/command/keyframe.cpp
+msgid "timeline from scene changes"
+msgstr "按画面切换生成时间轴"
+
 #: ../src/command/time.cpp
 msgid "Snap to &Nearby Scene Changes"
 msgstr "吸附到附近的画面切换(&N)"
