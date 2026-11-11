@@ -162,6 +162,7 @@ aegisub_src = files(
     'thesaurus.cpp',
     'time_unit_toggle.cpp',
     'timing_adjust.cpp',
+    'timing_check.cpp',
     'timing_page.cpp',
     'timeedit_ctrl.cpp',
     'toggle_bitmap.cpp',

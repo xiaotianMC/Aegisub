@@ -803,6 +803,8 @@ void StylePanel::ScheduleUpdate() {
 }
 
 void StylePanel::UpdateNow() {
+	// Shown again, the timing page's check may be out of date
+	if (page == Page::Timing && timing) timing->UpdateNow();
 	auto const& file = c->subtitleAccess->Read();
 	StyleLookup find = [&](std::string const& name) { return file.GetStyle(name); };
 	int width = 0, height = 0;

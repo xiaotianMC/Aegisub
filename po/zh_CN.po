@@ -10706,3 +10706,56 @@ msgstr "把选中的行整体提前（开始和结束一起），一步撤销"
 
 msgid "Move the selected lines later, start and end, in one step"
 msgstr "把选中的行整体推后（开始和结束一起），一步撤销"
+
+msgid "Check"
+msgstr "检查"
+
+msgctxt "check"
+msgid "All lines"
+msgstr "全部"
+
+msgctxt "check"
+msgid "Selected"
+msgstr "选中"
+
+msgid "Check every line of the file, or only the selected ones"
+msgstr "检查整个文件，或只检查选中的行"
+
+msgid "Lines shorter than this are listed as too short. Too fast is over the subtitle grid's CPS warning threshold (Preferences > Interface > Character Counter)"
+msgstr "短于这个时长的行列为太短。太快指阅读速度超过字幕表格 CPS 列的警告阈值（首选项 > 界面 > 字数统计）"
+
+msgid "Off by"
+msgstr "差帧"
+
+msgid "A start or end this many frames from a scene change or fewer, but not on it, is listed: it was most likely meant to be on it"
+msgstr "开始或结束离画面切换不超过这么多帧、又没正好对上的，会列出来：多半是想对齐却差了一点"
+
+msgid "The problem before the current line"
+msgstr "当前行之前的一处问题"
+
+msgid "The problem after the current line"
+msgstr "当前行之后的一处问题"
+
+msgid "Too short: %s s"
+msgstr "太短：%s 秒"
+
+msgid "Too fast: %d a second"
+msgstr "太快：每秒 %d 字"
+
+msgid "Overlaps #%d by %d ms"
+msgstr "与 #%d 重叠 %d ms"
+
+msgid "%d too short"
+msgstr "太短 %d"
+
+msgid "%d too fast"
+msgstr "太快 %d"
+
+msgid "%d overlapping"
+msgstr "重叠 %d"
+
+msgid "%d off a cut"
+msgstr "没对齐 %d"
+
+msgid "No timing problems found"
+msgstr "没有发现问题"

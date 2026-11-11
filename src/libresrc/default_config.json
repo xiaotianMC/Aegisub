@@ -506,6 +506,11 @@
 	},
 
 	"Timing" : {
+		"Check" : {
+			"Cut Frames" : 3,
+			"Min Duration" : 500,
+			"Selection Only" : false
+		},
 		"Default Duration" : 3000,
 		"Link Adjacent Lines" : true,
 		"Adjacent Line Gap" : 0.3,

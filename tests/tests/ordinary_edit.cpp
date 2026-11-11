@@ -78,6 +78,7 @@
 #include "style_panel.h"
 #include "style_panel_parts.h"
 #include "timing_adjust.h"
+#include "timing_check.h"
 #include "timing_page.h"
 #include "video_controller.h"
 #include "async_video_provider.h"
@@ -6227,7 +6228,7 @@ TEST_F(ordinary_edit, timing_page_edits_times_snaps_to_scene_changes_and_adds_le
     auto vc=c->videoController.get();
     auto description=c->subsController->GetUndoDescription();
 
-    EXPECT_EQ("time scene lead join shift",shown()["cards"]);
+    EXPECT_EQ("time scene lead join shift check",shown()["cards"]);
     EXPECT_EQ(wxS("0:00:01.60 → 0:00:05.60"),shown()["line"]);
     EXPECT_EQ(fmt_tl("%d characters per second",CharactersPerSecond("Hello, world",4000,true,true)),shown()["summary.cps"]);
     EXPECT_EQ(_("No line before it"),shown()["summary.prev"]);
@@ -6375,6 +6376,106 @@ TEST_F(ordinary_edit, timing_page_edits_times_snaps_to_scene_changes_and_adds_le
     EXPECT_EQ(0,OPT_GET("App/Style Panel/Page")->GetInt());
     again->Destroy();
     panel->Destroy();
+}
+
+TEST(timing_check, finds_short_fast_overlapping_and_nearly_cut_lines) {
+    agi::vfr::Framerate fps(25,1);
+    std::vector<std::unique_ptr<AssDialogue>> owned;
+    auto line=[&](int start,int end,std::string text,std::string style="Default",bool comment=false){
+        auto d=std::make_unique<AssDialogue>();d->Start=start;d->End=end;d->Text=text;d->Style=style;d->Comment=comment;
+        d->Row=int(owned.size());owned.push_back(std::move(d));return owned.back().get();};
+    line(1000,3000,"Hi");                                   // 0 fine
+    line(4000,4490,"Hi","S1");                              // 1 too short
+    line(5000,5500,"Hi","S2");                              // 2 just long enough
+    line(6000,7000,"abcdefghijklmnopqrst","S3");            // 3 20 a second: fast
+    line(7000,8000,std::string(40,'a'),"S4");               // 4 40 a second: too fast
+    line(8000,9000,"Hi","A");                               // 5
+    line(8800,9500,"Hi","A");                               // 6 overlaps 5 by 200
+    line(8900,9600,"Hi","B");                               // 7 another style: not
+    line(8000,10000,"Hi","A",true);                         // 8 a comment: not
+    line(fps.TimeAtFrame(52,agi::vfr::START),fps.TimeAtFrame(52,agi::vfr::START)+1500,"Hi","C"); // 9 starts 2 frames after the cut at 50
+    line(fps.TimeAtFrame(50,agi::vfr::START),fps.TimeAtFrame(50,agi::vfr::START)+1500,"Hi","D"); // 10 on it
+    line(fps.TimeAtFrame(55,agi::vfr::START),fps.TimeAtFrame(55,agi::vfr::START)+1500,"Hi","E"); // 11 5 frames: too far to be meant
+    line(fps.TimeAtFrame(100,agi::vfr::START),fps.TimeAtFrame(148,agi::vfr::END),"Hi","F");      // 12 ends a frame before the cut's own frame before
+    std::vector<AssDialogue const*> lines; for(auto const& d:owned) lines.push_back(d.get());
+    TimingCheckLimits limits; limits.min_duration=500; limits.cps_warning=15; limits.cps_error=30; limits.cut_frames=3;
+    auto list=[&](std::vector<TimingIssue> const& issues){std::string out;for(auto const& i:issues){
+        out+=std::to_string(i.row)+":"+"SFON"[int(i.kind)]+(i.end?"e":"")+(i.severe?"!":"")+"="+std::to_string(i.value)+(i.kind==TimingIssue::Kind::Overlap?"/"+std::to_string(i.other_row):"")+" ";}return out;};
+    std::vector<int> kf{0,50,150};
+    EXPECT_EQ("1:S=490 3:F=20 4:F!=40 6:O=200/5 9:N=-2 12:Ne=1 ",list(FindTimingIssues(lines,nullptr,limits,kf,0,fps)));
+    // Only the selected: still overlapping the one that is not
+    std::set<int> only{owned[6]->Id,owned[0]->Id};
+    EXPECT_EQ("6:O=200/5 ",list(FindTimingIssues(lines,&only,limits,kf,0,fps)));
+    // No keyframes, no scene changes to miss
+    EXPECT_EQ("1:S=490 3:F=20 4:F!=40 6:O=200/5 ",list(FindTimingIssues(lines,nullptr,limits,{},0,fps)));
+    // Two frames is within one frame's limit no longer
+    limits.cut_frames=1;
+    EXPECT_EQ("1:S=490 3:F=20 4:F!=40 6:O=200/5 12:Ne=1 ",list(FindTimingIssues(lines,nullptr,limits,kf,0,fps)));
+}
+
+TEST_F(ordinary_edit, timing_page_lists_timing_problems_and_goes_to_them) {
+    window->Show();
+    BOOST_SCOPE_EXIT_ALL(&){ window->Hide(); };
+    c->project->LoadVideo("?dummy:25:250:64:48:64:64:64:");
+    ASSERT_NE(nullptr,c->project->VideoProvider());
+    PumpFirstFrame(c.get(),window);
+    agi::fs::path kf((std::filesystem::current_path()/"timing-check-keyframes.txt").wstring());
+    agi::keyframe::Save(kf,{0,50,150});
+    c->project->LoadKeyframes(kf);
+    auto min_duration=OPT_GET("Timing/Check/Min Duration")->GetInt();
+    BOOST_SCOPE_EXIT_ALL(&){ c->project->CloseKeyframes(); c->project->CloseVideo(); OPT_SET("App/Style Panel/Page")->SetInt(0);
+        OPT_SET("Timing/Check/Min Duration")->SetInt(min_duration); OPT_SET("Timing/Check/Selection Only")->SetBool(false); };
+    auto vc=c->videoController.get();
+    std::vector<int> ids;
+    {auto write=c->subtitleAccess->TryWrite();auto &file=LiveWriteForTest(*c);
+     auto &row=file.Events.front();row.Text="Hello, world";row.Start=1600;row.End=5600;
+     auto add=[&](int start,int end,std::string text,std::string style){auto d=new AssDialogue(row);d->Start=start;d->End=end;d->Text=text;d->Style=style;file.Events.push_back(*d);};
+     add(6000,6300,"Hi","Default");                 // too short
+     add(6200,8000,"Next","Default");               // overlaps the one before
+     int at=vc->TimeAtFrame(152,agi::vfr::START);
+     add(at,at+2000,"Sign","Sign");                 // two frames after the cut at 150
+     file.Commit("fixture",AssFile::COMMIT_NEW);
+     for(auto const& d:file.Events) ids.push_back(d.Id);}
+    c->selectionController->SetSelectionAndActiveIDs({ids[0]},ids[0]);
+    auto panel=new StylePanel(window,c.get());
+    BOOST_SCOPE_EXIT_ALL(&){ panel->Destroy(); };
+    panel->ShowPage(StylePanel::Page::Timing);
+    auto page=panel->Timing();
+    auto shown=[&]{page->UpdateNow();return page->Shown();};
+
+    EXPECT_EQ(fmt_tl("%d too short",1)+wxS(" · ")+fmt_tl("%d overlapping",1)+wxS(" · ")+fmt_tl("%d off a cut",1),shown()["check.summary"]);
+    EXPECT_EQ(wxS("#2 ")+fmt_tl("Too short: %s s",wxS("0.30"))+wxS("\n#3 ")+fmt_tl("Overlaps #%d by %d ms",2,100)
+        +wxS("\n#4 ")+fmt_plural(2,"Start %d frame late","Start %d frames late",2),shown()["check.list"]);
+    EXPECT_EQ(wxS(" disabled"),shown()["check.prev"].Right(9)) << "nothing before the first line";
+
+    // From the current line, one problem on and back; picking one
+    page->Press("check.next");
+    EXPECT_EQ(ids[1],c->selectionController->ReadActiveLine()->Id);
+    EXPECT_EQ(vc->FrameAtTime(6000,agi::vfr::START),vc->GetFrameN()) << "the video goes there";
+    shown(); page->Press("check.next");
+    EXPECT_EQ(ids[2],c->selectionController->ReadActiveLine()->Id);
+    shown(); page->Press("check.prev");
+    EXPECT_EQ(ids[1],c->selectionController->ReadActiveLine()->Id);
+    page->PickIssue(2);
+    EXPECT_EQ(ids[3],c->selectionController->ReadActiveLine()->Id);
+    EXPECT_TRUE(shown()["check.list"].EndsWith(" (current)"));
+    EXPECT_EQ(wxS(" disabled"),shown()["check.next"].Right(9)) << "nothing after the last";
+
+    // Only the selected lines
+    c->selectionController->SetSelectionAndActiveIDs({ids[0]},ids[0]);
+    shown(); page->Choose("check.scope",1);
+    EXPECT_TRUE(OPT_GET("Timing/Check/Selection Only")->GetBool());
+    EXPECT_EQ(_("No timing problems found"),shown()["check.summary"]);
+    page->Choose("check.scope",0);
+
+    // A shorter shortest; then a problem mended on the page
+    shown(); page->EnterNumber("check.min_duration",200,true);
+    EXPECT_EQ(200,OPT_GET("Timing/Check/Min Duration")->GetInt());
+    EXPECT_EQ(fmt_tl("%d overlapping",1)+wxS(" · ")+fmt_tl("%d off a cut",1),shown()["check.summary"]);
+    c->selectionController->SetSelectionAndActiveIDs({ids[2]},ids[2]);
+    shown(); page->EnterNumber("time.start",6300,true);
+    EXPECT_EQ(6300,int(std::next(LiveRead(*c).Events.begin(),2)->Start));
+    EXPECT_EQ(fmt_tl("%d off a cut",1),shown()["check.summary"]);
 }
 
 TEST_F(ordinary_edit, compare_tab_is_one_at_a_time_and_refuses_drops_while_open) {

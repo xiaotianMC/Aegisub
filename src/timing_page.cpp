@@ -15,6 +15,7 @@
 #include "subtitle_project_access.h"
 #include "subtitle_row_edit.h"
 #include "timing_adjust.h"
+#include "timing_check.h"
 #include "video_controller.h"
 #include "command/command.h"
 #include "include/aegisub/context.h"
@@ -89,6 +90,116 @@ wxString CutText(bool end, bool within, int frames, int distance) {
 }
 }
 
+/// The check's issues, a row each: the line's number, dim, and what is
+/// wrong with it. Eight rows show; the wheel scrolls through more.
+class TimingPage::IssueList final : public StylePanel::Part {
+public:
+	struct Item {
+		wxString row, text;
+		bool severe = false, current = false;
+	};
+
+private:
+	std::vector<Item> items;
+	int top = 0, hover_item = -1;
+	static constexpr int rows = 8;
+
+	int RowHeight() const { return FromDIP(22); }
+	int Visible() const { return std::min<int>(rows, static_cast<int>(items.size())); }
+	int ItemAt(int y) const {
+		int i = top + (y - FromDIP(2)) / RowHeight();
+		return y >= FromDIP(2) && i >= 0 && i < std::min<int>(top + rows, static_cast<int>(items.size())) ? i : -1;
+	}
+	void ScrollTo(int new_top) {
+		new_top = std::clamp(new_top, 0, std::max(0, static_cast<int>(items.size()) - rows));
+		if (new_top == top) return;
+		top = new_top;
+		Refresh(false);
+	}
+
+	void Draw(wxDC &dc, Palette const& p) override {
+		wxSize size = GetClientSize();
+		dc.SetBrush(wxBrush(p.field));
+		dc.SetPen(wxPen(p.line, std::max(1, FromDIP(1))));
+		dc.DrawRoundedRectangle(wxRect(wxPoint(0, 0), size), FromDIP(5));
+		int const h = RowHeight(), pad = FromDIP(8);
+		int const number_width = dc.GetTextExtent(wxS("#0000")).x + FromDIP(6);
+		bool const more = static_cast<int>(items.size()) > rows;
+		int const right = size.x - pad - (more ? FromDIP(6) : 0);
+		wxColour error = theme::Colour("Colour/Subtitle Grid/CPS Error");
+		for (int i = top; i < std::min<int>(top + rows, static_cast<int>(items.size())); ++i) {
+			auto const& item = items[i];
+			int y = FromDIP(2) + (i - top) * h;
+			if (i == hover_item) {
+				dc.SetPen(*wxTRANSPARENT_PEN);
+				dc.SetBrush(wxBrush(theme::Mix(p.field, p.text, 0.07)));
+				dc.DrawRoundedRectangle(FromDIP(2), y, size.x - FromDIP(4), h, FromDIP(4));
+			}
+			int text_y = y + (h - dc.GetCharHeight()) / 2;
+			dc.SetTextForeground(item.current ? p.accent : p.dim);
+			dc.DrawText(item.row, pad, text_y);
+			dc.SetTextForeground(item.current ? p.accent : item.severe ? error : p.text);
+			dc.DrawText(Ellipsize(dc, item.text, std::max(0, right - pad - number_width)), pad + number_width, text_y);
+		}
+		// Where the rows shown are among them all
+		if (more) {
+			int track = size.y - FromDIP(8);
+			int thumb = std::max(FromDIP(12), track * rows / static_cast<int>(items.size()));
+			int at = FromDIP(4) + (track - thumb) * top / std::max(1, static_cast<int>(items.size()) - rows);
+			dc.SetPen(*wxTRANSPARENT_PEN);
+			dc.SetBrush(wxBrush(p.line));
+			dc.DrawRoundedRectangle(size.x - FromDIP(6), at, FromDIP(3), thumb, FromDIP(3) / 2.0);
+		}
+	}
+
+public:
+	std::function<void(int)> on_pick;
+
+	explicit IssueList(wxWindow *parent) : Part(parent, wxSize(40, 26)) {
+		SetCursor(wxCursor(wxCURSOR_HAND));
+		Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent &event) {
+			int i = ItemAt(event.GetY());
+			if (i >= 0 && on_pick) CallAfter([this, i] { if (on_pick) on_pick(i); });
+		});
+		Bind(wxEVT_MOTION, [this](wxMouseEvent &event) {
+			int i = ItemAt(event.GetY());
+			if (i != hover_item) { hover_item = i; Refresh(false); }
+		});
+		Bind(wxEVT_LEAVE_WINDOW, [this](wxMouseEvent &event) { hover_item = -1; Refresh(false); event.Skip(); });
+		Bind(wxEVT_MOUSEWHEEL, [this](wxMouseEvent &event) {
+			if (!WantsWheel()) { event.Skip(); return; }
+			ScrollTo(top - event.GetWheelRotation() / std::max(1, event.GetWheelDelta()) * 3);
+		});
+	}
+
+	/// Show @p new_items; @return Whether its height changed
+	bool Set(std::vector<Item> new_items) {
+		items = std::move(new_items);
+		hover_item = -1;
+		top = std::clamp(top, 0, std::max(0, static_cast<int>(items.size()) - rows));
+		// The current line's first issue in view
+		for (int i = 0; i < static_cast<int>(items.size()); ++i)
+			if (items[i].current) {
+				if (i < top || i >= top + rows) top = std::clamp(i - rows / 2, 0, std::max(0, static_cast<int>(items.size()) - rows));
+				break;
+			}
+		Refresh(false);
+		int height = Visible() * RowHeight() + FromDIP(4);
+		if (GetMinSize().y == height) return false;
+		SetMinSize(wxSize(GetMinSize().x, height));
+		return true;
+	}
+
+	bool WantsWheel() const override { return static_cast<int>(items.size()) > rows; }
+
+	wxString Shown() const override {
+		wxString shown;
+		for (auto const& item : items)
+			shown += (shown.empty() ? "" : "\n") + item.row + " " + item.text + (item.current ? " (current)" : "");
+		return shown;
+	}
+};
+
 template<class T, class... Args>
 T *TimingPage::Add(std::string const& name, Args&&... args) {
 	auto part = new T(this, std::forward<Args>(args)...);
@@ -122,7 +233,8 @@ TimingPage::TimingPage(wxWindow *parent, agi::Context *c)
 		"Subtitle/Character Counter/CPS Warning Threshold", "Subtitle/Character Counter/CPS Error Threshold",
 		"Subtitle/Character Counter/Ignore Whitespace", "Subtitle/Character Counter/Ignore Punctuation",
 		"Tool/Timing Post Processor/Threshold/Adjacent Gap", "Tool/Timing Post Processor/Threshold/Adjacent Overlap",
-		"Tool/Timing Post Processor/Adjacent Bias", "Tool/Shift Times/Time", "Tool/Shift Times/Frames", "Tool/Shift Times/ByTime"})
+		"Tool/Timing Post Processor/Adjacent Bias", "Tool/Shift Times/Time", "Tool/Shift Times/Frames", "Tool/Shift Times/ByTime",
+		"Timing/Check/Min Duration", "Timing/Check/Cut Frames", "Timing/Check/Selection Only"})
 		connections.push_back(OPT_SUB(option, [this](agi::OptionValue const&) { ScheduleUpdate(); }));
 	UpdateNow();
 }
@@ -579,6 +691,140 @@ void TimingPage::BuildShift() {
 	});
 }
 
+void TimingPage::Check() {
+	if (!IsShownOnScreen()) return;
+	std::vector<AssDialogue const*> lines;
+	for (auto const& row : c->subtitleAccess->Read().Events) lines.push_back(&row);
+	std::set<int> chosen;
+	bool const only = OPT_GET("Timing/Check/Selection Only")->GetBool();
+	if (only)
+		for (auto row : c->selectionController->ReadSelectedLines()) chosen.insert(row->Id);
+	TimingCheckLimits limits;
+	limits.min_duration = OPT_GET("Timing/Check/Min Duration")->GetInt();
+	limits.cut_frames = OPT_GET("Timing/Check/Cut Frames")->GetInt();
+	limits.cps_warning = OPT_GET("Subtitle/Character Counter/CPS Warning Threshold")->GetInt();
+	limits.cps_error = OPT_GET("Subtitle/Character Counter/CPS Error Threshold")->GetInt();
+	limits.ignore_whitespace = OPT_GET("Subtitle/Character Counter/Ignore Whitespace")->GetBool();
+	limits.ignore_punctuation = OPT_GET("Subtitle/Character Counter/Ignore Punctuation")->GetBool();
+	auto provider = c->project ? c->project->VideoProvider() : nullptr;
+	static const std::vector<int> none;
+	issues = FindTimingIssues(lines, only ? &chosen : nullptr, limits, c->project ? c->project->Keyframes() : none,
+		provider ? provider->GetFrameCount() : 0, c->project ? c->project->Timecodes() : agi::vfr::Framerate());
+}
+
+void TimingPage::GoTo(TimingIssue const& issue) {
+	c->selectionController->SetSelectionAndActiveIDs({issue.id}, issue.id);
+	if (HasVideo()) c->videoController->JumpToTime(issue.time, issue.end ? agi::vfr::END : agi::vfr::START);
+	UpdateNow();
+}
+
+void TimingPage::PickIssue(size_t index) {
+	if (index < issues.size()) GoTo(issues[index]);
+}
+
+void TimingPage::BuildCheck() {
+	AddCardTitle("check", _("Check"));
+	auto scope = Add<PageSwitch>("check.scope", std::vector<wxString>{wxGETTEXT_IN_CONTEXT("check", "All lines"), wxGETTEXT_IN_CONTEXT("check", "Selected")});
+	scope->SetToolTip(_("Check every line of the file, or only the selected ones"));
+	scope->on_choose = [](int index) { OPT_SET("Timing/Check/Selection Only")->SetBool(index == 1); };
+	auto scope_row = new wxBoxSizer(wxHORIZONTAL);
+	scope_row->Add(scope, 1, wxEXPAND);
+	AddRow(scope_row, true);
+
+	auto limits = new wxBoxSizer(wxHORIZONTAL);
+	auto shortest = Add<Field>("check.min_duration", _("Shortest"), "ms", false,
+		_("Lines shorter than this are listed as too short. Too fast is over the subtitle grid's CPS warning threshold (Preferences > Interface > Character Counter)"));
+	shortest->SetNumberHandler({0, 5000, 10}, [](double v, bool) {
+		OPT_SET("Timing/Check/Min Duration")->SetInt(static_cast<int>(std::lround(v)));
+	});
+	limits->Add(shortest, 1, wxEXPAND);
+	auto frames = Add<Field>("check.cut_frames", _("Off by"), wxGETTEXT_IN_CONTEXT("shift", "frames"), false,
+		_("A start or end this many frames from a scene change or fewer, but not on it, is listed: it was most likely meant to be on it"));
+	frames->SetNumberHandler({0, 12, 1}, [](double v, bool) {
+		OPT_SET("Timing/Check/Cut Frames")->SetInt(static_cast<int>(std::lround(v)));
+	});
+	limits->Add(frames, 1, wxEXPAND | wxLEFT, FromDIP(4));
+	AddRow(limits);
+
+	auto line = new wxBoxSizer(wxHORIZONTAL);
+	auto summary = Add<Caption>("check.summary");
+	line->Add(summary, 1, wxALIGN_CENTER_VERTICAL);
+	auto prev = Add<IconButton>("check.prev", IconButton::Glyph::Earlier, _("The problem before the current line"));
+	prev->SetMinSize(FromDIP(wxSize(22, 28)));
+	line->Add(prev, 0);
+	auto next = Add<IconButton>("check.next", IconButton::Glyph::Later, _("The problem after the current line"));
+	next->SetMinSize(FromDIP(wxSize(22, 28)));
+	line->Add(next, 0);
+	AddRow(line);
+
+	auto list = Add<IssueList>("check.list");
+	list->on_pick = [this](int index) { PickIssue(index); };
+	card_body->Add(list, 0, wxEXPAND | wxTOP, FromDIP(3));
+
+	// Earlier and later than the current line's row: its own issues are
+	// neither
+	auto before = [this]() -> TimingIssue const* {
+		TimingIssue const* found = nullptr;
+		for (auto const& issue : issues)
+			if (line_row >= 0 && issue.row < line_row) found = &issue;
+		return found;
+	};
+	auto after = [this]() -> TimingIssue const* {
+		for (auto const& issue : issues)
+			if (line_row < 0 || issue.row > line_row) return &issue;
+		return nullptr;
+	};
+	prev->on_click = [this, before] { if (auto issue = before()) GoTo(*issue); };
+	next->on_click = [this, after] { if (auto issue = after()) GoTo(*issue); };
+
+	refreshers.push_back([this, scope, shortest, frames, summary, prev, next, list, before, after] {
+		scope->Select(OPT_GET("Timing/Check/Selection Only")->GetBool() ? 1 : 0);
+		shortest->SetNumber(OPT_GET("Timing/Check/Min Duration")->GetInt(), true);
+		frames->SetNumber(OPT_GET("Timing/Check/Cut Frames")->GetInt(), true);
+
+		int counts[4] = {0, 0, 0, 0};
+		std::vector<IssueList::Item> items;
+		for (auto const& issue : issues) {
+			++counts[static_cast<int>(issue.kind)];
+			IssueList::Item item;
+			item.row = wxString::Format("#%d", issue.row + 1);
+			item.current = issue.id == line_id;
+			switch (issue.kind) {
+				case TimingIssue::Kind::Short:
+					item.text = fmt_tl("Too short: %s s", wxString::FromCDouble(issue.value / 1000., 2));
+					break;
+				case TimingIssue::Kind::Fast:
+					item.text = fmt_tl("Too fast: %d a second", issue.value);
+					item.severe = issue.severe;
+					break;
+				case TimingIssue::Kind::Overlap:
+					item.text = fmt_tl("Overlaps #%d by %d ms", issue.other_row + 1, issue.value);
+					break;
+				case TimingIssue::Kind::NearCut:
+					item.text = CutText(issue.end, true, issue.value, 0);
+					break;
+			}
+			items.push_back(std::move(item));
+		}
+		wxString text;
+		auto add = [&](int n, wxString const& part) { if (n) text += (text.empty() ? wxString() : wxString(wxS(" · "))) + part; };
+		add(counts[0], fmt_tl("%d too short", counts[0]));
+		add(counts[1], fmt_tl("%d too fast", counts[1]));
+		add(counts[2], fmt_tl("%d overlapping", counts[2]));
+		add(counts[3], fmt_tl("%d off a cut", counts[3]));
+		summary->SetText(text.empty() ? _("No timing problems found") : text);
+		summary->SetToolTip(text);
+		prev->Enable(before() != nullptr);
+		next->Enable(after() != nullptr);
+		bool const was_shown = list->IsShown();
+		list->Show(!items.empty());
+		if (list->Set(std::move(items)) || was_shown != list->IsShown()) {
+			Layout();
+			if (on_layout) on_layout();
+		}
+	});
+}
+
 void TimingPage::Build() {
 	Freeze();
 	refreshers.clear();
@@ -593,6 +839,7 @@ void TimingPage::Build() {
 		BuildJoin();
 		BuildShift();
 	}
+	BuildCheck();
 	Layout();
 	Thaw();
 	InvalidateBestSize();
@@ -639,6 +886,9 @@ void TimingPage::UpdateNow() {
 			gap_before = start - static_cast<int>(previous->End);
 		}
 	}
+
+	line_row = line ? line->Row : -1;
+	Check();
 
 	std::string key = line ? "L" : "-";
 	if (HasVideo()) key += "V";

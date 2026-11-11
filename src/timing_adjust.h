@@ -51,3 +51,8 @@ struct SceneCut {
 /// SnapToKeyframes finds it; @p frame_count, if positive, ends the last
 /// scene. Nothing when there are no keyframes.
 bool NearestSceneCut(std::vector<int> keyframes, int frame_count, agi::vfr::Framerate const& fps, int ms, bool end, SceneCut &cut);
+/// The keyframes NearestSceneCut looks among: @p keyframes sorted, with the
+/// last scene's end if @p frame_count is positive
+std::vector<int> SceneCutFrames(std::vector<int> keyframes, int frame_count);
+/// As NearestSceneCut, among frames SceneCutFrames gave: for many lines
+bool NearestSceneCutIn(std::vector<int> const& frames, agi::vfr::Framerate const& fps, int ms, bool end, SceneCut &cut);
