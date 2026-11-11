@@ -133,7 +133,7 @@ std::string SceneCacheKey(agi::fs::path const& video) {
 
 /// Raised when frames are compared another way: what an earlier way found
 /// is not kept on as if it had been found by this one
-constexpr const char *scene_method = "cells3";
+constexpr const char *scene_method = "cells4";
 
 agi::fs::path SceneCacheFile(std::string const& key, const char *suffix) {
 	char name[48];

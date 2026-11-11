@@ -34,6 +34,9 @@ struct Params {
 	bool gradual = true;
 	/// How different the frames either side of one must be, as threshold
 	double gradual_threshold = 0.30;
+	/// Of what changed at a cut, at least this share must be nowhere near
+	/// in the frame before (UnmatchedShare): less is something moving
+	double least_unmatched = 0.4;
 };
 
 /// The sensitivity option's three steps: low, medium, high
@@ -92,13 +95,25 @@ double BlendError(Signature const& a, Signature const& mid, Signature const& b, 
 /// the camera moved, which can look like a dissolve
 double MovedDifference(Signature const& a, Signature const& b, Area const& area = {});
 
+/// Cells each way a part of the picture is looked for, moved, by UnmatchedShare
+constexpr int unmatched_reach = 4;
+
+/// Of the cells that changed from @p a to @p b, the share whose patch of
+/// 3×3 cells in @p b is nowhere within unmatched_reach cells in @p a: low
+/// when what changed is something moving (an arm, ears, a thing thrown,
+/// each its own way), high when it is another picture
+double UnmatchedShare(Signature const& a, Signature const& b, Area const& area = {});
+
 /// The cuts among frames, frame 0 not included.
 /// @param diffs  diffs[i]: frame i against frame i - 1 (diffs[0] unused)
 /// @param across across[i]: the least difference between frame i - 1 and
 ///               any of the flash_span frames after i, and between frame i
 ///               and any of the frames before i - 1; low when frame i or
 ///               i - 1 is a flash, the picture being the same either side
-std::vector<int> FindCuts(std::vector<double> const& diffs, std::vector<double> const& across, Params const& params);
+/// @param unmatched unmatched[i]: frame i's UnmatchedShare against frame
+///               i - 1 (missing: taken as 1, nothing moving)
+std::vector<int> FindCuts(std::vector<double> const& diffs, std::vector<double> const& across, Params const& params,
+                          std::vector<double> const& unmatched = {});
 
 /// Frames are read this wide where the video can hand them out smaller,
 /// picked out rather than averaged: the pixels the thumbnail's cells are
@@ -112,8 +127,9 @@ struct Measures {
 	int flash_span = 0;
 	/// The cells compared
 	Area area;
-	/// As FindCuts takes them
-	std::vector<double> diffs, across;
+	/// As FindCuts takes them; unmatched worked out only where the
+	/// difference may be a cut's (1 elsewhere)
+	std::vector<double> diffs, across, unmatched;
 	/// far_difference[i]: frame i against frame i - gradual_span; blend[i]: the
 	/// BlendError of the frame half way between; moved[i]: their
 	/// MovedDifference, worked out only where the two may be a dissolve's

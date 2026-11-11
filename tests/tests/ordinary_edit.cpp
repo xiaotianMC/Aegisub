@@ -7652,6 +7652,43 @@ TEST(scene_detect, close_cuts_keep_the_strongest_and_the_start_is_not_one) {
     EXPECT_EQ((std::vector<int>{23}),scene_detect::FindCuts(diffs,across,scene_detect::ForSensitivity(0))) << "low sensitivity misses the weak cut";
 }
 
+TEST(scene_detect, things_moving_each_their_own_way_are_not_a_cut_and_a_cut_into_fast_motion_is) {
+    // A still scene; at frame 40 three things in it jump a few cells, each
+    // its own way, as arms and ears do. At 60 a cut to a shot panning fast.
+    struct Thing { int x,y,w,h,dx,dy; unsigned char colour[3]; };
+    static const Thing things[]={{40,30,70,55,15,0,{30,30,220}},{150,90,60,60,-15,10,{40,200,60}},{230,40,55,70,0,-15,{220,140,30}}};
+    DrawnVideo video(100,320,180);
+    video.draw=[](int n,int x,int y,unsigned char *bgr){
+        if(n>=60)return Shot(1,20*n,x,y,bgr);
+        bgr[0]=static_cast<unsigned char>(200-y/3);bgr[1]=static_cast<unsigned char>(150+x/8);bgr[2]=90;
+        for(auto const& t:things){
+            int const ox=t.x+(n>=40?t.dx:0),oy=t.y+(n>=40?t.dy:0);
+            if(x>=ox&&x<ox+t.w&&y>=oy&&y<oy+t.h){
+                // Each with a pattern of its own, moving with it
+                int const stripe=((x-ox)/6+(y-oy)/9)%2;
+                for(int c=0;c<3;++c)bgr[c]=static_cast<unsigned char>(t.colour[c]*(stripe?1.:0.6));
+            }
+        }
+    };
+    auto m=scene_detect::Measure(video,nullptr,3);
+    ASSERT_EQ(100u,m.unmatched.size());
+    EXPECT_GE(m.diffs[40],scene_detect::ForSensitivity(1).threshold) << "enough changes to be taken for a cut";
+    EXPECT_LT(m.unmatched[40],0.4) << "but each part is found moved a little";
+    EXPECT_GT(m.unmatched[60],0.9) << "another picture";
+    auto high=scene_detect::ForSensitivity(2);
+    high.gradual=false;
+    EXPECT_EQ((std::vector<int>{0,60}),scene_detect::Cuts(m,high));
+    auto unchecked=high;
+    unchecked.least_unmatched=0;
+    EXPECT_EQ((std::vector<int>{40,60}),scene_detect::FindCuts(m.diffs,m.across,unchecked,m.unmatched)) << "the things moving were a cut before";
+    // The frames after the cut change as much as it does: it is a cut by
+    // the still frames before it, being so wholly another picture
+    EXPECT_GT(m.diffs[70],0.5);
+    std::vector<double> partly(m.unmatched.size(),0.85);
+    EXPECT_EQ((std::vector<int>{40}),scene_detect::FindCuts(m.diffs,m.across,unchecked,partly)) << "not when less of it is another";
+    EXPECT_EQ(scene_detect::UnmatchedShare(scene_detect::Signature{},scene_detect::Signature{}),0.) << "nothing changed";
+}
+
 TEST(scene_detect, parts_read_on_their_own_find_what_one_reading_finds) {
     int const n=4*scene_detect::min_part_frames+7;
     auto draw=[](int f,int x,int y,unsigned char *bgr){
@@ -7668,6 +7705,7 @@ TEST(scene_detect, parts_read_on_their_own_find_what_one_reading_finds) {
     EXPECT_EQ(whole.far_difference,parts.far_difference);
     EXPECT_EQ(whole.blend,parts.blend);
     EXPECT_EQ(whole.moved,parts.moved);
+    EXPECT_EQ(whole.unmatched,parts.unmatched);
     int reads=0;for(auto const& v:videos){EXPECT_GT(v->reads,0) << "each reader has a part";reads+=v->reads;}
     EXPECT_LE(reads,n+3*(scene_detect::gradual_span+3)) << "each frame read once, but for a few each side of a part";
     EXPECT_EQ(scene_detect::Cuts(whole,scene_detect::Params{}),scene_detect::Cuts(parts,scene_detect::Params{}));
@@ -7703,7 +7741,7 @@ TEST(scene_detect, measures_are_kept_and_read_back) {
     m.flash_span=3;
     m.diffs={0.,0.25,0.5};
     m.across={std::numeric_limits<double>::infinity(),0.125,1.};
-    m.far_difference={0.,0.5,0.75};m.blend={1.,0.25,0.};m.moved={1.,1.,0.5};
+    m.far_difference={0.,0.5,0.75};m.blend={1.,0.25,0.};m.moved={1.,1.,0.5};m.unmatched={1.,0.25,0.75};
     m.area={1,63,2,30};
     agi::fs::path file((std::filesystem::current_path()/"kept.measures").wstring());
     scene_detect::SaveMeasures(file,m);
@@ -7711,7 +7749,7 @@ TEST(scene_detect, measures_are_kept_and_read_back) {
     EXPECT_EQ(3,back.flash_span);
     EXPECT_EQ(m.diffs,back.diffs);
     EXPECT_EQ(m.across,back.across);
-    EXPECT_EQ(m.far_difference,back.far_difference);EXPECT_EQ(m.blend,back.blend);EXPECT_EQ(m.moved,back.moved);
+    EXPECT_EQ(m.far_difference,back.far_difference);EXPECT_EQ(m.blend,back.blend);EXPECT_EQ(m.moved,back.moved);EXPECT_EQ(m.unmatched,back.unmatched);
     EXPECT_EQ(m.area,back.area);
     EXPECT_EQ((std::vector<int>{0}),scene_detect::Cuts(back,scene_detect::Params{})) << "frames too near the start";
     {agi::io::Save junk(file);junk.Get()<<"not measures";}

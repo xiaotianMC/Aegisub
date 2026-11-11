@@ -22,10 +22,15 @@
 #include <thread>
 
 namespace scene_detect {
+namespace {
+/// The least difference any sensitivity takes for a cut: UnmatchedShare is
+/// worked out where the difference is no less
+constexpr double least_cut = 0.08;
+}
 
 Params ForSensitivity(int sensitivity) {
 	Params p;
-	p.threshold = sensitivity <= 0 ? 0.30 : sensitivity == 1 ? 0.15 : 0.08;
+	p.threshold = sensitivity <= 0 ? 0.30 : sensitivity == 1 ? 0.15 : least_cut;
 	p.gradual_threshold = sensitivity <= 0 ? 0.45 : sensitivity == 1 ? 0.30 : 0.20;
 	return p;
 }
@@ -88,6 +93,18 @@ constexpr double blend_share = 0.3;
 /// The camera moving explains the change when moving the picture leaves
 /// less than this share of it
 constexpr double moved_share = 0.5;
+/// So much of the picture another that it is a cut even where the frames
+/// on one side of it change a lot (a shot of fast motion): the frames on
+/// the other side are all it is compared with
+constexpr double clearly_another = 0.9;
+
+/// The middle of @p values, 0 for none; reorders them
+double Median(std::vector<double> &values) {
+	if (values.empty()) return 0;
+	auto mid = values.begin() + values.size() / 2;
+	std::nth_element(values.begin(), mid, values.end());
+	return *mid;
+}
 }
 
 Area FindPicture(std::vector<Signature> const& samples) {
@@ -181,22 +198,59 @@ double MovedDifference(Signature const& a, Signature const& b, Area const& area)
 	return best;
 }
 
-std::vector<int> FindCuts(std::vector<double> const& diffs, std::vector<double> const& across, Params const& params) {
+double UnmatchedShare(Signature const& a, Signature const& b, Area const& area) {
+	int changed = 0, unmatched = 0;
+	auto inside = [&](int x, int y) { return x >= area.left && x < area.right && y >= area.top && y < area.bottom; };
+	for (int y = area.top; y < area.bottom; ++y)
+		for (int x = area.left; x < area.right; ++x) {
+			int const i = y * thumb_w + x;
+			if (Change(a, i, b, i) < changed_level) continue;
+			++changed;
+			// The patch round this cell, somewhere near in the frame before:
+			// on average no more changed than a cell that has not
+			bool found = false;
+			for (int dy = -unmatched_reach; dy <= unmatched_reach && !found; ++dy)
+				for (int dx = -unmatched_reach; dx <= unmatched_reach && !found; ++dx) {
+					int sum = 0, cells = 0;
+					for (int py = y - 1; py <= y + 1; ++py)
+						for (int px = x - 1; px <= x + 1; ++px) {
+							if (!inside(px, py) || !inside(px + dx, py + dy)) continue;
+							sum += Change(a, (py + dy) * thumb_w + px + dx, b, py * thumb_w + px);
+							++cells;
+						}
+					// Most of the patch inside the picture to go by
+					found = cells >= 6 && sum <= changed_level * cells;
+				}
+			unmatched += !found;
+		}
+	return changed ? double(unmatched) / changed : 0.;
+}
+
+std::vector<int> FindCuts(std::vector<double> const& diffs, std::vector<double> const& across, Params const& params,
+                          std::vector<double> const& unmatched) {
 	struct Cut { int frame; double strength; };
 	std::vector<Cut> cuts;
 	int const n = static_cast<int>(diffs.size());
-	std::vector<double> around;
+	std::vector<double> around, before, after;
 	for (int i = 1; i < n; ++i) {
 		double const d = diffs[i];
 		if (d < params.threshold) continue;
-		// Much more different than the frames around it: not motion
+		double const un = i < static_cast<int>(unmatched.size()) ? unmatched[i] : 1.;
+		// What changed is things moving, each its own way
+		if (un < params.least_unmatched) continue;
+		// Much more different than the frames around it: not motion. A
+		// picture wholly another is a cut into or out of a shot of fast
+		// motion when it is so against the frames on its other side.
 		around.clear();
-		for (int j = std::max(1, i - params.window); j <= std::min(n - 1, i + params.window); ++j)
-			if (j != i) around.push_back(diffs[j]);
-		if (!around.empty()) {
-			auto mid = around.begin() + around.size() / 2;
-			std::nth_element(around.begin(), mid, around.end());
-			if (d < params.ratio * *mid) continue;
+		before.clear();
+		after.clear();
+		for (int j = std::max(1, i - params.window); j < i; ++j) before.push_back(diffs[j]);
+		for (int j = i + 1; j <= std::min(n - 1, i + params.window); ++j) after.push_back(diffs[j]);
+		around = before;
+		around.insert(around.end(), after.begin(), after.end());
+		if (!around.empty() && d < params.ratio * Median(around)) {
+			double const calmer = std::min(before.empty() ? 0. : Median(before), after.empty() ? 0. : Median(after));
+			if (un < clearly_another || d < params.ratio * calmer) continue;
 		}
 		// The picture is back within a few frames: a flash
 		if (i < static_cast<int>(across.size()) && across[i] < params.threshold / 2) continue;
@@ -267,7 +321,10 @@ void MeasureRange(VideoProvider &video, int n, int span, Area const& area, int s
 		if (mine(j)) ++read;
 		auto &sig = recent[j % ring] = Sign(frame);
 		if (j == first) continue;
-		if (mine(j)) diffs[j] = Difference(recent[(j - 1) % ring], sig, area);
+		if (mine(j)) {
+			diffs[j] = Difference(recent[(j - 1) % ring], sig, area);
+			if (diffs[j] >= least_cut) m.unmatched[j] = UnmatchedShare(recent[(j - 1) % ring], sig, area);
+		}
 		// Frame j - k - 1 against this one: is j - k - 1 back after a flash
 		// at j - k ...
 		for (int k = 1; k <= span && j - k - 1 >= first; ++k) {
@@ -303,6 +360,7 @@ Measures Measure(std::vector<VideoProvider*> const& videos, agi::ProgressSink *p
 	if (n <= 0) {
 		m.diffs.assign(1, 0.);
 		m.across.assign(1, std::numeric_limits<double>::infinity());
+		m.unmatched.assign(1, 1.);
 		m.far_difference.assign(1, 0.);
 		m.blend.assign(1, 1.);
 		m.moved.assign(1, 1.);
@@ -310,6 +368,7 @@ Measures Measure(std::vector<VideoProvider*> const& videos, agi::ProgressSink *p
 	}
 	m.diffs.assign(n, 0.);
 	m.across.assign(n, std::numeric_limits<double>::infinity());
+	m.unmatched.assign(n, 1.);
 	m.far_difference.assign(n, 0.);
 	m.blend.assign(n, 1.);
 	m.moved.assign(n, 1.);
@@ -355,7 +414,7 @@ Measures Measure(std::vector<VideoProvider*> const& videos, agi::ProgressSink *p
 
 std::vector<int> Cuts(Measures const& measures, Params const& params) {
 	std::vector<int> result{0};
-	auto cuts = FindCuts(measures.diffs, measures.across, params);
+	auto cuts = FindCuts(measures.diffs, measures.across, params, measures.unmatched);
 	result.insert(result.end(), cuts.begin(), cuts.end());
 	if (params.gradual) {
 		// A short dissolve changes each frame enough for its frames to look
@@ -382,10 +441,10 @@ std::vector<int> Detect(VideoProvider &video, agi::ProgressSink *ps, Params cons
 namespace {
 // The file: this tag; the flash span, the frame count and the area's left,
 // right, top and bottom as 32-bit integers; then each frame's difference,
-// across, far, blend and moved as 32-bit floats. It is read back only on
-// the computer that wrote it.
-char const measures_tag[8] = {'A', 'g', 'S', 'c', 'n', 'M', '0', '3'};
-constexpr int per_frame = 5;
+// across, far, blend, moved and unmatched as 32-bit floats. It is read
+// back only on the computer that wrote it.
+char const measures_tag[8] = {'A', 'g', 'S', 'c', 'n', 'M', '0', '4'};
+constexpr int per_frame = 6;
 }
 
 void SaveMeasures(agi::fs::path const& file, Measures const& m) {
@@ -404,6 +463,7 @@ void SaveMeasures(agi::fs::path const& file, Measures const& m) {
 		row[per_frame * i + 2] = at(m.far_difference, i, 0);
 		row[per_frame * i + 3] = at(m.blend, i, 1);
 		row[per_frame * i + 4] = at(m.moved, i, 1);
+		row[per_frame * i + 5] = at(m.unmatched, i, 1);
 	}
 	out.write(reinterpret_cast<char const*>(row.data()), static_cast<std::streamsize>(row.size() * sizeof(float)));
 }
@@ -424,13 +484,14 @@ Measures LoadMeasures(agi::fs::path const& file) {
 		Measures m;
 		m.flash_span = head[0];
 		m.area = area;
-		for (auto v : {&m.diffs, &m.across, &m.far_difference, &m.blend, &m.moved}) v->resize(head[1]);
+		for (auto v : {&m.diffs, &m.across, &m.far_difference, &m.blend, &m.moved, &m.unmatched}) v->resize(head[1]);
 		for (int32_t i = 0; i < head[1]; ++i) {
 			m.diffs[i] = row[per_frame * i];
 			m.across[i] = row[per_frame * i + 1];
 			m.far_difference[i] = row[per_frame * i + 2];
 			m.blend[i] = row[per_frame * i + 3];
 			m.moved[i] = row[per_frame * i + 4];
+			m.unmatched[i] = row[per_frame * i + 5];
 		}
 		return m;
 	}
