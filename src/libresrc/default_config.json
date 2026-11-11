@@ -622,7 +622,9 @@
 			"Settings" : ""
 		},
 		"Scene Detection" : {
-			"Sensitivity" : 1
+			"Gradual" : true,
+			"Sensitivity" : 1,
+			"Subtitle Band" : 20
 		},
 		"Thesaurus" : {
 			"Language" : "en_US"

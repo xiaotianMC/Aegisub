@@ -9941,6 +9941,22 @@ msgid "How readily Detect Scene Changes takes a change of picture for a cut. Hig
 msgstr "“检测画面切换”把画面变化当作切换的灵敏度。越高找到的切换越多，误判也越多。"
 
 #: ../src/preferences.cpp
+msgid "Also find dissolves and fades"
+msgstr "同时检测叠化和淡入淡出"
+
+#: ../src/preferences.cpp
+msgid "A change of shot that takes a few frames is placed at its middle"
+msgstr "持续几帧的镜头转换，切换点放在转换的中间"
+
+#: ../src/preferences.cpp
+msgid "Leave out the bottom of the picture (%)"
+msgstr "不比较画面底部 (%)"
+
+#: ../src/preferences.cpp
+msgid "Where subtitles are burnt in, so that their coming and going is not taken for a cut; black bars are left out by themselves"
+msgstr "硬字幕所在的位置，免得字幕出现、消失被当成切换；黑边会自动排除"
+
+#: ../src/preferences.cpp
 msgid "Snap to scene changes within (ms)"
 msgstr "吸附画面切换的最大距离 (毫秒)"
 

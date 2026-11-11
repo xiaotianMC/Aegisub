@@ -278,6 +278,10 @@ void Video(PreferencesBook *book, Preferences *parent) {
 	wxArrayString choice_sens(3, csens_arr);
 	p->OptionChoice(playback, _("Scene change detection"), choice_sens, "Tool/Scene Detection/Sensitivity", false,
 		_("How readily Detect Scene Changes takes a change of picture for a cut. Higher finds more cuts, and more that are not."));
+	p->OptionAdd(playback, _("Also find dissolves and fades"), "Tool/Scene Detection/Gradual",
+		{.help = _("A change of shot that takes a few frames is placed at its middle")});
+	p->OptionAdd(playback, _("Leave out the bottom of the picture (%)"), "Tool/Scene Detection/Subtitle Band",
+		{.min = 0, .max = 50, .help = _("Where subtitles are burnt in, so that their coming and going is not taken for a cut; black bars are left out by themselves")});
 
 	auto magia = p->PageSizer(_("MagiaTimeline"));
 	p->OptionBrowse(magia, _("Installed in"), "Tool/MagiaTimeline/Path");

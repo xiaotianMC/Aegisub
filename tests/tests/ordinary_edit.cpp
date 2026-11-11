@@ -7415,7 +7415,7 @@ struct CancelledSink final : agi::ProgressSink {
 };
 }
 
-TEST(scene_detect, finds_cuts_but_not_motion_flashes_or_fades) {
+TEST(scene_detect, finds_cuts_and_fades_but_not_motion_or_flashes) {
     DrawnVideo video(180,320,180);
     video.draw=[](int n,int x,int y,unsigned char *bgr){
         if(n<40)return Shot(0,n,x,y,bgr);              // A, panning
@@ -7432,17 +7432,24 @@ TEST(scene_detect, finds_cuts_but_not_motion_flashes_or_fades) {
         Shot(4,n,x,y,bgr);
     };
     auto cuts=scene_detect::Detect(video,nullptr,scene_detect::Params{});
-    ASSERT_EQ(3u,cuts.size()) << ::testing::PrintToString(cuts);
+    ASSERT_EQ(4u,cuts.size()) << ::testing::PrintToString(cuts);
     EXPECT_EQ(0,cuts[0]);
     EXPECT_EQ(40,cuts[1]);
-    EXPECT_TRUE(cuts[2]==140||cuts[2]==143) << "cuts 3 frames apart are one: " << cuts[2];
+    EXPECT_NEAR(90,cuts[2],2) << "the fade, at its middle";
+    EXPECT_TRUE(cuts[3]==140||cuts[3]==143) << "cuts 3 frames apart are one: " << cuts[3];
     EXPECT_EQ(180,video.reads) << "each frame read once";
+    scene_detect::Params hard;
+    hard.gradual=false;
+    video.reads=0;
+    auto only_cuts=scene_detect::Detect(video,nullptr,hard);
+    ASSERT_EQ(3u,only_cuts.size()) << "fades not looked for: " << ::testing::PrintToString(only_cuts);
+    EXPECT_EQ(40,only_cuts[1]);
 
     CancelledSink cancelled;
     EXPECT_TRUE(scene_detect::Detect(video,&cancelled,scene_detect::Params{}).empty());
 }
 
-TEST(scene_detect, another_angle_in_the_same_colours_is_a_cut_and_a_flat_dissolve_is_not) {
+TEST(scene_detect, another_angle_in_the_same_colours_is_a_cut_and_a_flat_dissolve_one_at_its_middle) {
     // Drawn as cartoons are: flat colours, a sky and the ground, a few
     // shapes. The second shot is the same place from elsewhere: the same
     // colours in much the same amounts, laid out otherwise
@@ -7466,7 +7473,108 @@ TEST(scene_detect, another_angle_in_the_same_colours_is_a_cut_and_a_flat_dissolv
         for(int i=0;i<3;++i)bgr[i]=static_cast<unsigned char>(a[i]*(1-t)+b[i]*t);
     };
     auto cuts=scene_detect::Detect(video,nullptr,scene_detect::ForSensitivity(1));
-    EXPECT_EQ((std::vector<int>{0,40}),cuts) << "medium sensitivity";
+    ASSERT_EQ(3u,cuts.size()) << "medium sensitivity: " << ::testing::PrintToString(cuts);
+    EXPECT_EQ(40,cuts[1]);
+    EXPECT_NEAR(90,cuts[2],2) << "the dissolve, at its middle, once";
+    auto hard=scene_detect::ForSensitivity(1);
+    hard.gradual=false;
+    EXPECT_EQ((std::vector<int>{0,40}),scene_detect::Detect(video,nullptr,hard)) << "dissolves not looked for";
+}
+
+TEST(scene_detect, dissolves_and_fades_short_and_long_are_found_and_a_pan_is_not) {
+    // Shots of their own colours, each with a texture moving 2 px a frame
+    auto mix=[](int a,int b,double t,int n,int x,int y,unsigned char *bgr){
+        unsigned char p[3],q[3];Shot(a,n,x,y,p);Shot(b,n,x,y,q);
+        for(int i=0;i<3;++i)bgr[i]=static_cast<unsigned char>(p[i]*(1-t)+q[i]*t);
+    };
+    // Shot 4 is near black: a fade
+    struct Gradual { int from, length; };
+    for(auto g:{Gradual{60,6},Gradual{60,12},Gradual{60,30},Gradual{60,45}}) {
+        DrawnVideo video(160,160,90);
+        video.draw=[&](int n,int x,int y,unsigned char *bgr){
+            if(n<g.from)return Shot(0,n,x,y,bgr);
+            if(n<g.from+g.length)return mix(0,2,(n-g.from+1.)/(g.length+1),n,x,y,bgr);
+            Shot(2,n,x,y,bgr);
+        };
+        auto cuts=scene_detect::Detect(video,nullptr,scene_detect::ForSensitivity(1));
+        ASSERT_EQ(2u,cuts.size()) << g.length << " frames: " << ::testing::PrintToString(cuts);
+        EXPECT_NEAR(g.from+g.length/2.,cuts[1],3) << g.length << " frames: at its middle";
+    }
+    // Faded out to black and in again: once, about the black
+    DrawnVideo fades(160,160,90);
+    fades.draw=[&](int n,int x,int y,unsigned char *bgr){
+        if(n<50)return Shot(0,n,x,y,bgr);
+        if(n<60)return mix(0,4,(n-49)/11.,n,x,y,bgr);
+        if(n<64)return Shot(4,n,x,y,bgr);
+        if(n<74)return mix(4,1,(n-63)/11.,n,x,y,bgr);
+        Shot(1,n,x,y,bgr);
+    };
+    auto cuts=scene_detect::Detect(fades,nullptr,scene_detect::ForSensitivity(1));
+    ASSERT_GE(cuts.size(),2u) << ::testing::PrintToString(cuts);
+    ASSERT_LE(cuts.size(),3u) << "out and in, at most: " << ::testing::PrintToString(cuts);
+    EXPECT_GE(cuts[1],50);EXPECT_LE(cuts.back(),74);
+
+    // The camera panning fast over one place, at high sensitivity: no
+    // dissolve however the picture changes
+    DrawnVideo pan(160,160,90);
+    pan.draw=[](int n,int x,int y,unsigned char *bgr){Shot(3,3*n,x,y,bgr);};
+    EXPECT_EQ((std::vector<int>{0}),scene_detect::Detect(pan,nullptr,scene_detect::ForSensitivity(2)));
+    auto m=scene_detect::Measure(pan,nullptr,3);
+    double most=0;for(double f:m.far)most=std::max(most,f);
+    EXPECT_GT(most,0.3) << "frames 12 apart do differ";
+
+    // Tilting up a smooth sky: the frame half way is exactly the two either
+    // side mixed, as in a dissolve, but moving the picture explains it
+    DrawnVideo tilt(80,160,180);
+    tilt.draw=[](int n,int,int y,unsigned char *bgr){
+        double v=(y+4*n)*0.5;
+        bgr[0]=static_cast<unsigned char>(v);bgr[1]=static_cast<unsigned char>(255-v);bgr[2]=120;
+    };
+    auto sky=scene_detect::Measure(tilt,nullptr,3);
+    EXPECT_GT(sky.far[40],0.9) << "every cell changes";
+    EXPECT_LT(sky.blend[40],0.05) << "and looks mixed";
+    EXPECT_EQ((std::vector<int>{0}),scene_detect::Cuts(sky,scene_detect::ForSensitivity(2)));
+}
+
+TEST(scene_detect, black_bars_and_the_subtitles_band_are_left_out) {
+    // A picture letterboxed: black above and below, a subtitle burnt in
+    // near its bottom now and then
+    auto frame=[](int n,int x,int y,unsigned char *bgr){
+        if(y<20||y>=160){bgr[0]=bgr[1]=bgr[2]=0;return;}
+        if(n%30>=15&&y>=128&&y<156&&x>=30&&x<290&&(x/6+y/5)%2){bgr[0]=bgr[1]=bgr[2]=255;return;}
+        Shot(n<60?0:1,0,x,y,bgr);
+    };
+    DrawnVideo video(120,320,180);
+    video.draw=frame;
+    auto picture=scene_detect::FindPicture(video,24);
+    EXPECT_EQ(0,picture.left);EXPECT_EQ(scene_detect::thumb_w,picture.right);
+    EXPECT_NEAR(20*scene_detect::thumb_h/180.,picture.top,1) << "the bar above";
+    EXPECT_NEAR(160*scene_detect::thumb_h/180.,picture.bottom,1) << "the bar below";
+
+    // Without the band the subtitles' coming and going are cuts at high
+    // sensitivity; with it only the cut is
+    auto high=scene_detect::ForSensitivity(2);
+    auto whole=scene_detect::Cuts(scene_detect::Measure(video,nullptr,3,picture),high);
+    EXPECT_GT(whole.size(),2u) << "the subtitles seen: " << ::testing::PrintToString(whole);
+    auto band=scene_detect::WithoutSubtitles(picture,25);
+    EXPECT_EQ(picture.top,band.top);
+    EXPECT_LT(band.bottom,picture.bottom);
+    EXPECT_EQ((std::vector<int>{0,60}),scene_detect::Cuts(scene_detect::Measure(video,nullptr,3,band),high));
+
+    // The bars change nothing but the share: the same cut is as strong
+    // as in the picture without them
+    DrawnVideo bare(120,320,140);
+    bare.draw=[](int n,int x,int y,unsigned char *bgr){Shot(n<60?0:1,0,x,y+20,bgr);};
+    auto barred=scene_detect::Measure(video,nullptr,3,picture);
+    auto plain=scene_detect::Measure(bare,nullptr,3);
+    EXPECT_NEAR(plain.diffs[60],barred.diffs[60],0.1);
+    EXPECT_LT(scene_detect::Measure(video,nullptr,3).diffs[60],barred.diffs[60]) << "the bars counted dilute it";
+
+    // A dark video is not all bar
+    DrawnVideo dark(30,320,180);
+    dark.draw=[](int,int,int,unsigned char *bgr){bgr[0]=bgr[1]=bgr[2]=5;};
+    EXPECT_EQ(scene_detect::Area{},scene_detect::FindPicture(dark,8));
+    EXPECT_EQ(scene_detect::Area{},scene_detect::FindPicture(std::vector<scene_detect::Signature>{}));
 }
 
 TEST(scene_detect, signature_reads_any_pitch_and_flipped_frames) {
@@ -7507,8 +7615,11 @@ TEST(scene_detect, parts_read_on_their_own_find_what_one_reading_finds) {
     auto parts=scene_detect::Measure(raw,nullptr,3);
     EXPECT_EQ(whole.diffs,parts.diffs);
     EXPECT_EQ(whole.across,parts.across);
+    EXPECT_EQ(whole.far,parts.far);
+    EXPECT_EQ(whole.blend,parts.blend);
+    EXPECT_EQ(whole.moved,parts.moved);
     int reads=0;for(auto const& v:videos){EXPECT_GT(v->reads,0) << "each reader has a part";reads+=v->reads;}
-    EXPECT_LE(reads,n+3*(2*3+1)) << "each frame read once, but for a few each side of a part";
+    EXPECT_LE(reads,n+3*(scene_detect::gradual_span+3)) << "each frame read once, but for a few each side of a part";
     EXPECT_EQ(scene_detect::Cuts(whole,scene_detect::Params{}),scene_detect::Cuts(parts,scene_detect::Params{}));
 
     // Too short to be worth cutting up: one reader
@@ -7542,12 +7653,16 @@ TEST(scene_detect, measures_are_kept_and_read_back) {
     m.flash_span=3;
     m.diffs={0.,0.25,0.5};
     m.across={std::numeric_limits<double>::infinity(),0.125,1.};
+    m.far={0.,0.5,0.75};m.blend={1.,0.25,0.};m.moved={1.,1.,0.5};
+    m.area={1,63,2,30};
     agi::fs::path file((std::filesystem::current_path()/"kept.measures").wstring());
     scene_detect::SaveMeasures(file,m);
     auto back=scene_detect::LoadMeasures(file);
     EXPECT_EQ(3,back.flash_span);
     EXPECT_EQ(m.diffs,back.diffs);
     EXPECT_EQ(m.across,back.across);
+    EXPECT_EQ(m.far,back.far);EXPECT_EQ(m.blend,back.blend);EXPECT_EQ(m.moved,back.moved);
+    EXPECT_EQ(m.area,back.area);
     EXPECT_EQ((std::vector<int>{0}),scene_detect::Cuts(back,scene_detect::Params{})) << "frames too near the start";
     {agi::io::Save junk(file);junk.Get()<<"not measures";}
     EXPECT_TRUE(scene_detect::LoadMeasures(file).empty());
@@ -7629,6 +7744,38 @@ TEST_F(ordinary_edit, detect_scene_changes_loads_them_as_keyframes_and_keeps_the
     OPT_SET("Tool/Scene Detection/Sensitivity")->SetInt(sensitivity==2?0:2);
     cmd::call("keyframe/detect",c.get());
     EXPECT_EQ((std::vector<int>{0,100}),c->project->Keyframes());
+
+    // Dissolves looked for: from the same measures, the video not read
+    // again. One made up in them at frame 200, mixed from 194 to 206.
+    measures=scene_detect::LoadMeasures(measured[0]);
+    for(int i=200;i<=206;++i){measures.far[i]=0.9;measures.blend[i]=0.;measures.moved[i]=0.9;}
+    scene_detect::SaveMeasures(measured[0],measures);
+    // (the cuts already decided from them, before it was made up, forgotten)
+    for(auto const& f:std::filesystem::directory_iterator(std::filesystem::path(config::path->Decode("?user/scenes").wstring())))
+        if(f.path().filename().string().ends_with(".key.txt"))std::filesystem::remove(f.path());
+    bool const gradual=OPT_GET("Tool/Scene Detection/Gradual")->GetBool();
+    BOOST_SCOPE_EXIT_ALL(&){ OPT_SET("Tool/Scene Detection/Gradual")->SetBool(gradual); };
+    OPT_SET("Tool/Scene Detection/Gradual")->SetBool(false);
+    cmd::call("keyframe/detect",c.get());
+    EXPECT_EQ((std::vector<int>{0,100}),c->project->Keyframes()) << "dissolves not looked for";
+    OPT_SET("Tool/Scene Detection/Gradual")->SetBool(true);
+    cmd::call("keyframe/detect",c.get());
+    EXPECT_EQ((std::vector<int>{0,100,197}),c->project->Keyframes()) << "the dissolve, at its middle";
+
+    // Another band left out for subtitles: other cells compared, so the
+    // video is read again, into measures of their own
+    int const band=OPT_GET("Tool/Scene Detection/Subtitle Band")->GetInt();
+    BOOST_SCOPE_EXIT_ALL(&){ OPT_SET("Tool/Scene Detection/Subtitle Band")->SetInt(band); };
+    OPT_SET("Tool/Scene Detection/Subtitle Band")->SetInt(band==30?10:30);
+    cmd::call("keyframe/detect",c.get());
+    EXPECT_EQ((std::vector<int>{0}),c->project->Keyframes()) << "read again: one plain shot";
+    int kept=0;
+    for(auto const& f:std::filesystem::directory_iterator(std::filesystem::path(config::path->Decode("?user/scenes").wstring())))
+        kept+=f.path().filename().string().ends_with(".measures");
+    EXPECT_EQ(2,kept);
+    auto banded=scene_detect::LoadMeasures(measured[0]);
+    ASSERT_EQ(250u,banded.far.size());
+    EXPECT_FLOAT_EQ(0.9f,static_cast<float>(banded.far[200])) << "the first band's are as they were";
     c->project->CloseKeyframes();
     EXPECT_FALSE(c->project->CanCloseKeyframes());
 }

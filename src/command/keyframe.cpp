@@ -133,7 +133,7 @@ std::string SceneCacheKey(agi::fs::path const& video) {
 
 /// Raised when frames are compared another way: what an earlier way found
 /// is not kept on as if it had been found by this one
-constexpr const char *scene_method = "cells2";
+constexpr const char *scene_method = "cells3";
 
 agi::fs::path SceneCacheFile(std::string const& key, const char *suffix) {
 	char name[48];
@@ -141,18 +141,23 @@ agi::fs::path SceneCacheFile(std::string const& key, const char *suffix) {
 	return config::path->Decode("?user/scenes/") / name;
 }
 
-/// Where a video's cuts found at a sensitivity are kept, so that they are
-/// found once
-agi::fs::path SceneCachePath(agi::fs::path const& video, int sensitivity) {
+/// What is compared: the share of the picture left out for subtitles
+std::string SceneArea(int subtitle_band) {
+	return std::string(scene_method) + "|band" + std::to_string(subtitle_band);
+}
+
+/// Where a video's cuts found with some settings are kept, so that they
+/// are found once
+agi::fs::path SceneCachePath(agi::fs::path const& video, int sensitivity, bool gradual, int subtitle_band) {
 	auto key = SceneCacheKey(video);
-	return SceneCacheFile(key + "|" + scene_method + "|" + std::to_string(sensitivity), ".key.txt");
+	return SceneCacheFile(key + "|" + SceneArea(subtitle_band) + "|" + std::to_string(sensitivity) + (gradual ? "|gradual" : ""), ".key.txt");
 }
 
 /// Where what reading a video through found is kept, whatever the
-/// sensitivity: another sensitivity's cuts come from it without reading the
-/// video again
-agi::fs::path SceneMeasuresPath(agi::fs::path const& video) {
-	return SceneCacheFile(SceneCacheKey(video) + "|" + scene_method, ".measures");
+/// sensitivity and whether dissolves are looked for: their cuts come from
+/// it without reading the video again
+agi::fs::path SceneMeasuresPath(agi::fs::path const& video, int subtitle_band) {
+	return SceneCacheFile(SceneCacheKey(video) + "|" + SceneArea(subtitle_band), ".measures");
 }
 
 struct keyframe_detect final : public Command {
@@ -171,14 +176,16 @@ struct keyframe_detect final : public Command {
 		if (video.empty()) return;
 		int sensitivity = OPT_GET("Tool/Scene Detection/Sensitivity")->GetInt();
 		auto params = scene_detect::ForSensitivity(sensitivity);
-		auto cache = SceneCachePath(video, sensitivity);
+		params.gradual = OPT_GET("Tool/Scene Detection/Gradual")->GetBool();
+		int const band = std::clamp(static_cast<int>(OPT_GET("Tool/Scene Detection/Subtitle Band")->GetInt()), 0, 50);
+		auto cache = SceneCachePath(video, sensitivity, params.gradual, band);
 
 		std::vector<int> cuts;
 		try { if (agi::fs::FileExists(cache)) cuts = agi::keyframe::Load(cache); }
 		catch (agi::Exception const&) { cuts.clear(); }
 
 		if (cuts.empty()) {
-			auto measures_file = SceneMeasuresPath(video);
+			auto measures_file = SceneMeasuresPath(video, band);
 			auto measures = scene_detect::LoadMeasures(measures_file);
 			if (measures.flash_span != params.flash_span) measures = {};
 			bool const read_video = measures.empty();
@@ -203,7 +210,12 @@ struct keyframe_detect final : public Command {
 					int const length = readers[0]->GetFrameCount();
 					int const parts = std::clamp(std::min(cores - 1, length / scene_detect::min_part_frames), 1, 4);
 					while (static_cast<int>(readers.size()) < parts) open();
-					progress.Run([&](agi::ProgressSink *ps) { measures = scene_detect::Measure(readers, ps, params.flash_span); });
+					progress.Run([&](agi::ProgressSink *ps) {
+						// The picture within its black bars, a few frames
+						// looked at first, without where subtitles are burnt in
+						auto area = scene_detect::WithoutSubtitles(scene_detect::FindPicture(*readers[0]), band);
+						measures = scene_detect::Measure(readers, ps, params.flash_span, area);
+					});
 				}
 				catch (agi::UserCancelException const&) { return; }
 				catch (agi::Exception const& e) {
