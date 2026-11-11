@@ -38,13 +38,36 @@ Palette Colours(wxWindow const *window) {
 	return p;
 }
 
+void DrawOutline(wxDC &dc, wxRect const& rect, double radius, int thick, wxColour const& colour) {
+	if (rect.width <= 0 || rect.height <= 0) return;
+	if (auto gc = dc.GetGraphicsContext()) {
+		auto path = gc->CreatePath();
+		path.AddRoundedRectangle(rect.x, rect.y, rect.width, rect.height, radius);
+		int inner_w = rect.width - 2 * thick, inner_h = rect.height - 2 * thick;
+		if (inner_w > 0 && inner_h > 0)
+			path.AddRoundedRectangle(rect.x + thick, rect.y + thick, inner_w, inner_h, std::max(0., radius - thick));
+		// No pen: a pen's width would shift the fill by half a pixel
+		gc->SetPen(wxNullGraphicsPen);
+		gc->SetBrush(wxBrush(colour));
+		gc->FillPath(path, wxODDEVEN_RULE);
+		gc->SetPen(dc.GetPen());
+		gc->SetBrush(dc.GetBrush());
+		return;
+	}
+	// A raster DC draws a pen inside the rectangle already
+	dc.SetBrush(*wxTRANSPARENT_BRUSH);
+	dc.SetPen(wxPen(colour, thick));
+	dc.DrawRoundedRectangle(rect, radius);
+}
+
 void DrawCheck(wxDC &dc, wxWindow const *window, wxRect const& check, int state, Palette const& p) {
 	int thick = std::max(1, window->FromDIP(1));
 	int cy = check.y + check.height / 2;
 	if (state == 0) {
+		dc.SetPen(*wxTRANSPARENT_PEN);
 		dc.SetBrush(wxBrush(p.field));
-		dc.SetPen(wxPen(theme::Mix(p.surface, p.text, 0.45), thick));
 		dc.DrawRoundedRectangle(check, window->FromDIP(3));
+		DrawOutline(dc, check, window->FromDIP(3), thick, theme::Mix(p.surface, p.text, 0.45));
 		return;
 	}
 	dc.SetBrush(wxBrush(p.accent));
@@ -227,6 +250,12 @@ void AddField(wxWindow *field) {
 
 void AddWheelTarget(wxWindow *target) {
 	Track(wheel_targets, target);
+}
+
+bool GoHome(wxWindow *from) {
+	if (!home || !home->IsShownOnScreen() || (from && wxGetTopLevelParent(home) != wxGetTopLevelParent(from))) return false;
+	home->SetFocus();
+	return true;
 }
 
 void LeaveField() {
@@ -978,7 +1007,8 @@ bool FlatCheck::Enable(bool enable) {
 
 wxSize FlatCheck::DoGetBestClientSize() const {
 	wxSize extent = GetTextExtent(wxStripMenuCodes(label, wxStrip_Menu));
-	return wxSize(FromDIP(14) + FromDIP(6) + extent.x + FromDIP(2), std::max(FromDIP(18), extent.y + FromDIP(4)));
+	// Room at the left for the ring round the box when it has the keyboard
+	return wxSize(FromDIP(3) + FromDIP(14) + FromDIP(6) + extent.x + FromDIP(2), std::max(FromDIP(20), extent.y + FromDIP(4)));
 }
 
 void FlatCheck::OnPaint(wxPaintEvent &) {
@@ -991,20 +1021,17 @@ void FlatCheck::OnPaint(wxPaintEvent &) {
 	dc.DrawRectangle(wxPoint(0, 0), size);
 
 	int box = FromDIP(14);
-	wxRect check(0, (size.y - box) / 2, box, box);
+	wxRect check(FromDIP(3), (size.y - box) / 2, box, box);
 	flat::DrawCheck(dc, this, check, value ? 1 : 0, p);
-	if (HasFocus()) {
-		dc.SetBrush(*wxTRANSPARENT_BRUSH);
-		dc.SetPen(wxPen(p.accent, std::max(1, FromDIP(1))));
-		dc.DrawRoundedRectangle(check.Inflate(FromDIP(2)), FromDIP(4));
-	}
+	if (HasFocus())
+		flat::DrawOutline(dc, wxRect(check).Inflate(FromDIP(3)), FromDIP(5), std::max(1, FromDIP(1)), p.accent);
 
 	dc.SetFont(GetFont());
 	// A colour given to it (the preferences' search marking a match) wins
 	dc.SetTextForeground(UseForegroundColour() && IsEnabled() ? GetForegroundColour() : p.text);
 	wxString shown = wxStripMenuCodes(label, wxStrip_Menu);
 	wxSize extent = dc.GetTextExtent(shown);
-	dc.DrawText(shown, box + FromDIP(6), (size.y - extent.y) / 2);
+	dc.DrawText(shown, check.GetRight() + 1 + FromDIP(6), (size.y - extent.y) / 2);
 }
 
 // FlatButton

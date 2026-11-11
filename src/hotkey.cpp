@@ -71,6 +71,11 @@ namespace {
 		{nullptr}
 	};
 
+	const char *added_hotkeys_style_panel_keyboard[][3] = {
+		{"app/style_panel/keyboard", "Default", "F6"},
+		{nullptr}
+	};
+
 	void migrate_hotkeys(const char *added[][3]) {
 		auto hk_map = hotkey::inst->GetHotkeyMap();
 		bool changed = false;
@@ -182,6 +187,11 @@ void init() {
 	if (boost::find(migrations, "grid/line/next/style") == end(migrations)) {
 		migrate_hotkeys(added_hotkeys_next_style);
 		migrations.emplace_back("grid/line/next/style");
+	}
+
+	if (boost::find(migrations, "app/style_panel/keyboard") == end(migrations)) {
+		migrate_hotkeys(added_hotkeys_style_panel_keyboard);
+		migrations.emplace_back("app/style_panel/keyboard");
 	}
 
 	// The styling assistant is gone: the style box takes typed letters

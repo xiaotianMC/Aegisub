@@ -40,10 +40,18 @@ bool Scrolling();
 /// the accent colour and a tick when on (@p state 1), a dash when mixed (2)
 void DrawCheck(wxDC &dc, wxWindow const *window, wxRect const& box, int state, Palette const& p);
 
+/// A rounded outline @p thick wide, all of it inside @p rect: drawn as a
+/// filled ring, so that no part of it falls half outside the window, as a
+/// pen's line along the edge does at some scales
+void DrawOutline(wxDC &dc, wxRect const& rect, double radius, int thick, wxColour const& colour);
+
 /// Where the keyboard goes when a field is left: the subtitle text
 void SetHome(wxWindow *home);
 /// A field being typed in that Enter or a click anywhere else leaves
 void AddField(wxWindow *field);
+/// Give the keyboard back to the subtitle text, from wherever it is in its
+/// window. @return Whether it went
+bool GoHome(wxWindow *from);
 /// Leave the field being typed in, if any: the keyboard goes home
 void LeaveField();
 /// A control the wheel changes: wheel turns over it go to it, even where

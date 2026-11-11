@@ -123,7 +123,12 @@ StylePanel::StylePanel(wxWindow *parent, agi::Context *c)
 		line->AddSpacer(pad);
 		line->Add(pages, 1, wxALIGN_CENTER_VERTICAL);
 		auto collapse = Add<IconButton>("collapse", IconButton::Glyph::Collapse, _("Hide the style panel"));
-		collapse->on_click = [this] { if (on_collapse) on_collapse(); };
+		collapse->on_click = [this] {
+			// The keyboard on it would be left in a hidden window
+			bool keyboard = HasKeyboard();
+			if (on_collapse) on_collapse();
+			if (keyboard) flat::GoHome(this);
+		};
 		line->Add(collapse, 0, wxALIGN_CENTER_VERTICAL | wxLEFT | wxRIGHT, pad - FromDIP(4));
 		outer->Add(line, 0, wxEXPAND | wxTOP | wxBOTTOM, pad - FromDIP(4));
 	}
@@ -758,6 +763,50 @@ void StylePanel::ShowPage(Page new_page) {
 	FitInside();
 	Scroll(0, 0);
 	Thaw();
+}
+
+std::vector<StylePanel::Part*> StylePanel::KeyboardParts() const {
+	std::vector<Part*> found;
+	std::function<void(wxWindow const*)> walk = [&](wxWindow const* window) {
+		for (auto child : window->GetChildren()) {
+			if (auto part = dynamic_cast<Part*>(child)) {
+				if (part->Focusable() && part->IsEnabled() && part->IsShownOnScreen()) found.push_back(part);
+			}
+			else if (child->IsShown())
+				walk(child);
+		}
+	};
+	walk(this);
+	return found;
+}
+
+void StylePanel::MoveFocus(Part *from, bool forward) {
+	auto list = KeyboardParts();
+	if (list.empty()) {
+		flat::GoHome(this);
+		return;
+	}
+	auto it = std::find(list.begin(), list.end(), from);
+	size_t n = list.size(), i;
+	if (it == list.end()) i = forward ? 0 : n - 1;
+	else i = (static_cast<size_t>(it - list.begin()) + (forward ? 1 : n - 1)) % n;
+	list[i]->SetFocus();
+}
+
+bool StylePanel::HasKeyboard() const {
+	for (wxWindow *w = FindFocus(); w; w = w->GetParent())
+		if (w == this) return true;
+	return false;
+}
+
+bool StylePanel::TakeKeyboard() {
+	if (!OPT_GET("App/Style Panel/Show")->GetBool()) OPT_SET("App/Style Panel/Show")->SetBool(true);
+	if (request_open) request_open();
+	if (!IsShownOnScreen()) return false;
+	auto list = KeyboardParts();
+	if (list.empty()) return false;
+	list.front()->SetFocus();
+	return true;
 }
 
 void StylePanel::SetSectionVisible(std::string const& name, bool visible) {

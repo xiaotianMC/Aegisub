@@ -86,6 +86,20 @@ public:
 	/// the screen. @return Whether it is
 	bool ShowScrollEffect();
 
+	class Part;
+	/// The parts Tab goes through, in order: those shown and enabled that
+	/// take the keyboard
+	std::vector<Part*> KeyboardParts() const;
+	/// Give the keyboard to the part after @p from, or before it; round
+	/// from the last to the first
+	void MoveFocus(Part *from, bool forward);
+	/// Whether the keyboard is in the panel
+	bool HasKeyboard() const;
+	/// Show the panel if it is hidden or folded away and give the keyboard
+	/// to its first part, the switch between the pages. @return Whether
+	/// it has it
+	bool TakeKeyboard();
+
 	/// Collapse or expand a section: "style", "text" or "appearance"
 	void ShowSection(std::string const& name, bool show);
 	bool IsSectionShown(std::string const& name) const;
@@ -105,7 +119,6 @@ public:
 	static constexpr int min_width = 220;
 	static constexpr int max_width = 600;
 
-	class Part;
 	class Field;
 	class Toggle;
 	class ColourRow;

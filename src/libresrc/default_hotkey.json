@@ -110,6 +110,9 @@
 		"app/command_palette" : [
 			"Ctrl-Shift-P"
 		],
+		"app/style_panel/keyboard" : [
+			"F6"
+		],
 		"app/exit" : [
 			"Ctrl-Q"
 		],

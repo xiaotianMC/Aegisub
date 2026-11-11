@@ -40,12 +40,14 @@
 #include "../dialog_detached_video.h"
 #include "../dialog_manager.h"
 #include "../dialogs.h"
+#include "../flat_controls.h"
 #include "../frame_main.h"
 #include "../include/aegisub/context.h"
 #include "../libresrc/libresrc.h"
 #include "../main.h"
 #include "../options.h"
 #include "../project.h"
+#include "../style_panel.h"
 #include "../theme.h"
 #include "../utils.h"
 
@@ -312,6 +314,20 @@ struct app_toggle_style_panel final : public Command {
 	}
 };
 
+struct app_style_panel_keyboard final : public Command {
+	CMD_NAME("app/style_panel/keyboard")
+	STR_MENU("Style Panel &Keyboard")
+	STR_DISP("Style Panel Keyboard")
+	STR_HELP("Move the keyboard to the style panel, showing it if it is hidden; from the panel, back to the subtitle text")
+
+	void operator()(agi::Context *c) override {
+		auto panel = c->frame ? c->frame->GetStylePanel() : nullptr;
+		if (!panel) return;
+		if (panel->HasKeyboard()) flat::GoHome(panel);
+		else panel->TakeKeyboard();
+	}
+};
+
 struct app_updates final : public Command {
 	CMD_NAME("app/updates")
 	STR_MENU("&Check for Updates...")
@@ -410,6 +426,7 @@ namespace cmd {
 		reg(std::make_unique<app_toggle_global_hotkeys>());
 		reg(std::make_unique<app_toggle_toolbar>());
 		reg(std::make_unique<app_toggle_style_panel>());
+		reg(std::make_unique<app_style_panel_keyboard>());
 #ifdef __WXMAC__
 		reg(std::make_unique<app_minimize>());
 		reg(std::make_unique<app_maximize>());

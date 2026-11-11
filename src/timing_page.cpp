@@ -102,6 +102,8 @@ public:
 private:
 	std::vector<Item> items;
 	int top = 0, hover_item = -1;
+	int cursor = 0; ///< The item the keyboard is on
+
 	static constexpr int rows = 8;
 
 	int RowHeight() const { return FromDIP(22); }
@@ -130,7 +132,7 @@ private:
 		for (int i = top; i < std::min<int>(top + rows, static_cast<int>(items.size())); ++i) {
 			auto const& item = items[i];
 			int y = FromDIP(2) + (i - top) * h;
-			if (i == hover_item) {
+			if (i == hover_item || (i == cursor && HasFocus())) {
 				dc.SetPen(*wxTRANSPARENT_PEN);
 				dc.SetBrush(wxBrush(theme::Mix(p.field, p.text, 0.07)));
 				dc.DrawRoundedRectangle(FromDIP(2), y, size.x - FromDIP(4), h, FromDIP(4));
@@ -177,10 +179,12 @@ public:
 		items = std::move(new_items);
 		hover_item = -1;
 		top = std::clamp(top, 0, std::max(0, static_cast<int>(items.size()) - rows));
-		// The current line's first issue in view
+		// The current line's first issue in view, and the keyboard on it
+		cursor = std::clamp(cursor, 0, std::max(0, static_cast<int>(items.size()) - 1));
 		for (int i = 0; i < static_cast<int>(items.size()); ++i)
 			if (items[i].current) {
 				if (i < top || i >= top + rows) top = std::clamp(i - rows / 2, 0, std::max(0, static_cast<int>(items.size()) - rows));
+				if (items[cursor].row != items[i].row) cursor = i;
 				break;
 			}
 		Refresh(false);
@@ -191,6 +195,38 @@ public:
 	}
 
 	bool WantsWheel() const override { return static_cast<int>(items.size()) > rows; }
+
+	bool Focusable() const override { return !items.empty(); }
+	/// Up and Down, Page Up and Down, Home and End go through the items,
+	/// Enter or Space goes to the one the keyboard is on
+	bool OnKey(wxKeyEvent &e) override {
+		if (items.empty() || !Plain(e) || e.ShiftDown()) return false;
+		if (Activates(e)) {
+			int i = cursor;
+			if (on_pick) CallAfter([this, i] { if (on_pick) on_pick(i); });
+			return true;
+		}
+		int const last = static_cast<int>(items.size()) - 1;
+		int to;
+		switch (e.GetKeyCode()) {
+			case WXK_UP: case WXK_NUMPAD_UP: to = cursor - 1; break;
+			case WXK_DOWN: case WXK_NUMPAD_DOWN: to = cursor + 1; break;
+			case WXK_PAGEUP: case WXK_NUMPAD_PAGEUP: to = cursor - rows; break;
+			case WXK_PAGEDOWN: case WXK_NUMPAD_PAGEDOWN: to = cursor + rows; break;
+			case WXK_HOME: case WXK_NUMPAD_HOME: to = 0; break;
+			case WXK_END: case WXK_NUMPAD_END: to = last; break;
+			default: return false;
+		}
+		MoveCursor(to);
+		return true;
+	}
+	void MoveCursor(int to) {
+		cursor = std::clamp(to, 0, std::max(0, static_cast<int>(items.size()) - 1));
+		if (cursor < top) ScrollTo(cursor);
+		else if (cursor >= top + rows) ScrollTo(cursor - rows + 1);
+		Refresh(false);
+	}
+	int Cursor() const { return cursor; }
 
 	wxString Shown() const override {
 		wxString shown;
@@ -833,6 +869,8 @@ void TimingPage::BuildCheck() {
 		prev->Enable(before() != nullptr);
 		next->Enable(after() != nullptr);
 		bool const was_shown = list->IsShown();
+		// Nothing left to go through: the keyboard goes on
+		if (items.empty() && list->HasFocus()) list->MoveFocus(true);
 		list->Show(!items.empty());
 		if (list->Set(std::move(items)) || was_shown != list->IsShown()) {
 			Layout();
