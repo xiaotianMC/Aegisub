@@ -509,6 +509,7 @@
 		"Check" : {
 			"Cut Frames" : 3,
 			"Min Duration" : 500,
+			"Min Gap" : 100,
 			"Selection Only" : false
 		},
 		"Default Duration" : 3000,

@@ -6378,7 +6378,7 @@ TEST_F(ordinary_edit, timing_page_edits_times_snaps_to_scene_changes_and_adds_le
     panel->Destroy();
 }
 
-TEST(timing_check, finds_short_fast_overlapping_and_nearly_cut_lines) {
+TEST(timing_check, finds_short_fast_overlapping_close_and_nearly_cut_lines) {
     agi::vfr::Framerate fps(25,1);
     std::vector<std::unique_ptr<AssDialogue>> owned;
     auto line=[&](int start,int end,std::string text,std::string style="Default",bool comment=false){
@@ -6397,20 +6397,29 @@ TEST(timing_check, finds_short_fast_overlapping_and_nearly_cut_lines) {
     line(fps.TimeAtFrame(50,agi::vfr::START),fps.TimeAtFrame(50,agi::vfr::START)+1500,"Hi","D"); // 10 on it
     line(fps.TimeAtFrame(55,agi::vfr::START),fps.TimeAtFrame(55,agi::vfr::START)+1500,"Hi","E"); // 11 5 frames: too far to be meant
     line(fps.TimeAtFrame(100,agi::vfr::START),fps.TimeAtFrame(148,agi::vfr::END),"Hi","F");      // 12 ends a frame before the cut's own frame before
+    line(11000,12000,"Hi","G");                             // 13
+    line(12060,13000,"Hi","G");                             // 14 60 ms after 13: too close
+    line(13100,14000,"Hi","G");                             // 15 100 ms after: far enough
+    line(14000,15000,"Hi","G");                             // 16 right after: joined, not a gap
     std::vector<AssDialogue const*> lines; for(auto const& d:owned) lines.push_back(d.get());
-    TimingCheckLimits limits; limits.min_duration=500; limits.cps_warning=15; limits.cps_error=30; limits.cut_frames=3;
+    TimingCheckLimits limits; limits.min_duration=500; limits.min_gap=100; limits.cps_warning=15; limits.cps_error=30; limits.cut_frames=3;
     auto list=[&](std::vector<TimingIssue> const& issues){std::string out;for(auto const& i:issues){
-        out+=std::to_string(i.row)+":"+"SFON"[int(i.kind)]+(i.end?"e":"")+(i.severe?"!":"")+"="+std::to_string(i.value)+(i.kind==TimingIssue::Kind::Overlap?"/"+std::to_string(i.other_row):"")+" ";}return out;};
+        out+=std::to_string(i.row)+":"+"SFOGN"[int(i.kind)]+(i.end?"e":"")+(i.severe?"!":"")+"="+std::to_string(i.value)+(i.other_row>=0?"/"+std::to_string(i.other_row):"")+" ";}return out;};
     std::vector<int> kf{0,50,150};
-    EXPECT_EQ("1:S=490 3:F=20 4:F!=40 6:O=200/5 9:N=-2 12:Ne=1 ",list(FindTimingIssues(lines,nullptr,limits,kf,0,fps)));
+    EXPECT_EQ("1:S=490 3:F=20 4:F!=40 6:O=200/5 9:N=-2 12:Ne=1 14:G=60/13 ",list(FindTimingIssues(lines,nullptr,limits,kf,0,fps)));
     // Only the selected: still overlapping the one that is not
     std::set<int> only{owned[6]->Id,owned[0]->Id};
     EXPECT_EQ("6:O=200/5 ",list(FindTimingIssues(lines,&only,limits,kf,0,fps)));
     // No keyframes, no scene changes to miss
-    EXPECT_EQ("1:S=490 3:F=20 4:F!=40 6:O=200/5 ",list(FindTimingIssues(lines,nullptr,limits,{},0,fps)));
+    EXPECT_EQ("1:S=490 3:F=20 4:F!=40 6:O=200/5 14:G=60/13 ",list(FindTimingIssues(lines,nullptr,limits,{},0,fps)));
     // Two frames is within one frame's limit no longer
     limits.cut_frames=1;
+    EXPECT_EQ("1:S=490 3:F=20 4:F!=40 6:O=200/5 12:Ne=1 14:G=60/13 ",list(FindTimingIssues(lines,nullptr,limits,kf,0,fps)));
+    // Gaps not looked for; and one too close for a wider limit
+    limits.min_gap=0;
     EXPECT_EQ("1:S=490 3:F=20 4:F!=40 6:O=200/5 12:Ne=1 ",list(FindTimingIssues(lines,nullptr,limits,kf,0,fps)));
+    limits.min_gap=101;
+    EXPECT_EQ("1:S=490 3:F=20 4:F!=40 6:O=200/5 12:Ne=1 14:G=60/13 15:G=100/14 ",list(FindTimingIssues(lines,nullptr,limits,kf,0,fps)));
 }
 
 TEST_F(ordinary_edit, timing_page_lists_timing_problems_and_goes_to_them) {
@@ -6423,8 +6432,10 @@ TEST_F(ordinary_edit, timing_page_lists_timing_problems_and_goes_to_them) {
     agi::keyframe::Save(kf,{0,50,150});
     c->project->LoadKeyframes(kf);
     auto min_duration=OPT_GET("Timing/Check/Min Duration")->GetInt();
+    auto min_gap=OPT_GET("Timing/Check/Min Gap")->GetInt();
     BOOST_SCOPE_EXIT_ALL(&){ c->project->CloseKeyframes(); c->project->CloseVideo(); OPT_SET("App/Style Panel/Page")->SetInt(0);
-        OPT_SET("Timing/Check/Min Duration")->SetInt(min_duration); OPT_SET("Timing/Check/Selection Only")->SetBool(false); };
+        OPT_SET("Timing/Check/Min Duration")->SetInt(min_duration); OPT_SET("Timing/Check/Min Gap")->SetInt(min_gap);
+        OPT_SET("Timing/Check/Selection Only")->SetBool(false); };
     auto vc=c->videoController.get();
     std::vector<int> ids;
     {auto write=c->subtitleAccess->TryWrite();auto &file=LiveWriteForTest(*c);
@@ -6434,6 +6445,7 @@ TEST_F(ordinary_edit, timing_page_lists_timing_problems_and_goes_to_them) {
      add(6200,8000,"Next","Default");               // overlaps the one before
      int at=vc->TimeAtFrame(152,agi::vfr::START);
      add(at,at+2000,"Sign","Sign");                 // two frames after the cut at 150
+     add(8050,9000,"Then","Default");               // 50 ms after the one before: flickers
      file.Commit("fixture",AssFile::COMMIT_NEW);
      for(auto const& d:file.Events) ids.push_back(d.Id);}
     c->selectionController->SetSelectionAndActiveIDs({ids[0]},ids[0]);
@@ -6443,9 +6455,9 @@ TEST_F(ordinary_edit, timing_page_lists_timing_problems_and_goes_to_them) {
     auto page=panel->Timing();
     auto shown=[&]{page->UpdateNow();return page->Shown();};
 
-    EXPECT_EQ(fmt_tl("%d too short",1)+wxS(" · ")+fmt_tl("%d overlapping",1)+wxS(" · ")+fmt_tl("%d off a cut",1),shown()["check.summary"]);
+    EXPECT_EQ(fmt_tl("%d too short",1)+wxS(" · ")+fmt_tl("%d overlapping",1)+wxS(" · ")+fmt_tl("%d too close",1)+wxS(" · ")+fmt_tl("%d off a cut",1),shown()["check.summary"]);
     EXPECT_EQ(wxS("#2 ")+fmt_tl("Too short: %s s",wxS("0.30"))+wxS("\n#3 ")+fmt_tl("Overlaps #%d by %d ms",2,100)
-        +wxS("\n#4 ")+fmt_plural(2,"Start %d frame late","Start %d frames late",2),shown()["check.list"]);
+        +wxS("\n#4 ")+fmt_plural(2,"Start %d frame late","Start %d frames late",2)+wxS("\n#5 ")+fmt_tl("#%d ends only %d ms before",3,50),shown()["check.list"]);
     EXPECT_EQ(wxS(" disabled"),shown()["check.prev"].Right(9)) << "nothing before the first line";
 
     // From the current line, one problem on and back; picking one
@@ -6458,6 +6470,9 @@ TEST_F(ordinary_edit, timing_page_lists_timing_problems_and_goes_to_them) {
     EXPECT_EQ(ids[1],c->selectionController->ReadActiveLine()->Id);
     page->PickIssue(2);
     EXPECT_EQ(ids[3],c->selectionController->ReadActiveLine()->Id);
+    page->PickIssue(3);
+    EXPECT_EQ(ids[4],c->selectionController->ReadActiveLine()->Id);
+    EXPECT_EQ(vc->FrameAtTime(8050,agi::vfr::START),vc->GetFrameN());
     EXPECT_TRUE(shown()["check.list"].EndsWith(" (current)"));
     EXPECT_EQ(wxS(" disabled"),shown()["check.next"].Right(9)) << "nothing after the last";
 
@@ -6471,6 +6486,10 @@ TEST_F(ordinary_edit, timing_page_lists_timing_problems_and_goes_to_them) {
     // A shorter shortest; then a problem mended on the page
     shown(); page->EnterNumber("check.min_duration",200,true);
     EXPECT_EQ(200,OPT_GET("Timing/Check/Min Duration")->GetInt());
+    EXPECT_EQ(fmt_tl("%d overlapping",1)+wxS(" · ")+fmt_tl("%d too close",1)+wxS(" · ")+fmt_tl("%d off a cut",1),shown()["check.summary"]);
+    // Gaps not looked for
+    page->EnterNumber("check.min_gap",0,true);
+    EXPECT_EQ(0,OPT_GET("Timing/Check/Min Gap")->GetInt());
     EXPECT_EQ(fmt_tl("%d overlapping",1)+wxS(" · ")+fmt_tl("%d off a cut",1),shown()["check.summary"]);
     c->selectionController->SetSelectionAndActiveIDs({ids[2]},ids[2]);
     shown(); page->EnterNumber("time.start",6300,true);
@@ -7551,7 +7570,7 @@ TEST(scene_detect, dissolves_and_fades_short_and_long_are_found_and_a_pan_is_not
     pan.draw=[](int n,int x,int y,unsigned char *bgr){Shot(3,3*n,x,y,bgr);};
     EXPECT_EQ((std::vector<int>{0}),scene_detect::Detect(pan,nullptr,scene_detect::ForSensitivity(2)));
     auto m=scene_detect::Measure(pan,nullptr,3);
-    double most=0;for(double f:m.far)most=std::max(most,f);
+    double most=0;for(double f:m.far_difference)most=std::max(most,f);
     EXPECT_GT(most,0.3) << "frames 12 apart do differ";
 
     // Tilting up a smooth sky: the frame half way is exactly the two either
@@ -7562,7 +7581,7 @@ TEST(scene_detect, dissolves_and_fades_short_and_long_are_found_and_a_pan_is_not
         bgr[0]=static_cast<unsigned char>(v);bgr[1]=static_cast<unsigned char>(255-v);bgr[2]=120;
     };
     auto sky=scene_detect::Measure(tilt,nullptr,3);
-    EXPECT_GT(sky.far[40],0.9) << "every cell changes";
+    EXPECT_GT(sky.far_difference[40],0.9) << "every cell changes";
     EXPECT_LT(sky.blend[40],0.05) << "and looks mixed";
     EXPECT_EQ((std::vector<int>{0}),scene_detect::Cuts(sky,scene_detect::ForSensitivity(2)));
 }
@@ -7646,7 +7665,7 @@ TEST(scene_detect, parts_read_on_their_own_find_what_one_reading_finds) {
     auto parts=scene_detect::Measure(raw,nullptr,3);
     EXPECT_EQ(whole.diffs,parts.diffs);
     EXPECT_EQ(whole.across,parts.across);
-    EXPECT_EQ(whole.far,parts.far);
+    EXPECT_EQ(whole.far_difference,parts.far_difference);
     EXPECT_EQ(whole.blend,parts.blend);
     EXPECT_EQ(whole.moved,parts.moved);
     int reads=0;for(auto const& v:videos){EXPECT_GT(v->reads,0) << "each reader has a part";reads+=v->reads;}
@@ -7684,7 +7703,7 @@ TEST(scene_detect, measures_are_kept_and_read_back) {
     m.flash_span=3;
     m.diffs={0.,0.25,0.5};
     m.across={std::numeric_limits<double>::infinity(),0.125,1.};
-    m.far={0.,0.5,0.75};m.blend={1.,0.25,0.};m.moved={1.,1.,0.5};
+    m.far_difference={0.,0.5,0.75};m.blend={1.,0.25,0.};m.moved={1.,1.,0.5};
     m.area={1,63,2,30};
     agi::fs::path file((std::filesystem::current_path()/"kept.measures").wstring());
     scene_detect::SaveMeasures(file,m);
@@ -7692,7 +7711,7 @@ TEST(scene_detect, measures_are_kept_and_read_back) {
     EXPECT_EQ(3,back.flash_span);
     EXPECT_EQ(m.diffs,back.diffs);
     EXPECT_EQ(m.across,back.across);
-    EXPECT_EQ(m.far,back.far);EXPECT_EQ(m.blend,back.blend);EXPECT_EQ(m.moved,back.moved);
+    EXPECT_EQ(m.far_difference,back.far_difference);EXPECT_EQ(m.blend,back.blend);EXPECT_EQ(m.moved,back.moved);
     EXPECT_EQ(m.area,back.area);
     EXPECT_EQ((std::vector<int>{0}),scene_detect::Cuts(back,scene_detect::Params{})) << "frames too near the start";
     {agi::io::Save junk(file);junk.Get()<<"not measures";}
@@ -7779,7 +7798,7 @@ TEST_F(ordinary_edit, detect_scene_changes_loads_them_as_keyframes_and_keeps_the
     // Dissolves looked for: from the same measures, the video not read
     // again. One made up in them at frame 200, mixed from 194 to 206.
     measures=scene_detect::LoadMeasures(measured[0]);
-    for(int i=200;i<=206;++i){measures.far[i]=0.9;measures.blend[i]=0.;measures.moved[i]=0.9;}
+    for(int i=200;i<=206;++i){measures.far_difference[i]=0.9;measures.blend[i]=0.;measures.moved[i]=0.9;}
     scene_detect::SaveMeasures(measured[0],measures);
     // (the cuts already decided from them, before it was made up, forgotten)
     for(auto const& f:std::filesystem::directory_iterator(std::filesystem::path(config::path->Decode("?user/scenes").wstring())))
@@ -7805,8 +7824,8 @@ TEST_F(ordinary_edit, detect_scene_changes_loads_them_as_keyframes_and_keeps_the
         kept+=f.path().filename().string().ends_with(".measures");
     EXPECT_EQ(2,kept);
     auto banded=scene_detect::LoadMeasures(measured[0]);
-    ASSERT_EQ(250u,banded.far.size());
-    EXPECT_FLOAT_EQ(0.9f,static_cast<float>(banded.far[200])) << "the first band's are as they were";
+    ASSERT_EQ(250u,banded.far_difference.size());
+    EXPECT_FLOAT_EQ(0.9f,static_cast<float>(banded.far_difference[200])) << "the first band's are as they were";
     c->project->CloseKeyframes();
     EXPECT_FALSE(c->project->CanCloseKeyframes());
 }

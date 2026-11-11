@@ -10761,6 +10761,12 @@ msgstr "太快：每秒 %d 字"
 msgid "Overlaps #%d by %d ms"
 msgstr "与 #%d 重叠 %d ms"
 
+msgid "#%d ends only %d ms before"
+msgstr "与 #%d 间隔仅 %d ms"
+
+msgid "A line starting this little after the one before of its style ends, but not right at it, is listed: it goes off and on again for a moment. Join closes such gaps (0: not looked for)"
+msgstr "同样式的上一行结束后，相隔不到这个时长（但不是紧接着）就开始的行会列出：字幕会闪一下。用“连接相邻行”可以补上这种间隔（0：不检查）"
+
 msgid "%d too short"
 msgstr "太短 %d"
 
@@ -10769,6 +10775,9 @@ msgstr "太快 %d"
 
 msgid "%d overlapping"
 msgstr "重叠 %d"
+
+msgid "%d too close"
+msgstr "间隔太短 %d"
 
 msgid "%d off a cut"
 msgstr "没对齐 %d"

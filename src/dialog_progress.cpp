@@ -234,10 +234,10 @@ DialogProgress::DialogProgress(wxWindow *parent, wxString const& title_text, wxS
 	title_font.SetFractionalPointSize(title_font.GetFractionalPointSize() * 1.2);
 	title_font.SetWeight(wxFONTWEIGHT_SEMIBOLD);
 	title->SetFont(title_font);
-	wxFont small = percent->GetFont();
-	small.SetFractionalPointSize(small.GetFractionalPointSize() * 0.92);
-	percent->SetFont(small);
-	remaining->SetFont(small);
+	wxFont progress_font = percent->GetFont();
+	progress_font.SetFractionalPointSize(progress_font.GetFractionalPointSize() * 0.92);
+	percent->SetFont(progress_font);
+	remaining->SetFont(progress_font);
 
 	theme::UseSurface(this);
 	auto dim = flat::Colours(this).dim;

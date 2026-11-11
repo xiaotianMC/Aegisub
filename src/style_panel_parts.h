@@ -205,16 +205,25 @@ private:
 			right -= chevron_size + FromDIP(6);
 		}
 		int y = (size.y - dc.GetCharHeight()) / 2;
-		if (!label.empty()) {
-			dc.SetTextForeground(p.dim);
-			dc.DrawText(label, pad, y);
-		}
-		if (IsEditing()) return;
-		int x = TextLeft(dc);
 		wxString shown_unit = value == mixed ? wxString() : unit;
 		// Degree and percent signs sit against their number
 		int unit_gap = shown_unit == wxS("°") || shown_unit == "%" ? 0 : FromDIP(3);
 		int unit_width = shown_unit.empty() ? 0 : dc.GetTextExtent(shown_unit).x + unit_gap;
+		int x = pad;
+		if (!label.empty()) {
+			// Too narrow, the label gives way first: the value is what is
+			// looked for
+			int room = right - pad - FromDIP(6);
+			if (!IsEditing()) room -= dc.GetTextExtent(value).x + unit_width;
+			wxString shown_label = Ellipsize(dc, label, std::max(0, room));
+			if (shown_label == wxS("…") && !IsEditing()) shown_label.clear();
+			if (!shown_label.empty()) {
+				dc.SetTextForeground(p.dim);
+				dc.DrawText(shown_label, pad, y);
+				x += dc.GetTextExtent(shown_label).x + FromDIP(6);
+			}
+		}
+		if (IsEditing()) return;
 		wxString text = Ellipsize(dc, value, std::max(0, right - x - unit_width));
 		// Numbers that can be dragged are in the accent colour; a value
 		// taken from the style lighter, still not the grey of a disabled one

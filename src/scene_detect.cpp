@@ -214,12 +214,12 @@ std::vector<int> FindCuts(std::vector<double> const& diffs, std::vector<double> 
 
 std::vector<Transition> FindTransitions(Measures const& m, Params const& params) {
 	std::vector<Transition> found;
-	int const n = static_cast<int>(std::min({m.diffs.size(), m.far.size(), m.blend.size(), m.moved.size()}));
+	int const n = static_cast<int>(std::min({m.diffs.size(), m.far_difference.size(), m.blend.size(), m.moved.size()}));
 	auto mixed = [&](int i) {
-		double const far = m.far[i];
+		double const far_difference = m.far_difference[i];
 		// A cut between them leaves the frame half way of one shot or the
 		// other, not mixed: no need to look for one
-		return far >= params.gradual_threshold && m.blend[i] <= blend_share * far && m.moved[i] >= moved_share * far;
+		return far_difference >= params.gradual_threshold && m.blend[i] <= blend_share * far_difference && m.moved[i] >= moved_share * far_difference;
 	};
 	for (int i = gradual_span; i < n; ++i) {
 		if (!mixed(i)) continue;
@@ -228,11 +228,11 @@ std::vector<Transition> FindTransitions(Measures const& m, Params const& params)
 		// so little of the dissolve that its frames differ by little, and a
 		// window with too little of one shot is not mixed either
 		int last = i;
-		double strength = m.far[i];
+		double strength = m.far_difference[i];
 		for (int j = i + 1; j < n && j <= last + gradual_span / 2; ++j) {
 			if (!mixed(j)) continue;
 			last = j;
-			strength = std::max(strength, m.far[j]);
+			strength = std::max(strength, m.far_difference[j]);
 		}
 		// Each window's middle is half its span back from its end
 		int const frame = (i + last + 1) / 2 - gradual_span / 2;
@@ -281,9 +281,9 @@ void MeasureRange(VideoProvider &video, int n, int span, Area const& area, int s
 		// The ends of a dissolve or fade, if this frame is one's end
 		if (mine(j) && j - gradual_span >= first) {
 			auto const& start = recent[(j - gradual_span) % ring];
-			double const far = m.far[j] = Difference(start, sig, area);
+			double const far_difference = m.far_difference[j] = Difference(start, sig, area);
 			double const blend = m.blend[j] = BlendError(start, recent[(j - gradual_span / 2) % ring], sig, area);
-			if (far >= least_far && blend <= blend_share * far)
+			if (far_difference >= least_far && blend <= blend_share * far_difference)
 				m.moved[j] = MovedDifference(start, sig, area);
 		}
 	}
@@ -303,14 +303,14 @@ Measures Measure(std::vector<VideoProvider*> const& videos, agi::ProgressSink *p
 	if (n <= 0) {
 		m.diffs.assign(1, 0.);
 		m.across.assign(1, std::numeric_limits<double>::infinity());
-		m.far.assign(1, 0.);
+		m.far_difference.assign(1, 0.);
 		m.blend.assign(1, 1.);
 		m.moved.assign(1, 1.);
 		return m;
 	}
 	m.diffs.assign(n, 0.);
 	m.across.assign(n, std::numeric_limits<double>::infinity());
-	m.far.assign(n, 0.);
+	m.far_difference.assign(n, 0.);
 	m.blend.assign(n, 1.);
 	m.moved.assign(n, 1.);
 	// Parts no shorter than a few seconds: each reads a little either side
@@ -401,7 +401,7 @@ void SaveMeasures(agi::fs::path const& file, Measures const& m) {
 	for (size_t i = 0; i < m.diffs.size(); ++i) {
 		row[per_frame * i] = static_cast<float>(m.diffs[i]);
 		row[per_frame * i + 1] = at(m.across, i, std::numeric_limits<double>::infinity());
-		row[per_frame * i + 2] = at(m.far, i, 0);
+		row[per_frame * i + 2] = at(m.far_difference, i, 0);
 		row[per_frame * i + 3] = at(m.blend, i, 1);
 		row[per_frame * i + 4] = at(m.moved, i, 1);
 	}
@@ -424,11 +424,11 @@ Measures LoadMeasures(agi::fs::path const& file) {
 		Measures m;
 		m.flash_span = head[0];
 		m.area = area;
-		for (auto v : {&m.diffs, &m.across, &m.far, &m.blend, &m.moved}) v->resize(head[1]);
+		for (auto v : {&m.diffs, &m.across, &m.far_difference, &m.blend, &m.moved}) v->resize(head[1]);
 		for (int32_t i = 0; i < head[1]; ++i) {
 			m.diffs[i] = row[per_frame * i];
 			m.across[i] = row[per_frame * i + 1];
-			m.far[i] = row[per_frame * i + 2];
+			m.far_difference[i] = row[per_frame * i + 2];
 			m.blend[i] = row[per_frame * i + 3];
 			m.moved[i] = row[per_frame * i + 4];
 		}

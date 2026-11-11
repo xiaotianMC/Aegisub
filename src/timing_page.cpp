@@ -234,7 +234,7 @@ TimingPage::TimingPage(wxWindow *parent, agi::Context *c)
 		"Subtitle/Character Counter/Ignore Whitespace", "Subtitle/Character Counter/Ignore Punctuation",
 		"Tool/Timing Post Processor/Threshold/Adjacent Gap", "Tool/Timing Post Processor/Threshold/Adjacent Overlap",
 		"Tool/Timing Post Processor/Adjacent Bias", "Tool/Shift Times/Time", "Tool/Shift Times/Frames", "Tool/Shift Times/ByTime",
-		"Timing/Check/Min Duration", "Timing/Check/Cut Frames", "Timing/Check/Selection Only"})
+		"Timing/Check/Min Duration", "Timing/Check/Min Gap", "Timing/Check/Cut Frames", "Timing/Check/Selection Only"})
 		connections.push_back(OPT_SUB(option, [this](agi::OptionValue const&) { ScheduleUpdate(); }));
 	UpdateNow();
 }
@@ -701,6 +701,7 @@ void TimingPage::Check() {
 		for (auto row : c->selectionController->ReadSelectedLines()) chosen.insert(row->Id);
 	TimingCheckLimits limits;
 	limits.min_duration = OPT_GET("Timing/Check/Min Duration")->GetInt();
+	limits.min_gap = OPT_GET("Timing/Check/Min Gap")->GetInt();
 	limits.cut_frames = OPT_GET("Timing/Check/Cut Frames")->GetInt();
 	limits.cps_warning = OPT_GET("Subtitle/Character Counter/CPS Warning Threshold")->GetInt();
 	limits.cps_error = OPT_GET("Subtitle/Character Counter/CPS Error Threshold")->GetInt();
@@ -738,12 +739,22 @@ void TimingPage::BuildCheck() {
 		OPT_SET("Timing/Check/Min Duration")->SetInt(static_cast<int>(std::lround(v)));
 	});
 	limits->Add(shortest, 1, wxEXPAND);
+	auto gap = Add<Field>("check.min_gap", _("Gap"), "ms", false,
+		_("A line starting this little after the one before of its style ends, but not right at it, is listed: it goes off and on again for a moment. Join closes such gaps (0: not looked for)"));
+	gap->SetNumberHandler({0, 1000, 10}, [](double v, bool) {
+		OPT_SET("Timing/Check/Min Gap")->SetInt(static_cast<int>(std::lround(v)));
+	});
+	limits->Add(gap, 1, wxEXPAND | wxLEFT, FromDIP(4));
+	AddRow(limits);
+	limits = new wxBoxSizer(wxHORIZONTAL);
 	auto frames = Add<Field>("check.cut_frames", _("Off by"), wxGETTEXT_IN_CONTEXT("shift", "frames"), false,
 		_("A start or end this many frames from a scene change or fewer, but not on it, is listed: it was most likely meant to be on it"));
 	frames->SetNumberHandler({0, 12, 1}, [](double v, bool) {
 		OPT_SET("Timing/Check/Cut Frames")->SetInt(static_cast<int>(std::lround(v)));
 	});
-	limits->Add(frames, 1, wxEXPAND | wxLEFT, FromDIP(4));
+	limits->Add(frames, 1, wxEXPAND);
+	// As wide as the fields above
+	limits->Add(0, 0, 1, wxLEFT, FromDIP(4));
 	AddRow(limits);
 
 	auto line = new wxBoxSizer(wxHORIZONTAL);
@@ -777,12 +788,13 @@ void TimingPage::BuildCheck() {
 	prev->on_click = [this, before] { if (auto issue = before()) GoTo(*issue); };
 	next->on_click = [this, after] { if (auto issue = after()) GoTo(*issue); };
 
-	refreshers.push_back([this, scope, shortest, frames, summary, prev, next, list, before, after] {
+	refreshers.push_back([this, scope, shortest, gap, frames, summary, prev, next, list, before, after] {
 		scope->Select(OPT_GET("Timing/Check/Selection Only")->GetBool() ? 1 : 0);
 		shortest->SetNumber(OPT_GET("Timing/Check/Min Duration")->GetInt(), true);
+		gap->SetNumber(OPT_GET("Timing/Check/Min Gap")->GetInt(), true);
 		frames->SetNumber(OPT_GET("Timing/Check/Cut Frames")->GetInt(), true);
 
-		int counts[4] = {0, 0, 0, 0};
+		int counts[5] = {};
 		std::vector<IssueList::Item> items;
 		for (auto const& issue : issues) {
 			++counts[static_cast<int>(issue.kind)];
@@ -800,6 +812,9 @@ void TimingPage::BuildCheck() {
 				case TimingIssue::Kind::Overlap:
 					item.text = fmt_tl("Overlaps #%d by %d ms", issue.other_row + 1, issue.value);
 					break;
+				case TimingIssue::Kind::Gap:
+					item.text = fmt_tl("#%d ends only %d ms before", issue.other_row + 1, issue.value);
+					break;
 				case TimingIssue::Kind::NearCut:
 					item.text = CutText(issue.end, true, issue.value, 0);
 					break;
@@ -811,7 +826,8 @@ void TimingPage::BuildCheck() {
 		add(counts[0], fmt_tl("%d too short", counts[0]));
 		add(counts[1], fmt_tl("%d too fast", counts[1]));
 		add(counts[2], fmt_tl("%d overlapping", counts[2]));
-		add(counts[3], fmt_tl("%d off a cut", counts[3]));
+		add(counts[3], fmt_tl("%d too close", counts[3]));
+		add(counts[4], fmt_tl("%d off a cut", counts[4]));
 		summary->SetText(text.empty() ? _("No timing problems found") : text);
 		summary->SetToolTip(text);
 		prev->Enable(before() != nullptr);

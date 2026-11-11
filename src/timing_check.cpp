@@ -48,16 +48,16 @@ std::vector<TimingIssue> FindTimingIssues(std::vector<AssDialogue const*> const&
 				SceneCut cut;
 				if (!NearestSceneCutIn(cut_frames, fps, at_end ? end : start, at_end, cut)) continue;
 				if (cut.frames == 0 || std::abs(cut.frames) > limits.cut_frames) continue;
-				auto near = issue(line, TimingIssue::Kind::NearCut, cut.frames);
-				near.end = at_end;
-				near.time = at_end ? end : start;
-				issues.push_back(near);
+				auto near_cut = issue(line, TimingIssue::Kind::NearCut, cut.frames);
+				near_cut.end = at_end;
+				near_cut.time = at_end ? end : start;
+				issues.push_back(near_cut);
 			}
 		}
 	}
 
-	// Overlaps, among the lines of each style in the order they show: the
-	// later of two carries it
+	// Overlaps and gaps too short, among the lines of each style in the
+	// order they show: the later of two carries it
 	std::map<std::string, std::vector<AssDialogue const*>> by_style;
 	for (auto line : lines)
 		if (!line->Comment) by_style[line->Style.get()].push_back(line);
@@ -71,6 +71,11 @@ std::vector<TimingIssue> FindTimingIssues(std::vector<AssDialogue const*> const&
 				auto overlap = issue(line, TimingIssue::Kind::Overlap, std::min<int>(longest->End, line->End) - line->Start);
 				overlap.other_row = longest->Row;
 				issues.push_back(overlap);
+			}
+			else if (longest && line->Start > longest->End && line->Start - longest->End < limits.min_gap && wanted(line)) {
+				auto gap = issue(line, TimingIssue::Kind::Gap, line->Start - longest->End);
+				gap.other_row = longest->Row;
+				issues.push_back(gap);
 			}
 			if (!longest || line->End > longest->End) longest = line;
 		}

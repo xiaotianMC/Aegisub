@@ -114,11 +114,11 @@ struct Measures {
 	Area area;
 	/// As FindCuts takes them
 	std::vector<double> diffs, across;
-	/// far[i]: frame i against frame i - gradual_span; blend[i]: the
+	/// far_difference[i]: frame i against frame i - gradual_span; blend[i]: the
 	/// BlendError of the frame half way between; moved[i]: their
 	/// MovedDifference, worked out only where the two may be a dissolve's
 	/// ends (1 elsewhere)
-	std::vector<double> far, blend, moved;
+	std::vector<double> far_difference, blend, moved;
 	bool empty() const { return diffs.empty(); }
 };
 
