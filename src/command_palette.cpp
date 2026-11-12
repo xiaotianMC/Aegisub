@@ -6,6 +6,7 @@
 #include "compat.h"
 #include "include/aegisub/context.h"
 #include "include/aegisub/hotkey.h"
+#include "include/aegisub/menu.h"
 #include "options.h"
 #include "theme.h"
 #include "workspace_tabs.h"
@@ -76,12 +77,38 @@ std::wstring NormaliseQuery(std::wstring_view query) {
     return result;
 }
 
-std::vector<SearchKey> MakeKeys(std::wstring_view name, std::string_view id) {
-    std::vector<SearchKey> keys;
+std::vector<size_t> *Match::Marks(Field field) {
+    switch (field) {
+        case Field::Name: return &positions;
+        case Field::Path: return &path_positions;
+        case Field::Original: return &original_positions;
+        default: return nullptr;
+    }
+}
 
-    // The name. Words start after separators, at capitals after lower case
+std::vector<std::wstring> Tokenise(std::wstring_view query) {
+    std::vector<std::wstring> words;
+    std::wstring word;
+    for (wchar_t ch : query) {
+        if (std::iswspace(ch)) {
+            if (!word.empty()) words.push_back(std::move(word));
+            word.clear();
+        }
+        else word += static_cast<wchar_t>(std::towlower(ch));
+    }
+    if (!word.empty()) words.push_back(std::move(word));
+    return words;
+}
+
+namespace {
+/// Keys for one text: as written, and when it has Chinese characters its
+/// pinyin and pinyin initials, @p pinyin_weight lower.
+void AddTextKeys(std::vector<SearchKey>& keys, std::wstring_view name, Field field, int weight, int pinyin_weight) {
+    // As written. Words start after separators, at capitals after lower case
     // letters, and at every Chinese character.
     SearchKey plain;
+    plain.weight = weight;
+    plain.field = field;
     bool has_han = false;
     for (size_t i = 0; i < name.size(); ++i) {
         wchar_t ch = name[i];
@@ -93,40 +120,70 @@ std::vector<SearchKey> MakeKeys(std::wstring_view name, std::string_view id) {
         has_han = has_han || IsHan(ch);
     }
     keys.push_back(std::move(plain));
+    if (!has_han) return;
 
     // Pinyin, each syllable a word, and pinyin initials: "打开字幕" is found
     // by "dakaizimu" and by "dkzm".
-    if (has_han) {
-        SearchKey full, initials;
-        full.weight = initials.weight = -1;
-        for (size_t i = 0; i < name.size(); ++i) {
-            auto syllable = Pinyin(name[i]);
-            if (syllable.empty()) {
-                bool start = i == 0 || IsSeparator(name[i - 1]) || IsHan(name[i - 1]);
-                wchar_t lower = static_cast<wchar_t>(std::towlower(name[i]));
-                for (auto key : {&full, &initials}) {
-                    key->text += lower;
-                    key->starts.push_back(start && !IsSeparator(name[i]));
-                    key->shown.push_back(i);
-                }
-                continue;
+    SearchKey full, initials;
+    full.weight = initials.weight = pinyin_weight;
+    full.field = initials.field = field;
+    for (size_t i = 0; i < name.size(); ++i) {
+        auto syllable = Pinyin(name[i]);
+        if (syllable.empty()) {
+            bool start = i == 0 || IsSeparator(name[i - 1]) || IsHan(name[i - 1]);
+            wchar_t lower = static_cast<wchar_t>(std::towlower(name[i]));
+            for (auto key : {&full, &initials}) {
+                key->text += lower;
+                key->starts.push_back(start && !IsSeparator(name[i]));
+                key->shown.push_back(i);
             }
-            for (size_t j = 0; j < syllable.size(); ++j) {
-                full.text += syllable[j];
-                full.starts.push_back(j == 0);
-                full.shown.push_back(i);
-            }
-            initials.text += syllable[0];
-            initials.starts.push_back(true);
-            initials.shown.push_back(i);
+            continue;
         }
-        keys.push_back(std::move(full));
-        keys.push_back(std::move(initials));
+        for (size_t j = 0; j < syllable.size(); ++j) {
+            full.text += syllable[j];
+            full.starts.push_back(j == 0);
+            full.shown.push_back(i);
+        }
+        initials.text += syllable[0];
+        initials.starts.push_back(true);
+        initials.shown.push_back(i);
     }
+    keys.push_back(std::move(full));
+    keys.push_back(std::move(initials));
+}
+
+bool SameIgnoringCase(std::wstring_view a, std::wstring_view b) {
+    return std::equal(a.begin(), a.end(), b.begin(), b.end(),
+        [](wchar_t x, wchar_t y) { return std::towlower(x) == std::towlower(y); });
+}
+
+void Merge(Match& into, Match from) {
+    into.score += from.score;
+    for (auto field : {Field::Name, Field::Path, Field::Original}) {
+        auto to = into.Marks(field);
+        auto const& more = *from.Marks(field);
+        to->insert(to->end(), more.begin(), more.end());
+        std::sort(to->begin(), to->end());
+        to->erase(std::unique(to->begin(), to->end()), to->end());
+    }
+}
+}
+
+std::vector<SearchKey> MakeKeys(std::wstring_view name, std::string_view id, std::wstring_view original, std::wstring_view path) {
+    std::vector<SearchKey> keys;
+    AddTextKeys(keys, name, Field::Name, 0, -1);
+    // The English name, for those who know the commands by it (or from a
+    // guide written in English): a little below the name.
+    if (!original.empty() && !SameIgnoringCase(original, name))
+        AddTextKeys(keys, original, Field::Original, -3, -4);
+    // The menu the command is in: "timing shift" finds Shift Times in Timing.
+    if (!path.empty())
+        AddTextKeys(keys, path, Field::Path, -8, -9);
 
     // The command id, e.g. "subtitle/open/video": found but not drawn.
     SearchKey command;
     command.weight = -6;
+    command.field = Field::Hidden;
     for (size_t i = 0; i < id.size(); ++i) {
         wchar_t ch = static_cast<wchar_t>(std::tolower(static_cast<unsigned char>(id[i])));
         command.text += ch;
@@ -180,11 +237,11 @@ std::optional<Match> FuzzyMatch(std::wstring_view query, SearchKey const& key) {
 
     Match match;
     match.score = best + key.weight;
-    if (!key.shown.empty()) {
+    if (auto marks = match.Marks(key.field); marks && !key.shown.empty()) {
         for (int i = static_cast<int>(m) - 1, j = end; i >= 0 && j >= 0; j = from[i * n + j], --i)
-            match.positions.push_back(key.shown[j]);
-        std::sort(match.positions.begin(), match.positions.end());
-        match.positions.erase(std::unique(match.positions.begin(), match.positions.end()), match.positions.end());
+            marks->push_back(key.shown[j]);
+        std::sort(marks->begin(), marks->end());
+        marks->erase(std::unique(marks->begin(), marks->end()), marks->end());
     }
     return match;
 }
@@ -195,6 +252,78 @@ std::optional<Match> BestMatch(std::wstring_view query, std::vector<SearchKey> c
         if (auto match = FuzzyMatch(query, key); match && (!best || match->score > best->score))
             best = std::move(match);
     return best;
+}
+
+std::optional<Match> MatchQuery(std::wstring_view query, std::vector<SearchKey> const& keys) {
+    auto whole = BestMatch(NormaliseQuery(query), keys);
+    auto words = Tokenise(query);
+    if (words.size() < 2) return whole;
+    Match each;
+    for (auto const& word : words) {
+        auto match = BestMatch(word, keys);
+        if (!match) return whole;
+        Merge(each, *match);
+    }
+    if (whole && whole->score >= each.score) return whole;
+    return each;
+}
+
+std::wstring CanonicalHotkey(std::wstring_view text, bool typed) {
+    static constexpr std::wstring_view order[] = {L"ctrl", L"alt", L"shift", L"meta", L"cmd", L"super"};
+    auto modifier = [](std::wstring const& part) -> int {
+        std::wstring_view name = part;
+        if (name == L"control") name = L"ctrl";
+        else if (name == L"option") name = L"alt";
+        else if (name == L"command") name = L"cmd";
+        else if (name == L"win") name = L"super";
+        for (size_t i = 0; i < std::size(order); ++i)
+            if (order[i] == name) return static_cast<int>(i);
+        return -1;
+    };
+
+    std::vector<std::wstring> parts;
+    std::wstring part;
+    bool trailing = false;
+    for (size_t i = 0; i < text.size(); ++i) {
+        wchar_t ch = text[i];
+        bool joiner = ch == L'-' || ch == L'+';
+        // ...unless it is the key itself, last after another one ("Ctrl--").
+        if (joiner && i + 1 == text.size() && i > 0 && (text[i - 1] == L'-' || text[i - 1] == L'+'))
+            joiner = false;
+        if (joiner || std::iswspace(ch)) {
+            if (!part.empty()) parts.push_back(std::move(part));
+            part.clear();
+            trailing = trailing || joiner;
+        }
+        else {
+            part += static_cast<wchar_t>(std::towlower(ch));
+            trailing = false;
+        }
+    }
+    if (!part.empty()) parts.push_back(std::move(part));
+
+    std::vector<bool> mods(std::size(order));
+    std::vector<std::wstring> keys;
+    for (auto const& p : parts) {
+        if (int index = modifier(p); index >= 0) mods[index] = true;
+        else keys.push_back(p);
+    }
+    bool any_mod = std::find(mods.begin(), mods.end(), true) != mods.end();
+    if (keys.size() > 1) return {};
+    if (typed) {
+        if (keys.empty() && !(trailing && any_mod)) return {};
+        if (!keys.empty() && !any_mod) {
+            auto const& key = keys[0];
+            bool function = key.size() >= 2 && key.size() <= 3 && key[0] == L'f'
+                && std::all_of(key.begin() + 1, key.end(), [](wchar_t c) { return c >= L'0' && c <= L'9'; });
+            if (!function) return {};
+        }
+    }
+    std::wstring result;
+    for (size_t i = 0; i < mods.size(); ++i)
+        if (mods[i]) { result += order[i]; result += L'-'; }
+    if (!keys.empty()) result += keys[0];
+    return result;
 }
 }
 
@@ -215,6 +344,36 @@ wxString HotkeyLabel(std::string const& name) {
     return to_wx(key);
 }
 
+/// Every shortcut of the command, as shown and in CanonicalHotkey form.
+std::vector<std::pair<wxString, std::wstring>> Hotkeys(std::string const& name) {
+    std::vector<std::pair<wxString, std::wstring>> result;
+    for (auto context : {"Default", "Always", "Subtitle Edit Box", "Subtitle Grid", "Audio", "Video", "Translation Assistant"}) {
+        for (auto const& key : hotkey::get_hotkey_strs(context, name)) {
+            auto label = to_wx(key);
+            auto canonical = palette::CanonicalHotkey(label.ToStdWstring(), false);
+            if (std::none_of(result.begin(), result.end(), [&](auto const& known) { return known.second == canonical; }))
+                result.emplace_back(label, canonical);
+        }
+    }
+    return result;
+}
+
+/// Whether the shortcut @p canonical is what @p query (CanonicalHotkey with
+/// typed) asks for; 2 for the very shortcut, 1 for one with all the
+/// modifiers of a query that is only modifiers ("ctrl-shift-"), 0 for neither.
+int HotkeyHit(std::wstring const& query, std::wstring const& canonical) {
+    if (query == canonical) return 2;
+    if (query.empty() || query.back() != L'-') return 0;
+    auto has = [&](std::wstring_view part) {
+        for (size_t start = 0, end; (end = canonical.find(L'-', start)) != std::wstring::npos; start = end + 1)
+            if (std::wstring_view(canonical).substr(start, end - start) == part) return true;
+        return false;
+    };
+    for (size_t start = 0, end; (end = query.find(L'-', start)) != std::wstring::npos; start = end + 1)
+        if (!has(std::wstring_view(query).substr(start, end - start))) return 0;
+    return 1;
+}
+
 bool Listed(std::string_view name) {
     return !name.starts_with("recent/") && name != "app/command_palette";
 }
@@ -225,6 +384,36 @@ bool Listed(std::string_view name) {
 class PaletteList final : public wxVListBox {
     CommandPalette *palette;
     int Pad() const { return FromDIP(5); }
+
+    /// Draw @p text from @p x, the characters at @p marks (counted from
+    /// @p offset) bold in the accent colour; stops at @p right. Where it ends.
+    int DrawMarked(wxDC& dc, wxString const& text, std::vector<size_t> const& marks, size_t offset,
+        int x, int y, int right, wxColour const& colour, bool enabled) const
+    {
+        auto font = GetFont();
+        auto bold = font.Bold();
+        auto accent = theme::UiColours().accent;
+        auto marked_at = [&](size_t i, size_t next) {
+            return i >= offset && next < marks.size() && marks[next] == i - offset;
+        };
+        size_t next = 0;
+        for (size_t i = 0; i < text.size() && x < right;) {
+            bool marked = marked_at(i, next);
+            size_t j = i + 1;
+            if (marked) ++next;
+            else while (j < text.size() && !marked_at(j, next)) ++j;
+            auto run = text.Mid(i, j - i);
+            dc.SetFont(marked ? bold : font);
+            if (!marked && x + dc.GetTextExtent(run).x > right)
+                run = wxControl::Ellipsize(run, dc, wxELLIPSIZE_END, right - x);
+            dc.SetTextForeground(marked && enabled ? accent : colour);
+            dc.DrawText(run, x, y);
+            x += dc.GetTextExtent(run).x;
+            i = j;
+        }
+        dc.SetFont(font);
+        return x;
+    }
     int IconSize() const { return FromDIP(16); }
 
 public:
@@ -258,7 +447,6 @@ public:
         auto colours = theme::UiColours();
         auto text_colour = item.enabled ? colours.list_text : colours.list_dim;
         auto font = GetFont();
-        auto bold = font.Bold();
         int pad = Pad(), x = rect.x + pad * 2, y = rect.y + pad;
         int line = GetCharHeight();
 
@@ -276,38 +464,43 @@ public:
         // Shortcut on the right.
         int right = rect.GetRight() - pad * 2;
         dc.SetFont(font);
-        if (!item.hotkey.empty()) {
-            auto size = dc.GetTextExtent(item.hotkey);
-            dc.SetTextForeground(colours.list_dim);
-            dc.DrawText(item.hotkey, right - size.x, y);
+        // The shortcut that was typed, when the row was found by one.
+        wxString hotkey = match.hotkey.empty() ? item.hotkey : wxString(match.hotkey);
+        if (!hotkey.empty()) {
+            auto size = dc.GetTextExtent(hotkey);
+            dc.SetTextForeground(!match.hotkey.empty() && item.enabled ? colours.accent : colours.list_dim);
+            dc.DrawText(hotkey, right - size.x, y);
             right -= size.x + pad * 3;
         }
 
         // Name, matched characters bold in the accent colour.
         wxString name = item.display;
         if (item.checkable && item.checked) name = wxString::FromUTF8("✓ ") + name;
-        size_t offset = name.size() - item.display.size();
-        size_t next = 0;
-        for (size_t i = 0; i < name.size() && x < right;) {
-            bool marked = i >= offset && next < match.positions.size() && match.positions[next] == i - offset;
-            size_t j = i + 1;
-            if (marked) ++next;
-            else while (j < name.size() && !(j >= offset && next < match.positions.size() && match.positions[next] == j - offset)) ++j;
-            auto run = name.Mid(i, j - i);
-            dc.SetFont(marked ? bold : font);
-            dc.SetTextForeground(marked && item.enabled ? colours.accent : text_colour);
-            dc.DrawText(run, x, y);
-            x += dc.GetTextExtent(run).x;
-            i = j;
-        }
+        x = DrawMarked(dc, name, match.positions, name.size() - item.display.size(), x, y, right, text_colour, item.enabled);
 
-        // Help below the name.
+        // The menu it is in, dim, after the name: tells apart commands of
+        // the same name and shows what "timing shift" matched.
+        if (!item.path.empty() && x + pad * 3 < right)
+            DrawMarked(dc, item.path, match.path_positions, 0, x + pad * 3, y, right, colours.list_dim, item.enabled);
+
+        // Below: the English name when that is what matched, then the help.
+        int help_x = rect.x + pad * 4 + icon, help_y = y + line + FromDIP(1);
+        int help_right = rect.GetRight() - pad * 2;
+        if (!match.original_positions.empty() && !item.original.empty()) {
+            help_x = DrawMarked(dc, item.original, match.original_positions, 0, help_x, help_y, help_right, colours.list_dim, item.enabled);
+            if (help_x < help_right) {
+                auto dot = wxString::FromUTF8(" · ");
+                dc.SetTextForeground(colours.list_dim);
+                dc.DrawText(dot, help_x, help_y);
+                help_x += dc.GetTextExtent(dot).x;
+            }
+        }
         wxString help = item.help;
         if (!item.enabled) help = _("Not available now") + wxString::FromUTF8(" · ") + help;
-        int help_x = rect.x + pad * 4 + icon;
         dc.SetFont(font);
         dc.SetTextForeground(colours.list_dim);
-        dc.DrawText(wxControl::Ellipsize(help, dc, wxELLIPSIZE_END, rect.GetRight() - pad * 2 - help_x), help_x, y + line + FromDIP(1));
+        if (help_x < help_right)
+            dc.DrawText(wxControl::Ellipsize(help, dc, wxELLIPSIZE_END, help_right - help_x), help_x, help_y);
     }
 };
 
@@ -321,7 +514,7 @@ CommandPalette::CommandPalette(agi::Context *c)
 
     input = new wxTextCtrl(this, -1, "", wxDefaultPosition, wxDefaultSize, wxTE_PROCESS_ENTER);
     input->SetName("command-palette-input");
-    input->SetHint(_("Type a command name, pinyin or command id"));
+    input->SetHint(_("Type a command name, pinyin, menu, shortcut or command id"));
     list = new PaletteList(this);
     list->SetBackgroundColour(colours.list_back);
     empty = new wxStaticText(this, -1, _("No matching commands"));
@@ -341,6 +534,7 @@ CommandPalette::CommandPalette(agi::Context *c)
     // Every command, as it is now: names and availability change with the project.
     recent = OPT_GET("App/Command Palette/Recent")->GetListString();
     std::erase_if(recent, [](std::string const& name) { return name.empty(); });
+    auto paths = menu::CommandPaths();
     for (auto name_view : cmd::get_registered_commands()) {
         if (!Listed(name_view)) continue;
         std::string name(name_view);
@@ -351,7 +545,11 @@ CommandPalette::CommandPalette(agi::Context *c)
         if (item.display.empty()) continue;
         item.help = command->StrHelp();
         item.hotkey = HotkeyLabel(name);
-        item.keys = palette::MakeKeys(Wide(item.display), name);
+        item.hotkeys = Hotkeys(name);
+        item.original = command->StrDisplayOriginal();
+        if (item.original.IsSameAs(item.display, false)) item.original.clear();
+        if (auto path = paths.find(name); path != paths.end()) item.path = path->second;
+        item.keys = palette::MakeKeys(Wide(item.display), name, Wide(item.original), Wide(item.path));
         items.push_back(std::move(item));
     }
     std::erase_if(recent, [&](std::string const& name) {
@@ -413,7 +611,9 @@ void CommandPalette::SetQuery(wxString const& query) {
 }
 
 void CommandPalette::Filter() {
-    auto query = palette::NormaliseQuery(Wide(input->GetValue()));
+    auto typed = Wide(input->GetValue());
+    auto query = palette::NormaliseQuery(typed);
+    auto hotkey_query = palette::CanonicalHotkey(typed, true);
     shown.clear();
     matches.clear();
     auto recent_rank = [&](std::string const& name) {
@@ -438,10 +638,22 @@ void CommandPalette::Filter() {
     else {
         std::vector<std::pair<size_t, palette::Match>> found;
         for (size_t i = 0; i < items.size(); ++i) {
-            auto match = palette::BestMatch(query, items[i].keys);
+            auto match = palette::MatchQuery(typed, items[i].keys);
             // A word of the help text, as a last resort.
-            if (!match && query.size() >= 2 && Wide(items[i].help.Lower()).find(query) != std::wstring::npos)
-                match = palette::Match{1, {}};
+            if (!match && query.size() >= 2 && Wide(items[i].help.Lower()).find(query) != std::wstring::npos) {
+                match.emplace();
+                match->score = 1;
+            }
+            // A shortcut: "ctrl+s" and "f6" put that command first,
+            // "ctrl+shift+" lists the commands with both.
+            for (auto const& [label, canonical] : items[i].hotkeys) {
+                int hit = HotkeyHit(hotkey_query, canonical);
+                if (!hit) continue;
+                if (!match) match = palette::Match{};
+                match->score += hit == 2 ? 1000 : 200;
+                match->hotkey = Wide(label);
+                break;
+            }
             if (!match) continue;
             if (int rank = recent_rank(items[i].name); rank >= 0) match->score += 6 + static_cast<int>(max_recent) - rank;
             found.emplace_back(i, std::move(*match));

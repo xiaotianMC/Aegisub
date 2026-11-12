@@ -371,6 +371,7 @@
 			"Audio" : "",
 			"Automation" : "",
 			"Keyframes" : "",
+			"Speech" : "",
 			"Subtitles" : "",
 			"Timecodes" : "",
 			"Video" : ""
@@ -600,6 +601,12 @@
 			"Frames" : 0,
 			"Time" : 0,
 			"Type" : 0
+		},
+		"Speech Import" : {
+			"Bilingual" : false,
+			"Max Duration" : 7000,
+			"Min Duration" : 1000,
+			"Unsure Below" : 0.5
 		},
 		"Spell Checker" : {
 			"Backend" : "hunspell",

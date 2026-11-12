@@ -8615,8 +8615,8 @@ msgstr "按名称查找并执行任意命令"
 msgid "Not available now"
 msgstr "当前不可用"
 
-msgid "Type a command name, pinyin or command id"
-msgstr "输入命令名称、拼音或命令 ID"
+msgid "Type a command name, pinyin, menu, shortcut or command id"
+msgstr "输入命令名称、拼音、菜单、快捷键或命令 ID"
 
 msgid "No matching commands"
 msgstr "没有匹配的命令"
@@ -10969,3 +10969,69 @@ msgstr[0] "已清除 %d 行的标记"
 #: ../src/command/autotiming.cpp
 msgid "clear auto-timing marks"
 msgstr "清除自动打轴标记"
+
+#: ../src/command/autotiming.cpp
+msgid "&Import Speech Recognition..."
+msgstr "导入语音识别结果(&I)..."
+
+#: ../src/command/autotiming.cpp
+msgid "Import Speech Recognition"
+msgstr "导入语音识别结果"
+
+#: ../src/command/autotiming.cpp
+msgid "Make lines from what WhisperX or faster-whisper heard, a sentence a line: their JSON with each word's times, timed to the scene changes if they are known"
+msgstr "把 WhisperX 或 faster-whisper 的识别结果（带每个词时间的 JSON）做成字幕，一句一行；已有画面切换时按切换点修整时间"
+
+#: ../src/command/autotiming.cpp
+msgid "Speech recognition JSON"
+msgstr "语音识别 JSON"
+
+#: ../src/command/autotiming.cpp
+#, c-format
+msgid "Imported %d line"
+msgid_plural "Imported %d lines"
+msgstr[0] "已导入 %d 行"
+
+#: ../src/command/autotiming.cpp
+msgid "The file holds nothing heard"
+msgstr "文件里没有识别出的内容"
+
+#: ../src/command/autotiming.cpp
+msgid "import speech recognition"
+msgstr "导入语音识别结果"
+
+#: ../src/preferences.cpp
+msgid "Speech Recognition"
+msgstr "语音识别"
+
+#: ../src/preferences.cpp
+msgid "Pair each line with an empty translation line"
+msgstr "每行配一行空的译文行（双语轴）"
+
+#: ../src/preferences.cpp
+msgid "Import Speech Recognition gives each line the JP style and a CN line at the same times for its translation"
+msgstr "导入语音识别结果时，每行用 JP 样式，并配一行同一时间的 CN 行用来写译文"
+
+#: ../src/preferences.cpp
+msgid "Split sentences longer than (ms)"
+msgstr "超过此长度的句子拆开 (毫秒)"
+
+#: ../src/preferences.cpp
+msgid "A sentence heard as longer is split where a clause ends or the speaker pauses; the lines share a #group mark in the Effect field"
+msgstr "更长的句子在从句结束或停顿处拆开，拆出的几行在 Effect 栏写同一个 #组号"
+
+#: ../src/preferences.cpp
+msgid "Show each line at least (ms)"
+msgstr "每行至少显示 (毫秒)"
+
+#: ../src/preferences.cpp
+msgid "A short line is shown longer, up to the next line or scene change, to give time to read its translation"
+msgstr "太短的行向后延长，不超过下一行或画面切换，让译文读得完"
+
+#: ../src/preferences.cpp
+msgid "Mark words heard with less confidence than"
+msgstr "标记置信度低于此值的词"
+
+#: ../src/preferences.cpp
+msgid "Such words are written in the Effect field as ?word, for the translator to check"
+msgstr "这些词以 ?词 的形式写进 Effect 栏，提醒译者核对"

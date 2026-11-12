@@ -249,6 +249,16 @@ void Audio(PreferencesBook *book, Preferences *parent) {
 	p->OptionAdd(timing, _("Snap an end earlier to a scene change within (ms)"), "Timing/Scene Snap/End Earlier", {.min = 0, .max = 10000, .inc = 10,
 		.help = _("How far Snap to Nearby Scene Changes moves a line's end back to land just before a scene change: further would take the line away before it is said")});
 
+	auto speech = p->PageSizer(_("Speech Recognition"));
+	p->OptionAdd(speech, _("Pair each line with an empty translation line"), "Tool/Speech Import/Bilingual",
+		{.help = _("Import Speech Recognition gives each line the JP style and a CN line at the same times for its translation")});
+	p->OptionAdd(speech, _("Split sentences longer than (ms)"), "Tool/Speech Import/Max Duration", {.min = 2000, .max = 30000, .inc = 500,
+		.help = _("A sentence heard as longer is split where a clause ends or the speaker pauses; the lines share a #group mark in the Effect field")});
+	p->OptionAdd(speech, _("Show each line at least (ms)"), "Tool/Speech Import/Min Duration", {.min = 0, .max = 5000, .inc = 100,
+		.help = _("A short line is shown longer, up to the next line or scene change, to give time to read its translation")});
+	p->OptionAdd(speech, _("Mark words heard with less confidence than"), "Tool/Speech Import/Unsure Below", {.min = 0, .max = 1, .inc = 0.05,
+		.help = _("Such words are written in the Effect field as ?word, for the translator to check")});
+
 	auto snapping = p->PageSizer(_("Snapping"));
 	p->OptionAdd(snapping, _("Snap markers by default"), "Audio/Snap/Enable");
 	p->OptionAdd(snapping, _("Maximum snap distance (px)"), "Audio/Snap/Distance", {.min = 0, .max = 25});

@@ -1,8 +1,8 @@
 // Copyright (c) 2026, Aegisub contributors
 // SPDX-License-Identifier: ISC
 // The command palette (docs/command-palette.md): every command, searchable by
-// name, by pinyin of a Chinese name and by command id. It runs the chosen
-// command after closing.
+// name, by pinyin of a Chinese name, by English name, by menu, by shortcut and
+// by command id. It runs the chosen command after closing.
 #pragma once
 
 #include <wx/dialog.h>
@@ -17,29 +17,47 @@ class wxTextCtrl;
 namespace agi { struct Context; }
 
 namespace palette {
+/// What a search key was made from: matches in the name, the menu path and
+/// the English name are drawn, matches in the rest (the command id) are not.
+enum class Field { Name, Path, Original, Hidden };
+
 /// A text to search in, lower case, with where its words start and which
-/// character of the shown name each of its characters stands for.
+/// character of its field each of its characters stands for.
 struct SearchKey {
     std::wstring text;
     std::vector<bool> starts;
-    /// Index into the shown name for each character of @c text; empty when
+    /// Index into the field's text for each character of @c text; empty when
     /// the key is not drawn (a command id).
     std::vector<size_t> shown;
     int weight = 0; ///< Added to the score of a match in this key
+    Field field = Field::Name;
 };
 
 struct Match {
     int score = 0;
     /// Matched characters of the shown name, ascending.
     std::vector<size_t> positions;
+    /// Matched characters of the menu path and of the English name.
+    std::vector<size_t> path_positions, original_positions;
+    /// The shortcut typed, as shown, when the match is by shortcut.
+    std::wstring hotkey;
+
+    /// Where matches in @p field are kept; null for fields not drawn.
+    std::vector<size_t> *Marks(Field field);
 };
 
 /// Keys for the shown name @p name and the command id @p id: the name, its
 /// pinyin and pinyin initials when it has Chinese characters, and the id.
-std::vector<SearchKey> MakeKeys(std::wstring_view name, std::string_view id);
+/// Also, when given, the English @p original name (when it differs from the
+/// name) and the menu @p path, with its pinyin, both weighted below the name.
+std::vector<SearchKey> MakeKeys(std::wstring_view name, std::string_view id,
+    std::wstring_view original = {}, std::wstring_view path = {});
 
 /// Normalise what the user typed: lower case, without spaces.
 std::wstring NormaliseQuery(std::wstring_view query);
+
+/// The words of what the user typed, lower case.
+std::vector<std::wstring> Tokenise(std::wstring_view query);
 
 /// Best fuzzy match of the normalised @p query in @p key: every character of
 /// the query in order, preferring word starts and runs. None if it does not match.
@@ -47,6 +65,18 @@ std::optional<Match> FuzzyMatch(std::wstring_view query, SearchKey const& key);
 
 /// Best match over all @p keys.
 std::optional<Match> BestMatch(std::wstring_view query, std::vector<SearchKey> const& keys);
+
+/// Match what the user typed, @p query as typed: the whole of it without
+/// spaces, or, when it has several words, each word on its own in any order
+/// and any key ("tags hide", "timing shift"), whichever scores more.
+std::optional<Match> MatchQuery(std::wstring_view query, std::vector<SearchKey> const& keys);
+
+/// A shortcut in one form: lower case, modifiers in a fixed order, parts
+/// joined by '-' ("Shift+Ctrl+P", "ctrl shift p" and "Ctrl-Shift-P" all give
+/// "ctrl-shift-p"). With @p typed, empty unless the text looks like a
+/// shortcut: modifiers and one key, or a function key alone; modifiers
+/// followed by '-' or '+' give a prefix ending in '-' ("ctrl-").
+std::wstring CanonicalHotkey(std::wstring_view text, bool typed);
 
 /// The pinyin of one Chinese character, lower case without tones; empty for
 /// other characters or when the system's ICU lacks the transliterator.
@@ -58,6 +88,10 @@ public:
     struct Item {
         std::string name;
         wxString display, help, hotkey;
+        wxString original; ///< English name, empty when the same as display
+        wxString path;     ///< Where it is in the menu bar, e.g. "Timing"
+        /// Every shortcut, as shown and in CanonicalHotkey form.
+        std::vector<std::pair<wxString, std::wstring>> hotkeys;
         /// State now, read when the row is first shown (as menus do).
         bool resolved = false;
         bool enabled = true;

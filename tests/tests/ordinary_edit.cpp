@@ -89,6 +89,7 @@
 #include "include/aegisub/video_provider.h"
 #include "bilingual.h"
 #include "keyframe_snap.h"
+#include "speech_lines.h"
 #include "scene_detect.h"
 #include "magia_timeline.h"
 #include "dialog_magia_timeline.h"
@@ -666,6 +667,48 @@ TEST_F(ordinary_edit, command_palette_matches_word_starts_runs_and_pinyin) {
     EXPECT_EQ((std::vector<size_t>{2, 3}), characters->positions);
 }
 
+TEST_F(ordinary_edit, command_palette_matches_words_in_any_order_english_names_menus_and_shortcuts) {
+    // Words in any order, each where it fits best.
+    auto keys = palette::MakeKeys(L"Hide Tags", "grid/tags/hide");
+    auto swapped = palette::MatchQuery(L"tags hide", keys);
+    ASSERT_TRUE(swapped);
+    EXPECT_EQ((std::vector<size_t>{0, 1, 2, 3, 5, 6, 7, 8}), swapped->positions);
+    EXPECT_FALSE(palette::MatchQuery(L"tags xyz", keys)) << "every word has to match";
+    EXPECT_TRUE(palette::MatchQuery(L"  hide   tags ", keys));
+
+    // The English name in a translated interface, drawn below the name.
+    auto translated = palette::MakeKeys(L"\u5e73\u79fb\u65f6\u95f4...", "time/shift", L"Shift Times...", L"\u65f6\u95f4\u8f74"); // 平移时间, 时间轴
+    auto english = palette::MatchQuery(L"shift times", translated);
+    ASSERT_TRUE(english);
+    EXPECT_TRUE(english->positions.empty());
+    EXPECT_EQ((std::vector<size_t>{0, 1, 2, 3, 4, 6, 7, 8, 9, 10}), english->original_positions);
+    auto native = palette::MatchQuery(L"shift times", palette::MakeKeys(L"Shift Times...", "time/shift"));
+    ASSERT_TRUE(native);
+    EXPECT_GT(native->score, english->score) << "the shown name before the English one";
+    EXPECT_EQ(2u, palette::MakeKeys(L"Open", "", L"open").size()) << "no English key when it is the name";
+
+    // The menu: "sjz py" is 时间轴 (the menu) then 平移 (the name).
+    auto by_menu = palette::MatchQuery(L"sjz py", translated);
+    ASSERT_TRUE(by_menu);
+    EXPECT_EQ((std::vector<size_t>{0, 1}), by_menu->positions);
+    EXPECT_EQ((std::vector<size_t>{0, 1, 2}), by_menu->path_positions);
+    auto name_only = palette::MatchQuery(L"py", translated), menu_only = palette::MatchQuery(L"sj", palette::MakeKeys(L"\u6253\u5f00", "x", L"", L"\u65f6\u95f4"));
+    ASSERT_TRUE(name_only && menu_only);
+    EXPECT_GT(name_only->score, menu_only->score) << "the name before the menu";
+
+    // Shortcuts as typed.
+    EXPECT_EQ(L"ctrl-shift-p", palette::CanonicalHotkey(L"Shift+Ctrl+P", true));
+    EXPECT_EQ(L"ctrl-shift-p", palette::CanonicalHotkey(L"ctrl shift p", true));
+    EXPECT_EQ(L"ctrl-shift-p", palette::CanonicalHotkey(L"Ctrl-Shift-P", false));
+    EXPECT_EQ(L"ctrl--", palette::CanonicalHotkey(L"Ctrl--", true));
+    EXPECT_EQ(L"f6", palette::CanonicalHotkey(L"F6", true));
+    EXPECT_EQ(L"ctrl-shift-", palette::CanonicalHotkey(L"ctrl+shift+", true));
+    EXPECT_EQ(L"", palette::CanonicalHotkey(L"ctrl shift", true)) << "modifiers alone, no '+' after";
+    EXPECT_EQ(L"", palette::CanonicalHotkey(L"hide tags", true));
+    EXPECT_EQ(L"", palette::CanonicalHotkey(L"a", true)) << "one letter is a name being typed";
+    EXPECT_EQ(L"a", palette::CanonicalHotkey(L"A", false));
+}
+
 TEST_F(ordinary_edit, command_palette_lists_commands_remembers_choices_and_runs_after_closing) {
     OPT_SET("App/Command Palette/Recent")->SetListString({});
     {
@@ -691,6 +734,29 @@ TEST_F(ordinary_edit, command_palette_lists_commands_remembers_choices_and_runs_
         palette.SetQuery("qqqqzzzz");
         EXPECT_TRUE(palette.Shown().empty());
         EXPECT_FALSE(palette.Accept());
+
+        // Words in any order; the menu each command is in.
+        palette.SetQuery("tags hide");
+        ASSERT_FALSE(palette.Shown().empty());
+        EXPECT_EQ("grid/tags/hide", palette.Shown()[0]);
+        EXPECT_FALSE(palette.ShownItem(0).path.empty());
+        palette.SetQuery("timing shift");
+        auto timing = palette.Shown();
+        ASSERT_GE(timing.size(), 1u);
+        auto shift = std::find(timing.begin(), timing.end(), "time/shift");
+        ASSERT_NE(timing.end(), shift);
+        EXPECT_LT(shift - timing.begin(), 3);
+        EXPECT_FALSE(palette.ShownMatch(shift - timing.begin()).path_positions.empty());
+
+        // By shortcut, in any spelling, the shortcut marked.
+        palette.SetQuery("q+ctrl");
+        ASSERT_FALSE(palette.Shown().empty());
+        EXPECT_EQ("app/exit", palette.Shown()[0]);
+        EXPECT_EQ(L"Ctrl-Q", palette.ShownMatch(0).hotkey);
+        palette.SetQuery("ctrl+");
+        auto with_ctrl = palette.Shown();
+        EXPECT_GT(with_ctrl.size(), 10u);
+        EXPECT_NE(with_ctrl.end(), std::find(with_ctrl.begin(), with_ctrl.end(), "app/exit"));
     }
 
     // Through the command: the palette closes, then the chosen command runs.
@@ -3696,6 +3762,148 @@ TEST_F(ordinary_edit, translation_dialog_persists_only_confirmed_text_and_keeps_
     auto save=agi::fs::path((std::filesystem::current_path()/"dialog-result.ass").wstring());{auto write=c->subtitleAccess->TryWrite();c->subsController->Save(save);}
     AssFile reopened;SubtitleFormat::GetReader(save,"utf-8")->ReadFile(&reopened,save,c->project->Timecodes(),"utf-8");EXPECT_EQ("中 文",reopened.Events.front().Text.get());ASSERT_EQ(1u,reopened.Extradata.size());EXPECT_EQ("payload",reopened.Extradata.front().value);
 }
+namespace {
+speech::Word SW(std::string text,int start,int end,double score=0.9,std::string speaker={}){
+    return {std::move(text),start,end,score,std::move(speaker)};
+}
+speech::Segment SS(std::vector<speech::Word> words,std::string speaker={}){
+    speech::Segment s;s.start=words.front().start;s.end=words.back().end;s.speaker=std::move(speaker);
+    for(auto const& w:words)s.text+=w.text;
+    s.words=std::move(words);return s;
+}
+/// No lead, no stretching: what sentences are made, as heard
+speech::Rules PlainRules(){
+    speech::Rules r;r.lead_in=r.lead_out=0;r.min_duration=0;r.adjacent_gap=0;return r;
+}
+std::vector<std::string> Texts(std::vector<speech::Line> const& lines){
+    std::vector<std::string> out;for(auto const& l:lines)out.push_back(l.text);return out;
+}
+}
+
+TEST(speech_lines, whisperx_json_is_read_with_escapes_missing_times_scores_and_speakers) {
+    std::istringstream in(R"({"segments":[{"start":1.0,"end":2.5,"text":"こんにちは","speaker":"SPEAKER_00",
+        "words":[{"word":"こん","start":1.0,"end":1.4,"score":0.91,"speaker":"SPEAKER_00"},
+                 {"word":"にちは","start":1.5,"end":2.5,"score":0.3}, {"word":"2"}]}],
+        "word_segments":[],"language":"ja"})");
+    auto t=speech::ReadJson(in);
+    EXPECT_EQ("ja",t.language);
+    ASSERT_EQ(1u,t.segments.size());
+    auto const& seg=t.segments[0];
+    EXPECT_EQ(1000,seg.start);EXPECT_EQ(2500,seg.end);EXPECT_EQ("SPEAKER_00",seg.speaker);
+    ASSERT_EQ(3u,seg.words.size());
+    EXPECT_EQ("こん",seg.words[0].text);EXPECT_DOUBLE_EQ(0.91,seg.words[0].score);
+    EXPECT_EQ(1500,seg.words[1].start);EXPECT_DOUBLE_EQ(0.3,seg.words[1].score);
+    EXPECT_EQ(-1,seg.words[2].start) << "a number the aligner gave no time";
+    // faster-whisper's: "probability", integer seconds
+    std::istringstream fw(R"({"segments":[{"start":0,"end":1,"text":" Hi","words":[{"word":" Hi","start":0,"end":1,"probability":0.8}]}]})");
+    EXPECT_DOUBLE_EQ(0.8,speech::ReadJson(fw).segments[0].words[0].score);
+    std::istringstream nothing(R"({"text":"x"})");
+    EXPECT_THROW(speech::ReadJson(nothing),agi::InvalidInputException);
+    std::istringstream garbage("not json");
+    EXPECT_THROW(speech::ReadJson(garbage),agi::InvalidInputException);
+}
+
+TEST(speech_lines, a_line_a_sentence_joined_across_pieces_and_ended_by_a_full_stop_or_another_speaker) {
+    speech::Transcript t;t.language="ja";
+    // Heard in two pieces, no sentence end between: one line
+    t.segments.push_back(SS({SW("今日は",0,800)},"A"));
+    t.segments.push_back(SS({SW("いい",900,1200),SW("天気ですね。",1200,2000),SW("本当に",2100,2500),SW("ね。",2500,2800)},"A"));
+    // Another speaker, close after
+    t.segments.push_back(SS({SW("うん。",2900,3200)},"B"));
+    // A long pause in a piece ends the sentence
+    t.segments.push_back(SS({SW("じゃあ",5000,5400),SW("行こう",6500,7000)},"A"));
+    auto lines=speech::MakeLines(t,PlainRules(),{});
+    EXPECT_EQ((std::vector<std::string>{"今日はいい天気ですね。","本当にね。","うん。","じゃあ","行こう"}),Texts(lines));
+    EXPECT_EQ("B",lines[2].speaker);
+    EXPECT_EQ(0,lines[0].start);EXPECT_EQ(2000,lines[0].end);
+    for(auto const& l:lines)EXPECT_EQ(0,l.group);
+}
+
+TEST(speech_lines, a_long_sentence_is_split_where_a_clause_ends_and_both_parts_share_a_group) {
+    speech::Transcript t;t.language="ja";
+    // 10 s: the clause ends after けど、 with a pause; splitting before です would
+    // be shorter work for the middle but wrong
+    t.segments.push_back(SS({SW("朝から",0,1500),SW("雨が",1500,3000),SW("降っていたけど、",3000,4500),
+        SW("午後には",4900,6500),SW("晴れてきて",6500,8200),SW("よかったです。",8200,10000)}));
+    auto r=PlainRules();
+    auto lines=speech::MakeLines(t,r,{});
+    EXPECT_EQ((std::vector<std::string>{"朝から雨が降っていたけど、","午後には晴れてきてよかったです。"}),Texts(lines));
+    ASSERT_EQ(2u,lines.size());
+    EXPECT_GT(lines[0].group,0);EXPECT_EQ(lines[0].group,lines[1].group);
+    EXPECT_EQ(4500,lines[0].end);EXPECT_EQ(4900,lines[1].start);
+    // Short enough: left whole
+    r.max_duration=12000;
+    EXPECT_EQ(1u,speech::MakeLines(t,r,{}).size());
+}
+
+TEST(speech_lines, unsure_words_notes_and_the_times_around_lines_and_cuts) {
+    speech::Transcript t;t.language="ja";
+    t.segments.push_back(SS({SW("マミ",0,300,0.2),SW("さん",300,500,0.3),SW("は",500,600),SW("ソウルジェム",600,1400,0.1),SW("を",1400,1500),SW("持ってる。",1500,2000)}));
+    t.segments.push_back(SS({SW("（笑い）",5000,5600)}));
+    auto lines=speech::MakeLines(t,PlainRules(),{});
+    ASSERT_EQ(2u,lines.size());
+    EXPECT_EQ((std::vector<std::string>{"マミさん","ソウルジェム"}),lines[0].unsure) << "a run of unsure words is one";
+    EXPECT_FALSE(lines[0].note);EXPECT_TRUE(lines[1].note);
+
+    // Timed: lead in and out, stretched to a second, near lines meeting, at
+    // a cut between them when there is one, and a cut just inside an end
+    // taking it
+    speech::Transcript u;u.language="ja";
+    u.segments.push_back(SS({SW("はい。",1000,1300)}));
+    u.segments.push_back(SS({SW("そうです。",2500,4000)}));
+    u.segments.push_back(SS({SW("では。",4300,6000)}));
+    speech::Rules r;r.lead_in=100;r.lead_out=200;r.min_duration=1000;r.adjacent_gap=300;
+    lines=speech::MakeLines(u,r,{});
+    ASSERT_EQ(3u,lines.size());
+    EXPECT_EQ(900,lines[0].start);EXPECT_EQ(1900,lines[0].end) << "a second long";
+    EXPECT_EQ(2400,lines[1].start);
+    EXPECT_EQ(lines[2].start,lines[1].end) << "less than 300 ms apart: they meet";
+    lines=speech::MakeLines(u,r,{4150});
+    EXPECT_EQ(4150,lines[1].end);EXPECT_EQ(4150,lines[2].start) << "at the cut between them";
+    // Said on 50 ms past a cut, 250 ms with the lead-out: the cut takes the end
+    lines=speech::MakeLines(u,r,{5950});
+    EXPECT_EQ(5950,lines[2].end);
+}
+
+TEST(speech_lines, a_line_across_a_cut_is_split_at_a_pause_there_else_kept) {
+    speech::Transcript t;t.language="ja";
+    t.segments.push_back(SS({SW("それで",0,1000),SW("どうしたの？",1000,2000)}));
+    t.segments.push_back(SS({SW("それで",3000,4000),SW("次は",4400,5400),SW("何を",5400,6000)}));
+    auto lines=speech::MakeLines(t,PlainRules(),{1000,4200});
+    EXPECT_EQ((std::vector<std::string>{"それでどうしたの？","それで","次は何を"}),Texts(lines))
+        << "no pause at the first cut: kept whole; a pause at the second: split";
+    EXPECT_GT(lines[1].group,0);EXPECT_EQ(lines[1].group,lines[2].group);
+}
+
+TEST_F(ordinary_edit, speech_recognition_imported_a_sentence_a_line_in_one_step) {
+    speech::Transcript t;t.language="ja";
+    t.segments.push_back(SS({SW("こんにちは。",1000,2000,0.9,"SPEAKER_00")},"SPEAKER_00"));
+    t.segments.push_back(SS({SW("マミ",3000,3500,0.2,"SPEAKER_01"),SW("です。",3500,4500,0.9,"SPEAKER_01")},"SPEAKER_01"));
+    auto description=c->subsController->GetUndoDescription();
+    BOOST_SCOPE_EXIT_ALL(&){ OPT_SET("Tool/Speech Import/Bilingual")->SetBool(false); };
+    OPT_SET("Tool/Speech Import/Bilingual")->SetBool(true);
+    size_t styles=LiveRead(*c).Styles.size();
+    EXPECT_EQ(2u,speech::Import(c.get(),t));
+    std::vector<std::tuple<std::string,std::string,std::string,std::string>> lines;
+    for(auto const& row:LiveRead(*c).Events)lines.emplace_back(row.Style.get(),row.Actor.get(),row.Effect.get(),row.Text.get());
+    EXPECT_EQ((std::vector<std::tuple<std::string,std::string,std::string,std::string>>{
+        {"JP","SPEAKER_00","","こんにちは。"},{"CN","SPEAKER_00","",""},
+        {"JP","SPEAKER_01","?マミ","マミです。"},{"CN","SPEAKER_01","",""}}),lines) << "the new file's empty line made way";
+    auto const& first=LiveRead(*c).Events.front();
+    EXPECT_EQ(900,int(first.Start));EXPECT_EQ(2350,int(first.End)) << "the timing post-processor's lead";
+    EXPECT_EQ(styles+2,LiveRead(*c).Styles.size());
+    c->subsController->Undo();
+    EXPECT_EQ(1u,LiveRead(*c).Events.size());
+    EXPECT_EQ(styles,LiveRead(*c).Styles.size()) << "one step, styles and all";
+    EXPECT_EQ(description,c->subsController->GetUndoDescription());
+    // Something written: kept, the lines put in among it by time
+    OPT_SET("Tool/Speech Import/Bilingual")->SetBool(false);
+    {auto write=c->subtitleAccess->TryWrite();auto& row=LiveWriteForTest(*c).Events.front();row.Start=2500;row.End=2800;row.Text="written";LiveWriteForTest(*c).Commit("text",AssFile::COMMIT_DIAG_FULL);}
+    EXPECT_EQ(2u,speech::Import(c.get(),t));
+    std::vector<std::string> texts;for(auto const& row:LiveRead(*c).Events)texts.push_back(row.Text.get());
+    EXPECT_EQ((std::vector<std::string>{"こんにちは。","written","マミです。"}),texts);
+}
+
 TEST(bilingual_marks, read_and_written_in_the_effect_field_beside_what_else_it_holds) {
     auto marks=bilingual::ParseMarks("#12 ?マミ ?ソウルジェム");
     EXPECT_EQ(12,marks.group);

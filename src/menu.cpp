@@ -576,4 +576,36 @@ namespace menu {
 		menu->ProcessEvent(evt);
 		parent_window->PopupMenu(menu);
 	}
+
+	std::map<std::string, wxString> CommandPaths() {
+		std::map<std::string, wxString> paths;
+		auto walk = [&](auto&& walk, std::string const& name, wxString const& path, int depth) -> void {
+			if (depth > 8) return; // a menu.json that includes itself
+			for (auto const& item : get_menu(name)) {
+				json::Object const& entry = item;
+				std::string submenu, text, context, command;
+				read_entry(entry, "text", &text);
+				read_entry(entry, "tlcontext", &context);
+				if (read_entry(entry, "submenu", &submenu)) {
+					auto label = wxStripMenuCodes(wxGetTranslation(to_wx(text), {}, to_wx(context)), wxStrip_Menu).Trim().Trim(false);
+					try {
+						walk(walk, submenu, path.empty() ? label : path + wxString::FromUTF8(" › ") + label, depth + 1);
+					}
+					catch (agi::Exception const&) { }
+				}
+				else if (read_entry(entry, "command", &command) && !path.empty())
+					paths.emplace(command, path);
+			}
+		};
+		try {
+			walk(walk, "main", wxString(), 0);
+		}
+		catch (agi::Exception const& e) {
+			LOG_W("menu/paths") << e.GetMessage();
+		}
+		catch (std::exception const& e) {
+			LOG_W("menu/paths") << e.what();
+		}
+		return paths;
+	}
 }
