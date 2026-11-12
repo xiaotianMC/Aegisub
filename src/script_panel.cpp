@@ -176,6 +176,12 @@ std::tuple<int, int, int> ReadScroll(wxTextCtrl *box) {
 		static_cast<int>(gtk_adjustment_get_page_size(adjustment)),
 		static_cast<int>(gtk_adjustment_get_upper(adjustment) - lower)};
 #elif defined(__WXMSW__)
+	// Disabled while the text fits: no bar then, whatever it counts
+	SCROLLBARINFO bar{};
+	bar.cbSize = sizeof(bar);
+	if (::GetScrollBarInfo(static_cast<HWND>(box->GetHWND()), OBJID_VSCROLL, &bar)
+		&& (bar.rgstate[0] & (STATE_SYSTEM_UNAVAILABLE | STATE_SYSTEM_INVISIBLE)))
+		return {0, 0, 0};
 	SCROLLINFO info{};
 	info.cbSize = sizeof(info);
 	info.fMask = SIF_ALL;

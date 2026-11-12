@@ -8,7 +8,7 @@
 #include <vector>
 
 class AssDialogue;
-class AssDialogueBase;
+struct AssDialogueBase; // a struct: MSVC names a class and a struct apart
 class AssFile;
 
 /// A bilingual timing: each line said in one style, its translation in

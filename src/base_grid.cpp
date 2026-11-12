@@ -397,7 +397,9 @@ void BaseGrid::Draw(wxDC &dc, std::vector<char> const& paint_columns) {
 	const int nDraw = mid(0, drawPerScreen, GetRows() - yPos);
 
 	const auto active_line = context->selectionController->ReadActiveLine();
-	const int cursor_row = FindFocus() == this ? CursorRow() : -1;
+	// Framed only once Ctrl moved it off the active line, which has its
+	// own marks: not a second mark on the selected row
+	const int cursor_row = FindFocus() == this && cursor_id && CursorRow() != active_row ? CursorRow() : -1;
 	auto const& mutable_selection = context->selectionController->ReadSelectedSet();
     std::set<AssDialogue const*> selection(mutable_selection.begin(), mutable_selection.end());
 	visible_rows.clear();
@@ -471,8 +473,8 @@ void BaseGrid::Draw(wxDC &dc, std::vector<char> const& paint_columns) {
 			dc.DrawRectangle(0, y, bar, lineHeight - 1);
 		}
 
-		// The row the keyboard is on, while the grid has the keyboard: a
-		// thin frame in the accent colour, as the style list's
+		// The row the keyboard is on, moved apart from the active line,
+		// while the grid has the keyboard: a thin frame in the accent colour
 		if (i + yPos == cursor_row) {
 			int thin = std::max(1, FromDIP(1));
 			dc.SetPen(wxPen(theme::UiColours().accent, thin));

@@ -58,16 +58,19 @@ void Redraw() {
 	if (backdrop) {
 		int pad = theme::BlockGap(backdrop) + 2;
 		for (auto block : {drawn, now})
-			if (block) backdrop->RefreshRect(OutlineRect(block).Inflate(pad), false);
+			if (block) backdrop->RefreshRect(OutlineRect(block).Inflate(pad));
 	}
 	drawn = now;
 	outline_changed();
 }
 
 void Paint(wxPaintEvent &) {
-	// The backdrop is a plain colour, filled in before this
+	// The backdrop's colour first: a refresh doesn't always erase it
+	// (Windows doesn't), and the line drawn before would stay
 	wxPaintDC dc(backdrop);
-	if (backdrop && Outlined()) DrawOutline(backdrop, dc);
+	dc.SetBackground(wxBrush(backdrop->GetBackgroundColour()));
+	dc.Clear();
+	if (Outlined()) DrawOutline(backdrop, dc);
 }
 
 /// Moves the keyboard on Tab in a region, hides the line on a click and
