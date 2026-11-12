@@ -234,8 +234,16 @@ DialogProgress::DialogProgress(wxWindow *parent, wxString const& title_text, wxS
 	// it is the window, with a thin line round it (and on Windows 11 the
 	// system's own round corners and shadow)
 	// Asked of a window made already: this one has to know before it is
+#ifdef __WXMSW__
+	// wxMSW says yes, but for a top-level window wxBG_STYLE_TRANSPARENT only
+	// leaves the background unerased: the room for the shadow would show
+	// whatever was on the screen when the window opened, inside the system's
+	// round border drawn about the whole window. The window is the card here.
+	see_through = false;
+#else
 	wxWindow *made = parent ? parent : wxTheApp ? wxTheApp->GetTopWindow() : nullptr;
 	see_through = made && made->IsTransparentBackgroundSupported();
+#endif
 	SetBackgroundStyle(see_through ? wxBG_STYLE_TRANSPARENT : wxBG_STYLE_PAINT);
 	Create(parent, -1, title_text, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
 #ifdef __WXMSW__
