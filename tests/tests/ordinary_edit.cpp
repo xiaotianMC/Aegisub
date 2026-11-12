@@ -78,6 +78,11 @@
 #include "animation_tags.h"
 #include "style_look.h"
 #include "script_panel.h"
+#include "tag_summary.h"
+#include "grid_column.h"
+
+#include <wx/dcmemory.h>
+#include <wx/image.h>
 #include "style_panel.h"
 #include "style_panel_parts.h"
 #include "timing_adjust.h"
@@ -2302,6 +2307,122 @@ TEST_F(ordinary_edit, style_panel_folds_away_in_narrow_windows_and_opens_from_it
     EXPECT_EQ(StylePanel::Page::Timing,panel->ShownPage()) << "elsewhere on the strip: the page last shown";
     panel->ShowPage(StylePanel::Page::Style);
     delete frame; // now: it watches an option the next test changes
+}
+
+TEST(tag_summary, says_what_each_block_of_tags_does) {
+    using namespace tag_summary;
+    auto kinds=[](Piece const& p){ std::vector<Kind> k; for(auto const& m:p.marks)k.push_back(m.kind); return k; };
+    auto u=[](const char *text){ return wxString::FromUTF8(text); };
+    auto pieces=Summarize("{\\fad(200,200)\\pos(640,80)}你好{\\c&H0000FF&}世界{译注：双关}");
+    ASSERT_EQ(5u,pieces.size());
+    EXPECT_TRUE(pieces[0].block);
+    EXPECT_EQ((std::vector<Kind>{Kind::Fade,Kind::Pos}),kinds(pieces[0]));
+    EXPECT_EQ("你好",pieces[1].text);
+    ASSERT_EQ((std::vector<Kind>{Kind::Colour}),kinds(pieces[2]));
+    EXPECT_EQ(1,pieces[2].marks[0].index);
+    EXPECT_EQ(agi::Color(255,0,0),pieces[2].marks[0].colour) << "&HBBGGRR&";
+    EXPECT_EQ((std::vector<Kind>{Kind::Note}),kinds(pieces[4])) << "a block without tags";
+    EXPECT_EQ(u("[Fade·Position]"),PlainText(pieces[0]));
+    auto tip=Describe(pieces[0]);
+    EXPECT_NE(wxString::npos,tip.find("Fade: in 200 ms, out 200 ms")) << tip;
+    EXPECT_NE(wxString::npos,tip.find("Position: (640, 80)")) << tip;
+    EXPECT_TRUE(tip.EndsWith("{\\fad(200,200)\\pos(640,80)}")) << "the block as written last";
+    EXPECT_EQ(u("Note: 译注：双关"),Describe(pieces[4]));
+    EXPECT_EQ(u("Primary colour: #FF0000\n{\\c&H0000FF&}"),Describe(pieces[2]));
+
+    // The longest name first: \bord not \b, \be and \blur one kind, \fscx not \fs
+    auto one=Summarize("{\\bord2\\be1\\b1\\blur3\\fscx120\\fscy80\\fs40\\fsp2\\an8}x");
+    EXPECT_EQ((std::vector<Kind>{Kind::Border,Kind::Blur,Kind::Bold,Kind::Scale,Kind::FontSize,Kind::Spacing,Kind::Align}),kinds(one[0]));
+    EXPECT_EQ(8,one[0].marks.back().index);
+    EXPECT_EQ(2u,one[0].marks[3].tags.size()) << "\\fscx and \\fscy together";
+    // \t's tags are its own; \i0 is switched off
+    auto t=Summarize("{\\t(0,500,\\frz30\\fscx120)\\i0\\b1}x");
+    EXPECT_EQ((std::vector<Kind>{Kind::Transform,Kind::Italic,Kind::Bold}),kinds(t[0]));
+    EXPECT_TRUE(t[0].marks[1].off); EXPECT_FALSE(t[0].marks[2].off);
+    // Colours one a mark each, \3c and \4c told apart
+    auto c=Summarize("{\\3c&H000000&\\4c&H404040&\\c&HFF0000&}x");
+    ASSERT_EQ(3u,c[0].marks.size());
+    EXPECT_EQ(3,c[0].marks[0].index); EXPECT_EQ(4,c[0].marks[1].index); EXPECT_EQ(1,c[0].marks[2].index);
+    EXPECT_EQ(agi::Color(0,0,255),c[0].marks[2].colour);
+    // A rectangle clip and a drawn one
+    EXPECT_EQ(Kind::Clip,Summarize("{\\clip(0,0,640,360)}")[0].marks[0].kind);
+    EXPECT_EQ(Kind::VectorClip,Summarize("{\\clip(m 0 0 l 10 0 10 10)}")[0].marks[0].kind);
+    EXPECT_EQ(Kind::VectorClip,Summarize("{\\iclip(2,m 0 0 l 10 0 10 10)}")[0].marks[0].kind);
+    // \a as \an; tags it doesn't know
+    EXPECT_EQ(7,Summarize("{\\a5}")[0].marks[0].index);
+    EXPECT_EQ(5,Summarize("{\\a10}")[0].marks[0].index);
+    auto unknown=Summarize("{\\xyz9\\q2}");
+    EXPECT_EQ((std::vector<Kind>{Kind::Unknown}),kinds(unknown[0])) << "one icon for those it doesn't know";
+    EXPECT_EQ(2u,unknown[0].marks[0].tags.size());
+    EXPECT_NE(wxString::npos,Describe(unknown[0]).find("\\xyz9 \\q2")) << "each named in the tooltip";
+
+    // Karaoke timing alone: a bar between syllables
+    auto k=Summarize("{\\k20}这{\\kf30}是{\\k10\\b1}卡");
+    EXPECT_TRUE(k[0].karaoke); EXPECT_TRUE(k[2].karaoke);
+    EXPECT_FALSE(k[4].karaoke) << "with other tags: a chip";
+    EXPECT_EQ("|",PlainText(k[0]));
+
+    // A drawing: its points counted, the block ending it left out
+    auto d=Summarize("{\\an7\\pos(10,10)\\p1}m 0 0 l 100 0 100 100 0 100{\\p0}after");
+    ASSERT_EQ(3u,d.size());
+    EXPECT_EQ((std::vector<Kind>{Kind::Align,Kind::Pos,Kind::Drawing}),kinds(d[0]));
+    EXPECT_EQ(4,d[1].drawing_points);
+    EXPECT_EQ("after",d[2].text);
+    EXPECT_EQ("(4 points)",PlainText(d[1]));
+
+    // Braces left open: text as written
+    auto open=Summarize("abc{\\b1");
+    ASSERT_EQ(1u,open.size()); EXPECT_EQ("abc{\\b1",open[0].text);
+    EXPECT_TRUE(Summarize("").empty());
+
+    // Every kind drawn from an icon has one
+    for(int i=0;i<=static_cast<int>(Kind::Unknown);++i){
+        auto kind=static_cast<Kind>(i);
+        if(kind==Kind::Colour||kind==Kind::Align){EXPECT_EQ(nullptr,IconName(kind));continue;}
+        ASSERT_NE(nullptr,IconName(kind)) << i;
+        EXPECT_NE(nullptr,libresrc_modern_icon(IconName(kind))) << IconName(kind);
+        EXPECT_FALSE(KindName(kind).empty());
+    }
+}
+
+TEST_F(ordinary_edit, grid_text_column_draws_tag_chips_with_tooltips) {
+    auto columns=GetGridColumns();
+    auto &text=*columns.back();
+    ASSERT_EQ(_("Text"),text.Header());
+    AssDialogue line;
+    line.Text=std::string("{\\fad(200,200)\\pos(640,80)}Hello{\\i1}there");
+    BOOST_SCOPE_EXIT_ALL(&){ OPT_SET("Subtitle/Grid/Hide Overrides")->SetInt(1); };
+    OPT_SET("Subtitle/Grid/Hide Overrides")->SetInt(1);
+    wxBitmap bitmap(600,40);
+    wxMemoryDC dc(bitmap);
+    dc.SetFont(*wxNORMAL_FONT);
+    dc.SetBrush(*wxWHITE_BRUSH);dc.SetTextForeground(*wxBLACK);
+    dc.Clear();
+    text.Paint(dc,0,0,&line,c.get());
+    // Chips are drawn: something other than the text's black and the row's white
+    wxImage image=bitmap.ConvertToImage();
+    bool grey=false;
+    for(int y=0;y<image.GetHeight()&&!grey;++y)for(int x=0;x<GridColumn::cell_padding+40&&!grey;++x){
+        int r=image.GetRed(x,y);grey=r>200&&r<250&&image.GetGreen(x,y)==r;
+    }
+    EXPECT_TRUE(grey) << "the chip's fill";
+    // Its tooltip says what it does; between the chips, none
+    auto tip=text.Tooltip(dc,GridColumn::cell_padding+4,&line,c.get());
+    EXPECT_NE(wxString::npos,tip.find("Fade")) << tip;
+    EXPECT_TRUE(text.Tooltip(dc,2,&line,c.get()).empty()) << "left of it";
+    int hello=dc.GetTextExtent("Hel").x;
+    // Past the first chip, in "Hello": none
+    std::vector<int> tipped;
+    for(int x=0;x<400;++x) if(!text.Tooltip(dc,x,&line,c.get()).empty()) tipped.push_back(x);
+    ASSERT_FALSE(tipped.empty());
+    bool gap=false;for(size_t i=1;i<tipped.size();++i)if(tipped[i]>tipped[i-1]+hello)gap=true;
+    EXPECT_TRUE(gap) << "two chips with the text between";
+    // Shown in full, or left out: no chips, no tooltips
+    OPT_SET("Subtitle/Grid/Hide Overrides")->SetInt(0);
+    EXPECT_TRUE(text.Tooltip(dc,GridColumn::cell_padding+4,&line,c.get()).empty());
+    OPT_SET("Subtitle/Grid/Hide Overrides")->SetInt(2);
+    EXPECT_TRUE(text.Tooltip(dc,GridColumn::cell_padding+4,&line,c.get()).empty());
+    dc.SelectObject(wxNullBitmap);
 }
 
 TEST(script_text, splits_into_one_sentence_a_line) {

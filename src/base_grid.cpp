@@ -530,6 +530,20 @@ void BaseGrid::OnMouseEvent(wxMouseEvent &event) {
 		wxString tip;
 		if (over_number && !event.Leaving())
 			tip = dlg->Comment ? _("Click to show this subtitle line") : _("Click to hide this subtitle line");
+		else if (dlg && !event.Leaving() && event.GetY() >= lineHeight) {
+			// Over a cell: what it has to say, such as what a tag chip does
+			int x = 0;
+			for (auto const& column : columns) {
+				int width = column->Width();
+				if (width && event.GetX() >= x && event.GetX() < x + width) {
+					wxClientDC dc(this);
+					dc.SetFont(font);
+					tip = column->Tooltip(dc, event.GetX() - x, dlg, context);
+					break;
+				}
+				x += width;
+			}
+		}
 		if (!GetToolTip() || GetToolTip()->GetTip() != tip)
 			SetToolTip(tip);
 		SetCursor(over_number && !event.Leaving() ? wxCURSOR_HAND : wxCURSOR_ARROW);

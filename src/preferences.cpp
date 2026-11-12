@@ -209,8 +209,6 @@ void Grid(PreferencesBook *book, Preferences *parent) {
 	p->OptionAdd(grid, _("Highlight visible subtitles"), "Subtitle/Grid/Highlight Subtitles in Frame",
 		{.help = _("Lines showing on the video's current frame get their own background")});
 	p->OptionAdd(grid, _("Shade every other row"), "Subtitle/Grid/Alternate Rows");
-	p->OptionAdd(grid, _("Hide overrides symbol"), "Subtitle/Grid/Hide Overrides Char",
-		{.help = _("Leave tags out of the text column, rather than showing a symbol for each")});
 	p->OptionFont(grid, "Subtitle/Grid/");
 
 	p->SetSizerAndFit(p->sizer);

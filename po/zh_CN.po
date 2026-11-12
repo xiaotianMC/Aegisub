@@ -6089,9 +6089,6 @@ msgstr "点击激活字幕栏"
 msgid "Highlight visible subtitles"
 msgstr "高亮可见字幕"
 
-#: ../src/preferences.cpp:291
-msgid "Hide overrides symbol"
-msgstr "代替样式覆写标签的字符串"
 
 #: ../src/preferences.cpp:295
 msgid "Skip over whitespace"
@@ -9455,8 +9452,6 @@ msgstr "操作"
 msgid "Keep the playback cursor in view while playing"
 msgstr "播放时让播放光标始终可见"
 
-msgid "Leave tags out of the text column, rather than showing a symbol for each"
-msgstr "文本列中直接省略标签，不再为每个标签显示一个符号"
 
 msgid "Lines showing on the video's current frame get their own background"
 msgstr "在视频当前帧上显示的字幕行用单独的底色标出"
@@ -11040,3 +11035,72 @@ msgstr "标记置信度低于此值的词"
 #: ../src/preferences.cpp
 msgid "Such words are written in the Effect field as ?word, for the translator to check"
 msgstr "这些词以 ?词 的形式写进 Effect 栏，提醒译者核对"
+
+#: ../src/tag_summary.cpp
+msgid "Primary colour"
+msgstr "主要颜色"
+
+#: ../src/tag_summary.cpp
+msgid "Secondary colour"
+msgstr "次要颜色"
+
+#: ../src/tag_summary.cpp
+msgid "Border colour"
+msgstr "边框颜色"
+
+#: ../src/tag_summary.cpp
+msgid "off"
+msgstr "关"
+
+#: ../src/tag_summary.cpp
+msgid "on"
+msgstr "开"
+
+#: ../src/tag_summary.cpp
+msgid "in %s ms, out %s ms"
+msgstr "淡入 %s ms，淡出 %s ms"
+
+#: ../src/tag_summary.cpp
+msgid "Transparency"
+msgstr "透明度"
+
+#: ../src/tag_summary.cpp
+msgid "3D rotation"
+msgstr "3D 旋转"
+
+#: ../src/tag_summary.cpp
+msgid "Shear"
+msgstr "倾斜"
+
+#: ../src/tag_summary.cpp
+msgid "Vector clip"
+msgstr "矢量裁剪"
+
+#: ../src/tag_summary.cpp
+msgid "Origin"
+msgstr "原点"
+
+#: ../src/tag_summary.cpp
+msgid "Letter spacing"
+msgstr "字距"
+
+#: ../src/tag_summary.cpp
+msgid "Drawing"
+msgstr "绘图"
+
+#: ../src/tag_summary.cpp
+msgid "Note"
+msgstr "备注"
+
+#: ../src/tag_summary.cpp
+msgid "Other tag"
+msgstr "其他标签"
+
+#: ../src/tag_summary.cpp
+msgid "%s: %s"
+msgstr "%s：%s"
+
+#: ../src/tag_summary.cpp
+msgid "(%d point)"
+msgid_plural "(%d points)"
+msgstr[0] "（%d 个点）"

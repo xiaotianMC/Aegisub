@@ -313,6 +313,25 @@ CUSTOM.update({
 })
 
 
+# The subtitle grid's override-tag chips (docs/subtitle-grid-tags.md): what
+# each kind of tag does, where no toolbar icon already says it
+CUSTOM.update({
+ 'tag_fade': "<circle cx='12' cy='12' r='9'/>" + fill('M12 3A9 9 0 0 0 12 21Z'),                 # half lit: fading
+ 'tag_transform': p('M10 2H14') + p('M12 14L15 11') + "<circle cx='12' cy='14' r='8'/>",          # a stopwatch: \t over time
+ 'tag_alpha': rect(3, 3, 18, 18, 3) + fill('M5 5H12V12H5Z') + fill('M12 12H19V19H12Z'),          # a chequerboard
+ 'tag_fontsize': p('M2 20L8 4L14 20M4.3 14H11.7') + p('M15 20L18.5 11L22 20M16.2 17H20.8'),       # a large and a small A
+ 'tag_border': rect(3, 3, 18, 18, 4) + rect(8, 8, 8, 8, 1),
+ 'tag_shadow': rect(3, 3, 13, 13, 2) + p('M8 20H18A2 2 0 0 0 20 18V8', " stroke-width='3' opacity='.55'"),
+ 'tag_blur': "<circle cx='12' cy='12' r='3.5' fill='@' stroke='none'/>" + ''.join(dot(x, y, 1.3) for x, y in
+     [(20.5, 12), (18, 18), (12, 20.5), (6, 18), (3.5, 12), (6, 6), (12, 3.5), (18, 6)]),        # a dot spreading
+ 'tag_origin': p('M12 2V8M12 16V22M2 12H8M16 12H22') + "<circle cx='12' cy='12' r='2' fill='@' stroke='none'/>",
+ 'tag_reset': p('M3 12A9 9 0 1 0 12 3A9.75 9.75 0 0 0 5.26 5.74L3 8') + p('M3 3V8H8'),           # back to the style
+ 'tag_comment': p('M4 3H20A2 2 0 0 1 22 5V15A2 2 0 0 1 20 17H9L4 21V17A2 2 0 0 1 2 15V5A2 2 0 0 1 4 3Z') + p('M7 8H17M7 12H13'),
+ 'tag_unknown': p('M8 3H7A2 2 0 0 0 5 5V10L3 12L5 14V19A2 2 0 0 0 7 21H8') + p('M16 3H17A2 2 0 0 1 19 5V10L21 12L19 14V19A2 2 0 0 1 17 21H16'),
+ 'tag_spacing': p('M3 4V20M21 4V20') + p('M7 12H17') + p('M10 9L7 12L10 15') + p('M14 9L17 12L14 15'),
+ 'tag_shear': p('M8 5H21L16 19H3Z'),
+})
+
 # --- From Lucide
 LUCIDE = {
  # audio
