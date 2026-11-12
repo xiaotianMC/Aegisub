@@ -87,8 +87,8 @@ public:
 	/// (\move, \fad, \t and \org of the current line) or timing (its
 	/// times, scene changes and lead). The switch at the top chooses; the
 	/// panel opens on the one last shown (App/Style Panel/Page).
-	/// The video's script isn't one: the button beside the switch shows the
-	/// script panel in this one's place (StylePanelEdge::ShowScript)
+	/// The video's script isn't one: it has a panel of its own, shown in this
+	/// one's place (StylePanelEdge::ShowScript)
 	enum class Page { Style, Animation, Timing };
 	void ShowPage(Page page);
 	Page ShownPage() const { return page; }
@@ -122,8 +122,6 @@ public:
 	/// Called to show the panel when it is folded away, or the script
 	/// panel is in its place
 	std::function<void()> request_open;
-	/// Called by the script button: the script panel in this one's place
-	std::function<void()> on_script;
 
 	/// Show the panel and its Shape section, for the active line's shape
 	void EditShape();
@@ -242,7 +240,7 @@ public:
 	/// keyboard in the one going goes to the other
 	void ShowScript(bool show);
 	/// Show the script panel, opening the strip if it is folded, as the
-	/// script's name on it and the style panel's script button do
+	/// script's name on it does
 	void OpenScript();
 	/// As the View menu's Script does: the script panel on the screen with
 	/// the keyboard in its text; from there, back to the style panel

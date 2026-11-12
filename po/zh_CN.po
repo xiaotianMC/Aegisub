@@ -10839,9 +10839,6 @@ msgctxt "page"
 msgid "Script"
 msgstr "文案"
 
-#: ../src/style_panel.cpp
-msgid "Script: the video's whole script, typed or pasted in to check the subtitles against"
-msgstr "文案：输入或粘贴视频的完整文案，用来核对字幕"
 
 #: ../src/script_panel.cpp
 msgid "Back to the style panel: style, animation and timing"

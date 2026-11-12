@@ -21,6 +21,8 @@
 #include <wx/panel.h>
 
 namespace agi { struct Context; }
+class wxSizer;
+class wxStaticText;
 class wxTextCtrl;
 
 namespace script_text {
@@ -72,7 +74,14 @@ public:
 private:
 	agi::Context *c;
 	std::vector<agi::signal::Connection> connections;
+	agi::signal::Connection theme_changed;
 	wxTextCtrl *text;
+	wxSizer *top_line = nullptr; ///< The name and the buttons, a line under them
+	wxPanel *notice = nullptr;   ///< Why the text can't be changed, when it can't
+	wxStaticText *notice_text = nullptr;
+	int notice_width = 0;        ///< What its text is wrapped to
+	/// Between the text and the edge of the field drawn around it
+	int inset = FromDIP(8);
 	std::map<std::string, wxWindow*> parts;
 	/// The text before the last split, while nothing was typed since
 	std::optional<wxString> before_split;
@@ -83,4 +92,7 @@ private:
 	void Store();
 	void Split();
 	void UpdateParts();
+	/// The colours for the theme: the field's, the notice's
+	void Recolour();
+	void OnPaint();
 };

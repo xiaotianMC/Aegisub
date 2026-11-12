@@ -2368,11 +2368,11 @@ TEST_F(ordinary_edit, script_panel_takes_the_style_panels_place_and_writes_the_s
     panel->ShowPage(StylePanel::Page::Timing);
     EXPECT_FALSE(script->IsShown());
     EXPECT_TRUE(panel->IsShown());
-    EXPECT_EQ("enabled",panel->Shown()["script"]) << "its button beside the switch";
+    EXPECT_EQ(0u,panel->Shown().count("script")) << "no button for it on the style panel";
 
-    // The button puts the script panel in the style panel's place, as wide;
-    // the script panel's own button puts the style panel back on its page
-    panel->Press("script");
+    // It takes the style panel's place, as wide; the script panel's own
+    // button puts the style panel back on its page
+    edge->OpenScript();
     wxYield();
     EXPECT_TRUE(edge->ScriptShown());
     EXPECT_TRUE(script->IsShown());
@@ -6415,8 +6415,8 @@ TEST_F(ordinary_edit, style_panel_switches_between_its_style_and_animation_pages
     int on_style = visible();
     panel->ShowPage(StylePanel::Page::Animation);
     EXPECT_EQ("Animation", panel->Shown()["page"]);
-    // The switch, the script and fold buttons and the animation page
-    EXPECT_EQ(4, visible());
+    // The switch, the fold button and the animation page
+    EXPECT_EQ(3, visible());
     EXPECT_TRUE(panel->Animation()->IsShown());
     panel->ShowPage(StylePanel::Page::Style);
     EXPECT_EQ(on_style, visible());

@@ -123,10 +123,6 @@ StylePanel::StylePanel(wxWindow *parent, agi::Context *c)
 		pages->on_choose = [this](int index) { ShowPage(static_cast<Page>(index)); };
 		line->AddSpacer(pad);
 		line->Add(pages, 1, wxALIGN_CENTER_VERTICAL);
-		// The script panel, apart from the switch: it is the video's, not the line's
-		auto script_button = Add<IconButton>("script", IconButton::Glyph::Script, _("Script: the video's whole script, typed or pasted in to check the subtitles against"));
-		script_button->on_click = [this] { if (on_script) on_script(); };
-		line->Add(script_button, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, pad - FromDIP(6));
 		auto collapse = Add<IconButton>("collapse", IconButton::Glyph::Collapse, _("Hide the style panel"));
 		collapse->on_click = [this] {
 			// The keyboard on it would be left in a hidden window
@@ -1052,7 +1048,6 @@ StylePanelEdge::StylePanelEdge(wxWindow *parent, StylePanel *panel, ScriptPanel 
 		ShowScript(false);
 		if (Folded()) Open();
 	};
-	panel->on_script = [this] { OpenScript(); };
 	if (script) {
 		script->on_collapse = [this] { Collapse(); };
 		script->on_style = [this] { ShowScript(false); };

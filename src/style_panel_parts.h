@@ -774,7 +774,7 @@ public:
 /// A small button with a drawn symbol: the style row's actions
 class StylePanel::IconButton final : public StylePanel::Part {
 public:
-	enum class Glyph { Up, Down, Plus, More, Collapse, Close, Now, Pick, Swap, Earlier, Later, Script, Style };
+	enum class Glyph { Up, Down, Plus, More, Collapse, Close, Now, Pick, Swap, Earlier, Later, Style };
 
 private:
 	Glyph glyph;
@@ -863,22 +863,6 @@ private:
 				dc.SetPen(pen);
 				dc.DrawLine(x, centre.y - half, x + dir * half, centre.y);
 				dc.DrawLine(x + dir * half, centre.y, x, centre.y + half);
-				break;
-			}
-			case Glyph::Script: {
-				// A page of lines: the script
-				int w = FromDIP(10), h = FromDIP(13);
-				wxRect page(centre.x - w / 2, centre.y - h / 2, w, h);
-				wxPen pen(p.text, thick);
-				pen.SetCap(wxCAP_ROUND);
-				dc.SetPen(pen);
-				dc.SetBrush(*wxTRANSPARENT_BRUSH);
-				dc.DrawRoundedRectangle(page, FromDIP(2));
-				int left = page.x + FromDIP(3), right = page.GetRight() - FromDIP(2);
-				for (int i = 0; i < 3; ++i) {
-					int y = page.y + FromDIP(4) + i * FromDIP(3);
-					dc.DrawLine(left, y, i == 2 ? left + (right - left) / 2 : right, y);
-				}
 				break;
 			}
 			case Glyph::Style: {
@@ -1025,13 +1009,19 @@ public:
 class StylePanel::Caption final : public StylePanel::Part {
 	wxString text;
 
+	bool right = false;
+
 	void Draw(wxDC &dc, Palette const& p) override {
 		dc.SetTextForeground(p.dim);
-		dc.DrawText(Ellipsize(dc, text, GetClientSize().x), 0, (GetClientSize().y - dc.GetCharHeight()) / 2);
+		wxString shown = Ellipsize(dc, text, GetClientSize().x);
+		int x = right ? GetClientSize().x - dc.GetTextExtent(shown).x : 0;
+		dc.DrawText(shown, x, (GetClientSize().y - dc.GetCharHeight()) / 2);
 	}
 
 public:
 	explicit Caption(wxWindow *parent) : Part(parent, wxSize(40, 20)) { }
+	/// Against the right edge, as a count after a button is
+	void AlignRight() { right = true; Refresh(false); }
 	void SetText(wxString const& new_text) { Set(text, new_text); }
 	wxString Shown() const override { return text; }
 };

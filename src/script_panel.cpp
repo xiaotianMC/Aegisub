@@ -15,7 +15,10 @@
 
 #include <algorithm>
 
+#include <wx/dcbuffer.h>
+#include <wx/dcgraph.h>
 #include <wx/intl.h>
+#include <wx/settings.h>
 #include <wx/sizer.h>
 #include <wx/stattext.h>
 #include <wx/textctrl.h>
@@ -136,16 +139,18 @@ ScriptPanel::ScriptPanel(wxWindow *parent, agi::Context *c)
 , c(c)
 {
 	theme::UseSurface(this);
+	SetBackgroundStyle(wxBG_STYLE_PAINT);
 	const int pad = FromDIP(12);
 	auto outer = new wxBoxSizer(wxVERTICAL);
 
 	// The panel's name on the top bar, with the button going back to the
-	// style panel and the one folding it away, where the style panel has
-	// its switch, the script button and »
+	// style panel and the one folding it away, as tall as the style panel's
+	// with its switch
 	{
 		auto line = new wxBoxSizer(wxHORIZONTAL);
+		line->SetMinSize(wxSize(-1, FromDIP(26)));
 		auto title = new wxStaticText(this, -1, wxGETTEXT_IN_CONTEXT("page", "Script"));
-		title->SetFont(title->GetFont().Bold());
+		title->SetFont(title->GetFont().Bold().Scaled(1.15f));
 		line->AddSpacer(pad);
 		line->Add(title, 1, wxALIGN_CENTER_VERTICAL);
 		auto style = new StylePanel::IconButton(this, StylePanel::IconButton::Glyph::Style, _("Back to the style panel: style, animation and timing"));
@@ -162,9 +167,11 @@ ScriptPanel::ScriptPanel(wxWindow *parent, agi::Context *c)
 		parts["collapse"] = collapse;
 		line->Add(collapse, 0, wxALIGN_CENTER_VERTICAL | wxLEFT | wxRIGHT, pad - FromDIP(4));
 		outer->Add(line, 0, wxEXPAND | wxTOP | wxBOTTOM, pad - FromDIP(4));
+		top_line = line;
 	}
 
-	// The split button, and how many lines there are
+	// Below the line under the top bar: the split button, and how many
+	// lines there are against the right edge
 	{
 		auto line = new wxBoxSizer(wxHORIZONTAL);
 		auto split = new StylePanel::TextButton(this, _("One sentence a line"),
@@ -173,21 +180,49 @@ ScriptPanel::ScriptPanel(wxWindow *parent, agi::Context *c)
 		parts["split"] = split;
 		line->Add(split, 0, wxALIGN_CENTER_VERTICAL);
 		auto count = new StylePanel::Caption(this);
+		count->AlignRight();
 		parts["count"] = count;
 		line->Add(count, 1, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(10));
-		outer->Add(line, 0, wxEXPAND | wxLEFT | wxRIGHT, pad);
+		outer->Add(line, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, pad);
 	}
 
-	// Why it can't be changed now
-	auto note_caption = new StylePanel::Caption(this);
-	parts["note"] = note_caption;
-	outer->Add(note_caption, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, pad);
-	note_caption->Hide();
+	// Why it can't be changed now: a notice, as a locked editor has, its
+	// words wrapped rather than cut
+	notice = new wxPanel(this, -1, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+	notice_text = new wxStaticText(notice, -1, "");
+	{
+		auto sizer = new wxBoxSizer(wxVERTICAL);
+		sizer->Add(notice_text, 0, wxEXPAND | wxALL, FromDIP(8));
+		notice->SetSizer(sizer);
+	}
+	notice->Bind(wxEVT_SIZE, [this](wxSizeEvent &e) {
+		e.Skip();
+		int width = e.GetSize().x - FromDIP(16);
+		if (width > 0 && width != notice_width) {
+			notice_width = width;
+			notice_text->SetLabel(note);
+			notice_text->Wrap(width);
+			notice->Layout();
+			CallAfter([this] { Layout(); });
+		}
+	});
+	parts["note"] = notice;
+	outer->Add(notice, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, pad);
+	notice->Hide();
 
-	text = new wxTextCtrl(this, -1, "", wxDefaultPosition, wxDefaultSize, wxTE_MULTILINE | wxTE_RICH2);
+	// The text on a rounded field, inset from its edge; the edge in the
+	// accent colour while it has the keyboard (drawn by OnPaint)
+	text = new wxTextCtrl(this, -1, "", wxDefaultPosition, wxDefaultSize, wxTE_MULTILINE | wxTE_RICH2 | wxBORDER_NONE);
 	text->SetHint(_("Type or paste the video's whole script here, to check the subtitles against it. It is saved with the subtitles"));
 	text->SetToolTip(_("The video's script, saved in the subtitle file"));
-	outer->Add(text, 1, wxEXPAND | wxALL, pad);
+	outer->Add(text, 1, wxEXPAND | wxALL, pad + inset);
+	text->Bind(wxEVT_SET_FOCUS, [this](wxFocusEvent &e) { e.Skip(); Refresh(false); });
+	text->Bind(wxEVT_KILL_FOCUS, [this](wxFocusEvent &e) { e.Skip(); Refresh(false); });
+
+	Bind(wxEVT_PAINT, [this](wxPaintEvent &) { OnPaint(); });
+	Bind(wxEVT_SIZE, [this](wxSizeEvent &e) { e.Skip(); Refresh(false); });
+	theme_changed = theme::AddChangeListener([this] { Recolour(); });
+	Recolour();
 
 	text->Bind(wxEVT_TEXT, [this](wxCommandEvent &) {
 		// Typed: a split can no longer be taken back as such
@@ -227,6 +262,49 @@ ScriptPanel::ScriptPanel(wxWindow *parent, agi::Context *c)
 }
 
 ScriptPanel::~ScriptPanel() = default;
+
+void ScriptPanel::Recolour() {
+	auto ui = theme::UiColours();
+	wxColour surface = theme::Surface();
+	wxColour ink = wxSystemSettings::GetColour(wxSYS_COLOUR_BTNTEXT);
+	text->SetBackgroundColour(theme::Mix(surface, ink, theme::IsDark() ? 0.08 : 0.05));
+	text->SetForegroundColour(ink);
+	notice->SetBackgroundColour(ui.notice_back);
+	notice_text->SetForegroundColour(ui.notice_text);
+	notice->Refresh();
+	text->Refresh();
+	Refresh();
+}
+
+void ScriptPanel::OnPaint() {
+	wxAutoBufferedPaintDC buffered(this);
+	wxGCDC dc(buffered);
+	wxColour surface = theme::Surface();
+	wxColour ink = wxSystemSettings::GetColour(wxSYS_COLOUR_BTNTEXT);
+	dc.SetBackground(wxBrush(surface));
+	dc.Clear();
+	int thin = std::max(1, FromDIP(1));
+	// A line under the top bar, as under the style panel's section titles
+	if (top_line) {
+		int y = top_line->GetPosition().y + top_line->GetSize().y + FromDIP(8);
+		dc.SetPen(*wxTRANSPARENT_PEN);
+		dc.SetBrush(wxBrush(theme::Mix(surface, ink, 0.12)));
+		dc.DrawRectangle(0, y, GetClientSize().x, thin);
+	}
+	// The field the text is on, its edge the accent colour while typing
+	wxRect field = text->GetRect().Inflate(inset);
+	bool typing = FindFocus() == text;
+	dc.SetBrush(wxBrush(text->GetBackgroundColour()));
+	dc.SetPen(wxPen(typing ? theme::UiColours().accent : theme::Mix(surface, ink, 0.2), typing ? std::max(1, FromDIP(3) / 2) : thin));
+	dc.DrawRoundedRectangle(field, FromDIP(6));
+	// The notice's corners rounded, on the surface around it
+	if (notice->IsShown()) {
+		wxRect r = notice->GetRect();
+		dc.SetPen(*wxTRANSPARENT_PEN);
+		dc.SetBrush(wxBrush(notice->GetBackgroundColour()));
+		dc.DrawRoundedRectangle(r.Inflate(FromDIP(2)), FromDIP(5));
+	}
+}
 
 void ScriptPanel::UpdateNow() {
 	wxString stored = to_wx(c->subtitleAccess->Read().Properties.script_text);
@@ -278,12 +356,14 @@ void ScriptPanel::UpdateParts() {
 	split->Enable(before_split || !text->GetValue().empty());
 	int lines = script_text::CountLines(text->GetValue());
 	static_cast<StylePanel::Caption*>(parts["count"])->SetText(lines ? fmt_plural(lines, "%d line", "%d lines", lines) : wxString());
-	auto note_caption = static_cast<StylePanel::Caption*>(parts["note"]);
-	note_caption->SetText(note);
-	note_caption->SetToolTip(note);
-	if (note_caption->IsShown() != !note.empty()) {
-		note_caption->Show(!note.empty());
+	if (notice_text->GetLabel() != note) {
+		notice_text->SetLabel(note);
+		if (notice_width > 0) notice_text->Wrap(notice_width);
+	}
+	if (notice->IsShown() != !note.empty()) {
+		notice->Show(!note.empty());
 		Layout();
+		Refresh(false);
 	}
 }
 
