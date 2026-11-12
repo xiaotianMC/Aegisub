@@ -76,6 +76,7 @@
 #include "animation_page.h"
 #include "animation_tags.h"
 #include "style_look.h"
+#include "script_page.h"
 #include "style_panel.h"
 #include "style_panel_parts.h"
 #include "timing_adjust.h"
@@ -2233,6 +2234,161 @@ TEST_F(ordinary_edit, style_panel_folds_away_in_narrow_windows_and_opens_from_it
     EXPECT_EQ(StylePanel::Page::Timing,panel->ShownPage()) << "elsewhere on the strip: the page last shown";
     panel->ShowPage(StylePanel::Page::Style);
     delete frame; // now: it watches an option the next test changes
+}
+
+TEST(script_text, splits_into_one_sentence_a_line) {
+    using script_text::SplitSentences;
+    auto u=[](const char *text){ return wxString::FromUTF8(text); };
+    EXPECT_EQ(u("今天天气很好。\n我们去公园吧！\n好吗？"),SplitSentences(u("今天天气很好。我们去公园吧！好吗？")));
+    EXPECT_EQ(u("他说：“好。”\n然后走了。"),SplitSentences(u("他说：“好。”然后走了。"))) << "the closing quote with its sentence";
+    EXPECT_EQ(u("真的吗？！\n嗯……\n我想想。"),SplitSentences(u("真的吗？！嗯……我想想。"))) << "a run of marks together";
+    EXPECT_EQ(u("Hello there.\nIt costs 3.14 dollars!\nReally?!"),SplitSentences(u("Hello there. It costs 3.14 dollars! Really?!")))
+        << "half-width marks only before a space";
+    EXPECT_EQ(u("Wait...\n\"Why?\"\nNo."),SplitSentences(u("Wait... \"Why?\" No.")));
+    EXPECT_EQ(u("e.g.this stays"),SplitSentences(u("e.g.this stays")));
+    EXPECT_EQ(u("第一行没有标点\n第二行。"),SplitSentences(u("第一行没有标点\n\n  第二行。　"))) << "lines kept, empty ones and spaces gone";
+    EXPECT_EQ(u("a\nb"),SplitSentences(u("a\r\nb")));
+    EXPECT_EQ(u(""),SplitSentences(u("   \n")));
+    auto once=SplitSentences(u("一。二！三"));
+    EXPECT_EQ(once,SplitSentences(once)) << "split again: as it was";
+    EXPECT_EQ(3,script_text::CountLines(u("a\n\nb\n c \n")));
+    EXPECT_EQ(0,script_text::CountLines(u("")));
+}
+
+TEST_F(ordinary_edit, script_text_is_saved_in_the_ass_file_and_marks_it_changed) {
+    using Field=SubtitleProjectAccess::MetadataField;
+    auto path=agi::fs::path((std::filesystem::current_path()/"script-text.ass").wstring());
+    c->subsController->Save(path,"utf-8");ASSERT_FALSE(c->subsController->IsModified());
+    auto undo=c->subsController->GetUndoDescription();
+    // The characters the section uses, a line break and a line starting with "["
+    std::string script="第一句，有逗号: 冒号 # 井号 | 竖线。\n[Events]\n  indented\n";
+    c->subtitleAccess->SetMetadata(Field::ScriptText,script);
+    EXPECT_TRUE(c->subsController->IsModified());
+    EXPECT_EQ(undo,c->subsController->GetUndoDescription()) << "not a step to undo";
+    c->subsController->Save(path,"utf-8");EXPECT_FALSE(c->subsController->IsModified());
+    {
+        std::ifstream in(path.string());std::string all((std::istreambuf_iterator<char>(in)),std::istreambuf_iterator<char>());
+        EXPECT_NE(std::string::npos,all.find("\nScript Text: ")) << "in [Aegisub Project Garbage]";
+        EXPECT_EQ(std::string::npos,all.find("\n[Events]\n  indented")) << "on one line";
+    }
+    c->subsController->Close();
+    EXPECT_EQ("",LiveRead(*c).Properties.script_text);
+    c->subsController->Load(path,"utf-8");
+    EXPECT_EQ(script,LiveRead(*c).Properties.script_text);
+    EXPECT_FALSE(c->subsController->IsModified());
+    EXPECT_EQ(1u,static_cast<size_t>(std::distance(LiveRead(*c).Events.begin(),LiveRead(*c).Events.end()))) << "no line read from it";
+    // Emptied: a change too
+    c->subtitleAccess->SetMetadata(Field::ScriptText,"");
+    EXPECT_TRUE(c->subsController->IsModified());
+}
+
+TEST_F(ordinary_edit, script_page_opens_over_the_panel_and_writes_the_script) {
+    auto u=[](const char *text){ return wxString::FromUTF8(text); };
+    auto frame=new wxFrame(nullptr,-1,"script");
+    BOOST_SCOPE_EXIT_ALL(&){ delete frame; };
+    auto root=new wxPanel(frame);
+    auto panel=new StylePanel(root,c.get());
+    auto edge=new StylePanelEdge(root,panel);
+    auto sizer=new wxBoxSizer(wxHORIZONTAL);
+    sizer->Add(new wxPanel(root),1,wxEXPAND);sizer->Add(edge,0,wxEXPAND);sizer->Add(panel,0,wxEXPAND);
+    root->SetSizer(sizer);
+    frame->SetSize(frame->FromDIP(1400),700);frame->Show();
+    root->SetSize(frame->GetClientSize());edge->Update();root->Layout();
+    panel->ShowPage(StylePanel::Page::Timing);
+    auto script=panel->Script();
+    EXPECT_FALSE(script->IsShown());
+    EXPECT_EQ("enabled",panel->Shown()["script"]) << "its button beside the switch";
+
+    // The button opens it over the whole panel; ‹ goes back where it was
+    panel->Press("script");
+    wxYield();
+    EXPECT_EQ(StylePanel::Page::Script,panel->ShownPage());
+    EXPECT_TRUE(script->IsShown());
+    EXPECT_FALSE(panel->Timing()->IsShown());
+    EXPECT_EQ(3,OPT_GET("App/Style Panel/Page")->GetInt());
+    EXPECT_GT(script->TextBox()->GetSize().y,panel->GetClientSize().y/2) << "the text down the panel";
+    EXPECT_EQ("One sentence a line disabled",script->Shown()["split"]) << "nothing to split";
+    script->Press("back");
+    EXPECT_EQ(StylePanel::Page::Timing,panel->ShownPage());
+    EXPECT_FALSE(script->IsShown());
+    panel->ToggleScript();
+    EXPECT_EQ(StylePanel::Page::Script,panel->ShownPage()) << "as the View menu does";
+    panel->ToggleScript();
+    EXPECT_EQ(StylePanel::Page::Timing,panel->ShownPage()) << "and again: back";
+
+    // Typed: in the file at once, which is changed but has nothing to undo
+    panel->ShowPage(StylePanel::Page::Script);
+    auto undo=c->subsController->GetUndoDescription();
+    script->Type(u("第一句。第二句！\n第三句"));
+    EXPECT_EQ("第一句。第二句！\n第三句",LiveRead(*c).Properties.script_text);
+    EXPECT_TRUE(c->subsController->IsModified());
+    EXPECT_EQ(undo,c->subsController->GetUndoDescription());
+    EXPECT_EQ("2 lines",script->Shown()["count"]);
+    EXPECT_EQ("One sentence a line",script->Shown()["split"]);
+
+    // Split, then taken back by the same button
+    script->Press("split");
+    EXPECT_EQ(u("第一句。\n第二句！\n第三句"),script->TextBox()->GetValue());
+    EXPECT_EQ("第一句。\n第二句！\n第三句",LiveRead(*c).Properties.script_text);
+    EXPECT_EQ("3 lines",script->Shown()["count"]);
+    EXPECT_EQ("Undo the split",script->Shown()["split"]);
+    script->Press("split");
+    EXPECT_EQ("第一句。第二句！\n第三句",LiveRead(*c).Properties.script_text);
+    EXPECT_EQ("One sentence a line",script->Shown()["split"]);
+    // Typing after a split keeps it
+    script->Press("split");
+    script->Type(script->TextBox()->GetValue()+"\n");
+    EXPECT_EQ("One sentence a line",script->Shown()["split"]);
+    EXPECT_EQ("第一句。\n第二句！\n第三句\n",LiveRead(*c).Properties.script_text);
+
+    // Keys editing text stay in the box; the window's others go on to it
+    std::vector<int> reached;
+    {
+        frame->Bind(wxEVT_CHAR_HOOK,[&](wxKeyEvent &e){ reached.push_back(e.GetKeyCode()); });
+        auto press=[&](int key,int modifiers){
+            wxKeyEvent e(wxEVT_CHAR_HOOK);e.m_keyCode=key;
+            e.SetControlDown(modifiers&wxMOD_CONTROL);e.SetShiftDown(modifiers&wxMOD_SHIFT);e.SetAltDown(modifiers&wxMOD_ALT);
+            e.SetEventObject(script->TextBox());script->TextBox()->GetEventHandler()->ProcessEvent(e);
+        };
+        press('Z',wxMOD_CONTROL);press('V',wxMOD_CONTROL);press(WXK_DELETE,wxMOD_CONTROL);press(WXK_SPACE,0);press('A',wxMOD_SHIFT);
+        EXPECT_TRUE(reached.empty()) << "undo, paste, Ctrl+Delete, Space and typing are the box's";
+        press('S',wxMOD_CONTROL);press(WXK_F6,0);press('O',wxMOD_ALT);
+        EXPECT_EQ((std::vector<int>{'S',WXK_F6,'O'}),reached) << "save, F6 and Alt keys are the window's";
+    }
+
+    // Compared: the file's script can't change, nor the box
+    {
+        auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);
+        script->Type("changed");
+        EXPECT_EQ("第一句。\n第二句！\n第三句\n",LiveRead(*c).Properties.script_text);
+        EXPECT_EQ(u("第一句。\n第二句！\n第三句\n"),script->TextBox()->GetValue());
+        EXPECT_FALSE(script->Shown()["note"].empty()) << "says why";
+    }
+    script->Type("after");
+    EXPECT_EQ("after",LiveRead(*c).Properties.script_text);
+    EXPECT_TRUE(script->Shown()["note"].empty());
+
+    // Another file: its script in the box
+    {
+        auto write=c->subtitleAccess->TryWrite();
+        LiveWriteForTest(*c).LoadDefault();LiveWriteForTest(*c).Commit("",AssFile::COMMIT_NEW);
+    }
+    c->subtitleAccess->SetMetadata(SubtitleProjectAccess::MetadataField::ScriptText,"other");
+    EXPECT_EQ("other",script->TextBox()->GetValue());
+
+    // Folded, the strip names it after the other pages and opens on it
+    panel->ShowPage(StylePanel::Page::Style);
+    OPT_SET("App/Style Panel/Show")->SetBool(false);
+    ASSERT_TRUE(edge->Folded());
+    int x=edge->GetClientSize().x-edge->FromDIP(10), script_at=-1, timing_at=-1;
+    for(int y=0;y<edge->FromDIP(500);y+=2){int p=edge->PageAt(wxPoint(x,y));if(p==2&&timing_at<0)timing_at=y;if(p==3&&script_at<0)script_at=y;}
+    ASSERT_GT(timing_at,0); EXPECT_GT(script_at,timing_at);
+    edge->Open(StylePanel::Page::Script);
+    EXPECT_FALSE(edge->Folded());
+    EXPECT_EQ(StylePanel::Page::Script,panel->ShownPage());
+    script->Press("back");
+    EXPECT_EQ(StylePanel::Page::Style,panel->ShownPage());
+    OPT_SET("App/Style Panel/Show")->SetBool(true);
 }
 
 TEST_F(ordinary_edit, style_edit_writes_one_property_for_lines_or_selected_text) {
@@ -5915,8 +6071,8 @@ TEST_F(ordinary_edit, style_panel_switches_between_its_style_and_animation_pages
     int on_style = visible();
     panel->ShowPage(StylePanel::Page::Animation);
     EXPECT_EQ("Animation", panel->Shown()["page"]);
-    // The switch, the fold button and the animation page
-    EXPECT_EQ(3, visible());
+    // The switch, the script and fold buttons and the animation page
+    EXPECT_EQ(4, visible());
     EXPECT_TRUE(panel->Animation()->IsShown());
     panel->ShowPage(StylePanel::Page::Style);
     EXPECT_EQ(on_style, visible());

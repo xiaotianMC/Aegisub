@@ -147,6 +147,7 @@
         { "command" : "app/toggle/toolbar" },
         { "command" : "app/toggle/style_panel" },
         { "command" : "app/style_panel/keyboard" },
+        { "command" : "app/script_text" },
         {},
         { "command" : "app/command_palette" }
     ],

@@ -128,6 +128,7 @@ aegisub_src = files(
     'dialog_magia_timeline.cpp',
     'scene_detect.cpp',
     'scroll_effect.cpp',
+    'script_page.cpp',
     'search_replace_engine.cpp',
     'selection_controller.cpp',
     'spellchecker.cpp',

@@ -774,7 +774,7 @@ public:
 /// A small button with a drawn symbol: the style row's actions
 class StylePanel::IconButton final : public StylePanel::Part {
 public:
-	enum class Glyph { Up, Down, Plus, More, Collapse, Close, Now, Pick, Swap, Earlier, Later };
+	enum class Glyph { Up, Down, Plus, More, Collapse, Close, Now, Pick, Swap, Earlier, Later, Script };
 
 private:
 	Glyph glyph;
@@ -865,6 +865,22 @@ private:
 				dc.DrawLine(x + dir * half, centre.y, x, centre.y + half);
 				break;
 			}
+			case Glyph::Script: {
+				// A page of lines: the script
+				int w = FromDIP(10), h = FromDIP(13);
+				wxRect page(centre.x - w / 2, centre.y - h / 2, w, h);
+				wxPen pen(p.text, thick);
+				pen.SetCap(wxCAP_ROUND);
+				dc.SetPen(pen);
+				dc.SetBrush(*wxTRANSPARENT_BRUSH);
+				dc.DrawRoundedRectangle(page, FromDIP(2));
+				int left = page.x + FromDIP(3), right = page.GetRight() - FromDIP(2);
+				for (int i = 0; i < 3; ++i) {
+					int y = page.y + FromDIP(4) + i * FromDIP(3);
+					dc.DrawLine(left, y, i == 2 ? left + (right - left) / 2 : right, y);
+				}
+				break;
+			}
 			case Glyph::Pick: {
 				// ⌖ : a point on the video
 				dc.SetBrush(*wxTRANSPARENT_BRUSH);
@@ -939,6 +955,18 @@ public:
 			if (on_click) CallAfter([this] { pressed = false; Refresh(false); if (on_click) on_click(); });
 		});
 	}
+
+	/// Other words on it, as wide as they need
+	void SetLabel(wxString const& new_label) override {
+		if (label == new_label) return;
+		label = new_label;
+		wxClientDC dc(this);
+		dc.SetFont(GetFont());
+		SetMinSize(wxSize(dc.GetTextExtent(label).x + FromDIP(16), FromDIP(26)));
+		if (auto sizer = GetContainingSizer()) sizer->Layout();
+		Refresh(false);
+	}
+	wxString GetLabel() const override { return label; }
 
 	bool Focusable() const override { return true; }
 	bool OnKey(wxKeyEvent &e) override {

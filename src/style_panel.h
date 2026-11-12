@@ -27,6 +27,7 @@ struct StyleLook;
 class wxSizer;
 class wxTextCtrl;
 class AnimationPage;
+class ScriptPage;
 class TimingPage;
 
 class StylePanel final : public wxScrolledWindow {
@@ -76,11 +77,17 @@ public:
 	/// (\move, \fad, \t and \org of the current line) or timing (its
 	/// times, scene changes and lead). The switch at the top chooses; the
 	/// panel opens on the one last shown (App/Style Panel/Page).
-	enum class Page { Style, Animation, Timing };
+	/// Script, the video's script typed in, isn't on the switch: the button
+	/// beside it opens it over the whole panel, and its ‹ goes back
+	enum class Page { Style, Animation, Timing, Script };
 	void ShowPage(Page page);
 	Page ShownPage() const { return page; }
 	AnimationPage *Animation() const { return animation; }
 	TimingPage *Timing() const { return timing; }
+	ScriptPage *Script() const { return script; }
+	/// Show the panel, if it is hidden or folded away, on the script page
+	/// with the keyboard in its text; from there, back to the page before
+	void ToggleScript();
 	/// Show the current line's Banner or Scroll on the animation page,
 	/// adding a scroll where its Effect field is empty, if the panel is on
 	/// the screen. @return Whether it is
@@ -90,9 +97,9 @@ public:
 	/// The parts Tab goes through, in order: those shown and enabled that
 	/// take the keyboard
 	std::vector<Part*> KeyboardParts() const;
-	/// Give the keyboard to the part after @p from, or before it; round
-	/// from the last to the first
-	void MoveFocus(Part *from, bool forward);
+	/// Give the keyboard to the part after @p from (a part, or the script's
+	/// text), or before it; round from the last to the first
+	void MoveFocus(wxWindow *from, bool forward);
 	/// Whether the keyboard is in the panel
 	bool HasKeyboard() const;
 	/// Show the panel if it is hidden or folded away and give the keyboard
@@ -154,6 +161,9 @@ private:
 	AnimationPage *animation = nullptr;
 	wxSizer *timing_body = nullptr;
 	TimingPage *timing = nullptr;
+	wxSizer *top_line = nullptr; ///< The switch, the script button and »
+	ScriptPage *script = nullptr;
+	Page before_script = Page::Style; ///< Where the script page's ‹ goes
 	/// Show or hide a section's title and body for its state and the page
 	void ApplySection(Section const& section);
 	std::map<std::string, Part*> parts;

@@ -5,6 +5,7 @@
 #include "style_panel_parts.h"
 
 #include "animation_page.h"
+#include "script_page.h"
 #include "timing_page.h"
 
 #include "ass_dialogue.h"
@@ -122,6 +123,10 @@ StylePanel::StylePanel(wxWindow *parent, agi::Context *c)
 		pages->on_choose = [this](int index) { ShowPage(static_cast<Page>(index)); };
 		line->AddSpacer(pad);
 		line->Add(pages, 1, wxALIGN_CENTER_VERTICAL);
+		// The script page, apart from the switch: it is the video's, not the line's
+		auto script_button = Add<IconButton>("script", IconButton::Glyph::Script, _("Script: the video's whole script, typed or pasted in to check the subtitles against"));
+		script_button->on_click = [this] { ShowPage(Page::Script); };
+		line->Add(script_button, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, pad - FromDIP(6));
 		auto collapse = Add<IconButton>("collapse", IconButton::Glyph::Collapse, _("Hide the style panel"));
 		collapse->on_click = [this] {
 			// The keyboard on it would be left in a hidden window
@@ -131,6 +136,7 @@ StylePanel::StylePanel(wxWindow *parent, agi::Context *c)
 		};
 		line->Add(collapse, 0, wxALIGN_CENTER_VERTICAL | wxLEFT | wxRIGHT, pad - FromDIP(4));
 		outer->Add(line, 0, wxEXPAND | wxTOP | wxBOTTOM, pad - FromDIP(4));
+		top_line = line;
 	}
 
 	auto &style = AddSection(outer, "style", _("Style"));
@@ -291,13 +297,24 @@ StylePanel::StylePanel(wxWindow *parent, agi::Context *c)
 	outer->Add(timing_body, 0, wxEXPAND);
 	outer->Show(timing_body, false);
 
+	// The script page: the whole panel, its text down to the bottom
+	script = new ScriptPage(this, c);
+	script->on_back = [this] { ShowPage(before_script); };
+	script->on_collapse = [this] {
+		bool keyboard = HasKeyboard();
+		if (on_collapse) on_collapse();
+		if (keyboard) flat::GoHome(this);
+	};
+	outer->Add(script, 1, wxEXPAND);
+	outer->Show(script, false);
+
 	SetSizer(outer);
 	SetSectionVisible("shape", false);
 	FitInside();
 	BindEditing();
 	SetMinSize(wxSize(FromDIP(min_width), -1));
 	// Back on the page last shown
-	ShowPage(static_cast<Page>(std::clamp<int>(OPT_GET("App/Style Panel/Page")->GetInt(), 0, 2)));
+	ShowPage(static_cast<Page>(std::clamp<int>(OPT_GET("App/Style Panel/Page")->GetInt(), 0, 3)));
 
 	connections.push_back(c->subtitleAccess->Read().AddCommitListener("style_panel.AddCommitListener",
 		[this](int, AssDialogue const*, SubtitleModelRebindTicket ticket) { ScheduleUpdate(); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); },
@@ -751,21 +768,45 @@ bool StylePanel::ShowScrollEffect() {
 
 void StylePanel::ShowPage(Page new_page) {
 	if (page == new_page) return;
+	if (new_page == Page::Script) before_script = page;
+	bool keyboard = HasKeyboard();
 	page = new_page;
-	static_cast<PageSwitch*>(parts["page"])->Select(static_cast<int>(page));
+	if (page != Page::Script)
+		static_cast<PageSwitch*>(parts["page"])->Select(static_cast<int>(page));
 	OPT_SET("App/Style Panel/Page")->SetInt(static_cast<int>(page));
 	Freeze();
 	for (auto const& [name, section] : sections) ApplySection(section);
+	GetSizer()->Show(top_line, page != Page::Script, true);
 	GetSizer()->Show(animation_body, page == Page::Animation, true);
 	GetSizer()->Show(timing_body, page == Page::Timing, true);
+	GetSizer()->Show(script, page == Page::Script, true);
 	if (page == Page::Timing) timing->UpdateNow();
+	if (page == Page::Script) script->UpdateNow();
 	Layout();
 	FitInside();
 	Scroll(0, 0);
 	Thaw();
+	// The button pressed went with the page it was on: the keyboard goes
+	// to the script's text, and back to the switch
+	if (keyboard && IsShownOnScreen()) {
+		if (page == Page::Script) script->TextBox()->SetFocus();
+		else if (!HasKeyboard() || !FindFocus()->IsShownOnScreen()) parts["page"]->SetFocus();
+	}
+}
+
+void StylePanel::ToggleScript() {
+	if (page == Page::Script && IsShownOnScreen()) {
+		ShowPage(before_script);
+		return;
+	}
+	if (!OPT_GET("App/Style Panel/Show")->GetBool()) OPT_SET("App/Style Panel/Show")->SetBool(true);
+	if (request_open) request_open();
+	ShowPage(Page::Script);
+	if (IsShownOnScreen()) script->TextBox()->SetFocus();
 }
 
 std::vector<StylePanel::Part*> StylePanel::KeyboardParts() const {
+	// The script's text isn't a part: MoveFocus puts it after the page's parts
 	std::vector<Part*> found;
 	std::function<void(wxWindow const*)> walk = [&](wxWindow const* window) {
 		for (auto child : window->GetChildren()) {
@@ -780,8 +821,10 @@ std::vector<StylePanel::Part*> StylePanel::KeyboardParts() const {
 	return found;
 }
 
-void StylePanel::MoveFocus(Part *from, bool forward) {
-	auto list = KeyboardParts();
+void StylePanel::MoveFocus(wxWindow *from, bool forward) {
+	std::vector<wxWindow*> list;
+	for (auto part : KeyboardParts()) list.push_back(part);
+	if (page == Page::Script && script->TextBox()->IsShownOnScreen()) list.push_back(script->TextBox());
 	if (list.empty()) {
 		flat::GoHome(this);
 		return;
@@ -803,6 +846,11 @@ bool StylePanel::TakeKeyboard() {
 	if (!OPT_GET("App/Style Panel/Show")->GetBool()) OPT_SET("App/Style Panel/Show")->SetBool(true);
 	if (request_open) request_open();
 	if (!IsShownOnScreen()) return false;
+	// On the script page, into its text: what it is there for
+	if (page == Page::Script) {
+		script->TextBox()->SetFocus();
+		return true;
+	}
 	auto list = KeyboardParts();
 	if (list.empty()) return false;
 	list.front()->SetFocus();
@@ -1142,7 +1190,7 @@ std::vector<std::pair<wxString, wxRect>> StylePanelEdge::PageNames() const {
 	dc.SetFont(GetFont());
 	int gap = theme::BlockGap(GetParent());
 	int y = FromDIP(40); // below the «
-	for (wxString const& label : {_("Style"), _("Animation"), wxGETTEXT_IN_CONTEXT("page", "Timing")}) {
+	for (wxString const& label : {_("Style"), _("Animation"), wxGETTEXT_IN_CONTEXT("page", "Timing"), wxGETTEXT_IN_CONTEXT("page", "Script")}) {
 		int length = dc.GetTextExtent(label).x;
 		// Taller than the text, for an easier aim
 		names.emplace_back(label, wxRect(gap, y, std::max(0, GetClientSize().x - gap), length));

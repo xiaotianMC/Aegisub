@@ -37,7 +37,7 @@ class SubtitleProjectAccess {
     void RestoreMetadata(ProjectMetadata const& value) noexcept;
 public:
     enum class MetadataField { AutomationScripts, ExportFilters, ExportEncoding, StyleStorage,
-        AudioFile, VideoFile, TimecodesFile, KeyframesFile };
+        AudioFile, VideoFile, TimecodesFile, KeyframesFile, ScriptText };
     uint64_t MetadataRevision() const;
     bool MetadataDirty() const;
     ProjectUIState UIState() const;

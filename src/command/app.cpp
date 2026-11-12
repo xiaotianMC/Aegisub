@@ -328,6 +328,18 @@ struct app_style_panel_keyboard final : public Command {
 	}
 };
 
+struct app_script_text final : public Command {
+	CMD_NAME("app/script_text")
+	STR_MENU("&Script")
+	STR_DISP("Script Page")
+	STR_HELP("Show the video's script in the style panel, to type or paste it in and check the subtitles against it; from there, back to the page before")
+
+	void operator()(agi::Context *c) override {
+		if (auto panel = c->frame ? c->frame->GetStylePanel() : nullptr)
+			panel->ToggleScript();
+	}
+};
+
 struct app_updates final : public Command {
 	CMD_NAME("app/updates")
 	STR_MENU("&Check for Updates...")
@@ -427,6 +439,7 @@ namespace cmd {
 		reg(std::make_unique<app_toggle_toolbar>());
 		reg(std::make_unique<app_toggle_style_panel>());
 		reg(std::make_unique<app_style_panel_keyboard>());
+		reg(std::make_unique<app_script_text>());
 #ifdef __WXMAC__
 		reg(std::make_unique<app_minimize>());
 		reg(std::make_unique<app_maximize>());
