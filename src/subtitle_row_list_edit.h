@@ -42,9 +42,10 @@ public:
         std::sort(rows.begin(), rows.end(), [](auto a, auto b) { return a->Row < b->Row; });
         return rows;
     }
-    int Commit(wxString const& message, int type) {
+    /// @p amend_id the step this joins, as SubsController::OnCommit takes it
+    int Commit(wxString const& message, int type, int amend_id = -1) {
         Apply();
-        auto id = c->subtitleAccess->Edit(scope->Lease()).Commit(message, type);
+        auto id = c->subtitleAccess->Edit(scope->Lease()).Commit(message, type, amend_id);
         committed = true;
         return id;
     }

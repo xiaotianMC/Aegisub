@@ -81,6 +81,7 @@ std::vector<std::string_view> get_registered_commands() {
 void init_app();
 void init_audio();
 void init_automation();
+void init_autotiming();
 void init_command();
 void init_edit();
 void init_grid();
@@ -99,6 +100,7 @@ void init_builtin_commands() {
 	init_app();
 	init_audio();
 	init_automation();
+	init_autotiming();
 	init_edit();
 	init_grid();
 	init_help();

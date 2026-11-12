@@ -68,7 +68,6 @@
         { "command" : "time/shift" },
         { "command" : "tool/time/postprocess" },
         { "command" : "tool/time/kanji" },
-        { "command" : "tool/magiatimeline" },
         {},
         { "command" : "time/snap/start_video" },
         { "command" : "time/snap/end_video" },
@@ -77,6 +76,16 @@
         { "command" : "time/frame/current" },
         {},
         { "submenu" : "main/timing/make times continuous", "text" : "Make Times Continuous" }
+    ],
+    "main/autotiming" : [
+        { "command" : "tool/magiatimeline" },
+        { "command" : "keyframe/timeline" },
+        {},
+        { "command" : "keyframe/detect" },
+        { "command" : "time/snap/scene_nearby" },
+        {},
+        { "command" : "autotiming/bilingual" },
+        { "command" : "autotiming/clear_marks" }
     ],
     "main/timing/make times continuous" : [
         { "command" : "time/continuous/start" },

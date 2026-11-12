@@ -238,8 +238,16 @@ void Audio(PreferencesBook *book, Preferences *parent) {
 	p->OptionAdd(timing, _("Automatically link nearby subtitles"), "Timing/Link Adjacent Lines",
 		{.help = _("Dragging the boundary between two lines that touch moves both")});
 	p->OptionAdd(timing, _("Link subtitle gaps under (s)"), "Timing/Adjacent Line Gap", {.min = 0, .max = 10, .inc = 0.1});
-	p->OptionAdd(timing, _("Snap to scene changes within (ms)"), "Timing/Scene Snap Distance", {.min = 0, .max = 10000, .inc = 50,
-		.help = _("How far Snap to Nearby Scene Changes moves a line's start or end, before or after it, to land on a scene change")});
+	// Out, a line shows a little longer; in, it would cover a word or cut one
+	// off, so those reach only a few frames
+	p->OptionAdd(timing, _("Snap a start earlier to a scene change within (ms)"), "Timing/Scene Snap/Start Earlier", {.min = 0, .max = 10000, .inc = 50,
+		.help = _("How far Snap to Nearby Scene Changes moves a line's start back to land on a scene change")});
+	p->OptionAdd(timing, _("Snap a start later to a scene change within (ms)"), "Timing/Scene Snap/Start Later", {.min = 0, .max = 10000, .inc = 10,
+		.help = _("How far Snap to Nearby Scene Changes moves a line's start on to land on a scene change: further would hide the line's first word")});
+	p->OptionAdd(timing, _("Snap an end later to a scene change within (ms)"), "Timing/Scene Snap/End Later", {.min = 0, .max = 10000, .inc = 50,
+		.help = _("How far Snap to Nearby Scene Changes moves a line's end on to land just before a scene change")});
+	p->OptionAdd(timing, _("Snap an end earlier to a scene change within (ms)"), "Timing/Scene Snap/End Earlier", {.min = 0, .max = 10000, .inc = 10,
+		.help = _("How far Snap to Nearby Scene Changes moves a line's end back to land just before a scene change: further would take the line away before it is said")});
 
 	auto snapping = p->PageSizer(_("Snapping"));
 	p->OptionAdd(snapping, _("Snap markers by default"), "Audio/Snap/Enable");

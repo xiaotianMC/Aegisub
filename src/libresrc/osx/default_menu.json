@@ -5,6 +5,7 @@
         { "submenu" : "main/view",     "tlcontext": "Menu bar", "text" : "Vie&w" },
         { "submenu" : "main/subtitle", "tlcontext": "Menu bar", "text" : "&Subtitle" },
         { "submenu" : "main/timing",   "tlcontext": "Menu bar", "text" : "&Timing" },
+        { "submenu" : "main/autotiming", "tlcontext": "Menu bar", "text" : "Auto-Ti&ming" },
         { "submenu" : "main/video",    "tlcontext": "Menu bar", "text" : "&Video" },
         { "submenu" : "main/audio",    "tlcontext": "Menu bar", "text" : "&Audio" },
         { "special" : "automation",    "tlcontext": "Menu bar", "text" : "A&utomation" },

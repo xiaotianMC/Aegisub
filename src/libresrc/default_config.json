@@ -515,7 +515,13 @@
 		"Default Duration" : 3000,
 		"Link Adjacent Lines" : true,
 		"Adjacent Line Gap" : 0.3,
-		"Scene Snap Distance" : 500
+		"Scene Snap" : {
+			"End Earlier" : 100,
+			"End Later" : 500,
+			"Start Earlier" : 500,
+			"Start Later" : 100
+		},
+		"Scene Snap Distance" : -1
 	},
 
 	"Tool" : {

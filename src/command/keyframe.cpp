@@ -174,13 +174,18 @@ bool NothingWritten(agi::Context *c) {
 	return true;
 }
 
-/// With nothing written yet, a blank line for each shot found: from its
-/// first frame to the frame before the next cut, in one undo step. The
-/// lines there were, all empty, make way for them. @return How many
-size_t FillEmptyTimeline(agi::Context *c, std::vector<int> const& cuts) {
+/// A blank line for each shot found: from its first frame to the frame
+/// before the next cut, in one undo step. With nothing written yet, the
+/// lines there were, all empty, make way for them; otherwise every line is
+/// kept and only the shots no line is shown in get one, among the others by
+/// time. @p always false does nothing unless nothing is written.
+/// @return How many lines were added
+size_t TimelineFromCuts(agi::Context *c, std::vector<int> const& cuts, bool always) {
 	auto provider = c->project->VideoProvider();
 	auto const& fps = c->project->Timecodes();
-	if (!provider || !fps.IsLoaded() || !NothingWritten(c)) return 0;
+	if (!provider || !fps.IsLoaded()) return 0;
+	bool const replace = NothingWritten(c);
+	if (!replace && !always) return 0;
 	int const frames = provider->GetFrameCount();
 	if (frames <= 0) return 0;
 	std::vector<int> starts;
@@ -194,23 +199,59 @@ size_t FillEmptyTimeline(agi::Context *c, std::vector<int> const& cuts) {
 	std::string style = "Default";
 	if (!staged.file.Events.empty()) style = staged.file.Events.front().Style.get();
 	std::vector<std::unique_ptr<AssDialogue>> removed;
-	staged.file.Events.clear_and_dispose([&](AssDialogue *line) { removed.emplace_back(line); });
+	if (replace)
+		staged.file.Events.clear_and_dispose([&](AssDialogue *line) { removed.emplace_back(line); });
 	std::set<AssDialogue*> added;
 	AssDialogue *first = nullptr;
 	for (size_t i = 0; i < starts.size(); ++i) {
 		int const last_frame = (i + 1 < starts.size() ? starts[i + 1] : frames) - 1;
+		int const start = fps.TimeAtFrame(starts[i], agi::vfr::START);
+		int const end = std::max<int>(fps.TimeAtFrame(last_frame, agi::vfr::END), start);
+		auto before = staged.file.Events.end();
+		if (!replace) {
+			bool shown = false;
+			for (auto it = staged.file.Events.begin(); it != staged.file.Events.end(); ++it) {
+				if (added.count(&*it)) continue;
+				if (!it->Comment && it->Start < end && it->End > start) shown = true;
+				if (before == staged.file.Events.end() && it->Start > start) before = it;
+			}
+			if (shown) continue;
+		}
 		auto line = new AssDialogue;
-		line->Start = fps.TimeAtFrame(starts[i], agi::vfr::START);
-		line->End = std::max<int>(fps.TimeAtFrame(last_frame, agi::vfr::END), line->Start);
+		line->Start = start;
+		line->End = end;
 		line->Style = style;
-		staged.file.Events.push_back(*line);
+		staged.file.Events.insert(before, *line);
 		added.insert(line);
 		if (!first) first = line;
 	}
+	if (added.empty()) return 0;
 	staged.Commit(_("timeline from scene changes"), AssFile::COMMIT_DIAG_ADDREM);
 	staged.Select(added, first);
 	return added.size();
 }
+
+struct keyframe_timeline final : public Command {
+	CMD_NAME("keyframe/timeline")
+	STR_MENU("&Timeline from Scene Changes")
+	STR_DISP("Timeline from Scene Changes")
+	STR_HELP("Add an empty line for each shot between the scene changes that no line is shown in yet")
+	CMD_TYPE(COMMAND_VALIDATE)
+
+	bool Validate(const agi::Context *c) override {
+		return !c->project->Keyframes().empty() && c->project->Timecodes().IsLoaded() && c->project->VideoProvider();
+	}
+
+	void operator()(agi::Context *c) override {
+		if (!Validate(c)) return;
+		size_t const lines = TimelineFromCuts(c, c->project->Keyframes(), true);
+		if (!c->frame) return;
+		if (lines)
+			c->frame->StatusTimeout(fmt_plural(lines, "Added an empty line for %d shot", "Added an empty line for each of %d shots", static_cast<int>(lines)));
+		else
+			c->frame->StatusTimeout(_("Every shot already has a line"));
+	}
+};
 
 struct keyframe_detect final : public Command {
 	CMD_NAME("keyframe/detect")
@@ -288,7 +329,7 @@ struct keyframe_detect final : public Command {
 			}
 		}
 		c->project->LoadKeyframes(cache);
-		size_t const lines = FillEmptyTimeline(c, c->project->Keyframes());
+		size_t const lines = TimelineFromCuts(c, c->project->Keyframes(), false);
 		if (!c->frame) return;
 		if (lines)
 			c->frame->StatusTimeout(fmt_plural(lines, "Found %d shot and added an empty line for each", "Found %d shots and added an empty line for each", static_cast<int>(lines)));
@@ -304,5 +345,6 @@ namespace cmd {
 		reg(std::make_unique<keyframe_close>());
 		reg(std::make_unique<keyframe_open>());
 		reg(std::make_unique<keyframe_save>());
+		reg(std::make_unique<keyframe_timeline>());
 	}
 }

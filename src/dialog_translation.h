@@ -53,6 +53,16 @@ private:
 	/// Which dialogue block in the active line is currently being translated
 	size_t cur_block = 0;
 
+	/// Bilingual, the line its translation goes in, at the same times in the
+	/// target style; 0 when the translation replaces the original
+	int target_id = 0;
+	/// The active line, and its translation line if it has one, read again
+	bool LoadActive();
+	/// A translation line, passed over in a bilingual file
+	bool SkipLine() const;
+	/// The translation line's parts, if they match the original's, tag for tag
+	std::vector<std::unique_ptr<AssDialogueBlock>> TargetBlocks() const;
+
 	/// Total number of dialogue lines in the file
 	size_t line_count;
 

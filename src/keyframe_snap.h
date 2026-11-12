@@ -14,7 +14,17 @@ struct KeyframeSnapThresholds {
 	int before_start = 0, after_start = 0, before_end = 0, after_end = 0;
 	/// Those the timing post-processor keeps
 	static KeyframeSnapThresholds FromOptions();
+	/// Those Snap to Nearby Scene Changes and the style panel keep: a start
+	/// moved earlier or an end later may go further than one moved in, which
+	/// would cover a word or cut one off
+	static KeyframeSnapThresholds FromSceneSnap();
+	/// How far a start (@p end false) or end may move @p later, or earlier
+	int Limit(bool end, bool later) const;
 };
+
+/// One distance either way, Timing/Scene Snap Distance, became four: a
+/// distance set there goes on outward and, no more than 100 ms, inward
+void MigrateSceneSnapDistance();
 
 /// The keyframe in @p keyframes (sorted, not empty) nearest @p frame: the
 /// earlier one when two are as near

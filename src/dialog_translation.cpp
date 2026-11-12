@@ -29,6 +29,7 @@
 
 #include "ass_dialogue.h"
 #include "ass_file.h"
+#include "bilingual.h"
 #include "subtitle_project_access.h"
 #include "command/command.h"
 #include "compat.h"
@@ -140,14 +141,12 @@ DialogTranslation::DialogTranslation(agi::Context *c)
 
 	Bind(wxEVT_KEY_DOWN, &DialogTranslation::OnKeyDown, this);
 
-	edit->ResetActive();
-	if(edit->Rows().empty())throw NothingToTranslate();
-	active_line=std::make_unique<AssDialogue>(edit->Rows().front());
+	if(!LoadActive())throw NothingToTranslate();
 	translated_text->Bind(wxEVT_STC_MODIFIED,[this](wxStyledTextEvent& e){
 		if(!updating_display && (e.GetModificationType() & (wxSTC_MOD_INSERTTEXT|wxSTC_MOD_DELETETEXT)))edit->Begin();
 	});
 	blocks = active_line->ParseTags();
-	if (bad_block(blocks[0])) {
+	if (SkipLine() || bad_block(blocks[0])) {
 		if (!NextBlock())
 			throw NothingToTranslate();
 	}
@@ -162,9 +161,7 @@ DialogTranslation::~DialogTranslation() {
 
 void DialogTranslation::OnActiveLineChanged(bool installing) try {
 	if (switching_lines || !edit->Alive()) return;
-	edit->ResetActive();
-	if(edit->Rows().empty()){edit->Invalidate();return;}
-	active_line=std::make_unique<AssDialogue>(edit->Rows().front());
+	if(!LoadActive()){edit->Invalidate();return;}
 	blocks = active_line->ParseTags();
 	cur_block = 0;
 
@@ -181,6 +178,40 @@ void DialogTranslation::OnExternalCommit(int) {
 	edit->Invalidate();
 }
 
+bool DialogTranslation::LoadActive() {
+	int const id=SubtitleDialogEdit::ActiveID(c);
+	target_id=0;
+	if(!id){edit->Reset({});return false;}
+	auto const& file=c->subtitleAccess->Read();
+	for(auto const& row:file.Events)if(row.Id==id){
+		if(bilingual::IsSource(row))if(auto partner=bilingual::Partner(file,row))target_id=partner->Id;
+		break;
+	}
+	edit->Reset(target_id?std::vector<int>{id,target_id}:std::vector<int>{id});
+	if(edit->Rows().empty())return false;
+	active_line=std::make_unique<AssDialogue>(*edit->Find(id));
+	return true;
+}
+
+bool DialogTranslation::SkipLine() const {
+	// A translation line is not a line to translate when the file is bilingual
+	if(!bilingual::IsTarget(*active_line))return false;
+	for(auto const& row:c->subtitleAccess->Read().Events)if(bilingual::IsSource(row))return true;
+	return false;
+}
+
+std::vector<std::unique_ptr<AssDialogueBlock>> DialogTranslation::TargetBlocks() const {
+	auto const* target=target_id?edit->Find(target_id):nullptr;
+	if(!target)return {};
+	auto kept=AssDialogue(*target).ParseTags();
+	if(kept.size()!=blocks.size())return {};
+	for(size_t i=0;i<kept.size();++i){
+		if(kept[i]->GetType()!=blocks[i]->GetType())return {};
+		if(blocks[i]->GetType()!=AssBlockType::PLAIN && kept[i]->GetText()!=blocks[i]->GetText())return {};
+	}
+	return kept;
+}
+
 bool DialogTranslation::NextBlock() try {
 	if(!edit->Alive())return false;
 	switching_lines = true;
@@ -191,15 +222,14 @@ bool DialogTranslation::NextBlock() try {
 			c->selectionController->NextLine();
 			auto id=SubtitleDialogEdit::ActiveID(c);
 			if(!id || id==active_line->Id)return false;
-			edit->ResetActive();
-			active_line=std::make_unique<AssDialogue>(edit->Rows().front());
+			LoadActive();
 			line_count=c->subtitleAccess->Read().Events.size();
 			blocks = active_line->ParseTags();
 			cur_block = 0;
 		}
 		else
 			++cur_block;
-	} while (bad_block(blocks[cur_block]));
+	} while (SkipLine() || bad_block(blocks[cur_block]));
 	switching_lines = false;
 
 	UpdateDisplay();
@@ -217,15 +247,14 @@ bool DialogTranslation::PrevBlock() try {
 			c->selectionController->PrevLine();
 			auto id=SubtitleDialogEdit::ActiveID(c);
 			if(!id || id==active_line->Id)return false;
-			edit->ResetActive();
-			active_line=std::make_unique<AssDialogue>(edit->Rows().front());
+			LoadActive();
 			line_count=c->subtitleAccess->Read().Events.size();
 			blocks = active_line->ParseTags();
 			cur_block = blocks.size() - 1;
 		}
 		else
 			--cur_block;
-	} while (bad_block(blocks[cur_block]));
+	} while (SkipLine() || bad_block(blocks[cur_block]));
 	switching_lines = false;
 
 	UpdateDisplay();
@@ -262,6 +291,14 @@ void DialogTranslation::UpdateDisplay() {
 	if (seek_video->IsChecked()) c->videoController->JumpToTime(active_line->Start);
 
 	translated_text->ClearAll();
+	// What is already translated of this part, to go on from
+	auto kept=TargetBlocks();
+	if(!kept.empty()){
+		auto text=kept[cur_block]->GetText();
+		boost::replace_all(text,"\\N","\n");
+		translated_text->SetTextRaw(text.c_str());
+		translated_text->DocumentEnd();
+	}
 	translated_text->SetFocus();
 }
 
@@ -271,19 +308,24 @@ void DialogTranslation::Commit(bool next) try {
 	boost::replace_all(new_value, "\r\n", "\\N");
 	boost::replace_all(new_value, "\r", "\\N");
 	boost::replace_all(new_value, "\n", "\\N");
-	AssDialogue candidate(static_cast<AssDialogueBase const&>(*active_line));
 	if(cur_block>=blocks.size())return;
+	auto const* target=target_id?edit->Find(target_id):nullptr;
+	AssDialogue candidate(target?*target:static_cast<AssDialogueBase const&>(*active_line));
 	auto replacement=std::make_unique<AssDialogueBlockPlain>(new_value);
+	// Bilingual, the translation goes in its own line and the original stays:
+	// the other parts of that line are what it has for them, as long as it
+	// still has the original's tags, else the original's
+	auto kept=TargetBlocks();
 	std::string text;
-	for(size_t i=0;i<blocks.size();++i)text+=i==cur_block?new_value:blocks[i]->GetText();
+	for(size_t i=0;i<blocks.size();++i)text+=i==cur_block?new_value:kept.empty()?blocks[i]->GetText():kept[i]->GetText();
 	candidate.Text=std::move(text);
 	file_change_connection.Block();
 	BOOST_SCOPE_EXIT_ALL(this){file_change_connection.Unblock();};
 	if(!edit->Commit({AssDialogueBase(candidate)},_("translation assistant"),AssFile::COMMIT_DIAG_TEXT)) {
 		wxMessageBox(_("The subtitle or its dependencies changed. Select the line again to restart."),_("Translation Assistant"),wxOK|wxICON_WARNING,this);return;
 	}
-	active_line=std::make_unique<AssDialogue>(edit->Rows().front());
-	blocks[cur_block]=std::move(replacement);
+	active_line=std::make_unique<AssDialogue>(*edit->Find(active_line->Id));
+	if(!target_id)blocks[cur_block]=std::move(replacement);
 
 	if (next) {
 		if (!NextBlock()) {

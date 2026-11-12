@@ -265,7 +265,8 @@ TimingPage::TimingPage(wxWindow *parent, agi::Context *c)
 		connections.push_back(c->project->AddTimecodesListener([this](agi::vfr::Framerate const&) { ScheduleUpdate(); }));
 	}
 	// Set here or in Preferences and the timing post-processor alike
-	for (const char *option : {"Timing/Scene Snap Distance", "Tool/Timing Post Processor/Lead/IN", "Tool/Timing Post Processor/Lead/OUT",
+	for (const char *option : {"Timing/Scene Snap/Start Earlier", "Timing/Scene Snap/Start Later",
+		"Timing/Scene Snap/End Earlier", "Timing/Scene Snap/End Later", "Tool/Timing Post Processor/Lead/IN", "Tool/Timing Post Processor/Lead/OUT",
 		"Subtitle/Character Counter/CPS Warning Threshold", "Subtitle/Character Counter/CPS Error Threshold",
 		"Subtitle/Character Counter/Ignore Whitespace", "Subtitle/Character Counter/Ignore Punctuation",
 		"Tool/Timing Post Processor/Threshold/Adjacent Gap", "Tool/Timing Post Processor/Threshold/Adjacent Overlap",
@@ -353,12 +354,12 @@ void TimingPage::StepFrame(bool at_end, int frames) {
 
 void TimingPage::SnapEnd(bool at_end) {
 	if (c->project->Keyframes().empty() || !c->project->Timecodes().IsLoaded()) return;
-	int const d = OPT_GET("Timing/Scene Snap Distance")->GetInt();
 	auto provider = c->project->VideoProvider();
 	int const frames = provider ? provider->GetFrameCount() : 0;
-	KeyframeSnapThresholds limits;
-	if (at_end) limits.before_end = limits.after_end = d;
-	else limits.before_start = limits.after_start = d;
+	auto limits = KeyframeSnapThresholds::FromSceneSnap();
+	// Only the end pressed for moves
+	if (at_end) limits.before_start = limits.after_start = 0;
+	else limits.before_end = limits.after_end = 0;
 	Write(_("snap to scene changes"), [&](std::vector<AssDialogue*> const& rows, AssDialogue &) {
 		SnapToKeyframes({rows.begin(), rows.end()}, c->project->Keyframes(), frames, c->project->Timecodes(), limits);
 	});
@@ -561,13 +562,14 @@ void TimingPage::BuildScene() {
 			refreshers.push_back([this, at_end, where, snap] {
 				SceneCut cut;
 				auto provider = c->project->VideoProvider();
-				int const distance = OPT_GET("Timing/Scene Snap Distance")->GetInt();
 				int const ms = at_end ? end : start;
 				if (!line_id || !NearestSceneCut(c->project->Keyframes(), provider ? provider->GetFrameCount() : 0, c->project->Timecodes(), ms, at_end, cut)) {
 					where->SetText(wxString());
 					snap->Enable(false);
 					return;
 				}
+				// Out and in reach as far as they are each set to
+				int const distance = KeyframeSnapThresholds::FromSceneSnap().Limit(at_end, cut.time > ms);
 				bool within = std::abs(cut.time - ms) <= distance;
 				where->SetText(CutText(at_end, within, cut.frames, distance));
 				snap->Enable(within && cut.frames != 0);
@@ -575,18 +577,31 @@ void TimingPage::BuildScene() {
 		}
 
 		auto row = new wxBoxSizer(wxHORIZONTAL);
-		auto distance = Add<Field>("scene.distance", wxS("±"), "ms", false,
-			_("How far a start or end may move to a scene change, here and for Snap to Nearby Scene Changes (Preferences > Timing)"));
-		distance->SetNumberHandler({0, 5000, 10}, [](double v, bool) {
-			OPT_SET("Timing/Scene Snap Distance")->SetInt(static_cast<int>(std::lround(v)));
+		// Out: a start earlier, an end later. In: the other ways, which would
+		// cover a word or cut one off. Preferences > Timing sets the four apart.
+		auto out = Add<Field>("scene.out", wxGETTEXT_IN_CONTEXT("snap", "Out"), "ms", false,
+			_("How far a start may move earlier or an end later to a scene change, here and for Snap to Nearby Scene Changes (Preferences > Timing)"));
+		out->SetNumberHandler({0, 5000, 10}, [](double v, bool) {
+			int const ms = static_cast<int>(std::lround(v));
+			OPT_SET("Timing/Scene Snap/Start Earlier")->SetInt(ms);
+			OPT_SET("Timing/Scene Snap/End Later")->SetInt(ms);
 		});
-		row->Add(distance, 1, wxEXPAND);
+		row->Add(out, 1, wxEXPAND);
+		auto in = Add<Field>("scene.in", wxGETTEXT_IN_CONTEXT("snap", "In"), "ms", false,
+			_("How far a start may move later or an end earlier to a scene change: a few frames, or the line hides a word (Preferences > Timing)"));
+		in->SetNumberHandler({0, 5000, 10}, [](double v, bool) {
+			int const ms = static_cast<int>(std::lround(v));
+			OPT_SET("Timing/Scene Snap/Start Later")->SetInt(ms);
+			OPT_SET("Timing/Scene Snap/End Earlier")->SetInt(ms);
+		});
+		row->Add(in, 1, wxEXPAND | wxLEFT, FromDIP(4));
 		auto both = Add<TextButton>("scene.both", _("Snap both"), cmd::get("time/snap/scene_nearby")->StrHelp());
 		both->on_click = [this] { cmd::call("time/snap/scene_nearby", c); };
 		row->Add(both, 0, wxEXPAND | wxLEFT, FromDIP(4));
 		AddRow(row);
-		refreshers.push_back([this, distance, both] {
-			distance->SetNumber(OPT_GET("Timing/Scene Snap Distance")->GetInt(), true);
+		refreshers.push_back([this, out, in, both] {
+			out->SetNumber(OPT_GET("Timing/Scene Snap/Start Earlier")->GetInt(), true);
+			in->SetNumber(OPT_GET("Timing/Scene Snap/Start Later")->GetInt(), true);
 			both->Enable(line_id != 0);
 		});
 	}

@@ -25,6 +25,7 @@
 #include "options.h"
 #include "command/command.h"
 #include "include/aegisub/hotkey.h"
+#include <tuple>
 #include <typeinfo>
 #include "flat_dialog.h"
 #include "flat_list.h"
@@ -86,6 +87,7 @@
 #include "async_video_provider.h"
 #include "video_frame.h"
 #include "include/aegisub/video_provider.h"
+#include "bilingual.h"
 #include "keyframe_snap.h"
 #include "scene_detect.h"
 #include "magia_timeline.h"
@@ -3694,6 +3696,87 @@ TEST_F(ordinary_edit, translation_dialog_persists_only_confirmed_text_and_keeps_
     auto save=agi::fs::path((std::filesystem::current_path()/"dialog-result.ass").wstring());{auto write=c->subtitleAccess->TryWrite();c->subsController->Save(save);}
     AssFile reopened;SubtitleFormat::GetReader(save,"utf-8")->ReadFile(&reopened,save,c->project->Timecodes(),"utf-8");EXPECT_EQ("中 文",reopened.Events.front().Text.get());ASSERT_EQ(1u,reopened.Extradata.size());EXPECT_EQ("payload",reopened.Extradata.front().value);
 }
+TEST(bilingual_marks, read_and_written_in_the_effect_field_beside_what_else_it_holds) {
+    auto marks=bilingual::ParseMarks("#12 ?マミ ?ソウルジェム");
+    EXPECT_EQ(12,marks.group);
+    EXPECT_EQ((std::vector<std::string>{"マミ","ソウルジェム"}),marks.unsure);
+    EXPECT_EQ("",marks.rest);
+    marks=bilingual::ParseMarks("note #3 ?a b");
+    EXPECT_EQ(3,marks.group);EXPECT_EQ("note b",marks.rest);
+    // A renderer's effect is never read as marks
+    EXPECT_EQ(0,bilingual::ParseMarks("Scroll up;10;20;#5").group);
+    EXPECT_EQ("Banner;20",bilingual::ClearMarks("Banner;20"));
+    // No commas in the field, and no spaces in a word
+    bilingual::Marks written;written.group=7;written.unsure={"a, b"};written.rest="note";
+    EXPECT_EQ("note #7 ?a\xEF\xBC\x8C" "b",bilingual::FormatMarks(written));
+    EXPECT_EQ("note",bilingual::ClearMarks(bilingual::FormatMarks(written)));
+    EXPECT_EQ("karaoke",bilingual::ClearMarks("karaoke"));
+    EXPECT_EQ("a  b",bilingual::ClearMarks("a  b")) << "untouched when it holds no marks";
+}
+
+TEST_F(ordinary_edit, make_bilingual_pairs_each_line_with_an_empty_translation_line_in_one_step) {
+    {auto write=c->subtitleAccess->TryWrite();auto& f=LiveWriteForTest(*c);
+     auto& first=f.Events.front();first.Start=1000;first.End=2000;first.Text="こんにちは";first.Effect="#1";first.Actor="マミ";
+     auto second=new AssDialogue;second->Start=3000;second->End=4000;second->Text="さようなら";f.Events.push_back(*second);
+     f.Commit("lines",AssFile::COMMIT_DIAG_ADDREM);}
+    std::set<int> ids;for(auto const& row:LiveRead(*c).Events)ids.insert(row.Id);
+    c->selectionController->SetSelectionAndActiveIDs(ids,LiveRead(*c).Events.front().Id);
+    auto description=c->subsController->GetUndoDescription();
+    size_t styles=LiveRead(*c).Styles.size();
+    cmd::call("autotiming/bilingual",c.get());
+    std::vector<std::tuple<std::string,int,int,std::string,std::string,std::string>> lines;
+    for(auto const& row:LiveRead(*c).Events)lines.emplace_back(row.Style.get(),row.Start,row.End,row.Text.get(),row.Actor.get(),row.Effect.get());
+    EXPECT_EQ((std::vector<std::tuple<std::string,int,int,std::string,std::string,std::string>>{
+        {"JP",1000,2000,"こんにちは","マミ","#1"},{"CN",1000,2000,"","マミ",""},
+        {"JP",3000,4000,"さようなら","",""},{"CN",3000,4000,"","",""}}),lines) << "marks stay on the original";
+    EXPECT_NE(nullptr,LiveRead(*c).GetStyle("JP"));EXPECT_NE(nullptr,LiveRead(*c).GetStyle("CN"));
+    EXPECT_EQ(styles+2,LiveRead(*c).Styles.size());
+    // Done again, nothing is to do: no step
+    auto made=c->subsController->GetUndoDescription();
+    cmd::call("autotiming/bilingual",c.get());
+    EXPECT_EQ(4u,LiveRead(*c).Events.size());
+    // One step back: the lines and the styles both
+    c->subsController->Undo();
+    EXPECT_EQ(2u,LiveRead(*c).Events.size());
+    EXPECT_EQ(styles,LiveRead(*c).Styles.size());
+    EXPECT_EQ("Default",LiveRead(*c).Events.front().Style.get());
+    EXPECT_EQ(description,c->subsController->GetUndoDescription());
+    c->subsController->Redo();
+    EXPECT_EQ(made,c->subsController->GetUndoDescription());
+
+    // The translation assistant writes in the translation line, keeps the
+    // original, and goes from original to original
+    c->selectionController->SetSelectionAndActiveIDs({LiveRead(*c).Events.front().Id},LiveRead(*c).Events.front().Id);
+    auto row=[&](size_t i){return std::next(LiveRead(*c).Events.begin(),i);};
+    {DialogTranslation dialog(c.get());SubsTextEditCtrl* target=nullptr;for(auto child:descendants(&dialog))if(auto text=dynamic_cast<SubsTextEditCtrl*>(child))target=text;ASSERT_NE(nullptr,target);
+     target->SetTextRaw("你好");dialog.Commit(true);
+     EXPECT_EQ("こんにちは",row(0)->Text.get());EXPECT_EQ("你好",row(1)->Text.get());
+     EXPECT_EQ(row(2)->Id,c->selectionController->ReadActiveLine()->Id) << "the translation line passed over";
+     target->SetTextRaw("再见");dialog.Commit(false);
+     EXPECT_EQ("さようなら",row(2)->Text.get());EXPECT_EQ("再见",row(3)->Text.get());}
+    // Back on a translated line, its translation is there to go on from
+    c->selectionController->SetSelectionAndActiveIDs({row(0)->Id},row(0)->Id);
+    {DialogTranslation dialog(c.get());SubsTextEditCtrl* target=nullptr;for(auto child:descendants(&dialog))if(auto text=dynamic_cast<SubsTextEditCtrl*>(child))target=text;ASSERT_NE(nullptr,target);
+     EXPECT_EQ("你好",std::string(target->GetTextRaw().data()));}
+}
+
+TEST_F(ordinary_edit, clear_auto_timing_marks_leaves_the_rest_of_the_effect_field) {
+    {auto write=c->subtitleAccess->TryWrite();auto& f=LiveWriteForTest(*c);
+     f.Events.front().Effect="#3 ?マミ";
+     for(auto effect:{"Banner;20","karaoke","note ?x"}){auto line=new AssDialogue;line->Effect=effect;f.Events.push_back(*line);}
+     f.Commit("lines",AssFile::COMMIT_DIAG_ADDREM);}
+    auto description=c->subsController->GetUndoDescription();
+    cmd::call("autotiming/clear_marks",c.get());
+    std::vector<std::string> effects;for(auto const& row:LiveRead(*c).Events)effects.push_back(row.Effect.get());
+    EXPECT_EQ((std::vector<std::string>{"","Banner;20","karaoke","note"}),effects);
+    auto cleared=c->subsController->GetUndoDescription();
+    EXPECT_NE(description,cleared);
+    cmd::call("autotiming/clear_marks",c.get());
+    EXPECT_EQ(cleared,c->subsController->GetUndoDescription()) << "nothing left to clear: no step";
+    c->subsController->Undo();
+    EXPECT_EQ("#3 ?マミ",LiveRead(*c).Events.front().Effect.get());
+}
+
 TEST_F(ordinary_edit, dialog_dependency_changes_and_explicit_hide_release_pending_work) {
     SubtitleDialogEdit edit(c.get());edit.ResetActive();
     {auto write=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).Events.front().Start=1;}
@@ -6440,7 +6523,17 @@ TEST_F(ordinary_edit, timing_page_edits_times_snaps_to_scene_changes_and_adds_le
     EXPECT_EQ(wxS(" error"),shown()["summary.cps"].Right(6));
 
     // Scene changes: frame 50 is 10 frames after the start, frame 150 ends
-    // the scene the end is in
+    // the scene the end is in. Moving the start in that far needs more than
+    // the few frames a start may move later by default.
+    EXPECT_EQ(fmt_tl("Start: none within %d ms",100),shown()["scene.start"]);
+    EXPECT_EQ(wxS(" disabled"),shown()["scene.snap_start"].Right(9));
+    BOOST_SCOPE_EXIT_ALL(&){
+        for(auto o:{"Start Earlier","End Later"})OPT_SET(std::string("Timing/Scene Snap/")+o)->SetInt(500);
+        for(auto o:{"Start Later","End Earlier"})OPT_SET(std::string("Timing/Scene Snap/")+o)->SetInt(100); };
+    shown(); page->EnterNumber("scene.in",500,true);
+    EXPECT_EQ(500,OPT_GET("Timing/Scene Snap/Start Later")->GetInt());
+    EXPECT_EQ(500,OPT_GET("Timing/Scene Snap/End Earlier")->GetInt());
+    EXPECT_EQ(500,OPT_GET("Timing/Scene Snap/Start Earlier")->GetInt()) << "out is set apart";
     EXPECT_EQ(fmt_plural(10,"Start %d frame early","Start %d frames early",10),shown()["scene.start"]);
     page->Press("scene.snap_start");
     EXPECT_EQ(c->project->Timecodes().TimeAtFrame(50,agi::vfr::START),times(0).first);
@@ -6452,13 +6545,13 @@ TEST_F(ordinary_edit, timing_page_edits_times_snaps_to_scene_changes_and_adds_le
     c->subsController->Undo(); c->subsController->Undo();
     EXPECT_EQ(std::make_pair(1600,5600),times(0));
     EXPECT_EQ(description,c->subsController->GetUndoDescription());
-    // The distance is the one Snap to Nearby Scene Changes keeps
-    shown(); page->EnterNumber("scene.distance",100,true);
-    BOOST_SCOPE_EXIT_ALL(&){ OPT_SET("Timing/Scene Snap Distance")->SetInt(500); };
-    EXPECT_EQ(100,OPT_GET("Timing/Scene Snap Distance")->GetInt());
-    EXPECT_EQ(fmt_tl("Start: none within %d ms",100),shown()["scene.start"]);
-    EXPECT_EQ(wxS(" disabled"),shown()["scene.snap_start"].Right(9));
-    OPT_SET("Timing/Scene Snap Distance")->SetInt(500);
+    // The end moves out: the out distance is the one that reaches it
+    shown(); page->EnterNumber("scene.out",100,true);
+    EXPECT_EQ(100,OPT_GET("Timing/Scene Snap/Start Earlier")->GetInt());
+    EXPECT_EQ(100,OPT_GET("Timing/Scene Snap/End Later")->GetInt());
+    EXPECT_EQ(fmt_tl("End: none within %d ms",100),shown()["scene.end"]);
+    EXPECT_EQ(wxS(" disabled"),shown()["scene.snap_end"].Right(9));
+    shown(); page->EnterNumber("scene.out",500,true);
     shown(); page->Press("scene.both");
     EXPECT_EQ(std::make_pair(c->project->Timecodes().TimeAtFrame(50,agi::vfr::START),c->project->Timecodes().TimeAtFrame(149,agi::vfr::END)),times(0));
     c->subsController->Undo();
@@ -8109,6 +8202,44 @@ TEST_F(ordinary_edit, detect_scene_changes_times_empty_subtitles_a_line_a_shot) 
     EXPECT_EQ((std::vector<int>{0,50}),c->project->Keyframes()) << "the keyframes are still loaded";
 }
 
+TEST_F(ordinary_edit, timeline_from_scene_changes_gives_the_shots_with_no_line_one_and_keeps_the_rest) {
+    c->project->LoadVideo("?dummy:25:250:64:48:64:64:64:");
+    ASSERT_NE(nullptr,c->project->VideoProvider());
+    PumpFirstFrame(c.get(),window);
+    agi::fs::path kf((std::filesystem::current_path()/"timeline-keyframes.txt").wstring());
+    agi::keyframe::Save(kf,{0,100,200});
+    c->project->LoadKeyframes(kf);
+    BOOST_SCOPE_EXIT_ALL(&){ c->project->CloseKeyframes(); c->project->CloseVideo(); };
+    auto const& fps=c->project->Timecodes();
+    auto command=cmd::get("keyframe/timeline");
+    ASSERT_TRUE(command->Validate(c.get()));
+    // A line written in the middle shot, and a comment over the first: a
+    // comment is not shown, so that shot still has none
+    {auto write=c->subtitleAccess->TryWrite();auto& f=LiveWriteForTest(*c);
+     auto& row=f.Events.front();row.Start=fps.TimeAtFrame(110,agi::vfr::START);row.End=fps.TimeAtFrame(180,agi::vfr::END);row.Text="hello";
+     auto note=new AssDialogue;note->Comment=true;note->Start=0;note->End=1000;note->Text="note";f.Events.push_back(*note);
+     f.Commit("lines",AssFile::COMMIT_DIAG_ADDREM);}
+    auto description=c->subsController->GetUndoDescription();
+    cmd::call("keyframe/timeline",c.get());
+    std::vector<std::tuple<int,int,std::string>> lines;
+    for(auto const& line:LiveRead(*c).Events) lines.emplace_back(line.Start,line.End,line.Text.get());
+    EXPECT_EQ((std::vector<std::tuple<int,int,std::string>>{
+        {0,fps.TimeAtFrame(99,agi::vfr::END),""},
+        {fps.TimeAtFrame(110,agi::vfr::START),fps.TimeAtFrame(180,agi::vfr::END),"hello"},
+        {0,1000,"note"},
+        {fps.TimeAtFrame(200,agi::vfr::START),fps.TimeAtFrame(249,agi::vfr::END),""}}),lines) << "among the others by time, all kept";
+    EXPECT_EQ(2u,c->selectionController->ReadSelectedLines().size());
+    c->subsController->Undo();
+    EXPECT_EQ(2u,LiveRead(*c).Events.size()) << "one undo step";
+    EXPECT_EQ(description,c->subsController->GetUndoDescription());
+    c->subsController->Redo();
+    // Every shot has a line now: nothing added, no empty undo step
+    cmd::call("keyframe/timeline",c.get());
+    EXPECT_EQ(4u,LiveRead(*c).Events.size());
+    c->subsController->Undo();
+    EXPECT_EQ(2u,LiveRead(*c).Events.size());
+}
+
 TEST_F(ordinary_edit, snap_to_nearby_scene_changes_moves_the_selected_lines_in_one_step) {
     c->project->LoadVideo("?dummy:25:250:64:48:64:64:64:");
     ASSERT_NE(nullptr,c->project->VideoProvider());
@@ -8118,7 +8249,8 @@ TEST_F(ordinary_edit, snap_to_nearby_scene_changes_moves_the_selected_lines_in_o
     c->project->LoadKeyframes(kf);
     BOOST_SCOPE_EXIT_ALL(&){ c->project->CloseKeyframes(); c->project->CloseVideo(); };
     // Timed to the audio, a line starts and ends further from the cuts than
-    // the timing post-processor's few frames: the default distance reaches
+    // the timing post-processor's few frames: the default distance out
+    // reaches the end, 400 ms on; the start, 400 ms in, stays
     {auto write=c->subtitleAccess->TryWrite();auto& row=LiveWriteForTest(*c).Events.front();
      row.Start=1600;row.End=5600;LiveWriteForTest(*c).Commit("times",AssFile::COMMIT_DIAG_TIME);}
     {auto id=LiveRead(*c).Events.front().Id;c->selectionController->SetSelectionAndActiveIDs({id},id);}
@@ -8126,17 +8258,46 @@ TEST_F(ordinary_edit, snap_to_nearby_scene_changes_moves_the_selected_lines_in_o
     ASSERT_TRUE(cmd::get("time/snap/scene_nearby")->Validate(c.get()));
     cmd::call("time/snap/scene_nearby",c.get());
     auto const& row=LiveRead(*c).Events.front();
-    EXPECT_EQ(c->project->Timecodes().TimeAtFrame(50,agi::vfr::START),int(row.Start));
+    EXPECT_EQ(1600,int(row.Start));
     EXPECT_EQ(c->project->Timecodes().TimeAtFrame(149,agi::vfr::END),int(row.End));
+    c->subsController->Undo();
+    // Set to reach in that far, the start goes too
+    BOOST_SCOPE_EXIT_ALL(&){ OPT_SET("Timing/Scene Snap/Start Later")->SetInt(100); };
+    OPT_SET("Timing/Scene Snap/Start Later")->SetInt(500);
+    cmd::call("time/snap/scene_nearby",c.get());
+    EXPECT_EQ(c->project->Timecodes().TimeAtFrame(50,agi::vfr::START),int(LiveRead(*c).Events.front().Start));
+    EXPECT_EQ(c->project->Timecodes().TimeAtFrame(149,agi::vfr::END),int(LiveRead(*c).Events.front().End));
     c->subsController->Undo();
     EXPECT_EQ(1600,int(LiveRead(*c).Events.front().Start));EXPECT_EQ(5600,int(LiveRead(*c).Events.front().End));
     EXPECT_EQ(description,c->subsController->GetUndoDescription());
     // Nothing within the distance: nothing changed, no empty undo step
-    OPT_SET("Timing/Scene Snap Distance")->SetInt(100);
-    BOOST_SCOPE_EXIT_ALL(&){ OPT_SET("Timing/Scene Snap Distance")->SetInt(500); };
+    OPT_SET("Timing/Scene Snap/Start Later")->SetInt(100);
+    OPT_SET("Timing/Scene Snap/End Later")->SetInt(100);
+    BOOST_SCOPE_EXIT_ALL(&){ OPT_SET("Timing/Scene Snap/End Later")->SetInt(500); };
     cmd::call("time/snap/scene_nearby",c.get());
     EXPECT_EQ(1600,int(LiveRead(*c).Events.front().Start));EXPECT_EQ(5600,int(LiveRead(*c).Events.front().End));
     EXPECT_EQ(description,c->subsController->GetUndoDescription());
+}
+
+TEST_F(ordinary_edit, one_scene_snap_distance_set_before_goes_out_and_a_little_way_in) {
+    BOOST_SCOPE_EXIT_ALL(&){
+        OPT_SET("Timing/Scene Snap Distance")->SetInt(-1);
+        for(auto o:{"Start Earlier","End Later"})OPT_SET(std::string("Timing/Scene Snap/")+o)->SetInt(500);
+        for(auto o:{"Start Later","End Earlier"})OPT_SET(std::string("Timing/Scene Snap/")+o)->SetInt(100); };
+    // Nothing set before: the four stay as they are
+    OPT_SET("Timing/Scene Snap/Start Later")->SetInt(40);
+    MigrateSceneSnapDistance();
+    EXPECT_EQ(40,OPT_GET("Timing/Scene Snap/Start Later")->GetInt());
+    OPT_SET("Timing/Scene Snap Distance")->SetInt(300);
+    MigrateSceneSnapDistance();
+    EXPECT_EQ(300,OPT_GET("Timing/Scene Snap/Start Earlier")->GetInt());
+    EXPECT_EQ(300,OPT_GET("Timing/Scene Snap/End Later")->GetInt());
+    EXPECT_EQ(100,OPT_GET("Timing/Scene Snap/Start Later")->GetInt());
+    EXPECT_EQ(100,OPT_GET("Timing/Scene Snap/End Earlier")->GetInt());
+    EXPECT_EQ(-1,OPT_GET("Timing/Scene Snap Distance")->GetInt()) << "once";
+    OPT_SET("Timing/Scene Snap Distance")->SetInt(60);
+    MigrateSceneSnapDistance();
+    EXPECT_EQ(60,OPT_GET("Timing/Scene Snap/Start Later")->GetInt()) << "less than 100 in stays as it was";
 }
 
 namespace {

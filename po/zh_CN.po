@@ -9967,21 +9967,48 @@ msgid "Where subtitles are burnt in, so that their coming and going is not taken
 msgstr "硬字幕所在的位置，免得字幕出现、消失被当成切换；黑边会自动排除"
 
 #: ../src/preferences.cpp
-msgid "Snap to scene changes within (ms)"
-msgstr "吸附画面切换的最大距离 (毫秒)"
+msgid "Snap a start earlier to a scene change within (ms)"
+msgstr "开始时间往前吸附画面切换的最大距离 (毫秒)"
+
+#: ../src/preferences.cpp
+msgid "Snap a start later to a scene change within (ms)"
+msgstr "开始时间往后吸附画面切换的最大距离 (毫秒)"
+
+#: ../src/preferences.cpp
+msgid "Snap an end later to a scene change within (ms)"
+msgstr "结束时间往后吸附画面切换的最大距离 (毫秒)"
+
+#: ../src/preferences.cpp
+msgid "Snap an end earlier to a scene change within (ms)"
+msgstr "结束时间往前吸附画面切换的最大距离 (毫秒)"
+
+#: ../src/preferences.cpp
+msgid "How far Snap to Nearby Scene Changes moves a line's start back to land on a scene change"
+msgstr "“吸附到附近的画面切换”最多把开始时间往前移多远，对齐到画面切换"
+
+#: ../src/preferences.cpp
+msgid "How far Snap to Nearby Scene Changes moves a line's start on to land on a scene change: further would hide the line's first word"
+msgstr "“吸附到附近的画面切换”最多把开始时间往后移多远，对齐到画面切换。移得太多会盖掉开口的字"
+
+#: ../src/preferences.cpp
+msgid "How far Snap to Nearby Scene Changes moves a line's end on to land just before a scene change"
+msgstr "“吸附到附近的画面切换”最多把结束时间往后移多远，对齐到画面切换的前一帧"
+
+#: ../src/preferences.cpp
+msgid "How far Snap to Nearby Scene Changes moves a line's end back to land just before a scene change: further would take the line away before it is said"
+msgstr "“吸附到附近的画面切换”最多把结束时间往前移多远，对齐到画面切换的前一帧。移得太多话还没说完字幕就没了"
 
 #: ../src/preferences.cpp
 msgid "How far Snap to Nearby Scene Changes moves a line's start or end, before or after it, to land on a scene change"
 msgstr "“吸附到附近的画面切换”最多把行的开始或结束往前、往后移动多远，去对齐画面切换"
 
 #: ../src/command/time.cpp
-msgid "Move the selected lines' starts and ends onto the keyframes near them, as far as the distance set in Preferences > Timing"
-msgstr "把选中行的开始和结束时间移到附近的关键帧上，最大距离在“首选项 → 时间”里设置"
+msgid "Move the selected lines' starts and ends onto the keyframes near them, as far as the distances set in Preferences > Timing"
+msgstr "把选中行的开始和结束时间移到附近的关键帧上，各方向的最大距离在“首选项 → 时间”里设置"
 
 #: ../src/command/time.cpp
-#, c-format
-msgid "No scene change within %d ms of the selected lines' starts or ends: the distance is set in Preferences > Timing"
-msgstr "选中行的开始和结束 %d 毫秒内都没有画面切换。最大距离可在“首选项 → 时间”里调整"
+msgid "No scene change near enough to the selected lines' starts or ends: the distances are set in Preferences > Timing"
+msgstr "选中行的开始和结束附近都没有够近的画面切换。各方向的最大距离可在“首选项 → 时间”里调整"
 
 #: ../src/command/time.cpp
 #, c-format
@@ -10855,3 +10882,90 @@ msgstr "在样式面板里打开文案页，输入或粘贴视频文案来核对
 #: ../src/command/app.cpp
 msgid "Script Page"
 msgstr "文案页"
+
+#: ../src/timing_page.cpp
+msgctxt "snap"
+msgid "Out"
+msgstr "往外"
+
+#: ../src/timing_page.cpp
+msgctxt "snap"
+msgid "In"
+msgstr "往里"
+
+#: ../src/timing_page.cpp
+msgid "How far a start may move earlier or an end later to a scene change, here and for Snap to Nearby Scene Changes (Preferences > Timing)"
+msgstr "开始时间往前、结束时间往后吸附画面切换的最大距离，这里和“吸附到附近的画面切换”共用（首选项 → 时间）"
+
+#: ../src/timing_page.cpp
+msgid "How far a start may move later or an end earlier to a scene change: a few frames, or the line hides a word (Preferences > Timing)"
+msgstr "开始时间往后、结束时间往前吸附画面切换的最大距离。只宜几帧，否则会盖掉字（首选项 → 时间）"
+
+#: ../src/command/keyframe.cpp
+msgid "&Timeline from Scene Changes"
+msgstr "按画面切换生成时间轴(&T)"
+
+#: ../src/command/keyframe.cpp
+msgid "Timeline from Scene Changes"
+msgstr "按画面切换生成时间轴"
+
+#: ../src/command/keyframe.cpp
+msgid "Add an empty line for each shot between the scene changes that no line is shown in yet"
+msgstr "给还没有字幕的每个镜头添加一行空字幕，时间从镜头开始到下一个画面切换之前"
+
+#: ../src/command/keyframe.cpp
+#, c-format
+msgid "Added an empty line for %d shot"
+msgid_plural "Added an empty line for each of %d shots"
+msgstr[0] "已为 %d 个镜头各添加一行空字幕"
+
+#: ../src/command/keyframe.cpp
+msgid "Every shot already has a line"
+msgstr "每个镜头都已经有字幕"
+
+#: default_menu.json:0
+msgctxt "Menu bar"
+msgid "Auto-Ti&ming"
+msgstr "自动打轴(&M)"
+
+#: ../src/command/autotiming.cpp
+msgid "Make &Bilingual"
+msgstr "生成双语轴(&B)"
+
+#: ../src/command/autotiming.cpp
+msgid "Make Bilingual"
+msgstr "生成双语轴"
+
+#: ../src/command/autotiming.cpp
+msgid "Give each selected line an empty line at the same times for its translation: the line takes the JP style, the translation the CN style"
+msgstr "给每个选中行添加一行同一时间的空行用来写译文：原行改用 JP 样式，译文行用 CN 样式"
+
+#: ../src/command/autotiming.cpp
+msgid "make bilingual"
+msgstr "生成双语轴"
+
+#: ../src/command/autotiming.cpp
+msgid "Clear Auto-Timing &Marks"
+msgstr "清除自动打轴标记(&M)"
+
+#: ../src/command/autotiming.cpp
+msgid "Clear Auto-Timing Marks"
+msgstr "清除自动打轴标记"
+
+#: ../src/command/autotiming.cpp
+msgid "Take the marks auto-timing leaves in the Effect field, #group and ?word, off every line, leaving what else the field holds"
+msgstr "去掉所有行 Effect 栏里自动打轴留下的标记（#组号 和 ?词），栏里的其他内容保留"
+
+#: ../src/command/autotiming.cpp
+msgid "No line has auto-timing marks"
+msgstr "没有行带自动打轴标记"
+
+#: ../src/command/autotiming.cpp
+#, c-format
+msgid "Cleared the marks of %d line"
+msgid_plural "Cleared the marks of %d lines"
+msgstr[0] "已清除 %d 行的标记"
+
+#: ../src/command/autotiming.cpp
+msgid "clear auto-timing marks"
+msgstr "清除自动打轴标记"

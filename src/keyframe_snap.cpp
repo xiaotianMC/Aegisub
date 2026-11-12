@@ -19,6 +19,31 @@ KeyframeSnapThresholds KeyframeSnapThresholds::FromOptions() {
 	return t;
 }
 
+KeyframeSnapThresholds KeyframeSnapThresholds::FromSceneSnap() {
+	KeyframeSnapThresholds t;
+	t.after_start = OPT_GET("Timing/Scene Snap/Start Earlier")->GetInt();
+	t.before_start = OPT_GET("Timing/Scene Snap/Start Later")->GetInt();
+	t.after_end = OPT_GET("Timing/Scene Snap/End Earlier")->GetInt();
+	t.before_end = OPT_GET("Timing/Scene Snap/End Later")->GetInt();
+	return t;
+}
+
+int KeyframeSnapThresholds::Limit(bool end, bool later) const {
+	// before_*: the line's start or end is before the keyframe, so moves later
+	if (end) return later ? before_end : after_end;
+	return later ? before_start : after_start;
+}
+
+void MigrateSceneSnapDistance() {
+	int const old = static_cast<int>(OPT_GET("Timing/Scene Snap Distance")->GetInt());
+	if (old < 0) return;
+	OPT_SET("Timing/Scene Snap/Start Earlier")->SetInt(old);
+	OPT_SET("Timing/Scene Snap/End Later")->SetInt(old);
+	OPT_SET("Timing/Scene Snap/Start Later")->SetInt(std::min(old, 100));
+	OPT_SET("Timing/Scene Snap/End Earlier")->SetInt(std::min(old, 100));
+	OPT_SET("Timing/Scene Snap Distance")->SetInt(-1);
+}
+
 int ClosestKeyframe(std::vector<int> const& kf, int frame) {
 	auto const pos = std::upper_bound(kf.begin(), kf.end(), frame);
 	// The last keyframe if this is after it

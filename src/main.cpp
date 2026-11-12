@@ -47,6 +47,7 @@
 #include "export_framerate.h"
 #include "format.h"
 #include "frame_main.h"
+#include "keyframe_snap.h"
 #include "include/aegisub/context.h"
 #include "libresrc/libresrc.h"
 #include "options.h"
@@ -221,6 +222,7 @@ bool AegisubApp::OnInit() {
 #endif
 
 	MigrateAudioColourSchemes();
+	MigrateSceneSnapDistance();
 
 	// Init commands.
 	cmd::init_builtin_commands();

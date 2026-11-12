@@ -9,7 +9,7 @@ MagiaTimeline 的作者希望用它打轴的视频注明“自动打轴：MagiaT
 1. 按它的说明安装：
    - 源码版：装好 Python 3.12，运行它的 `install.bat` / `install.sh`，会在它的文件夹里建一个 `venv` 虚拟环境；
    - 或者解压发布页上的 Windows 打包版。
-2. 打开视频，**时间 → 用 MagiaTimeline 给硬字幕打轴…**。第一次会问 MagiaTimeline 装在哪个文件夹，之后记住（**首选项 → 视频 → MagiaTimeline → 安装位置**，可以填文件夹、`MagiaTimeline.py` 或 `MagiaTimeline.exe`）。
+2. 打开视频，**自动打轴 → 用 MagiaTimeline 给硬字幕打轴…**。第一次会问 MagiaTimeline 装在哪个文件夹，之后记住（**首选项 → 视频 → MagiaTimeline → 安装位置**，可以填文件夹、`MagiaTimeline.py` 或 `MagiaTimeline.exe`）。
 3. 先弹出设置对话框（见下），点“运行”开始；取消则什么都不做。
 4. 运行时弹出进度窗口，显示它最新输出的一行。可以取消：会结束它以及它启动的所有子进程，字幕不变。
 5. 运行完，它找到的每一段在字幕末尾各添加一行：时间就是那一段，样式和当前行相同。勾了“识别文字”时正文是它识别出的文字，否则为空。新加的行都处于选中状态。一步撤销。
@@ -54,7 +54,7 @@ MagiaTimeline 的作者希望用它打轴的视频注明“自动打轴：MagiaT
 
 - `src/magia_timeline.{h,cpp}`：找启动方式（`FindLaunch`）、读配置（`Inspect`）、改写配置（`WriteConfig`）、保存的选择（`ParseSaved` / `FormatSaved` / `Effective` / `Changes`）、读结果（`ReadTimeline`、`AddReadText`）、启动进程并在进度窗口里等待（`Run`）。
 - `src/dialog_magia_timeline.{h,cpp}`：设置对话框。
-- `src/command/tool.cpp`：`tool/magiatimeline` 命令，在“时间”菜单里。
+- `src/command/tool.cpp`：`tool/magiatimeline` 命令，在“自动打轴”菜单里（见 [auto-timing.md](auto-timing.md)）。
 - 选项 `Tool/MagiaTimeline/Path`（首选项里可改）、`Tool/MagiaTimeline/Settings`（对话框里的选择）。
 
 ## 验证
