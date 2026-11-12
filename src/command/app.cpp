@@ -47,6 +47,7 @@
 #include "../main.h"
 #include "../options.h"
 #include "../project.h"
+#include "../script_panel.h"
 #include "../style_panel.h"
 #include "../theme.h"
 #include "../utils.h"
@@ -323,6 +324,18 @@ struct app_style_panel_keyboard final : public Command {
 	void operator()(agi::Context *c) override {
 		auto panel = c->frame ? c->frame->GetStylePanel() : nullptr;
 		if (!panel) return;
+		// The script panel when it is the one at the right: into its text
+		auto edge = c->frame->GetPanelEdge();
+		auto script = c->frame->GetScriptPanel();
+		if (edge && script && edge->ScriptShown()) {
+			if (script->HasKeyboard()) flat::GoHome(script);
+			else {
+				if (!OPT_GET("App/Style Panel/Show")->GetBool()) OPT_SET("App/Style Panel/Show")->SetBool(true);
+				edge->OpenScript();
+				script->TakeKeyboard();
+			}
+			return;
+		}
 		if (panel->HasKeyboard()) flat::GoHome(panel);
 		else panel->TakeKeyboard();
 	}
@@ -331,12 +344,12 @@ struct app_style_panel_keyboard final : public Command {
 struct app_script_text final : public Command {
 	CMD_NAME("app/script_text")
 	STR_MENU("&Script")
-	STR_DISP("Script Page")
-	STR_HELP("Show the video's script in the style panel, to type or paste it in and check the subtitles against it; from there, back to the page before")
+	STR_DISP("Script Panel")
+	STR_HELP("Show the script panel in the style panel's place, to type or paste in the video's script and check the subtitles against it; from there, back to the style panel")
 
 	void operator()(agi::Context *c) override {
-		if (auto panel = c->frame ? c->frame->GetStylePanel() : nullptr)
-			panel->ToggleScript();
+		if (auto edge = c->frame ? c->frame->GetPanelEdge() : nullptr)
+			edge->ToggleScript();
 	}
 };
 

@@ -38,7 +38,9 @@
 class AegisubApp;
 class AsyncVideoProvider;
 class AudioBox;
+class ScriptPanel;
 class StylePanel;
+class StylePanelEdge;
 class SubsEditBox;
 class VideoBox;
 namespace agi { class AudioProvider; }
@@ -85,6 +87,8 @@ private:
 	AudioBox *audioBox;      ///< The audio area
 	VideoBox *videoBox;      ///< The video area
 	StylePanel *stylePanel;  ///< The style panel at the right
+	ScriptPanel *scriptPanel; ///< The script panel, in the style panel's place when shown
+	StylePanelEdge *panelEdge; ///< The strip left of them, which chooses and folds them
 	SubsEditBox *editBox;    ///< The fields of the active line
 
 	wxSizer *OuterSizer; ///< The editing area, then the style panel at the right
@@ -99,6 +103,8 @@ private:
 public:
 	/// The style panel at the right of the window
 	StylePanel *GetStylePanel() const { return stylePanel; }
+	ScriptPanel *GetScriptPanel() const { return scriptPanel; }
+	StylePanelEdge *GetPanelEdge() const { return panelEdge; }
 	/// The edit box below the audio
 	SubsEditBox *GetEditBox() const { return editBox; }
 	FrameMain();

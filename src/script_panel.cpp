@@ -1,7 +1,7 @@
 // Copyright (c) 2026, Aegisub contributors
 // SPDX-License-Identifier: ISC
 
-#include "script_page.h"
+#include "script_panel.h"
 
 #include "ass_file.h"
 #include "compat.h"
@@ -12,6 +12,8 @@
 #include "subtitle_project_access.h"
 #include "theme.h"
 #include "include/aegisub/context.h"
+
+#include <algorithm>
 
 #include <wx/intl.h>
 #include <wx/sizer.h>
@@ -129,7 +131,7 @@ bool EditsText(wxKeyEvent const& e) {
 }
 }
 
-ScriptPage::ScriptPage(wxWindow *parent, agi::Context *c)
+ScriptPanel::ScriptPanel(wxWindow *parent, agi::Context *c)
 : wxPanel(parent, -1, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL | wxBORDER_NONE)
 , c(c)
 {
@@ -137,20 +139,26 @@ ScriptPage::ScriptPage(wxWindow *parent, agi::Context *c)
 	const int pad = FromDIP(12);
 	auto outer = new wxBoxSizer(wxVERTICAL);
 
-	// ‹ and the page's name on the first line, where the switch is on the
-	// other pages, with the button folding the panel away
+	// The panel's name on the top bar, with the button going back to the
+	// style panel and the one folding it away, where the style panel has
+	// its switch, the script button and »
 	{
 		auto line = new wxBoxSizer(wxHORIZONTAL);
-		auto back = new StylePanel::IconButton(this, StylePanel::IconButton::Glyph::Earlier, _("Back to the style, animation and timing pages"));
-		back->on_click = [this] { if (on_back) on_back(); };
-		parts["back"] = back;
-		line->AddSpacer(pad - FromDIP(6));
-		line->Add(back, 0, wxALIGN_CENTER_VERTICAL);
 		auto title = new wxStaticText(this, -1, wxGETTEXT_IN_CONTEXT("page", "Script"));
 		title->SetFont(title->GetFont().Bold());
-		line->Add(title, 1, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(2));
-		auto collapse = new StylePanel::IconButton(this, StylePanel::IconButton::Glyph::Collapse, _("Hide the style panel"));
-		collapse->on_click = [this] { if (on_collapse) on_collapse(); };
+		line->AddSpacer(pad);
+		line->Add(title, 1, wxALIGN_CENTER_VERTICAL);
+		auto style = new StylePanel::IconButton(this, StylePanel::IconButton::Glyph::Style, _("Back to the style panel: style, animation and timing"));
+		style->on_click = [this] { if (on_style) on_style(); };
+		parts["style"] = style;
+		line->Add(style, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, pad - FromDIP(6));
+		auto collapse = new StylePanel::IconButton(this, StylePanel::IconButton::Glyph::Collapse, _("Hide the script panel"));
+		collapse->on_click = [this] {
+			// The keyboard on it would be left in a hidden window
+			bool keyboard = HasKeyboard();
+			if (on_collapse) on_collapse();
+			if (keyboard) flat::GoHome(this);
+		};
 		parts["collapse"] = collapse;
 		line->Add(collapse, 0, wxALIGN_CENTER_VERTICAL | wxLEFT | wxRIGHT, pad - FromDIP(4));
 		outer->Add(line, 0, wxEXPAND | wxTOP | wxBOTTOM, pad - FromDIP(4));
@@ -190,11 +198,8 @@ ScriptPage::ScriptPage(wxWindow *parent, agi::Context *c)
 		int key = e.GetKeyCode();
 		if (key == WXK_TAB && !e.ControlDown() && !e.AltDown()) {
 			// On to the panel's buttons, as Tab goes between them
-			for (wxWindow *w = GetParent(); w; w = w->GetParent())
-				if (auto panel = dynamic_cast<StylePanel*>(w)) {
-					panel->MoveFocus(text, !e.ShiftDown());
-					return;
-				}
+			MoveFocus(text, !e.ShiftDown());
+			return;
 		}
 		if (key == WXK_ESCAPE && !e.HasAnyModifiers() && flat::GoHome(this)) return;
 		if (EditsText(e)) {
@@ -209,7 +214,7 @@ ScriptPage::ScriptPage(wxWindow *parent, agi::Context *c)
 
 	SetSizer(outer);
 
-	connections.push_back(c->subtitleAccess->Read().AddCommitListener("script_page.AddCommitListener",
+	connections.push_back(c->subtitleAccess->Read().AddCommitListener("script_panel.AddCommitListener",
 		[this](int type, AssDialogue const*, SubtitleModelRebindTicket ticket) {
 			// A file opened or made new
 			if (type == AssFile::COMMIT_NEW) UpdateNow();
@@ -221,9 +226,9 @@ ScriptPage::ScriptPage(wxWindow *parent, agi::Context *c)
 	UpdateNow();
 }
 
-ScriptPage::~ScriptPage() = default;
+ScriptPanel::~ScriptPanel() = default;
 
-void ScriptPage::UpdateNow() {
+void ScriptPanel::UpdateNow() {
 	wxString stored = to_wx(c->subtitleAccess->Read().Properties.script_text);
 	if (text->GetValue() != stored) {
 		// Another file's script: what the split took back belongs to the old one
@@ -233,7 +238,7 @@ void ScriptPage::UpdateNow() {
 	UpdateParts();
 }
 
-void ScriptPage::Store() {
+void ScriptPanel::Store() {
 	std::string value = from_wx(text->GetValue());
 	try {
 		c->subtitleAccess->SetMetadata(SubtitleProjectAccess::MetadataField::ScriptText, std::move(value));
@@ -248,7 +253,7 @@ void ScriptPage::Store() {
 	UpdateParts();
 }
 
-void ScriptPage::Split() {
+void ScriptPanel::Split() {
 	if (before_split) {
 		// Pressed again: back to the text as it was
 		wxString old = *before_split;
@@ -267,7 +272,7 @@ void ScriptPage::Split() {
 	UpdateParts();
 }
 
-void ScriptPage::UpdateParts() {
+void ScriptPanel::UpdateParts() {
 	auto split = static_cast<StylePanel::TextButton*>(parts["split"]);
 	split->SetLabel(before_split ? _("Undo the split") : _("One sentence a line"));
 	split->Enable(before_split || !text->GetValue().empty());
@@ -282,22 +287,53 @@ void ScriptPage::UpdateParts() {
 	}
 }
 
-void ScriptPage::Type(wxString const& value) {
+void ScriptPanel::Type(wxString const& value) {
 	// As typed: wxEVT_TEXT follows
 	text->SetValue(value);
 }
 
-void ScriptPage::Press(std::string const& name) {
-	if (name == "back") { if (on_back) on_back(); }
-	else if (name == "collapse") { if (on_collapse) on_collapse(); }
+void ScriptPanel::Press(std::string const& name) {
+	if (name == "style") { if (on_style) on_style(); }
+	else if (name == "collapse") static_cast<StylePanel::IconButton*>(parts["collapse"])->on_click();
 	else if (name == "split") Split();
 }
 
-std::map<std::string, wxString> ScriptPage::Shown() const {
+std::map<std::string, wxString> ScriptPanel::Shown() const {
 	std::map<std::string, wxString> shown;
 	auto split = static_cast<StylePanel::TextButton*>(parts.at("split"));
 	shown["split"] = split->Shown() + (split->IsEnabled() ? "" : " disabled");
 	shown["count"] = static_cast<StylePanel::Caption*>(parts.at("count"))->Shown();
 	shown["note"] = note;
 	return shown;
+}
+
+bool ScriptPanel::HasKeyboard() const {
+	for (wxWindow *w = FindFocus(); w; w = w->GetParent())
+		if (w == this) return true;
+	return false;
+}
+
+bool ScriptPanel::TakeKeyboard() {
+	if (!text->IsShownOnScreen()) return false;
+	text->SetFocus();
+	return true;
+}
+
+void ScriptPanel::MoveFocus(wxWindow *from, bool forward) {
+	// Down the panel: the top bar's buttons, the split button, the text
+	std::vector<wxWindow*> list;
+	for (auto name : {"style", "collapse", "split"}) {
+		auto part = parts[name];
+		if (part->IsEnabled() && part->IsShownOnScreen()) list.push_back(part);
+	}
+	if (text->IsShownOnScreen()) list.push_back(text);
+	if (list.empty()) {
+		flat::GoHome(this);
+		return;
+	}
+	auto it = std::find(list.begin(), list.end(), from);
+	size_t n = list.size(), i;
+	if (it == list.end()) i = forward ? 0 : n - 1;
+	else i = (static_cast<size_t>(it - list.begin()) + (forward ? 1 : n - 1)) % n;
+	list[i]->SetFocus();
 }

@@ -201,7 +201,7 @@ public:
 	/// the one before
 	void MoveFocus(bool forward) {
 		for (wxWindow *w = GetParent(); w; w = w->GetParent())
-			if (auto panel = dynamic_cast<StylePanel*>(w)) {
+			if (auto panel = dynamic_cast<PanelFocus*>(w)) {
 				panel->MoveFocus(this, forward);
 				return;
 			}
@@ -774,7 +774,7 @@ public:
 /// A small button with a drawn symbol: the style row's actions
 class StylePanel::IconButton final : public StylePanel::Part {
 public:
-	enum class Glyph { Up, Down, Plus, More, Collapse, Close, Now, Pick, Swap, Earlier, Later, Script };
+	enum class Glyph { Up, Down, Plus, More, Collapse, Close, Now, Pick, Swap, Earlier, Later, Script, Style };
 
 private:
 	Glyph glyph;
@@ -879,6 +879,19 @@ private:
 					int y = page.y + FromDIP(4) + i * FromDIP(3);
 					dc.DrawLine(left, y, i == 2 ? left + (right - left) / 2 : right, y);
 				}
+				break;
+			}
+			case Glyph::Style: {
+				// A, as a font's sample: the style panel
+				int h = FromDIP(12), w = FromDIP(5);
+				int top = centre.y - h / 2, bottom = top + h;
+				wxPen pen(p.text, thick);
+				pen.SetCap(wxCAP_ROUND);
+				dc.SetPen(pen);
+				dc.DrawLine(centre.x - w, bottom, centre.x, top);
+				dc.DrawLine(centre.x, top, centre.x + w, bottom);
+				int bar = bottom - h * 2 / 5;
+				dc.DrawLine(centre.x - w * 3 / 5, bar, centre.x + w * 3 / 5, bar);
 				break;
 			}
 			case Glyph::Pick: {

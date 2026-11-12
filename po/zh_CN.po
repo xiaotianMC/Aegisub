@@ -10834,7 +10834,7 @@ msgstr "%d 分 %d 秒"
 msgid "About %s left"
 msgstr "剩余约 %s"
 
-#: ../src/style_panel.cpp ../src/script_page.cpp
+#: ../src/style_panel.cpp ../src/script_panel.cpp
 msgctxt "page"
 msgid "Script"
 msgstr "文案"
@@ -10843,31 +10843,39 @@ msgstr "文案"
 msgid "Script: the video's whole script, typed or pasted in to check the subtitles against"
 msgstr "文案：输入或粘贴视频的完整文案，用来核对字幕"
 
-#: ../src/script_page.cpp
-msgid "Back to the style, animation and timing pages"
-msgstr "回到样式、动画和时间页"
+#: ../src/script_panel.cpp
+msgid "Back to the style panel: style, animation and timing"
+msgstr "回到样式面板：样式、动画和时间"
 
-#: ../src/script_page.cpp
+#: ../src/script_panel.cpp
+msgid "Hide the script panel"
+msgstr "收起文案面板"
+
+#: ../src/style_panel.cpp
+msgid "Drag to change the width of the script panel"
+msgstr "拖动可改变文案面板的宽度"
+
+#: ../src/script_panel.cpp
 msgid "One sentence a line"
 msgstr "拆成一句一行"
 
-#: ../src/script_page.cpp
+#: ../src/script_panel.cpp
 msgid "Break the text after each sentence's end (。！？… and . ! ? before a space), so each sentence is on a line of its own"
 msgstr "在每句结尾（。！？…，以及后面跟空格的 . ! ?）处换行，让每句话单独占一行"
 
-#: ../src/script_page.cpp
+#: ../src/script_panel.cpp
 msgid "Undo the split"
 msgstr "撤销拆分"
 
-#: ../src/script_page.cpp
+#: ../src/script_panel.cpp
 msgid "Type or paste the video's whole script here, to check the subtitles against it. It is saved with the subtitles"
 msgstr "在这里输入或粘贴视频的完整文案，用来核对字幕。文案随字幕文件一起保存"
 
-#: ../src/script_page.cpp
+#: ../src/script_panel.cpp
 msgid "The video's script, saved in the subtitle file"
 msgstr "视频的文案，保存在字幕文件里"
 
-#: ../src/script_page.cpp
+#: ../src/script_panel.cpp
 msgid "The subtitles are being compared: the script can be changed once the comparison ends"
 msgstr "正在对比字幕：对比结束后才能修改文案"
 
@@ -10876,12 +10884,12 @@ msgid "&Script"
 msgstr "文案(&S)"
 
 #: ../src/command/app.cpp
-msgid "Show the video's script in the style panel, to type or paste it in and check the subtitles against it; from there, back to the page before"
-msgstr "在样式面板里打开文案页，输入或粘贴视频文案来核对字幕；已在文案页时回到之前的页"
+msgid "Show the script panel in the style panel's place, to type or paste in the video's script and check the subtitles against it; from there, back to the style panel"
+msgstr "把右侧换成文案面板，输入或粘贴视频文案来核对字幕；文案面板已显示时回到样式面板"
 
 #: ../src/command/app.cpp
-msgid "Script Page"
-msgstr "文案页"
+msgid "Script Panel"
+msgstr "文案面板"
 
 #: ../src/timing_page.cpp
 msgctxt "snap"

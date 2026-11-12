@@ -27,10 +27,20 @@ struct StyleLook;
 class wxSizer;
 class wxTextCtrl;
 class AnimationPage;
-class ScriptPage;
+class ScriptPanel;
 class TimingPage;
 
-class StylePanel final : public wxScrolledWindow {
+/// A panel at the right whose parts Tab goes between: the style panel and
+/// the script panel. A drawn part asks the one it is in for the next
+class PanelFocus {
+public:
+	virtual ~PanelFocus() = default;
+	/// Give the keyboard to what comes after @p from, or before it; round
+	/// from the last to the first
+	virtual void MoveFocus(wxWindow *from, bool forward) = 0;
+};
+
+class StylePanel final : public wxScrolledWindow, public PanelFocus {
 protected:
 	// Declared first: expires only after all owned bindings are destroyed.
 	std::shared_ptr<int> model_observer_lifetime = std::make_shared<int>(0);
@@ -77,17 +87,13 @@ public:
 	/// (\move, \fad, \t and \org of the current line) or timing (its
 	/// times, scene changes and lead). The switch at the top chooses; the
 	/// panel opens on the one last shown (App/Style Panel/Page).
-	/// Script, the video's script typed in, isn't on the switch: the button
-	/// beside it opens it over the whole panel, and its ‹ goes back
-	enum class Page { Style, Animation, Timing, Script };
+	/// The video's script isn't one: the button beside the switch shows the
+	/// script panel in this one's place (StylePanelEdge::ShowScript)
+	enum class Page { Style, Animation, Timing };
 	void ShowPage(Page page);
 	Page ShownPage() const { return page; }
 	AnimationPage *Animation() const { return animation; }
 	TimingPage *Timing() const { return timing; }
-	ScriptPage *Script() const { return script; }
-	/// Show the panel, if it is hidden or folded away, on the script page
-	/// with the keyboard in its text; from there, back to the page before
-	void ToggleScript();
 	/// Show the current line's Banner or Scroll on the animation page,
 	/// adding a scroll where its Effect field is empty, if the panel is on
 	/// the screen. @return Whether it is
@@ -97,9 +103,9 @@ public:
 	/// The parts Tab goes through, in order: those shown and enabled that
 	/// take the keyboard
 	std::vector<Part*> KeyboardParts() const;
-	/// Give the keyboard to the part after @p from (a part, or the script's
-	/// text), or before it; round from the last to the first
-	void MoveFocus(wxWindow *from, bool forward);
+	/// Give the keyboard to the part after @p from, or before it; round
+	/// from the last to the first
+	void MoveFocus(wxWindow *from, bool forward) override;
 	/// Whether the keyboard is in the panel
 	bool HasKeyboard() const;
 	/// Show the panel if it is hidden or folded away and give the keyboard
@@ -113,8 +119,11 @@ public:
 
 	/// Called by the button folding the panel away
 	std::function<void()> on_collapse;
-	/// Called to show the panel when it is folded away
+	/// Called to show the panel when it is folded away, or the script
+	/// panel is in its place
 	std::function<void()> request_open;
+	/// Called by the script button: the script panel in this one's place
+	std::function<void()> on_script;
 
 	/// Show the panel and its Shape section, for the active line's shape
 	void EditShape();
@@ -161,9 +170,6 @@ private:
 	AnimationPage *animation = nullptr;
 	wxSizer *timing_body = nullptr;
 	TimingPage *timing = nullptr;
-	wxSizer *top_line = nullptr; ///< The switch, the script button and »
-	ScriptPage *script = nullptr;
-	Page before_script = Page::Style; ///< Where the script page's ‹ goes
 	/// Show or hide a section's title and body for its state and the page
 	void ApplySection(Section const& section);
 	std::map<std::string, Part*> parts;
@@ -183,41 +189,62 @@ private:
 	template<class T, class... Args> T *Add(std::string const& name, Args&&... args);
 };
 
-/// The strip left of the style panel (docs/style-panel.md): the gap
-/// between it and the editing area, which sets its width when dragged.
-/// It also shows and hides the panel: as "App/Style Panel/Show" says, and
-/// folded away while the window is narrower than narrow_width, leaving a
-/// wider strip with an arrow and the pages' names down it: a name opens
-/// the panel on its page, anywhere else on the page last shown.
+/// The strip left of the panels at the right (docs/style-panel.md): the gap
+/// between them and the editing area, which sets their width when dragged.
+/// One of them shows at a time: the style panel, or the script panel in its
+/// place ("App/Script Panel/Show"). The strip also shows and hides them: as
+/// "App/Style Panel/Show" says, and folded away while the window is
+/// narrower than narrow_width, leaving a wider strip with an arrow and the
+/// pages' names down it, the script's last: a name opens its page or the
+/// script panel, anywhere else what was shown last.
 class StylePanelEdge final : public wxWindow {
 	StylePanel *panel;
-	agi::signal::Connection option_changed, theme_changed;
+	ScriptPanel *script;
+	agi::signal::Connection option_changed, script_changed, theme_changed;
 	bool opened = false; ///< Opened by hand while the window is narrow
 	bool hover = false;
 	int hover_page = -1; ///< The page whose name is under the pointer
 	int start_x = 0, start_width = 0;
 
 	void SetWidth(int width);
+	/// The panel shown when the strip isn't folded
+	wxWindow *Shown() const;
 	/// The pages' names down the folded strip, and where each is
 	std::vector<std::pair<wxString, wxRect>> PageNames() const;
 
 public:
 	/// Below this window width, in DIP, the panel folds away
 	static constexpr int narrow_width = 1100;
+	/// What PageAt gives for the script's name, after the pages'
+	static constexpr int script_name = 3;
 
-	StylePanelEdge(wxWindow *parent, StylePanel *panel);
+	/// @p script may be null: the style panel alone
+	StylePanelEdge(wxWindow *parent, StylePanel *panel, ScriptPanel *script = nullptr);
 
-	/// Show or hide the panel for the parent's width and the option
+	/// Show or hide the panels for the parent's width and the options
 	void Update();
-	/// Whether the panel is hidden and the strip opens it
+	/// Whether the panels are hidden and the strip opens them
 	bool Folded() const;
 	/// Act as clicking the folded strip does
 	void Open();
 	/// Act as clicking a page's name on the folded strip does: open the
-	/// panel on that page
+	/// style panel on that page
 	void Open(StylePanel::Page page);
-	/// The page whose name is at @p point of the folded strip, -1 for none
+	/// The page whose name is at @p point of the folded strip, script_name
+	/// for the script's, -1 for none
 	int PageAt(wxPoint point) const;
-	/// Fold the panel away, as its » button does
+	/// Fold the panels away, as their » buttons do
 	void Collapse();
+
+	/// Whether the script panel is the one at the right, folded or not
+	bool ScriptShown() const;
+	/// Put the script panel in the style panel's place, or back; the
+	/// keyboard in the one going goes to the other
+	void ShowScript(bool show);
+	/// Show the script panel, opening the strip if it is folded, as the
+	/// script's name on it and the style panel's script button do
+	void OpenScript();
+	/// As the View menu's Script does: the script panel on the screen with
+	/// the keyboard in its text; from there, back to the style panel
+	void ToggleScript();
 };

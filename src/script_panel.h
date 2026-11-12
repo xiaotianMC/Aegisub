@@ -1,9 +1,10 @@
 // Copyright (c) 2026, Aegisub contributors
 // SPDX-License-Identifier: ISC
-// The style panel's script page (docs/style-panel.md#文案页): the video's
-// whole script as plain text, typed or pasted in to check the subtitles
-// against, kept with the subtitles in the .ass file. A button breaks long
-// text into one sentence a line.
+// The script panel (docs/style-panel.md#文案面板): the video's whole script
+// as plain text, typed or pasted in to check the subtitles against, kept with
+// the subtitles in the .ass file. A panel of its own at the right, in the
+// style panel's place: its top bar's button goes back to the style panel.
+// A button breaks long text into one sentence a line.
 #pragma once
 
 #include <libaegisub/signal.h>
@@ -14,6 +15,8 @@
 #include <optional>
 #include <string>
 #include <vector>
+
+#include "style_panel.h"
 
 #include <wx/panel.h>
 
@@ -31,13 +34,13 @@ wxString SplitSentences(wxString const& text);
 int CountLines(wxString const& text);
 }
 
-class ScriptPage final : public wxPanel {
+class ScriptPanel final : public wxPanel, public PanelFocus {
 protected:
 	std::shared_ptr<int> model_observer_lifetime = std::make_shared<int>(0);
 
 public:
-	ScriptPage(wxWindow *parent, agi::Context *c);
-	~ScriptPage();
+	ScriptPanel(wxWindow *parent, agi::Context *c);
+	~ScriptPanel();
 
 	/// Read the script from the file again
 	void UpdateNow();
@@ -46,15 +49,23 @@ public:
 	wxTextCtrl *TextBox() const { return text; }
 	/// Act as typing: replace the text with @p value, as the user does
 	void Type(wxString const& value);
-	/// Act as clicking a button does: "back", "split" (also its undo),
+	/// Act as clicking a button does: "style", "split" (also its undo),
 	/// "collapse"
 	void Press(std::string const& name);
+	/// Whether the keyboard is in the panel
+	bool HasKeyboard() const;
+	/// Give the keyboard to the text, if the panel is on the screen.
+	/// @return Whether it has it
+	bool TakeKeyboard();
+	/// Give the keyboard to the button or text after @p from, or before it;
+	/// round from the last to the first
+	void MoveFocus(wxWindow *from, bool forward) override;
 	/// What the parts show: "split" (its label, " disabled" after it when it
 	/// can't be used), "count", "note"; for tests
 	std::map<std::string, wxString> Shown() const;
 
-	/// Called by the button going back to the panel's other pages
-	std::function<void()> on_back;
+	/// Called by the button going back to the style panel
+	std::function<void()> on_style;
 	/// Called by the button folding the panel away
 	std::function<void()> on_collapse;
 

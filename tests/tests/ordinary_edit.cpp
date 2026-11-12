@@ -77,7 +77,7 @@
 #include "animation_page.h"
 #include "animation_tags.h"
 #include "style_look.h"
-#include "script_page.h"
+#include "script_panel.h"
 #include "style_panel.h"
 #include "style_panel_parts.h"
 #include "timing_adjust.h"
@@ -2350,42 +2350,65 @@ TEST_F(ordinary_edit, script_text_is_saved_in_the_ass_file_and_marks_it_changed)
     EXPECT_TRUE(c->subsController->IsModified());
 }
 
-TEST_F(ordinary_edit, script_page_opens_over_the_panel_and_writes_the_script) {
+TEST_F(ordinary_edit, script_panel_takes_the_style_panels_place_and_writes_the_script) {
     auto u=[](const char *text){ return wxString::FromUTF8(text); };
+    OPT_SET("App/Style Panel/Show")->SetBool(true);
+    OPT_SET("App/Script Panel/Show")->SetBool(false);
     auto frame=new wxFrame(nullptr,-1,"script");
-    BOOST_SCOPE_EXIT_ALL(&){ delete frame; };
+    BOOST_SCOPE_EXIT_ALL(&){ delete frame; OPT_SET("App/Script Panel/Show")->SetBool(false); OPT_SET("App/Style Panel/Show")->SetBool(true); };
     auto root=new wxPanel(frame);
     auto panel=new StylePanel(root,c.get());
-    auto edge=new StylePanelEdge(root,panel);
+    auto script=new ScriptPanel(root,c.get());
+    auto edge=new StylePanelEdge(root,panel,script);
     auto sizer=new wxBoxSizer(wxHORIZONTAL);
-    sizer->Add(new wxPanel(root),1,wxEXPAND);sizer->Add(edge,0,wxEXPAND);sizer->Add(panel,0,wxEXPAND);
+    sizer->Add(new wxPanel(root),1,wxEXPAND);sizer->Add(edge,0,wxEXPAND);sizer->Add(panel,0,wxEXPAND);sizer->Add(script,0,wxEXPAND);
     root->SetSizer(sizer);
     frame->SetSize(frame->FromDIP(1400),700);frame->Show();
     root->SetSize(frame->GetClientSize());edge->Update();root->Layout();
     panel->ShowPage(StylePanel::Page::Timing);
-    auto script=panel->Script();
     EXPECT_FALSE(script->IsShown());
+    EXPECT_TRUE(panel->IsShown());
     EXPECT_EQ("enabled",panel->Shown()["script"]) << "its button beside the switch";
 
-    // The button opens it over the whole panel; ‹ goes back where it was
+    // The button puts the script panel in the style panel's place, as wide;
+    // the script panel's own button puts the style panel back on its page
     panel->Press("script");
     wxYield();
-    EXPECT_EQ(StylePanel::Page::Script,panel->ShownPage());
+    EXPECT_TRUE(edge->ScriptShown());
     EXPECT_TRUE(script->IsShown());
-    EXPECT_FALSE(panel->Timing()->IsShown());
-    EXPECT_EQ(3,OPT_GET("App/Style Panel/Page")->GetInt());
-    EXPECT_GT(script->TextBox()->GetSize().y,panel->GetClientSize().y/2) << "the text down the panel";
+    EXPECT_FALSE(panel->IsShown()) << "not a page of the style panel: one or the other";
+    EXPECT_TRUE(OPT_GET("App/Script Panel/Show")->GetBool());
+    EXPECT_EQ(2,OPT_GET("App/Style Panel/Page")->GetInt()) << "the style panel's page left as it was";
+    EXPECT_EQ(panel->GetMinSize().x,script->GetSize().x);
+    EXPECT_GT(script->TextBox()->GetSize().y,script->GetClientSize().y/2) << "the text down the panel";
     EXPECT_EQ("One sentence a line disabled",script->Shown()["split"]) << "nothing to split";
-    script->Press("back");
-    EXPECT_EQ(StylePanel::Page::Timing,panel->ShownPage());
+    script->Press("style");
+    EXPECT_FALSE(edge->ScriptShown());
     EXPECT_FALSE(script->IsShown());
-    panel->ToggleScript();
-    EXPECT_EQ(StylePanel::Page::Script,panel->ShownPage()) << "as the View menu does";
-    panel->ToggleScript();
-    EXPECT_EQ(StylePanel::Page::Timing,panel->ShownPage()) << "and again: back";
+    EXPECT_TRUE(panel->IsShown());
+    EXPECT_EQ(StylePanel::Page::Timing,panel->ShownPage());
+    edge->ToggleScript();
+    EXPECT_TRUE(script->IsShown()) << "as the View menu does";
+    EXPECT_FALSE(panel->IsShown());
+    edge->ToggleScript();
+    EXPECT_TRUE(panel->IsShown()) << "and again: back";
+    EXPECT_FALSE(script->IsShown());
+    // A page asked for, as a shape line does, brings the style panel back
+    edge->OpenScript();
+    ASSERT_TRUE(script->IsShown());
+    panel->EditShape();
+    EXPECT_TRUE(panel->IsShown());
+    EXPECT_FALSE(script->IsShown());
+    // » folds it away; opened again, it is the script panel still
+    edge->OpenScript();
+    script->Press("collapse");
+    EXPECT_TRUE(edge->Folded());
+    EXPECT_FALSE(OPT_GET("App/Style Panel/Show")->GetBool());
+    edge->Open();
+    EXPECT_TRUE(script->IsShown());
+    EXPECT_FALSE(panel->IsShown());
 
     // Typed: in the file at once, which is changed but has nothing to undo
-    panel->ShowPage(StylePanel::Page::Script);
     auto undo=c->subsController->GetUndoDescription();
     script->Type(u("第一句。第二句！\n第三句"));
     EXPECT_EQ("第一句。第二句！\n第三句",LiveRead(*c).Properties.script_text);
@@ -2444,19 +2467,28 @@ TEST_F(ordinary_edit, script_page_opens_over_the_panel_and_writes_the_script) {
     c->subtitleAccess->SetMetadata(SubtitleProjectAccess::MetadataField::ScriptText,"other");
     EXPECT_EQ("other",script->TextBox()->GetValue());
 
-    // Folded, the strip names it after the other pages and opens on it
-    panel->ShowPage(StylePanel::Page::Style);
+    // Folded, the strip names it after the pages and opens it
+    edge->Open(StylePanel::Page::Style);
+    EXPECT_TRUE(panel->IsShown()) << "a page's name: the style panel";
+    EXPECT_FALSE(script->IsShown());
     OPT_SET("App/Style Panel/Show")->SetBool(false);
     ASSERT_TRUE(edge->Folded());
     int x=edge->GetClientSize().x-edge->FromDIP(10), script_at=-1, timing_at=-1;
-    for(int y=0;y<edge->FromDIP(500);y+=2){int p=edge->PageAt(wxPoint(x,y));if(p==2&&timing_at<0)timing_at=y;if(p==3&&script_at<0)script_at=y;}
+    for(int y=0;y<edge->FromDIP(500);y+=2){int p=edge->PageAt(wxPoint(x,y));if(p==2&&timing_at<0)timing_at=y;if(p==StylePanelEdge::script_name&&script_at<0)script_at=y;}
     ASSERT_GT(timing_at,0); EXPECT_GT(script_at,timing_at);
-    edge->Open(StylePanel::Page::Script);
+    edge->OpenScript();
     EXPECT_FALSE(edge->Folded());
-    EXPECT_EQ(StylePanel::Page::Script,panel->ShownPage());
-    script->Press("back");
-    EXPECT_EQ(StylePanel::Page::Style,panel->ShownPage());
-    OPT_SET("App/Style Panel/Show")->SetBool(true);
+    EXPECT_TRUE(script->IsShown());
+    EXPECT_FALSE(panel->IsShown());
+
+    // Once a page of the style panel: opened on the script panel instead
+    OPT_SET("App/Script Panel/Show")->SetBool(false);
+    OPT_SET("App/Style Panel/Page")->SetInt(3);
+    auto again=new StylePanel(root,c.get());
+    EXPECT_TRUE(OPT_GET("App/Script Panel/Show")->GetBool());
+    EXPECT_EQ(StylePanel::Page::Style,again->ShownPage());
+    EXPECT_EQ(0,OPT_GET("App/Style Panel/Page")->GetInt());
+    again->Destroy();
 }
 
 TEST_F(ordinary_edit, style_edit_writes_one_property_for_lines_or_selected_text) {

@@ -55,6 +55,7 @@
 #include "subs_controller.h"
 #include "subs_edit_box.h"
 #include "status_info.h"
+#include "script_panel.h"
 #include "style_panel.h"
 #include "utils.h"
 #include "version.h"
@@ -240,14 +241,17 @@ void FrameMain::InitContents() {
 	MainSizer = new wxBoxSizer(wxVERTICAL);
 	MainSizer->Add(TopSizer, 0, wxEXPAND | wxLEFT | wxTOP, gap);
 	MainSizer->Add(context->subsGrid, 1, wxEXPAND | wxLEFT | wxTOP | wxBOTTOM, gap);
-	// The style panel takes the whole height at the right (docs/style-panel.md);
-	// the gap before it is its resize strip
+	// The style panel takes the whole height at the right, or the script
+	// panel in its place (docs/style-panel.md); the gap before it is its
+	// resize strip
 	stylePanel = new StylePanel(Panel, context.get());
-	auto edge = new StylePanelEdge(Panel, stylePanel);
+	scriptPanel = new ScriptPanel(Panel, context.get());
+	auto edge = panelEdge = new StylePanelEdge(Panel, stylePanel, scriptPanel);
 	OuterSizer = new wxBoxSizer(wxHORIZONTAL);
 	OuterSizer->Add(MainSizer, 1, wxEXPAND);
 	OuterSizer->Add(edge, 0, wxEXPAND);
 	OuterSizer->Add(stylePanel, 0, wxEXPAND | wxTOP | wxBOTTOM | wxRIGHT, gap);
+	OuterSizer->Add(scriptPanel, 0, wxEXPAND | wxTOP | wxBOTTOM | wxRIGHT, gap);
 	Panel->SetSizer(OuterSizer);
 	edge->Update();
 	tabs->SetEditor(Panel);

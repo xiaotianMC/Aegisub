@@ -75,7 +75,7 @@ struct ProjectMetadata {
 	std::string keyframes_file;
 	std::map<std::string, std::string> automation_settings;
 	/// The video's whole script as plain text, one line per line, typed in
-	/// to check the subtitles against (docs/style-panel.md#文案页)
+	/// to check the subtitles against (docs/style-panel.md#文案面板)
 	std::string script_text;
     bool operator==(ProjectMetadata const&) const = default;
 };
