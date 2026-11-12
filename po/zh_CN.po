@@ -11104,3 +11104,19 @@ msgstr "%s：%s"
 msgid "(%d point)"
 msgid_plural "(%d points)"
 msgstr[0] "（%d 个点）"
+
+#: ../src/command/app.cpp
+msgid "Next Region"
+msgstr "下一个区域"
+
+#: ../src/command/app.cpp
+msgid "Previous Region"
+msgstr "上一个区域"
+
+#: ../src/command/app.cpp
+msgid "Move the keyboard to the next part of the window: the subtitle grid, the line's fields, the audio, the video, the side panel"
+msgstr "把键盘移到窗口的下一个区域：字幕表格、编辑框、音频、视频、侧边栏"
+
+#: ../src/command/app.cpp
+msgid "Move the keyboard to the part of the window before: the side panel, the video, the audio, the line's fields, the subtitle grid"
+msgstr "把键盘移到窗口的上一个区域：侧边栏、视频、音频、编辑框、字幕表格"

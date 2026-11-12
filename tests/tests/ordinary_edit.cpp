@@ -18,6 +18,7 @@
 #include "timeedit_ctrl.h"
 #include "time_unit_toggle.h"
 #include "flat_controls.h"
+#include "keyboard_regions.h"
 #include "base_grid.h"
 #include "auto4_base.h"
 #include "dialog_export_ebu3264.h"
@@ -2307,6 +2308,22 @@ TEST_F(ordinary_edit, style_panel_folds_away_in_narrow_windows_and_opens_from_it
     EXPECT_EQ(StylePanel::Page::Timing,panel->ShownPage()) << "elsewhere on the strip: the page last shown";
     panel->ShowPage(StylePanel::Page::Style);
     delete frame; // now: it watches an option the next test changes
+}
+
+TEST(style_list, samples_dark_letters_on_a_light_field) {
+    AssStyle white; white.primary=agi::Color(255,255,255); white.outline=agi::Color(0,0,0); white.outline_w=2;
+    auto light=[](wxColour c){ return c.Red()+c.Green()+c.Blue()>3*128; };
+    EXPECT_TRUE(light(StyleList::SampleField(white))) << "a black border: the edge is black";
+    white.outline_w=0;
+    EXPECT_FALSE(light(StyleList::SampleField(white))) << "white letters: the dark field, as on video";
+    AssStyle black; black.primary=agi::Color(0,0,0); black.outline_w=0;
+    EXPECT_TRUE(light(StyleList::SampleField(black))) << "black letters, no border";
+    black.outline=agi::Color(0,0,0); black.outline_w=2;
+    EXPECT_TRUE(light(StyleList::SampleField(black))) << "black letters, black border";
+    black.outline=agi::Color(255,255,255);
+    EXPECT_FALSE(light(StyleList::SampleField(black))) << "a white border shows on the dark field";
+    AssStyle navy; navy.primary=agi::Color(20,30,90); navy.outline_w=0;
+    EXPECT_TRUE(light(StyleList::SampleField(navy))) << "dark blue too";
 }
 
 TEST(tag_summary, says_what_each_block_of_tags_does) {
@@ -9231,4 +9248,176 @@ TEST_F(ordinary_edit, magiatimeline_is_run_as_chosen_in_its_dialog_and_the_choic
     }
     used=ReadText(folder/"used.yml");
     EXPECT_NE(std::string::npos,used.find("  doPaddle: true\n  paddleLang: \"japan\"\n  doTesseract: false\n")) << used;
+}
+
+TEST(script_text, the_thumb_shows_how_much_is_on_the_screen_and_where) {
+    EXPECT_FALSE(script_text::ThumbFor(0,100,100,200,20)) << "it all fits";
+    EXPECT_FALSE(script_text::ThumbFor(0,0,0,200,20));
+    auto top=script_text::ThumbFor(0,100,400,200,20);
+    ASSERT_TRUE(top);
+    EXPECT_EQ(0,top->top);
+    EXPECT_EQ(50,top->height) << "a quarter on the screen, a quarter of the track";
+    auto bottom=script_text::ThumbFor(300,100,400,200,20);
+    EXPECT_EQ(150,bottom->top) << "at the end, at the bottom";
+    EXPECT_EQ(150,script_text::ThumbFor(9999,100,400,200,20)->top);
+    EXPECT_EQ(20,script_text::ThumbFor(0,10,100000,200,20)->height) << "never shorter than the least";
+    for (int pos : {0,37,150,300})
+        EXPECT_NEAR(pos,script_text::PosForThumb(script_text::ThumbFor(pos,100,400,200,20)->top,100,400,200,20),2) << "a pixel of the thumb is 2 of the text";
+    EXPECT_EQ(300,script_text::PosForThumb(500,100,400,200,20)) << "dragged past the end";
+    EXPECT_EQ(0,script_text::PosForThumb(-30,100,400,200,20));
+}
+
+TEST_F(ordinary_edit, script_panel_draws_its_own_thin_scroll_bar_on_the_field) {
+    OPT_SET("App/Style Panel/Show")->SetBool(true);
+    OPT_SET("App/Script Panel/Show")->SetBool(true);
+    auto frame=new wxFrame(nullptr,-1,"script bar");
+    BOOST_SCOPE_EXIT_ALL(&){ delete frame; OPT_SET("App/Script Panel/Show")->SetBool(false); };
+    auto script=new ScriptPanel(frame,c.get());
+    frame->SetClientSize(script->FromDIP(300),script->FromDIP(500));frame->Show();
+    script->SetSize(frame->GetClientSize());script->Layout();
+    for(int i=0;i<10;++i) wxYield();
+    script->TextBox()->ChangeValue("short");
+    for(int i=0;i<10;++i) wxYield();
+    EXPECT_FALSE(script->ScrollThumb()) << "the text fits: no bar";
+    wxString t; for(int i=0;i<200;++i) t+=wxString::Format("line %d of the script\n",i);
+    script->TextBox()->ChangeValue(t);
+    for(int i=0;i<20;++i){ wxYield(); wxMilliSleep(5); }
+    auto [pos,page,range]=script->ScrollState();
+#ifdef __WXGTK__
+    ASSERT_GT(range,page) << "longer than the box";
+    auto thumb=script->ScrollThumb();
+    ASSERT_TRUE(thumb);
+    wxRect box=script->TextBox()->GetScreenRect();
+    box.SetPosition(script->ScreenToClient(box.GetPosition()));
+    EXPECT_GT(thumb->x,box.GetRight()) << "right of the text, not over it";
+    EXPECT_LT(thumb->GetRight(),script->GetClientSize().x);
+    EXPECT_LE(thumb->width,script->FromDIP(6)) << "thin";
+    EXPECT_LT(thumb->height,box.height);
+    // Scrolled, by the thumb or the text's own keys, the thumb follows
+    int top=thumb->y;
+    EXPECT_EQ(0,pos);
+    script->ScrollTextTo(range);
+    EXPECT_EQ(range-page,std::get<0>(script->ScrollState()));
+    EXPECT_GT(script->ScrollThumb()->y,top);
+    EXPECT_EQ(box.GetBottom(),script->ScrollThumb()->GetBottom()) << "at the end, at the bottom";
+    script->ScrollTextTo(-50);
+    EXPECT_EQ(0,std::get<0>(script->ScrollState()));
+    EXPECT_EQ(box.y,script->ScrollThumb()->y) << "at the start, at the top";
+#else
+    (void)pos;(void)page;(void)range;
+#endif
+}
+
+TEST_F(ordinary_edit, keyboard_regions_go_round_with_f6_and_keep_tab_inside) {
+    auto frame=new wxFrame(nullptr,-1,"regions");
+    BOOST_SCOPE_EXIT_ALL(&){ regions::Clear(); delete frame; };
+    auto backdrop=new wxPanel(frame);
+    // One control on its own (as the grid is), a panel of two, one hidden,
+    // and one with a toolbar
+    auto grid=new wxTextCtrl(backdrop,-1,"grid");
+    auto edit=new wxPanel(backdrop);
+    auto a=new wxTextCtrl(edit,-1,"a"), b=new wxTextCtrl(edit,-1,"b");
+    { auto s=new wxBoxSizer(wxVERTICAL); s->Add(a); s->Add(b); edit->SetSizer(s); }
+    auto hidden=new wxPanel(backdrop);
+    new wxTextCtrl(hidden,-1,"h");
+    auto tools=new wxPanel(backdrop);
+    auto bar=new wxToolBar(tools,-1);
+    bar->AddTool(1,"t",wxBitmap(16,16));
+    bar->Realize();
+    auto button=new wxButton(tools,-1,"ok");
+    { auto s=new wxBoxSizer(wxVERTICAL); s->Add(bar); s->Add(button); tools->SetSizer(s); }
+    auto sizer=new wxBoxSizer(wxHORIZONTAL);
+    for (wxWindow *w : {static_cast<wxWindow*>(grid),static_cast<wxWindow*>(edit),static_cast<wxWindow*>(hidden),static_cast<wxWindow*>(tools)})
+        sizer->Add(w,0,wxALL,10);
+    backdrop->SetSizer(sizer);
+    hidden->Hide();
+    regions::Setup(backdrop,{{grid},{edit},{hidden},{tools}});
+    frame->SetSize(700,300);frame->Show();backdrop->SetSize(frame->GetClientSize());backdrop->Layout();
+    for(int i=0;i<10;++i) wxYield();
+
+    EXPECT_EQ(0,regions::RegionOf(grid));
+    EXPECT_EQ(1,regions::RegionOf(b));
+    EXPECT_EQ(3,regions::RegionOf(bar));
+    EXPECT_EQ(-1,regions::RegionOf(backdrop));
+    EXPECT_EQ((std::vector<wxWindow*>{a,b}),regions::Stops(1));
+    EXPECT_EQ((std::vector<wxWindow*>{button}),regions::Stops(3)) << "a toolbar's buttons have no keys";
+    EXPECT_EQ((std::vector<wxWindow*>{grid}),regions::Stops(0));
+    EXPECT_EQ(a,regions::TabTarget(b,true)) << "round to the first, not on to the next region";
+    EXPECT_EQ(b,regions::TabTarget(a,false));
+    EXPECT_EQ(grid,regions::TabTarget(grid,true));
+
+    a->SetFocus();
+    for(int i=0;i<5;++i) wxYield();
+    ASSERT_EQ(a,wxWindow::FindFocus());
+    EXPECT_EQ(1,regions::Current());
+    EXPECT_EQ(nullptr,regions::Outlined()) << "put there, not moved by keys: no line";
+
+    // F6 on, past the hidden one, and round
+    EXPECT_TRUE(regions::Next(true));
+    EXPECT_EQ(button,wxWindow::FindFocus());
+    EXPECT_EQ(tools,regions::Outlined());
+    EXPECT_TRUE(regions::Next(true));
+    EXPECT_EQ(grid,wxWindow::FindFocus());
+    EXPECT_TRUE(regions::Next(false));
+    EXPECT_EQ(button,wxWindow::FindFocus());
+    // The command F6 is bound to
+    cmd::call("app/region/previous",c.get());
+    EXPECT_EQ(a,wxWindow::FindFocus());
+    cmd::call("app/region/next",c.get());
+    EXPECT_EQ(button,wxWindow::FindFocus());
+
+    // The line is drawn in the gap round the block
+    regions::Next(false);
+    ASSERT_EQ(edit,regions::Outlined());
+    {
+        wxSize size=backdrop->GetClientSize();
+        wxBitmap bitmap(size);
+        wxMemoryDC dc(bitmap);
+        dc.SetBackground(*wxWHITE_BRUSH);dc.Clear();
+        regions::DrawOutline(backdrop,dc);
+        dc.SelectObject(wxNullBitmap);
+        auto image=bitmap.ConvertToImage();
+        wxRect r=edit->GetRect();
+        int y=r.y+r.height/2;
+        bool line=false;
+        for(int x=std::max(0,r.x-8);x<r.x;++x)
+            line|=image.GetRed(x,y)<200;
+        EXPECT_TRUE(line) << "left of the block";
+        EXPECT_EQ(255,image.GetRed(r.x+r.width/2,y)) << "nothing over the block";
+    }
+
+    // Tab and Shift+Tab in a window that takes every key
+    wxKeyEvent tab(wxEVT_CHAR_HOOK);
+    tab.m_keyCode=WXK_TAB;
+    EXPECT_TRUE(regions::HandleKey(a,tab));
+    EXPECT_EQ(b,wxWindow::FindFocus());
+    EXPECT_TRUE(regions::HandleKey(b,tab));
+    EXPECT_EQ(a,wxWindow::FindFocus());
+    tab.SetShiftDown(true);
+    EXPECT_TRUE(regions::HandleKey(a,tab));
+    EXPECT_EQ(b,wxWindow::FindFocus());
+    wxKeyEvent other(wxEVT_CHAR_HOOK);
+    other.m_keyCode='X';
+    EXPECT_FALSE(regions::HandleKey(b,other));
+
+    // A click hides the line
+    EXPECT_EQ(edit,regions::Outlined());
+    wxMouseEvent click(wxEVT_LEFT_DOWN);
+    click.SetEventObject(b);
+    b->ProcessWindowEvent(click);
+    EXPECT_EQ(nullptr,regions::Outlined());
+
+    // A toolbar's click leaves the keyboard where it was, or gives it to
+    // the window it is set to give it to
+    auto click_tool=[&]{
+        wxCommandEvent event(wxEVT_TOOL,1);
+        event.SetEventObject(bar);
+        bar->ProcessWindowEvent(event);
+        for(int i=0;i<5;++i) wxYield();
+    };
+    click_tool();
+    EXPECT_EQ(b,wxWindow::FindFocus());
+    regions::FocusAfterClicks(bar,grid);
+    click_tool();
+    EXPECT_EQ(grid,wxWindow::FindFocus());
 }

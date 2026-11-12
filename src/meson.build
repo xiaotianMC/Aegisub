@@ -114,6 +114,7 @@ aegisub_src = files(
     'hotkey.cpp',
     'hotkey_data_view_model.cpp',
     'initial_line_state.cpp',
+    'keyboard_regions.cpp',
     'main.cpp',
     'menu.cpp',
     'mkv_wrap.cpp',

@@ -14,6 +14,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "style_panel.h"
@@ -34,6 +35,14 @@ namespace script_text {
 wxString SplitSentences(wxString const& text);
 /// The lines holding more than spaces
 int CountLines(wxString const& text);
+
+/// Where the thumb of the text's scroll bar is: @p pos of @p range
+/// scrolled, @p page of it on the screen, on a track @p track long with
+/// a thumb at least @p least long. Empty when it all fits
+struct Thumb { int top = 0, height = 0; };
+std::optional<Thumb> ThumbFor(int pos, int page, int range, int track, int least);
+/// The scroll position putting the thumb's top at @p top on the track
+int PosForThumb(int top, int page, int range, int track, int least);
 }
 
 class ScriptPanel final : public wxPanel, public PanelFocus {
@@ -49,6 +58,14 @@ public:
 
 	/// The box the script is typed into
 	wxTextCtrl *TextBox() const { return text; }
+	/// The text's scroll bar, drawn thin on the field (the box's own is
+	/// hidden): where the thumb is, in the panel, empty when the text fits
+	std::optional<wxRect> ScrollThumb() const;
+	/// How far the text is scrolled, and how far it can be (pos, page,
+	/// range, in the box's units); for tests
+	std::tuple<int, int, int> ScrollState() const;
+	/// Scroll the text to @p pos, as dragging the thumb does
+	void ScrollTextTo(int pos);
 	/// Act as typing: replace the text with @p value, as the user does
 	void Type(wxString const& value);
 	/// Act as clicking a button does: "style", "split" (also its undo),
@@ -76,6 +93,15 @@ private:
 	std::vector<agi::signal::Connection> connections;
 	agi::signal::Connection theme_changed;
 	wxTextCtrl *text;
+	/// Holds the box, cutting off its own scroll bar where it has to
+	wxPanel *clip = nullptr;
+	/// The room right of the text, on the field, for the thin scroll bar
+	int bar_room = FromDIP(6);
+	bool bar_hover = false;
+	/// Dragging the thumb: from where in it, -1 when not
+	int drag_from = -1;
+	/// The scroll state the bar was last drawn for
+	std::tuple<int, int, int> drawn_scroll;
 	wxSizer *top_line = nullptr; ///< The name and the buttons, a line under them
 	wxPanel *notice = nullptr;   ///< Why the text can't be changed, when it can't
 	wxStaticText *notice_text = nullptr;
@@ -95,4 +121,7 @@ private:
 	/// The colours for the theme: the field's, the notice's
 	void Recolour();
 	void OnPaint();
+	/// The track the thumb runs on, in the panel
+	wxRect BarTrack() const;
+	void OnBarMouse(wxMouseEvent &event);
 };

@@ -81,6 +81,8 @@ class AudioBox final : public wxSashWindow, private agi::signal::ConnectionScope
 	void OnVerticalLink(agi::OptionValue const& opt);
 
 public:
+	/// The waveform, where the keyboard goes in the audio
+	AudioDisplay *GetDisplay() const { return audioDisplay; }
 	/// Vertical zoom and volume positions, 1 to 100 (50 is neutral)
 	void SetVerticalZoom(int pos);
 	void SetVolume(int pos);

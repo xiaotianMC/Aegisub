@@ -49,6 +49,7 @@
 #include "subs_controller.h"
 #include "subtitle_binding.h"
 #include "video_controller.h"
+#include "keyboard_regions.h"
 
 #include <libaegisub/util.h>
 
@@ -786,6 +787,9 @@ void BaseGrid::OnCharHook(wxKeyEvent &event) {
 		return;
 	}
 	if (hotkey::check("Subtitle Grid", context, event))
+		return;
+	// Tab on in the grid's region, Esc to the subtitle text
+	if (regions::HandleKey(this, event))
 		return;
 
 	int key = event.GetKeyCode();

@@ -76,6 +76,12 @@ namespace {
 		{nullptr}
 	};
 
+	const char *added_hotkeys_regions[][3] = {
+		{"app/region/next", "Default", "F6"},
+		{"app/region/previous", "Default", "Shift-F6"},
+		{nullptr}
+	};
+
 	void migrate_hotkeys(const char *added[][3]) {
 		auto hk_map = hotkey::inst->GetHotkeyMap();
 		bool changed = false;
@@ -192,6 +198,22 @@ void init() {
 	if (boost::find(migrations, "app/style_panel/keyboard") == end(migrations)) {
 		migrate_hotkeys(added_hotkeys_style_panel_keyboard);
 		migrations.emplace_back("app/style_panel/keyboard");
+	}
+
+	// F6 goes round the main window's regions, the side panel one of them
+	// (docs/keyboard-regions.md): taken from the side panel's own command
+	if (boost::find(migrations, "F6 regions") == end(migrations)) {
+		auto hk_map = hotkey::inst->GetHotkeyMap();
+		auto [first, last] = hk_map.equal_range("app/style_panel/keyboard");
+		for (auto it = first; it != last;) {
+			if (it->second.Context() == "Default" && it->second.Str() == "F6")
+				it = hk_map.erase(it);
+			else
+				++it;
+		}
+		hotkey::inst->SetHotkeyMap(std::move(hk_map));
+		migrate_hotkeys(added_hotkeys_regions);
+		migrations.emplace_back("F6 regions");
 	}
 
 	// The styling assistant is gone: the style box takes typed letters

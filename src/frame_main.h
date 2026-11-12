@@ -71,6 +71,10 @@ private:
 	/// Refresh the line and file fields of the status bar.
 	void UpdateStatus();
 
+	/// The regions F6 goes between and Tab stays in (keyboard_regions.h)
+
+	void SetUpKeyboardRegions(wxWindow *backdrop);
+
 	void OnKeyDown(wxKeyEvent &event);
 	void OnMouseWheel(wxMouseEvent &evt);
 

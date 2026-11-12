@@ -55,6 +55,7 @@
 #include "visual_tool.h"
 #include "visual_tool_cross.h"
 #include "visual_tool_scale.h"
+#include "keyboard_regions.h"
 
 
 #include <algorithm>
@@ -498,8 +499,7 @@ void VideoDisplay::OnMouseWheel(wxMouseEvent& event) {
 			// picture inside the preview without changing the window zoom or
 			// the video's share of the workspace. Ctrl and Shift keep their
 			// configured scroll actions.
-			if (!WheelCmdDown(event) && !WheelShiftDown(event)
-				&& (pan_mode || ToolIsType(typeid(VisualToolScale)))) {
+			if (!WheelCmdDown(event) && !WheelShiftDown(event) && ZoomsContent()) {
 				double factor = 1 + 0.125 * wheel / event.GetWheelDelta();
 				ZoomAndPan(contentZoomValue * factor, GetZoomAnchorPoint(scaled_position), scaled_position);
 				return;
@@ -556,6 +556,13 @@ void VideoDisplay::OnMouseWheel(wxMouseEvent& event) {
 }
 
 void VideoDisplay::OnGestureZoom(wxZoomGestureEvent& event) {
+	// As the wheel: the picture is zoomed in the preview pan mode and the
+	// scale tool only (docs/rectangle-drawing.md). Elsewhere a pinch left
+	// it zoomed with no way to drag it about, and leaving no mode undid it
+	if (!ZoomsContent()) {
+		isZoomGestureActive = false;
+		return;
+	}
 	if (!isZoomGestureActive && !event.IsGestureStart()) {
 		// On wxGTK, right-clicking generates a false GestureEnd event (without any preceding GestureStart event).
 		// See https://github.com/wxWidgets/wxWidgets/issues/26211
@@ -632,7 +639,9 @@ void VideoDisplay::OnKeyDown(wxKeyEvent &event) {
 		SetPanMode(false);
 		return;
 	}
-	hotkey::check("Video", con, event);
+	if (hotkey::check("Video", con, event)) return;
+	// Tab on in the video's region, Esc to the subtitle text
+	if (!regions::HandleKey(this, event)) event.Skip();
 }
 
 void VideoDisplay::SetWindowZoom(double value) {
@@ -701,6 +710,12 @@ void VideoDisplay::SetTool(std::unique_ptr<VisualToolBase> new_tool) {
 	toolBar->Show(false);
 	toolBar->ClearTools();
 	tool->SetToolbar(toolBar);
+#ifdef __WXMSW__
+	// A vertical bar on Windows is wider than its buttons: as wide as they
+	// are, as the visual tools' bar above it is (toolbar.cpp), so that the
+	// tools' column, and the video's block, keep their width from tool to tool
+	if (toolBar->GetToolsCount()) toolBar->SetMinSize(wxSize(toolBar->GetToolSize().x, -1));
+#endif
 
 	// Update size as the new typesetting tool may have changed the subtoolbar size
 	if (!freeSize)
@@ -713,6 +728,10 @@ void VideoDisplay::SetTool(std::unique_ptr<VisualToolBase> new_tool) {
 			if (w->GetSizer()) w->Layout();
 		PositionVideo();
 	}
+}
+
+bool VideoDisplay::ZoomsContent() const {
+	return pan_mode || ToolIsType(typeid(VisualToolScale));
 }
 
 bool VideoDisplay::ToolIsType(std::type_info const& type) const {

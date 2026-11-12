@@ -47,6 +47,7 @@
 #include "../main.h"
 #include "../options.h"
 #include "../project.h"
+#include "../keyboard_regions.h"
 #include "../script_panel.h"
 #include "../style_panel.h"
 #include "../theme.h"
@@ -341,6 +342,28 @@ struct app_style_panel_keyboard final : public Command {
 	}
 };
 
+struct app_region_next final : public Command {
+	CMD_NAME("app/region/next")
+	STR_MENU("Next Region")
+	STR_DISP("Next Region")
+	STR_HELP("Move the keyboard to the next part of the window: the subtitle grid, the line's fields, the audio, the video, the side panel")
+
+	void operator()(agi::Context *) override {
+		regions::Next(true);
+	}
+};
+
+struct app_region_previous final : public Command {
+	CMD_NAME("app/region/previous")
+	STR_MENU("Previous Region")
+	STR_DISP("Previous Region")
+	STR_HELP("Move the keyboard to the part of the window before: the side panel, the video, the audio, the line's fields, the subtitle grid")
+
+	void operator()(agi::Context *) override {
+		regions::Next(false);
+	}
+};
+
 struct app_script_text final : public Command {
 	CMD_NAME("app/script_text")
 	STR_MENU("&Script")
@@ -453,6 +476,8 @@ namespace cmd {
 		reg(std::make_unique<app_toggle_style_panel>());
 		reg(std::make_unique<app_style_panel_keyboard>());
 		reg(std::make_unique<app_script_text>());
+		reg(std::make_unique<app_region_next>());
+		reg(std::make_unique<app_region_previous>());
 #ifdef __WXMAC__
 		reg(std::make_unique<app_minimize>());
 		reg(std::make_unique<app_maximize>());

@@ -18,13 +18,19 @@
 
 /// A list of styles, chosen from as a wxListBox with several selections
 /// is: click, Ctrl and Shift with a click, the arrow keys with Shift.
-/// Each row shows a sample of the style on a dark field, its name, its
+/// Each row shows a sample of the style on a dark field (a light one for
+/// dark letters), its name, its
 /// font and size, and a note on the right. Sends wxEVT_LISTBOX when the
 /// user changes the selection and wxEVT_LISTBOX_DCLICK on a double click
 /// or Enter, as wxListBox does.
 class StyleList final : public wxVScrolledWindow {
 public:
 	enum class Tone { Dim, Accent, Warn };
+	/// The field a style's sample is drawn on: dark, as most videos are
+	/// behind subtitles, unless the letters' edge (the border colour when
+	/// there is a border, else the primary) is dark too, then light, so
+	/// black text shows
+	static wxColour SampleField(AssStyle const& style);
 	struct Row {
 		AssStyle style;
 		wxString note;

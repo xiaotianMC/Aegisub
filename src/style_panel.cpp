@@ -17,6 +17,7 @@
 #include "dialogs.h"
 #include "flat_controls.h"
 #include "font_popup.h"
+#include "keyboard_regions.h"
 #include "format.h"
 #include "options.h"
 #include "style_edit.h"
@@ -1059,6 +1060,9 @@ StylePanelEdge::StylePanelEdge(wxWindow *parent, StylePanel *panel, ScriptPanel 
 	});
 	script_changed = OPT_SUB("App/Script Panel/Show", [this](agi::OptionValue const&) { Update(); });
 	theme_changed = theme::AddChangeListener([this] { Refresh(); });
+	// The strip is the gap left of the panel: the line round a region
+	// the keyboard is in falls on it too
+	outline_changed = regions::AddOutlineListener([this] { Refresh(false); });
 	parent->Bind(wxEVT_SIZE, [this](wxSizeEvent &event) {
 		event.Skip();
 		Update();
@@ -1072,7 +1076,10 @@ StylePanelEdge::StylePanelEdge(wxWindow *parent, StylePanel *panel, ScriptPanel 
 		dc.SetPen(*wxTRANSPARENT_PEN);
 		dc.SetBrush(wxBrush(back));
 		dc.DrawRectangle(wxPoint(0, 0), size);
-		if (!Folded()) return;
+		if (!Folded()) {
+			regions::DrawOutline(this, dc);
+			return;
+		}
 		// Folded: a narrow block of its own, as a side bar folded away is,
 		// with a « pointing to where the panel opens and its name down it
 		int gap = theme::BlockGap(GetParent());
@@ -1115,6 +1122,7 @@ StylePanelEdge::StylePanelEdge(wxWindow *parent, StylePanel *panel, ScriptPanel 
 			dc.SetTextForeground(i == current || i == hover_page ? accent : plain);
 			dc.DrawRotatedText(label, cx + height / 2, rect.y, 270);
 		}
+		regions::DrawOutline(this, dc);
 	});
 	Bind(wxEVT_ENTER_WINDOW, [this](wxMouseEvent &) { hover = true; Refresh(false); });
 	Bind(wxEVT_LEAVE_WINDOW, [this](wxMouseEvent &) { hover = false; hover_page = -1; Refresh(false); });

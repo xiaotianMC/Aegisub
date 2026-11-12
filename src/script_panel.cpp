@@ -23,6 +23,14 @@
 #include <wx/stattext.h>
 #include <wx/textctrl.h>
 
+#ifdef __WXGTK__
+#include <gtk/gtk.h>
+#endif
+#ifdef __WXMSW__
+#include <wx/msw/wrapwin.h>
+#include <richedit.h>
+#endif
+
 namespace script_text {
 namespace {
 bool Ends(wxUniChar ch) {
@@ -107,6 +115,25 @@ wxString SplitSentences(wxString const& text) {
 	return result;
 }
 
+std::optional<Thumb> ThumbFor(int pos, int page, int range, int track, int least) {
+	if (page <= 0 || range <= page || track <= 0) return std::nullopt;
+	Thumb thumb;
+	thumb.height = std::clamp(static_cast<int>(static_cast<long long>(track) * page / range), std::min(least, track), track);
+	int room = track - thumb.height;
+	pos = std::clamp(pos, 0, range - page);
+	thumb.top = static_cast<int>(static_cast<long long>(room) * pos / (range - page));
+	return thumb;
+}
+
+int PosForThumb(int top, int page, int range, int track, int least) {
+	auto thumb = ThumbFor(0, page, range, track, least);
+	if (!thumb) return 0;
+	int room = track - thumb->height;
+	if (room <= 0) return 0;
+	top = std::clamp(top, 0, room);
+	return static_cast<int>((static_cast<long long>(top) * (range - page) + room / 2) / room);
+}
+
 int CountLines(wxString const& text) {
 	int count = 0;
 	for (wxString const& line : wxSplit(text, '\n', 0))
@@ -116,6 +143,65 @@ int CountLines(wxString const& text) {
 }
 
 namespace {
+/// The box's own scroll bar is hidden, and drawn thin on the field instead
+/// (docs/style-panel.md#文案面板): on Windows it is cut off by the window
+/// holding the box, made narrower than it; on GTK it is never shown
+int HiddenBarWidth(wxWindow *box) {
+#ifdef __WXMSW__
+	return wxSystemSettings::GetMetric(wxSYS_VSCROLL_X, box);
+#else
+	(void)box;
+	return 0;
+#endif
+}
+
+void HideOwnBar(wxTextCtrl *box) {
+#ifdef __WXGTK__
+	// Scrolled still, by the wheel and the keys, with no bar of its own
+	auto window = GTK_SCROLLED_WINDOW(box->GetHandle());
+	GtkPolicyType horizontal, vertical;
+	gtk_scrolled_window_get_policy(window, &horizontal, &vertical);
+	gtk_scrolled_window_set_policy(window, horizontal, GTK_POLICY_EXTERNAL);
+#else
+	(void)box;
+#endif
+}
+
+/// pos, page, range of the box's text, in its own units (pixels)
+std::tuple<int, int, int> ReadScroll(wxTextCtrl *box) {
+#if defined(__WXGTK__)
+	auto adjustment = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(box->GetHandle()));
+	double lower = gtk_adjustment_get_lower(adjustment);
+	return {static_cast<int>(gtk_adjustment_get_value(adjustment) - lower),
+		static_cast<int>(gtk_adjustment_get_page_size(adjustment)),
+		static_cast<int>(gtk_adjustment_get_upper(adjustment) - lower)};
+#elif defined(__WXMSW__)
+	SCROLLINFO info{};
+	info.cbSize = sizeof(info);
+	info.fMask = SIF_ALL;
+	if (!::GetScrollInfo(static_cast<HWND>(box->GetHWND()), SB_VERT, &info)) return {0, 0, 0};
+	return {info.nPos - info.nMin, static_cast<int>(info.nPage), info.nMax - info.nMin + 1};
+#else
+	(void)box;
+	return {0, 0, 0};
+#endif
+}
+
+void WriteScroll(wxTextCtrl *box, int pos) {
+#if defined(__WXGTK__)
+	auto adjustment = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(box->GetHandle()));
+	gtk_adjustment_set_value(adjustment, gtk_adjustment_get_lower(adjustment) + pos);
+#elif defined(__WXMSW__)
+	// The rich edit box scrolls by pixels, as its scroll bar counts them
+	POINT point{};
+	::SendMessage(static_cast<HWND>(box->GetHWND()), EM_GETSCROLLPOS, 0, reinterpret_cast<LPARAM>(&point));
+	point.y = pos;
+	::SendMessage(static_cast<HWND>(box->GetHWND()), EM_SETSCROLLPOS, 0, reinterpret_cast<LPARAM>(&point));
+#else
+	(void)box; (void)pos;
+#endif
+}
+
 /// Whether the box takes @p e itself rather than the window's hotkeys
 bool EditsText(wxKeyEvent const& e) {
 	int key = e.GetKeyCode();
@@ -211,11 +297,36 @@ ScriptPanel::ScriptPanel(wxWindow *parent, agi::Context *c)
 	notice->Hide();
 
 	// The text on a rounded field, inset from its edge; the edge in the
-	// accent colour while it has the keyboard (drawn by OnPaint)
-	text = new wxTextCtrl(this, -1, "", wxDefaultPosition, wxDefaultSize, wxTE_MULTILINE | wxTE_RICH2 | wxBORDER_NONE);
+	// accent colour while it has the keyboard, and a thin scroll bar at
+	// its right in place of the box's own (drawn by OnPaint)
+	clip = new wxPanel(this, -1, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+	text = new wxTextCtrl(clip, -1, "", wxDefaultPosition, wxDefaultSize, wxTE_MULTILINE | wxTE_RICH2 | wxBORDER_NONE);
 	text->SetHint(_("Type or paste the video's whole script here, to check the subtitles against it. It is saved with the subtitles"));
 	text->SetToolTip(_("The video's script, saved in the subtitle file"));
-	outer->Add(text, 1, wxEXPAND | wxALL, pad + inset);
+	HideOwnBar(text);
+	clip->Bind(wxEVT_SIZE, [this](wxSizeEvent &e) {
+		// Wider than the window holding it by its own bar, cut off
+		wxSize size = e.GetSize();
+		text->SetSize(0, 0, size.x + HiddenBarWidth(text), size.y);
+	});
+	{
+		auto field = new wxBoxSizer(wxHORIZONTAL);
+		field->Add(clip, 1, wxEXPAND);
+		field->AddSpacer(bar_room);
+		outer->Add(field, 1, wxEXPAND | wxALL, pad + inset);
+	}
+	// The bar follows the text however it was scrolled: the wheel, the
+	// keys, typing, selecting
+	text->Bind(wxEVT_IDLE, [this](wxIdleEvent &e) {
+		e.Skip();
+		if (ReadScroll(text) != drawn_scroll) RefreshRect(BarTrack().Inflate(FromDIP(4)), false);
+	});
+	for (auto type : {wxEVT_LEFT_DOWN, wxEVT_LEFT_UP, wxEVT_MOTION, wxEVT_LEAVE_WINDOW, wxEVT_MOUSEWHEEL})
+		Bind(type, &ScriptPanel::OnBarMouse, this);
+	Bind(wxEVT_MOUSE_CAPTURE_LOST, [this](wxMouseCaptureLostEvent &) {
+		drag_from = -1;
+		Refresh(false);
+	});
 	text->Bind(wxEVT_SET_FOCUS, [this](wxFocusEvent &e) { e.Skip(); Refresh(false); });
 	text->Bind(wxEVT_KILL_FOCUS, [this](wxFocusEvent &e) { e.Skip(); Refresh(false); });
 
@@ -268,6 +379,7 @@ void ScriptPanel::Recolour() {
 	wxColour surface = theme::Surface();
 	wxColour ink = wxSystemSettings::GetColour(wxSYS_COLOUR_BTNTEXT);
 	text->SetBackgroundColour(theme::Mix(surface, ink, theme::IsDark() ? 0.08 : 0.05));
+	clip->SetBackgroundColour(text->GetBackgroundColour());
 	text->SetForegroundColour(ink);
 	notice->SetBackgroundColour(ui.notice_back);
 	notice_text->SetForegroundColour(ui.notice_text);
@@ -292,17 +404,107 @@ void ScriptPanel::OnPaint() {
 		dc.DrawRectangle(0, y, GetClientSize().x, thin);
 	}
 	// The field the text is on, its edge the accent colour while typing
-	wxRect field = text->GetRect().Inflate(inset);
+	wxRect field = clip->GetRect();
+	field.width += bar_room;
+	field.Inflate(inset);
 	bool typing = FindFocus() == text;
 	dc.SetBrush(wxBrush(text->GetBackgroundColour()));
 	dc.SetPen(wxPen(typing ? theme::UiColours().accent : theme::Mix(surface, ink, 0.2), typing ? std::max(1, FromDIP(3) / 2) : thin));
 	dc.DrawRoundedRectangle(field, FromDIP(6));
+	// The thin scroll bar: a rounded thumb only, wider and darker under
+	// the pointer, none when the text fits
+	drawn_scroll = ReadScroll(text);
+	if (auto thumb = ScrollThumb()) {
+		bool strong = bar_hover || drag_from >= 0;
+		dc.SetPen(*wxTRANSPARENT_PEN);
+		dc.SetBrush(wxBrush(theme::Mix(text->GetBackgroundColour(), ink, strong ? 0.5 : 0.28)));
+		wxRect r = *thumb;
+		if (!strong) r.Deflate(FromDIP(1), 0);
+		dc.DrawRoundedRectangle(r, r.width / 2.0);
+	}
 	// The notice's corners rounded, on the surface around it
 	if (notice->IsShown()) {
 		wxRect r = notice->GetRect();
 		dc.SetPen(*wxTRANSPARENT_PEN);
 		dc.SetBrush(wxBrush(notice->GetBackgroundColour()));
 		dc.DrawRoundedRectangle(r.Inflate(FromDIP(2)), FromDIP(5));
+	}
+}
+
+wxRect ScriptPanel::BarTrack() const {
+	// Down the room right of the text, as tall as the text, its right
+	// edge a little in from the field's
+	wxRect box = clip->GetRect();
+	int width = FromDIP(6);
+	return wxRect(box.GetRight() + 1 + bar_room + inset - FromDIP(3) - width, box.y, width, box.height);
+}
+
+std::tuple<int, int, int> ScriptPanel::ScrollState() const {
+	return ReadScroll(text);
+}
+
+std::optional<wxRect> ScriptPanel::ScrollThumb() const {
+	auto [pos, page, range] = ReadScroll(text);
+	wxRect track = BarTrack();
+	auto thumb = script_text::ThumbFor(pos, page, range, track.height, FromDIP(24));
+	if (!thumb) return std::nullopt;
+	return wxRect(track.x, track.y + thumb->top, track.width, thumb->height);
+}
+
+void ScriptPanel::ScrollTextTo(int pos) {
+	auto [now, page, range] = ReadScroll(text);
+	WriteScroll(text, std::clamp(pos, 0, std::max(0, range - page)));
+	Refresh(false);
+}
+
+void ScriptPanel::OnBarMouse(wxMouseEvent &event) {
+	event.Skip();
+	wxPoint p = event.GetPosition();
+	wxRect track = BarTrack();
+	// Easier to hit than to see: the whole room right of the text
+	wxRect hit(clip->GetRect().GetRight() + 1, track.y, track.GetRight() + 1 - clip->GetRect().GetRight() + FromDIP(3), track.height);
+	auto thumb = ScrollThumb();
+	auto [pos, page, range] = ReadScroll(text);
+	auto set_hover = [&](bool on) {
+		if (bar_hover == on) return;
+		bar_hover = on;
+		RefreshRect(track.Inflate(FromDIP(4)), false);
+	};
+	auto type = event.GetEventType();
+	if (type == wxEVT_LEAVE_WINDOW) {
+		if (drag_from < 0) set_hover(false);
+		return;
+	}
+	if (type == wxEVT_MOUSEWHEEL) {
+		if (!thumb || !hit.Contains(p)) return;
+		int lines = event.GetLinesPerAction() > 0 ? event.GetLinesPerAction() : 3;
+		ScrollTextTo(pos - event.GetWheelRotation() * lines * text->GetCharHeight() / std::max(1, event.GetWheelDelta()));
+		return;
+	}
+	if (type == wxEVT_MOTION) {
+		if (drag_from >= 0 && thumb) {
+			ScrollTextTo(script_text::PosForThumb(p.y - drag_from - track.y, page, range, track.height, FromDIP(24)));
+			return;
+		}
+		set_hover(thumb && hit.Contains(p));
+		return;
+	}
+	if (type == wxEVT_LEFT_UP) {
+		if (drag_from < 0) return;
+		drag_from = -1;
+		if (HasCapture()) ReleaseMouse();
+		set_hover(hit.Contains(p));
+		Refresh(false);
+		return;
+	}
+	if (type == wxEVT_LEFT_DOWN && thumb && hit.Contains(p)) {
+		if (p.y >= thumb->y && p.y < thumb->GetBottom() + 1) {
+			drag_from = p.y - thumb->y;
+			CaptureMouse();
+			Refresh(false);
+		}
+		// Above or below the thumb: a page up or down
+		else ScrollTextTo(pos + (p.y < thumb->y ? -page : page));
 	}
 }
 

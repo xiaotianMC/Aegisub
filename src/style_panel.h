@@ -198,7 +198,7 @@ private:
 class StylePanelEdge final : public wxWindow {
 	StylePanel *panel;
 	ScriptPanel *script;
-	agi::signal::Connection option_changed, script_changed, theme_changed;
+	agi::signal::Connection option_changed, script_changed, theme_changed, outline_changed;
 	bool opened = false; ///< Opened by hand while the window is narrow
 	bool hover = false;
 	int hover_page = -1; ///< The page whose name is under the pointer

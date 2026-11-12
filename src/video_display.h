@@ -240,6 +240,9 @@ public:
 	/// fitted size of the preview.
 	void SetPanMode(bool enabled);
 	bool IsPanMode() const { return pan_mode; }
+	/// Whether the wheel and a pinch zoom the picture inside the preview:
+	/// in the pan mode and the scale tool
+	bool ZoomsContent() const;
 	void TogglePanMode();
 
 	/// Get the last seen position of the mouse in script coordinates
