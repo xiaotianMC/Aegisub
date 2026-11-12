@@ -22,10 +22,12 @@
 #include "../subtitle_value_edit.h"
 #include "../utils.h"
 
+#include <libaegisub/audio/provider.h>
 #include <libaegisub/exception.h>
 #include <libaegisub/io.h>
 #include <libaegisub/vfr.h>
 
+#include <cmath>
 #include <set>
 
 #include <wx/msgdlg.h>
@@ -136,7 +138,16 @@ struct autotiming_import_speech final : public Command {
 };
 }
 
-size_t speech::Import(agi::Context *c, speech::Transcript const& transcript) {
+size_t speech::Import(agi::Context *c, speech::Transcript const& said) {
+	// The pauses an aligner put inside its words found again in the audio
+	speech::Transcript transcript = said;
+	std::vector<std::pair<int, int>> quiet;
+	if (auto audio = c->project->AudioProvider()) {
+		int const step = 10;
+		quiet = speech::FindQuiet(speech::Levels(*audio, step), step);
+		speech::TrimToSpeech(transcript, quiet);
+	}
+
 	auto scope = c->subtitleAccess->TryWrite();
 	if (!scope) return 0;
 	speech::Rules rules;
@@ -153,7 +164,7 @@ size_t speech::Import(agi::Context *c, speech::Transcript const& transcript) {
 	std::vector<int> cuts;
 	if (have_cuts)
 		for (int frame : keyframes) if (frame > 0) cuts.push_back(fps.TimeAtFrame(frame, agi::vfr::START));
-	auto made = speech::MakeLines(transcript, rules, cuts);
+	auto made = speech::MakeLines(transcript, rules, cuts, quiet);
 	if (made.empty()) return 0;
 
 	bool const pair = OPT_GET("Tool/Speech Import/Bilingual")->GetBool();

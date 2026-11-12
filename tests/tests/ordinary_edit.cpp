@@ -3851,6 +3851,26 @@ TEST(speech_lines, a_line_a_sentence_joined_across_pieces_and_ended_by_a_full_st
     for(auto const& l:lines)EXPECT_EQ(0,l.group);
 }
 
+TEST(speech_lines, without_punctuation_sentences_end_at_the_audio_pauses_though_the_characters_times_are_off) {
+    // As WhisperX aligns Japanese: a character at a time, no gaps, and here
+    // all of it squeezed into the first 2.6 s of the 6 s it is said in
+    speech::Transcript t;t.language="ja";
+    std::vector<speech::Word> chars;
+    std::string const text="私はクロですありがとうございました見てくださいね";
+    for(size_t i=0,k=0;i<text.size();i+=3,++k)chars.push_back(SW(text.substr(i,3),int(k)*100,int(k+1)*100));
+    t.segments.push_back(SS(chars));
+    std::vector<std::pair<int,int>> const quiet{{1500,1900},{4000,4400},{6000,7000}};
+    auto lines=speech::MakeLines(t,PlainRules(),{},quiet);
+    // Not ありがとう|ございました, くだ|さい nor before ね
+    EXPECT_EQ((std::vector<std::string>{"私はクロです","ありがとうございました","見てくださいね"}),Texts(lines));
+    ASSERT_EQ(3u,lines.size());
+    EXPECT_EQ(1500,lines[0].end);
+    EXPECT_EQ(1900,lines[1].start);EXPECT_EQ(4000,lines[1].end);
+    EXPECT_EQ(4400,lines[2].start);EXPECT_EQ(6000,lines[2].end);
+    // Without the pauses, by the characters' times: one line
+    EXPECT_EQ(1u,speech::MakeLines(t,PlainRules(),{}).size());
+}
+
 TEST(speech_lines, a_long_sentence_is_split_where_a_clause_ends_and_both_parts_share_a_group) {
     speech::Transcript t;t.language="ja";
     // 10 s: the clause ends after けど、 with a pause; splitting before です would
@@ -3872,7 +3892,8 @@ TEST(speech_lines, unsure_words_notes_and_the_times_around_lines_and_cuts) {
     speech::Transcript t;t.language="ja";
     t.segments.push_back(SS({SW("マミ",0,300,0.2),SW("さん",300,500,0.3),SW("は",500,600),SW("ソウルジェム",600,1400,0.1),SW("を",1400,1500),SW("持ってる。",1500,2000)}));
     t.segments.push_back(SS({SW("（笑い）",5000,5600)}));
-    auto lines=speech::MakeLines(t,PlainRules(),{});
+    auto plain=PlainRules();plain.unsure_below=0.5;
+    auto lines=speech::MakeLines(t,plain,{});
     ASSERT_EQ(2u,lines.size());
     EXPECT_EQ((std::vector<std::string>{"マミさん","ソウルジェム"}),lines[0].unsure) << "a run of unsure words is one";
     EXPECT_FALSE(lines[0].note);EXPECT_TRUE(lines[1].note);

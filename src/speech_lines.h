@@ -6,9 +6,10 @@
 #include <cstddef>
 #include <iosfwd>
 #include <string>
+#include <utility>
 #include <vector>
 
-namespace agi { struct Context; }
+namespace agi { class AudioProvider; struct Context; }
 
 /// Speech recognition's output made into subtitle lines: a line a sentence,
 /// each one the translator can take on its own
@@ -56,23 +57,42 @@ struct Rules {
 	/// min_piece is made
 	int max_duration = 7000, min_piece = 1500;
 	/// Pieces with no sentence end between them, nearer than this, are one
-	/// sentence; a longer pause within one ends it
-	int join_gap = 300, pause_break = 800;
+	/// sentence; a longer pause within one ends it. With no punctuation, as
+	/// Whisper often writes Japanese, a pause of sentence_pause after a
+	/// sentence's last word (です, ました, ね...) ends it too.
+	int join_gap = 300, pause_break = 600, sentence_pause = 250;
 	/// Every line shown at least this long, if the next line or cut allows
 	int min_duration = 1000;
 	/// As the timing post-processor's
 	int lead_in = 100, lead_out = 350, adjacent_gap = 300;
 	/// Words scored below this are marked unsure
-	double unsure_below = 0.5;
+	double unsure_below = 0.3;
 	/// A cut with less than this of a line on one side takes that end; with
 	/// more on both, the line is split at a pause of at least min_pause
 	/// within cut_pause of it
 	int cut_side = 300, cut_pause = 200, min_pause = 100;
 };
 
+/// The audio's loudness in dB, every @p step_ms, its channels together
+std::vector<float> Levels(agi::AudioProvider const& audio, int step_ms);
+
+/// Where no one is speaking, as [start, end) in milliseconds: from the
+/// sound's loudness in dB every @p step_ms, the stretches of at least
+/// @p min_ms well below its loud parts, relative to its quiet ones so music
+/// or a crowd under the voices does not hide them
+std::vector<std::pair<int, int>> FindQuiet(std::vector<float> const& levels, int step_ms, int min_ms = 150);
+
+/// Each word's time without the quiet in it. Aligning Japanese a character
+/// at a time, WhisperX leaves no gaps: a pause becomes part of the character
+/// before or after it, and is found again this way.
+void TrimToSpeech(Transcript &transcript, std::vector<std::pair<int, int>> const& quiet);
+
 /// @p cuts, the scene changes' times, sorted; empty if none are known.
+/// @p quiet, FindQuiet's pauses if the audio is known: sentences then end
+/// at them, each line's ends at the pause's.
 /// Lines are in time order, their ends not yet snapped to the frames.
-std::vector<Line> MakeLines(Transcript const& transcript, Rules const& rules, std::vector<int> const& cuts);
+std::vector<Line> MakeLines(Transcript const& transcript, Rules const& rules, std::vector<int> const& cuts,
+	std::vector<std::pair<int, int>> const& quiet = {});
 
 /// @p transcript's lines put in the subtitles, in one undo step: in place of
 /// them if nothing is written yet, else among them by time. Snapped to the

@@ -609,7 +609,7 @@
 			"Bilingual" : false,
 			"Max Duration" : 7000,
 			"Min Duration" : 1000,
-			"Unsure Below" : 0.5
+			"Unsure Below" : 0.3
 		},
 		"Spell Checker" : {
 			"Backend" : "hunspell",
