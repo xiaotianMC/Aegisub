@@ -583,6 +583,32 @@ struct video_jump_start final : public validator_video_loaded {
 	}
 };
 
+struct video_line_next final : public validator_video_loaded {
+	CMD_NAME("video/line/next")
+	STR_MENU("Next Line, Jumping the Video")
+	STR_DISP("Next Line, Jumping the Video")
+	STR_HELP("Move to the next subtitle line and jump the video to its start")
+
+	void operator()(agi::Context *c) override {
+		c->selectionController->NextLine();
+		if (auto line = c->selectionController->ReadActiveLine())
+			c->videoController->JumpToTime(line->Start);
+	}
+};
+
+struct video_line_prev final : public validator_video_loaded {
+	CMD_NAME("video/line/prev")
+	STR_MENU("Previous Line, Jumping the Video")
+	STR_DISP("Previous Line, Jumping the Video")
+	STR_HELP("Move to the previous subtitle line and jump the video to its start")
+
+	void operator()(agi::Context *c) override {
+		c->selectionController->PrevLine();
+		if (auto line = c->selectionController->ReadActiveLine())
+			c->videoController->JumpToTime(line->Start);
+	}
+};
+
 struct video_open final : public Command {
 	CMD_NAME("video/open")
 	CMD_ICON(open_video_menu)
@@ -815,6 +841,8 @@ namespace cmd {
 		reg(std::make_unique<video_jump>());
 		reg(std::make_unique<video_jump_end>());
 		reg(std::make_unique<video_jump_start>());
+		reg(std::make_unique<video_line_next>());
+		reg(std::make_unique<video_line_prev>());
 		reg(std::make_unique<video_open>());
 		reg(std::make_unique<video_open_dummy>());
 		reg(std::make_unique<video_opt_autoscroll>());

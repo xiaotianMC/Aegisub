@@ -11120,3 +11120,43 @@ msgstr "把键盘移到窗口的下一个区域：字幕表格、编辑框、音
 #: ../src/command/app.cpp
 msgid "Move the keyboard to the part of the window before: the side panel, the video, the audio, the line's fields, the subtitle grid"
 msgstr "把键盘移到窗口的上一个区域：侧边栏、视频、音频、编辑框、字幕表格"
+
+#: ../src/command/grid.cpp
+msgid "Add or Remove the Keyboard's Line"
+msgstr "加入或移出光标行"
+
+#: ../src/command/grid.cpp
+msgid "Add the line the keyboard is on in the subtitle grid to the selection, or take it out: Ctrl and the arrows move the keyboard without changing the selection"
+msgstr "把字幕表格里键盘所在的行加进选择或移出：Ctrl 加方向键只移动键盘所在的行，不改选择"
+
+#: ../src/command/grid.cpp
+msgid "Select up to the Keyboard's Line"
+msgstr "选到光标行"
+
+#: ../src/command/grid.cpp
+msgid "Select the lines from the one the selection is extended from up to the one the keyboard is on in the subtitle grid"
+msgstr "在字幕表格里选中从扩选起点到键盘所在行的一段"
+
+#: ../src/command/grid.cpp
+msgid "Add Lines up to the Keyboard's Line"
+msgstr "加选到光标行"
+
+#: ../src/command/grid.cpp
+msgid "Add the lines from the one the selection is extended from up to the one the keyboard is on in the subtitle grid to the selection"
+msgstr "把字幕表格里从扩选起点到键盘所在行的一段加进选择"
+
+#: ../src/command/video.cpp
+msgid "Next Line, Jumping the Video"
+msgstr "下一行并跳转视频"
+
+#: ../src/command/video.cpp
+msgid "Move to the next subtitle line and jump the video to its start"
+msgstr "转到下一行字幕，视频跳到它的开头"
+
+#: ../src/command/video.cpp
+msgid "Previous Line, Jumping the Video"
+msgstr "上一行并跳转视频"
+
+#: ../src/command/video.cpp
+msgid "Move to the previous subtitle line and jump the video to its start"
+msgstr "转到上一行字幕，视频跳到它的开头"

@@ -82,6 +82,24 @@ namespace {
 		{nullptr}
 	};
 
+	const char *added_hotkeys_keys_in_regions[][3] = {
+		{"grid/select/toggle", "Subtitle Grid", "Ctrl-Space"},
+		{"grid/select/range", "Subtitle Grid", "Shift-Space"},
+		{"grid/select/range/add", "Subtitle Grid", "Ctrl-Shift-Space"},
+		{"video/line/prev", "Video", "Up"},
+		{"video/line/next", "Video", "Down"},
+		{"video/jump/start", "Video", "Home"},
+		{"video/jump/end", "Video", "End"},
+		{"time/start/decrease", "Audio", "Shift-Left"},
+		{"time/start/increase", "Audio", "Shift-Right"},
+		{"time/length/decrease", "Audio", "Ctrl-Left"},
+		{"time/length/increase", "Audio", "Ctrl-Right"},
+		{"grid/line/prev", "Audio", "Up"},
+		{"grid/line/next", "Audio", "Down"},
+		{"audio/play/toggle", "Audio", "Space"},
+		{nullptr}
+	};
+
 	void migrate_hotkeys(const char *added[][3]) {
 		auto hk_map = hotkey::inst->GetHotkeyMap();
 		bool changed = false;
@@ -214,6 +232,13 @@ void init() {
 		hotkey::inst->SetHotkeyMap(std::move(hk_map));
 		migrate_hotkeys(added_hotkeys_regions);
 		migrations.emplace_back("F6 regions");
+	}
+
+	// Keys for the grid's selection, and arrows in the video and the audio
+	// (docs/keyboard-regions.md); a key taken in its context stays as it is
+	if (boost::find(migrations, "keys in regions") == end(migrations)) {
+		migrate_hotkeys(added_hotkeys_keys_in_regions);
+		migrations.emplace_back("keys in regions");
 	}
 
 	// The styling assistant is gone: the style box takes typed letters

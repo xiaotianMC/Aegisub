@@ -26,6 +26,7 @@
 #include "options.h"
 #include "command/command.h"
 #include "include/aegisub/hotkey.h"
+#include <libaegisub/hotkey.h>
 #include <tuple>
 #include <typeinfo>
 #include "flat_dialog.h"
@@ -9420,4 +9421,111 @@ TEST_F(ordinary_edit, keyboard_regions_go_round_with_f6_and_keep_tab_inside) {
     regions::FocusAfterClicks(bar,grid);
     click_tool();
     EXPECT_EQ(grid,wxWindow::FindFocus());
+}
+
+TEST_F(selection_ui, ctrl_moves_the_keyboards_row_and_space_picks_rows_here_and_there) {
+    auto key=[&](wxEventType type,int code,bool ctrl,bool shift=false){
+        wxKeyEvent event(type);event.m_keyCode=code;event.SetControlDown(ctrl);event.SetShiftDown(shift);
+        event.SetEventObject(grid);grid->GetEventHandler()->ProcessEvent(event);
+    };
+    auto selected=[&]{ return c->selectionController->SelectedIDs(); };
+    EXPECT_EQ(0,grid->CursorRow()) << "on the active line";
+
+    // Ctrl and the arrows: the keyboard's row alone
+    key(wxEVT_KEY_DOWN,WXK_DOWN,true);key(wxEVT_KEY_DOWN,WXK_DOWN,true);
+    EXPECT_EQ(2,grid->CursorRow());
+    EXPECT_EQ(ids[0],c->selectionController->ActiveID());
+    EXPECT_EQ((std::set<int>{ids[0]}),selected());
+
+    // Ctrl+Space, through the grid's own hotkey (not the window's "focus
+    // the seek bar"): in the selection, as the active line
+    key(wxEVT_CHAR_HOOK,WXK_SPACE,true);
+    EXPECT_EQ((std::set<int>{ids[0],ids[2]}),selected());
+    EXPECT_EQ(ids[2],c->selectionController->ActiveID());
+    EXPECT_EQ(2,grid->CursorRow());
+
+    // Taken out again: the active line goes to the nearest selected row,
+    // the keyboard stays
+    key(wxEVT_KEY_DOWN,WXK_DOWN,true);
+    cmd::call("grid/select/toggle",c.get());
+    EXPECT_EQ((std::set<int>{ids[0],ids[2],ids[3]}),selected());
+    cmd::call("grid/select/toggle",c.get());
+    EXPECT_EQ((std::set<int>{ids[0],ids[2]}),selected());
+    EXPECT_EQ(ids[2],c->selectionController->ActiveID());
+    EXPECT_EQ(3,grid->CursorRow());
+    key(wxEVT_KEY_DOWN,WXK_UP,true);
+    cmd::call("grid/select/toggle",c.get());
+    EXPECT_EQ((std::set<int>{ids[0]}),selected());
+    EXPECT_EQ(ids[0],c->selectionController->ActiveID()) << "the only one left";
+    EXPECT_EQ(2,grid->CursorRow());
+    key(wxEVT_KEY_DOWN,WXK_HOME,true);
+    cmd::call("grid/select/toggle",c.get());
+    EXPECT_EQ((std::set<int>{ids[0]}),selected()) << "the last selected row stays";
+
+    // A plain arrow goes on from the keyboard's row
+    key(wxEVT_KEY_DOWN,WXK_DOWN,true);key(wxEVT_KEY_DOWN,WXK_DOWN,true);
+    key(wxEVT_KEY_DOWN,WXK_DOWN,false);
+    EXPECT_EQ((std::set<int>{ids[3]}),selected());
+    EXPECT_EQ(ids[3],c->selectionController->ActiveID());
+
+    // Shift+Space: from the row the selection extends from to the keyboard's
+    key(wxEVT_KEY_DOWN,WXK_UP,true);key(wxEVT_KEY_DOWN,WXK_UP,true);
+    key(wxEVT_CHAR_HOOK,WXK_SPACE,false,true);
+    EXPECT_EQ((std::set<int>{ids[1],ids[2],ids[3]}),selected());
+    EXPECT_EQ(ids[1],c->selectionController->ActiveID());
+    // Ctrl+Shift+Space adds to it
+    c->selectionController->SetSelectionAndActiveIDs({ids[3]},ids[3],false);
+    key(wxEVT_KEY_DOWN,WXK_UP,true);key(wxEVT_KEY_DOWN,WXK_UP,true);key(wxEVT_KEY_DOWN,WXK_UP,true);
+    cmd::call("grid/select/toggle",c.get());
+    EXPECT_EQ((std::set<int>{ids[0],ids[3]}),selected());
+    key(wxEVT_KEY_DOWN,WXK_DOWN,true);
+    key(wxEVT_CHAR_HOOK,WXK_SPACE,true,true);
+    EXPECT_EQ((std::set<int>{ids[0],ids[1],ids[3]}),selected()) << "from row 0, where it was extended from, added";
+
+    // A click puts the keyboard on the clicked row
+    Mouse(2);
+    EXPECT_EQ(2,grid->CursorRow());
+}
+
+TEST_F(ordinary_edit, video_and_audio_have_arrow_keys_and_space_of_their_own) {
+    // The command each key runs in each region, as a key press finds it
+    auto runs=[&](const char *context,int code,int modifiers){ return std::string(hotkey::inst->Scan(context,hotkey::keypress_to_str(code,modifiers),false)); };
+    EXPECT_EQ("grid/select/toggle",runs("Subtitle Grid",WXK_SPACE,wxMOD_CMD));
+    EXPECT_EQ("grid/select/range",runs("Subtitle Grid",WXK_SPACE,wxMOD_SHIFT));
+    EXPECT_EQ("grid/select/range/add",runs("Subtitle Grid",WXK_SPACE,wxMOD_CMD|wxMOD_SHIFT));
+    EXPECT_EQ("video/play",runs("Subtitle Grid",WXK_SPACE,0)) << "Space still plays the video in the grid";
+    EXPECT_EQ("video/focus_seek",runs("Subtitle Edit Box",WXK_SPACE,wxMOD_CMD)) << "Ctrl+Space elsewhere as it was";
+    EXPECT_EQ("video/line/prev",runs("Video",WXK_UP,0));
+    EXPECT_EQ("video/line/next",runs("Video",WXK_DOWN,0));
+    EXPECT_EQ("video/jump/start",runs("Video",WXK_HOME,0));
+    EXPECT_EQ("video/jump/end",runs("Video",WXK_END,0));
+    EXPECT_EQ("video/frame/next",runs("Video",WXK_RIGHT,0)) << "the arrows it had stay";
+    EXPECT_EQ("time/start/decrease",runs("Audio",WXK_LEFT,wxMOD_SHIFT));
+    EXPECT_EQ("time/start/increase",runs("Audio",WXK_RIGHT,wxMOD_SHIFT));
+    EXPECT_EQ("time/length/decrease",runs("Audio",WXK_LEFT,wxMOD_CMD));
+    EXPECT_EQ("time/length/increase",runs("Audio",WXK_RIGHT,wxMOD_CMD));
+    EXPECT_EQ("grid/line/prev",runs("Audio",WXK_UP,0));
+    EXPECT_EQ("grid/line/next",runs("Audio",WXK_DOWN,0));
+    EXPECT_EQ("audio/play/toggle",runs("Audio",WXK_SPACE,0));
+    EXPECT_EQ("time/next",runs("Audio",WXK_RIGHT,0));
+
+    // Up and Down in the video: the next line, the video at its start
+    c->project->LoadVideo("?dummy:25:250:640:480:64:64:64:");
+    ASSERT_NE(nullptr,c->project->VideoProvider());
+    PumpFirstFrame(c.get(),window);
+    int first=0,second=0;
+    {
+        auto write=c->subtitleAccess->TryWrite();
+        auto& row=LiveWriteForTest(*c).Events.front();row.Start=1000;row.End=2000;first=row.Id;
+        auto next=new AssDialogue;next->Start=4000;next->End=5000;
+        LiveWriteForTest(*c).Events.push_back(*next);second=next->Id;
+        LiveWriteForTest(*c).Commit("two lines",AssFile::COMMIT_DIAG_ADDREM|AssFile::COMMIT_DIAG_FULL);
+    }
+    c->selectionController->SetSelectionAndActiveIDs({first},first,false);
+    cmd::call("video/line/next",c.get());
+    EXPECT_EQ(second,c->selectionController->ActiveID());
+    EXPECT_EQ(c->videoController->FrameAtTime(4000,agi::vfr::START),c->videoController->GetFrameN());
+    cmd::call("video/line/prev",c.get());
+    EXPECT_EQ(first,c->selectionController->ActiveID());
+    EXPECT_EQ(c->videoController->FrameAtTime(1000,agi::vfr::START),c->videoController->GetFrameN());
 }

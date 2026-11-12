@@ -35,6 +35,18 @@
 		]
 	},
 	"Audio" : {
+		"time/start/decrease" : [
+			"Shift-Left"
+		],
+		"time/start/increase" : [
+			"Shift-Right"
+		],
+		"grid/line/prev" : [
+			"Up"
+		],
+		"grid/line/next" : [
+			"Down"
+		],
 		"app/toggle/global_hotkeys" : [
 			"Ctrl-KP_Multiply"
 		],
@@ -68,7 +80,8 @@
 			"T"
 		],
 		"audio/play/toggle" : [
-			"B"
+			"B",
+			"Space"
 		],
 		"audio/scroll/left" : [
 			"A"
@@ -86,13 +99,15 @@
 			"V"
 		],
 		"time/length/decrease" : [
-			"KP_Subtract"
+			"KP_Subtract",
+			"Ctrl-Left"
 		],
 		"time/length/decrease/shift" : [
 			"Shift-KP_Subtract"
 		],
 		"time/length/increase" : [
-			"KP_Add"
+			"KP_Add",
+			"Ctrl-Right"
 		],
 		"time/length/increase/shift" : [
 			"Shift-KP_Add"
@@ -255,6 +270,15 @@
 		]
 	},
 	"Subtitle Grid" : {
+		"grid/select/toggle" : [
+			"Ctrl-Space"
+		],
+		"grid/select/range" : [
+			"Shift-Space"
+		],
+		"grid/select/range/add" : [
+			"Ctrl-Shift-Space"
+		],
 		"subtitle/select/all" : [
 			"Ctrl-A"
 		],
@@ -308,6 +332,18 @@
 		]
 	},
 	"Video" : {
+		"video/line/prev" : [
+			"Up"
+		],
+		"video/line/next" : [
+			"Down"
+		],
+		"video/jump/start" : [
+			"Home"
+		],
+		"video/jump/end" : [
+			"End"
+		],
 		"video/frame/next" : [
 			"Right"
 		],

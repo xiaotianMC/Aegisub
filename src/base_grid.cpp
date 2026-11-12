@@ -54,6 +54,7 @@
 #include <libaegisub/util.h>
 
 #include <algorithm>
+#include <climits>
 
 #include <wx/tooltip.h>
 #include <wx/dcbuffer.h>
@@ -140,9 +141,17 @@ BEGIN_EVENT_TABLE(BaseGrid,wxWindow)
 	EVT_MOUSE_EVENTS(BaseGrid::OnMouseEvent)
 	EVT_KEY_DOWN(BaseGrid::OnKeyDown)
 	EVT_CHAR_HOOK(BaseGrid::OnCharHook)
+	EVT_SET_FOCUS(BaseGrid::OnFocus)
+	EVT_KILL_FOCUS(BaseGrid::OnFocus)
 	EVT_MENU_RANGE(MENU_SHOW_COL,MENU_SHOW_COL+15,BaseGrid::OnShowColMenu)
 	EVT_DPI_CHANGED(BaseGrid::OnDPIChanged)
 END_EVENT_TABLE()
+
+void BaseGrid::OnFocus(wxFocusEvent &e) {
+	// The keyboard's row is framed only while the grid has the keyboard
+	Refresh(false);
+	e.Skip();
+}
 
 void BaseGrid::OnDPIChanged(wxDPIChangedEvent &e) {
 	UpdateStyle();
@@ -252,6 +261,8 @@ void BaseGrid::OnActiveLineChanged() {
 			MakeRowVisible(new_active->Row);
 		active_row = new_active->Row;
         extend_id = new_active->Id;
+		// The keyboard goes with the active line
+		cursor_id = 0;
 		Refresh(false);
 	}
 	else
@@ -386,6 +397,7 @@ void BaseGrid::Draw(wxDC &dc, std::vector<char> const& paint_columns) {
 	const int nDraw = mid(0, drawPerScreen, GetRows() - yPos);
 
 	const auto active_line = context->selectionController->ReadActiveLine();
+	const int cursor_row = FindFocus() == this ? CursorRow() : -1;
 	auto const& mutable_selection = context->selectionController->ReadSelectedSet();
     std::set<AssDialogue const*> selection(mutable_selection.begin(), mutable_selection.end());
 	visible_rows.clear();
@@ -457,6 +469,16 @@ void BaseGrid::Draw(wxDC &dc, std::vector<char> const& paint_columns) {
 			dc.SetPen(*wxTRANSPARENT_PEN);
 			dc.SetBrush(wxBrush(active_colour));
 			dc.DrawRectangle(0, y, bar, lineHeight - 1);
+		}
+
+		// The row the keyboard is on, while the grid has the keyboard: a
+		// thin frame in the accent colour, as the style list's
+		if (i + yPos == cursor_row) {
+			int thin = std::max(1, FromDIP(1));
+			dc.SetPen(wxPen(theme::UiColours().accent, thin));
+			dc.SetBrush(*wxTRANSPARENT_BRUSH);
+			dc.DrawRectangle(thin / 2, y + thin / 2, w - thin, lineHeight - 1 - thin / 2);
+			dc.SetPen(*wxTRANSPARENT_PEN);
 		}
 
 		// Row divider
@@ -604,6 +626,7 @@ void BaseGrid::OnMouseEvent(wxMouseEvent &event) {
 		context->selectionController->SetActiveID(target->Id);
 		ScrollTo(old_y_pos);
 		extend_id = target->Id;
+		cursor_id = 0;
 
 		auto selection = context->selectionController->SelectedIDs();
 
@@ -767,6 +790,71 @@ AssDialogue const* BaseGrid::GetDialogue(int n) const {
 	if (static_cast<size_t>(n) >= index_line_map.size()) return nullptr;
 	return index_line_map[n];
 }
+int BaseGrid::CursorRow() const {
+	if (index_line_map.empty()) return -1;
+	if (cursor_id)
+		for (size_t i = 0; i < index_line_map.size(); ++i)
+			if (index_line_map[i]->Id == cursor_id) return static_cast<int>(i);
+	if (auto active = context->selectionController->ReadActiveLine()) return active->Row;
+	return 0;
+}
+
+void BaseGrid::ToggleCursorRow() {
+	int row = CursorRow();
+	if (row < 0) return;
+	auto target = index_line_map[row];
+	auto ids = context->selectionController->SelectedIDs();
+	if (!ids.count(target->Id)) {
+		ids.insert(target->Id);
+		context->selectionController->SetSelectionAndActiveIDs(std::move(ids), target->Id);
+	}
+	else {
+		// A bound group goes out whole: it is selected as one
+		std::set<int> going;
+		for (auto line : ExpandBoundSelection(context->subtitleAccess->Read(), Selection{target}))
+			going.insert(line->Id);
+		std::set<int> rest;
+		for (int id : ids)
+			if (!going.count(id)) rest.insert(id);
+		if (rest.empty()) return;
+		auto active = context->selectionController->ReadActiveLine();
+		if (active && going.count(active->Id)) {
+			// The active line went: the selected row nearest takes its place
+			int nearest = 0, distance = INT_MAX;
+			for (size_t i = 0; i < index_line_map.size(); ++i) {
+				int d = std::abs(static_cast<int>(i) - row);
+				if (rest.count(index_line_map[i]->Id) && d < distance) {
+					distance = d;
+					nearest = index_line_map[i]->Id;
+				}
+			}
+			context->selectionController->SetSelectionAndActiveIDs(std::move(rest), nearest);
+		}
+		else
+			context->selectionController->SetSelectedIDs(std::move(rest));
+	}
+	// The keyboard stays on the row, wherever the active line went
+	cursor_id = target->Id;
+	MakeRowVisible(row);
+	Refresh(false);
+}
+
+void BaseGrid::SelectToCursor(bool add) {
+	int row = CursorRow();
+	if (row < 0) return;
+	int from = ExtendRow(), old_extend = extend_id;
+	std::set<int> ids;
+	if (add) ids = context->selectionController->SelectedIDs();
+	for (int i = std::min(from, row); i <= std::max(from, row); ++i)
+		ids.insert(index_line_map[i]->Id);
+	context->selectionController->SetSelectionAndActiveIDs(std::move(ids), index_line_map[row]->Id);
+	// Extended from the same row next time, as Shift and the arrows do
+	extend_id = old_extend;
+	cursor_id = 0;
+	MakeRowVisible(row);
+	Refresh(false);
+}
+
 int BaseGrid::ExtendRow() const {
     for (size_t i = 0; i < index_line_map.size(); ++i)
         if (index_line_map[i]->Id == extend_id) return static_cast<int>(i);
@@ -841,11 +929,22 @@ void BaseGrid::OnKeyDown(wxKeyEvent &event) {
 	}
     auto const& rows = index_line_map;
 
-	auto active_line = context->selectionController->ReadActiveLine();
     if (rows.empty()) { context->selectionController->SetActiveID(0); return; }
+	// From the keyboard's row, which Ctrl may have moved from the active line
+	int next = mid(0, std::max(0, CursorRow()) + dir * step, GetRows() - 1);
+
+	// Ctrl: the keyboard's row alone, the selection and the active line
+	// as they are, for picking rows here and there with Ctrl+Space
+	if (ctrl && !shift && !alt) {
+		cursor_id = rows.at(next)->Id;
+		MakeRowVisible(next);
+		Refresh(false);
+		return;
+	}
+
 	int old_extend = rows.at(ExtendRow())->Id;
-	int next = mid(0, (active_line ? active_line->Row : 0) + dir * step, GetRows() - 1);
 	context->selectionController->SetActiveID(rows.at(next)->Id);
+	cursor_id = 0;
 
 	// Move selection
 	if (!ctrl && !shift && !alt) {

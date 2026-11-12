@@ -77,6 +77,8 @@
 - **胶囊标签**：CPS 超限的红色底和图层列的绑定组色块不再填满格子，而是左右各缩进半个内边距的圆角胶囊；CPS 胶囊上的文字随超限程度由正文颜色渐变为白色。
 - **默认颜色**：网格的浅色出厂值（`default_config.json`）和深色出厂值（`src/theme.cpp`）都改为这套中性灰加强调色蓝的配色。没改过的颜色跟着新默认值走，改过的颜色保持不变。首选项里的颜色项没有变化，“当前行边框”现在决定的是当前行的竖条和底色。
 
+- **键盘光标行**：表格拿着键盘时，键盘所在的行外面一圈强调色细框。Ctrl 加方向键只移动它，Ctrl+空格把它加进或移出选择，Shift+空格选到它，见[主窗口的键盘区域](keyboard-regions.md#字幕表格)。
+
 实现：`src/base_grid.cpp`（`BaseGrid::Draw`，由 `OnPaint` 调用）、`src/grid_column.{h,cpp}`（`GridColumn::cell_padding`、`TextLeft`，`DrawPill`）。测试按 `BaseGrid::LineHeight()` 计算点击位置，不再自己按字体高度推算。
 
 ## 状态栏
