@@ -5,9 +5,11 @@
 
 #include "ass_dialogue.h"
 #include "ass_file.h"
+#include "compat.h"
 #include "dialog_progress.h"
 
 #include <libaegisub/background_runner.h>
+#include <libaegisub/format.h>
 
 #include <algorithm>
 #include <atomic>
@@ -567,6 +569,21 @@ std::optional<double> ProgressOf(std::string const& output, int duration_ms) {
 	return std::nullopt;
 }
 
+Stage StageOf(std::string const& output) {
+	Stage stage = Stage::Starting;
+	size_t pos = 0;
+	while (pos < output.size()) {
+		size_t end = output.find_first_of("\r\n", pos);
+		if (end == std::string::npos) end = output.size();
+		std::string const line = output.substr(pos, end - pos);
+		pos = end + 1;
+		if (StartsWith(line, "Task ")) stage = Stage::Analysing;
+		else if (line == "==== Extra Job: ocr ====") stage = Stage::Reading;
+		else if (line == "==== IIR to ASS ====") stage = Stage::Writing;
+	}
+	return stage;
+}
+
 namespace {
 /// Told on the main thread when the program ends; deletes itself then if
 /// it was given up on before
@@ -625,6 +642,8 @@ Outcome Run(Launch const& launch, agi::fs::path const& config, wxWindow *parent,
 	DialogProgress progress(parent, "MagiaTimeline", _("Starting MagiaTimeline..."));
 	try {
 		progress.Run([&](agi::ProgressSink *ps) {
+			using namespace std::chrono;
+			auto const started = steady_clock::now();
 			ps->SetIndeterminate();
 			bool indeterminate = true;
 			std::string shown;
@@ -632,6 +651,21 @@ Outcome Run(Launch const& launch, agi::fs::path const& config, wxWindow *parent,
 				bool const ended = process->ended;
 				Drain(process->GetInputStream(), outcome.output);
 				Drain(process->GetErrorStream(), outcome.output);
+				// The stage it is in and how long it has been going, so it is
+				// seen to be going even while it says nothing
+				wxString stage;
+				switch (StageOf(outcome.output)) {
+					case Stage::Starting: stage = _("Starting MagiaTimeline..."); break;
+					case Stage::Analysing: stage = _("Analysing the video..."); break;
+					case Stage::Reading: stage = _("Reading the subtitles' text..."); break;
+					case Stage::Writing: stage = _("Writing the result..."); break;
+				}
+				int const seconds = int(duration_cast<std::chrono::seconds>(steady_clock::now() - started).count());
+				auto message = from_wx(stage) + "  " + agi::format("%d:%02d", seconds / 60, seconds % 60);
+				if (message != shown) {
+					ps->SetMessage(message);
+					shown = message;
+				}
 				// How far, where the stage it is in tells; a sweep where not
 				if (auto share = ProgressOf(outcome.output, duration_ms)) {
 					ps->SetProgress(std::llround(*share * 1000), 1000);
@@ -640,12 +674,6 @@ Outcome Run(Launch const& launch, agi::fs::path const& config, wxWindow *parent,
 				else if (!indeterminate) {
 					ps->SetIndeterminate();
 					indeterminate = true;
-				}
-				auto last = Readable(LastLines(outcome.output, 1));
-				if (!last.empty()) last.pop_back();
-				if (!last.empty() && last != shown) {
-					ps->SetMessage(last);
-					shown = last;
 				}
 				if (ps->IsCancelled()) {
 					wxProcess::Kill(static_cast<int>(pid), wxSIGKILL, wxKILL_CHILDREN);

@@ -9343,6 +9343,19 @@ TEST(magia_timeline, how_far_it_is_is_read_from_what_it_prints) {
     EXPECT_FALSE(magia_timeline::ProgressOf(reading+"Subtitle_Dialog_199\n==== IIR to ASS ====\n",100000)) << "past reading: no telling";
 }
 
+TEST(magia_timeline, the_stage_it_is_in_is_read_from_what_it_prints) {
+    using magia_timeline::Stage;
+    EXPECT_EQ(Stage::Starting,magia_timeline::StageOf(""));
+    EXPECT_EQ(Stage::Starting,magia_timeline::StageOf("INFO: Could not find files for the given pattern(s).\r\n")) << "what something it ran said, while loading";
+    std::string const analysing="Task 0: a.mp4 -> b\n==== Running Engine ====\n==== IIR Building ====\nframe 00:00:10.00\n";
+    EXPECT_EQ(Stage::Analysing,magia_timeline::StageOf(analysing));
+    EXPECT_EQ(Stage::Analysing,magia_timeline::StageOf(analysing+"==== Extra Job: sty ====\n")) << "another extra job is still analysing";
+    std::string const reading=analysing+"==== Extra Job: ocr ====\nIIRTextExtractionPass: processing 2 intervals\n";
+    EXPECT_EQ(Stage::Reading,magia_timeline::StageOf(reading));
+    EXPECT_EQ(Stage::Writing,magia_timeline::StageOf(reading+"Subtitle_Dialog_0\n==== IIR to ASS ====\n"));
+    EXPECT_EQ(Stage::Writing,magia_timeline::StageOf(analysing+"==== IIR to ASS ====\nResult written to b.ass\n")) << "without reading";
+}
+
 namespace {
 /// Stands in for MagiaTimeline's virtual environment's Python: checks it is
 /// run as it would be, says what it was given, and writes what it writes

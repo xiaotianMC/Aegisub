@@ -154,11 +154,28 @@ std::string LastLines(std::string const& output, size_t count);
 /// progress, or when the video's length is unknown (0) while building.
 std::optional<double> ProgressOf(std::string const& output, int duration_ms);
 
-/// Run @p launch on @p config in a progress dialog over @p parent, its
-/// latest line of output shown as it goes and how far it is through a
-/// video @p duration_ms long (0 if unknown) where it tells, until it ends
-/// or is cancelled, when it and what it started are killed. From the main
-/// thread.
+/// The stages of a run, as told apart by what it prints
+enum class Stage {
+	/// Loading, before it says which video it is on
+	Starting,
+	/// Going through the video for when the subtitles show
+	Analysing,
+	/// Reading the subtitles' text
+	Reading,
+	/// Writing the result
+	Writing,
+};
+
+/// The stage a run is in, from what it has printed so far
+Stage StageOf(std::string const& output);
+
+/// Run @p launch on @p config in a progress dialog over @p parent, the
+/// stage it is in and how long it has run shown as it goes (what it prints
+/// is kept for telling what went wrong, not shown: it is mostly what the
+/// programs it runs say, and the packaged one's own words come in bursts),
+/// and how far it is through a video @p duration_ms long (0 if unknown)
+/// where it tells, until it ends or is cancelled, when it and what it
+/// started are killed. From the main thread.
 Outcome Run(Launch const& launch, agi::fs::path const& config, wxWindow *parent, int duration_ms = 0);
 
 }
