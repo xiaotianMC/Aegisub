@@ -716,6 +716,141 @@ TEST_F(ordinary_edit, command_palette_matches_words_in_any_order_english_names_m
     EXPECT_EQ(L"a", palette::CanonicalHotkey(L"A", false));
 }
 
+TEST_F(ordinary_edit, command_palette_finds_dialogue_as_runs_and_reads_goto_queries) {
+    // Dialogue: each word one run, in the text or its pinyin, not scattered.
+    auto keys = palette::MakeTextKeys(L"\u6253\u5f00\u5b57\u5e55\u6587\u4ef6"); // 打开字幕文件
+    auto syllables = palette::MatchQuery(L"zimu", keys, true);
+    ASSERT_TRUE(syllables);
+    EXPECT_EQ((std::vector<size_t>{2, 3}), syllables->positions);
+    EXPECT_FALSE(palette::MatchQuery(L"imu", keys, true)) << "pinyin runs start a syllable";
+    EXPECT_FALSE(palette::MatchQuery(L"dz", keys, true)) << "initials not side by side";
+    EXPECT_TRUE(palette::MatchQuery(L"dz", keys, false)) << "as a command name it would match";
+    auto words = palette::MatchQuery(L"wj dk", keys, true);
+    ASSERT_TRUE(words);
+    EXPECT_EQ((std::vector<size_t>{0, 1, 4, 5}), words->positions);
+    auto english = palette::MatchQuery(L"orl", palette::MakeTextKeys(L"Hello world"), true);
+    ASSERT_TRUE(english);
+    EXPECT_EQ((std::vector<size_t>{7, 8, 9}), english->positions) << "plain text: anywhere";
+
+    EXPECT_EQ(120, palette::ParseGoto(L" 120 ").line);
+    EXPECT_EQ(-1, palette::ParseGoto(L"120").time);
+    EXPECT_EQ(83450, palette::ParseGoto(L"1:23.45").time);
+    EXPECT_EQ(3723000, palette::ParseGoto(L"1:02:03").time);
+    EXPECT_EQ(83000, palette::ParseGoto(L"1\uff1a23").time) << "a Chinese input method's colon";
+    EXPECT_EQ(12, palette::ParseGoto(L"\uff11\uff12").line) << "full-width digits";
+    EXPECT_EQ(0, palette::ParseGoto(L"abc").line);
+    EXPECT_EQ(-1, palette::ParseGoto(L"abc").time);
+    EXPECT_EQ(0, palette::ParseGoto(L"").line);
+    EXPECT_EQ(-1, palette::ParseGoto(L":").time) << "no digits";
+}
+
+TEST_F(ordinary_edit, command_palette_finds_lines_and_goes_to_lines_and_times) {
+    std::vector<int> ids{LiveRead(*c).Events.front().Id};
+    {
+        auto write = c->subtitleAccess->TryWrite();
+        auto& file = LiveWriteForTest(*c);
+        struct { int start, end; char const *text; bool comment; } rows[] = {
+            {1000, 2000, "{\\i1}Hello\\Nworld", false},
+            {3000, 5000, "\u6253\u5f00\u5b57\u5e55\u6587\u4ef6", false},
+            {6000, 7000, "a note world", true},
+        };
+        for (auto const& row : rows) {
+            auto line = new AssDialogue;
+            line->Start = row.start; line->End = row.end;
+            line->Text = row.text; line->Comment = row.comment;
+            line->Actor = "Kei";
+            file.Events.push_back(*line);
+            ids.push_back(line->Id);
+        }
+        file.Commit("", AssFile::COMMIT_DIAG_ADDREM);
+    }
+
+    CommandPalette palette(c.get());
+    palette.SetQuery("@");
+    EXPECT_EQ(CommandPalette::Mode::Lines, palette.CurrentMode());
+    EXPECT_TRUE(palette.Targets().empty());
+    EXPECT_FALSE(palette.EmptyMessage().empty()) << "says what to type";
+
+    palette.SetQuery("@world");
+    ASSERT_EQ(2u, palette.Targets().size()) << "a comment is found too";
+    EXPECT_TRUE(palette.Shown().empty()) << "no commands in this mode";
+    auto const& hello = palette.Targets()[0];
+    EXPECT_EQ(ids[1], hello.line_id);
+    EXPECT_EQ("Hello world", hello.text) << "tags dropped, \\N a space";
+    EXPECT_EQ((std::vector<size_t>{6, 7, 8, 9, 10}), hello.match.positions);
+    EXPECT_EQ("0:00:01.00", hello.start);
+    EXPECT_TRUE(hello.detail.StartsWith("#2"));
+    EXPECT_TRUE(hello.detail.Contains("Kei"));
+    EXPECT_TRUE(palette.Targets()[1].comment);
+
+    palette.SetQuery(wxString::FromUTF8("\uff20zimu")); // ＠, as a Chinese input method types it
+    ASSERT_EQ(1u, palette.Targets().size());
+    EXPECT_EQ(ids[2], palette.Targets()[0].line_id);
+    palette.SetQuery("@world hello");
+    ASSERT_EQ(1u, palette.Targets().size());
+    palette.SetQuery("@hw");
+    EXPECT_TRUE(palette.Targets().empty());
+    EXPECT_FALSE(palette.EmptyMessage().empty());
+
+    // ':' a line number
+    palette.SetQuery(":3");
+    EXPECT_EQ(CommandPalette::Mode::Goto, palette.CurrentMode());
+    ASSERT_EQ(1u, palette.Targets().size());
+    EXPECT_EQ(ids[2], palette.Targets()[0].line_id);
+    palette.SetQuery(":99");
+    EXPECT_TRUE(palette.Targets().empty());
+    EXPECT_TRUE(palette.EmptyMessage().Contains("99"));
+    palette.SetQuery(":");
+    EXPECT_TRUE(palette.Targets().empty());
+    EXPECT_FALSE(palette.EmptyMessage().empty());
+
+    // ...or a time: with no video, the line on screen then first; seeking
+    // is there but not available.
+    palette.SetQuery(":0:00:03.5");
+    ASSERT_EQ(2u, palette.Targets().size());
+    EXPECT_EQ(ids[2], palette.Targets()[0].line_id);
+    EXPECT_EQ(3500, palette.Targets()[1].time);
+    EXPECT_FALSE(palette.Targets()[1].enabled);
+    palette.SetQuery(":5.5");
+    ASSERT_EQ(1u, palette.Targets().size()) << "nothing on screen or after but a comment";
+    EXPECT_EQ(5500, palette.Targets()[0].time);
+
+    palette.SetQuery(":0:00:03.5");
+    palette.Select(1);
+    EXPECT_FALSE(palette.Accept()) << "no video to seek";
+    palette.Select(0);
+    EXPECT_TRUE(palette.Accept());
+    ASSERT_TRUE(palette.ChosenTarget());
+    palette.GoToChosen();
+    EXPECT_EQ(ids[2], c->selectionController->ActiveID());
+    EXPECT_EQ(std::set<int>{ids[2]}, c->selectionController->SelectedIDs());
+
+    // Through the command: the line is gone to once the palette has closed.
+    struct Choose : wxModalDialogHook {
+        Choose() { Register(); }
+        int Enter(wxDialog *dialog) override {
+            auto palette = dynamic_cast<CommandPalette*>(dialog);
+            if (!palette) return wxID_NONE;
+            palette->SetQuery(wxString::FromUTF8("\uff1a2"));
+            palette->CallAfter([palette] { EXPECT_TRUE(palette->Accept()); });
+            return wxID_NONE;
+        }
+        void Exit(wxDialog *) override {}
+    } choose;
+    cmd::call("app/command_palette", c.get());
+    EXPECT_EQ(ids[1], c->selectionController->ActiveID());
+
+    // While the comparison tab is in front the lines are shown, not gone to.
+    auto page = new testing_comparison_page(tabs->Book());
+    tabs->OpenComparison(page, "other.ass");
+    CommandPalette locked(c.get());
+    locked.SetQuery("@world");
+    ASSERT_FALSE(locked.Targets().empty());
+    EXPECT_FALSE(locked.Targets()[0].enabled);
+    EXPECT_FALSE(locked.Accept());
+    tabs->ComparisonEnded(false);
+}
+
 TEST_F(ordinary_edit, command_palette_lists_commands_remembers_choices_and_runs_after_closing) {
     OPT_SET("App/Command Palette/Recent")->SetListString({});
     {

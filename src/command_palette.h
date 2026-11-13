@@ -31,6 +31,7 @@ struct SearchKey {
     std::vector<size_t> shown;
     int weight = 0; ///< Added to the score of a match in this key
     Field field = Field::Name;
+    bool pinyin = false; ///< Pinyin of Chinese text, a syllable a word
 };
 
 struct Match {
@@ -53,6 +54,10 @@ struct Match {
 std::vector<SearchKey> MakeKeys(std::wstring_view name, std::string_view id,
     std::wstring_view original = {}, std::wstring_view path = {});
 
+/// Keys for a text alone (a subtitle line): as written, and its pinyin and
+/// pinyin initials when it has Chinese characters.
+std::vector<SearchKey> MakeTextKeys(std::wstring_view text);
+
 /// Normalise what the user typed: lower case, without spaces.
 std::wstring NormaliseQuery(std::wstring_view query);
 
@@ -66,10 +71,24 @@ std::optional<Match> FuzzyMatch(std::wstring_view query, SearchKey const& key);
 /// Best match over all @p keys.
 std::optional<Match> BestMatch(std::wstring_view query, std::vector<SearchKey> const& keys);
 
+/// Best match of the normalised @p query as one run in @p key, for long
+/// texts (the dialogue) where scattered characters would match nearly
+/// anything. A run in pinyin starts a syllable. None if it does not match.
+std::optional<Match> RunMatch(std::wstring_view query, SearchKey const& key);
+
 /// Match what the user typed, @p query as typed: the whole of it without
 /// spaces, or, when it has several words, each word on its own in any order
 /// and any key ("tags hide", "timing shift"), whichever scores more.
-std::optional<Match> MatchQuery(std::wstring_view query, std::vector<SearchKey> const& keys);
+/// With @p runs, each word has to be a run (RunMatch) rather than fuzzy.
+std::optional<Match> MatchQuery(std::wstring_view query, std::vector<SearchKey> const& keys, bool runs = false);
+
+/// What text typed after ':' asks for: a line number, or a time with ':',
+/// '.' or ','. Neither when empty or anything else.
+struct GotoQuery {
+    int line = 0;  ///< 1-based, 0 when not a line
+    int time = -1; ///< Milliseconds, -1 when not a time
+};
+GotoQuery ParseGoto(std::wstring_view text);
 
 /// A shortcut in one form: lower case, modifiers in a fixed order, parts
 /// joined by '-' ("Shift+Ctrl+P", "ctrl shift p" and "Ctrl-Shift-P" all give
@@ -85,6 +104,22 @@ std::wstring Pinyin(wchar_t ch);
 
 class CommandPalette final : public wxDialog {
 public:
+    /// What the palette searches, from the first character typed: commands,
+    /// '@' the dialogue, ':' a line number or a time to go to.
+    enum class Mode { Commands, Lines, Goto };
+
+    /// A row of the '@' and ':' modes: a subtitle line, or a time.
+    struct Target {
+        int line_id = 0;   ///< The line to go to, 0 for none
+        int time = -1;     ///< The time to seek the video to, -1 for none
+        wxString text;     ///< The line's text, or what happens
+        wxString start;    ///< The line's start time
+        wxString detail;   ///< Below: line number, style, actor
+        bool enabled = true;
+        bool comment = false;
+        palette::Match match;
+    };
+
     struct Item {
         std::string name;
         wxString display, help, hotkey;
@@ -110,6 +145,26 @@ private:
     std::vector<size_t> shown;
     std::vector<palette::Match> matches;
     std::string chosen;
+    Mode mode = Mode::Commands;
+    /// The rows in the '@' and ':' modes.
+    std::vector<Target> targets;
+    std::optional<Target> chosen_target;
+    /// Every subtitle line, indexed for '@' the first time it is used.
+    struct Line {
+        int id, row, start;
+        bool comment;
+        wxString text, style, actor;
+        std::vector<palette::SearchKey> keys;
+    };
+    std::vector<Line> lines;
+    bool lines_read = false;
+    wxStaticText *modes_hint;
+
+    void ReadLines();
+    void FilterLines(std::wstring_view query);
+    void FilterGoto(std::wstring_view query);
+    Target LineTarget(Line const& line) const;
+    void ShowRows(size_t count, wxString const& none);
     bool composing = false;
     bool was_active = false;
 
@@ -136,10 +191,21 @@ public:
     bool Accept();
     /// The chosen command, empty when closed without one.
     std::string const& Chosen() const { return chosen; }
+    /// The chosen line or time, in the '@' and ':' modes.
+    std::optional<Target> const& ChosenTarget() const { return chosen_target; }
+    /// Go to the chosen line or time; nothing when none was chosen.
+    void GoToChosen();
+
+    Mode CurrentMode() const { return mode; }
+    /// The rows shown in the '@' and ':' modes.
+    std::vector<Target> const& Targets() const { return targets; }
+    /// What is said in place of the list when it is empty.
+    wxString EmptyMessage() const;
 
     /// Put @p name first among the recently used commands.
     static void Remember(std::string const& name);
 };
 
-/// Show the palette over the main window. The chosen command, if any.
+/// Show the palette over the main window. A line or time chosen is gone to
+/// once it has closed; the chosen command, if any, is returned to be run.
 std::string ShowCommandPalette(agi::Context *c);

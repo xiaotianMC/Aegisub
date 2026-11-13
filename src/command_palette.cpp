@@ -7,6 +7,12 @@
 #include "include/aegisub/context.h"
 #include "include/aegisub/hotkey.h"
 #include "include/aegisub/menu.h"
+#include "ass_dialogue.h"
+#include "ass_file.h"
+#include "project.h"
+#include "selection_controller.h"
+#include "subtitle_project_access.h"
+#include "video_controller.h"
 #include "options.h"
 #include "theme.h"
 #include "workspace_tabs.h"
@@ -15,6 +21,8 @@
 #include <climits>
 #include <map>
 #include <memory>
+
+#include <libaegisub/ass/time.h>
 
 #include <unicode/translit.h>
 #include <unicode/unistr.h>
@@ -127,6 +135,7 @@ void AddTextKeys(std::vector<SearchKey>& keys, std::wstring_view name, Field fie
     SearchKey full, initials;
     full.weight = initials.weight = pinyin_weight;
     full.field = initials.field = field;
+    full.pinyin = initials.pinyin = true;
     for (size_t i = 0; i < name.size(); ++i) {
         auto syllable = Pinyin(name[i]);
         if (syllable.empty()) {
@@ -167,6 +176,12 @@ void Merge(Match& into, Match from) {
         to->erase(std::unique(to->begin(), to->end()), to->end());
     }
 }
+}
+
+std::vector<SearchKey> MakeTextKeys(std::wstring_view text) {
+    std::vector<SearchKey> keys;
+    AddTextKeys(keys, text, Field::Name, 0, -1);
+    return keys;
 }
 
 std::vector<SearchKey> MakeKeys(std::wstring_view name, std::string_view id, std::wstring_view original, std::wstring_view path) {
@@ -254,13 +269,73 @@ std::optional<Match> BestMatch(std::wstring_view query, std::vector<SearchKey> c
     return best;
 }
 
-std::optional<Match> MatchQuery(std::wstring_view query, std::vector<SearchKey> const& keys) {
-    auto whole = BestMatch(NormaliseQuery(query), keys);
+std::optional<Match> RunMatch(std::wstring_view query, SearchKey const& key) {
+    size_t m = query.size();
+    if (m == 0) return Match{};
+    std::optional<Match> best;
+    for (size_t at = key.text.find(query); at != std::wstring::npos; at = key.text.find(query, at + 1)) {
+        if (key.pinyin && !key.starts[at]) continue;
+        // As FuzzyMatch scores a run: 16 a character, 8 more after the
+        // first, 8 more at a word start (12 at the very start)
+        int score = static_cast<int>(16 + 24 * (m - 1)) + (key.starts[at] ? (at == 0 ? 12 : 8) : 0) + key.weight;
+        if (best && score <= best->score) continue;
+        Match match;
+        match.score = score;
+        if (auto marks = match.Marks(key.field); marks && !key.shown.empty()) {
+            for (size_t i = at; i < at + m; ++i) marks->push_back(key.shown[i]);
+            marks->erase(std::unique(marks->begin(), marks->end()), marks->end());
+        }
+        best = std::move(match);
+    }
+    return best;
+}
+
+namespace {
+std::optional<Match> Best(std::wstring_view query, std::vector<SearchKey> const& keys, bool runs) {
+    if (!runs) return BestMatch(query, keys);
+    std::optional<Match> best;
+    for (auto const& key : keys)
+        if (auto match = RunMatch(query, key); match && (!best || match->score > best->score))
+            best = std::move(match);
+    return best;
+}
+}
+
+GotoQuery ParseGoto(std::wstring_view typed) {
+    GotoQuery result;
+    // What a Chinese input method types: "：" for ':', full-width digits
+    std::wstring ascii(typed);
+    for (auto& ch : ascii) {
+        if (ch >= 0xff01 && ch <= 0xff5e) ch = static_cast<wchar_t>(ch - 0xfee0);
+        else if (ch == L'\u3002') ch = L'.';
+    }
+    std::wstring_view text = ascii;
+    while (!text.empty() && std::iswspace(text.front())) text.remove_prefix(1);
+    while (!text.empty() && std::iswspace(text.back())) text.remove_suffix(1);
+    if (text.empty()) return result;
+    bool digits = false, separators = false;
+    for (wchar_t ch : text) {
+        if (ch >= L'0' && ch <= L'9') digits = true;
+        else if (ch == L':' || ch == L'.' || ch == L',') separators = true;
+        else return result;
+    }
+    if (!digits) return result;
+    if (!separators) {
+        if (text.size() > 9) return result;
+        result.line = std::stoi(std::wstring(text));
+        return result;
+    }
+    result.time = static_cast<int>(agi::Time(std::string(text.begin(), text.end())));
+    return result;
+}
+
+std::optional<Match> MatchQuery(std::wstring_view query, std::vector<SearchKey> const& keys, bool runs) {
+    auto whole = Best(NormaliseQuery(query), keys, runs);
     auto words = Tokenise(query);
     if (words.size() < 2) return whole;
     Match each;
     for (auto const& word : words) {
-        auto match = BestMatch(word, keys);
+        auto match = Best(word, keys, runs);
         if (!match) return whole;
         Merge(each, *match);
     }
@@ -330,6 +405,13 @@ std::wstring CanonicalHotkey(std::wstring_view text, bool typed) {
 namespace {
 constexpr size_t max_recent = 12;
 constexpr int visible_rows = 10;
+/// At most this many lines found by '@' are listed.
+constexpr size_t max_lines = 500;
+
+bool IsPrefix(wchar_t ch, wchar_t ascii) {
+    // Also as a Chinese input method types it: "＠", "："
+    return ch == ascii || ch == static_cast<wchar_t>(ascii + 0xfee0);
+}
 
 std::wstring Wide(wxString const& text) {
     return text.ToStdWstring();
@@ -441,7 +523,35 @@ public:
         dc.DrawRectangle(rect.x, rect.y, FromDIP(3), rect.height);
     }
 
+    /// A row of the '@' and ':' modes: the text with what matched marked
+    /// and the start time on the right; line number, style and actor below.
+    void DrawTarget(wxDC& dc, wxRect const& rect, CommandPalette::Target const& target) const {
+        auto colours = theme::UiColours();
+        int pad = Pad(), y = rect.y + pad, line = GetCharHeight();
+        int x = rect.x + pad * 4 + IconSize();
+        int right = rect.GetRight() - pad * 2;
+        dc.SetFont(GetFont());
+        if (!target.start.empty()) {
+            auto size = dc.GetTextExtent(target.start);
+            dc.SetTextForeground(colours.list_dim);
+            dc.DrawText(target.start, right - size.x, y);
+            right -= size.x + pad * 3;
+        }
+        auto text_colour = target.enabled && !target.comment ? colours.list_text : colours.list_dim;
+        DrawMarked(dc, target.text, target.match.positions, 0, x, y, right, text_colour, target.enabled);
+        wxString detail = target.detail;
+        if (!target.enabled) detail = _("Not available now") + (detail.empty() ? wxString() : wxString::FromUTF8(" · ") + detail);
+        dc.SetFont(GetFont());
+        dc.SetTextForeground(colours.list_dim);
+        int detail_right = rect.GetRight() - pad * 2;
+        dc.DrawText(wxControl::Ellipsize(detail, dc, wxELLIPSIZE_END, detail_right - x), x, y + line + FromDIP(1));
+    }
+
     void OnDrawItem(wxDC& dc, wxRect const& rect, size_t n) const override {
+        if (palette->mode != CommandPalette::Mode::Commands) {
+            if (n < palette->targets.size()) DrawTarget(dc, rect, palette->targets[n]);
+            return;
+        }
         auto const& item = palette->ShownItem(n);
         auto const& match = palette->ShownMatch(n);
         auto colours = theme::UiColours();
@@ -523,12 +633,19 @@ CommandPalette::CommandPalette(agi::Context *c)
     auto hint = new wxStaticText(this, -1, wxString::FromUTF8("↑↓ ") + _("Select") + wxString::FromUTF8("   Enter ") + _("Run") + wxString::FromUTF8("   Esc ") + _("Close"));
     hint->SetForegroundColour(colours.list_dim);
     hint->SetFont(GetFont().Smaller());
+    modes_hint = new wxStaticText(this, -1, wxString::FromUTF8("@ ") + _("Find in subtitles") + wxString::FromUTF8("   : ") + _("Go to line or time"));
+    modes_hint->SetForegroundColour(colours.list_dim);
+    modes_hint->SetFont(GetFont().Smaller());
+    auto footer = new wxBoxSizer(wxHORIZONTAL);
+    footer->Add(modes_hint, wxSizerFlags().Center());
+    footer->AddStretchSpacer();
+    footer->Add(hint, wxSizerFlags().Center());
 
     auto sizer = new wxBoxSizer(wxVERTICAL);
     sizer->Add(input, wxSizerFlags().Expand().Border(wxALL, FromDIP(8)));
     sizer->Add(list, wxSizerFlags(1).Expand());
     sizer->Add(empty, wxSizerFlags().Border(wxALL, FromDIP(12)));
-    sizer->Add(hint, wxSizerFlags().Right().Border(wxALL, FromDIP(6)));
+    sizer->Add(footer, wxSizerFlags().Expand().Border(wxALL, FromDIP(6)).Border(wxLEFT | wxRIGHT, FromDIP(10)));
     SetSizer(sizer);
 
     // Every command, as it is now: names and availability change with the project.
@@ -612,10 +729,22 @@ void CommandPalette::SetQuery(wxString const& query) {
 
 void CommandPalette::Filter() {
     auto typed = Wide(input->GetValue());
-    auto query = palette::NormaliseQuery(typed);
-    auto hotkey_query = palette::CanonicalHotkey(typed, true);
     shown.clear();
     matches.clear();
+    targets.clear();
+    mode = Mode::Commands;
+    if (!typed.empty() && IsPrefix(typed[0], L'@')) {
+        mode = Mode::Lines;
+        FilterLines(std::wstring_view(typed).substr(1));
+        return;
+    }
+    if (!typed.empty() && IsPrefix(typed[0], L':')) {
+        mode = Mode::Goto;
+        FilterGoto(std::wstring_view(typed).substr(1));
+        return;
+    }
+    auto query = palette::NormaliseQuery(typed);
+    auto hotkey_query = palette::CanonicalHotkey(typed, true);
     auto recent_rank = [&](std::string const& name) {
         auto it = std::find(recent.begin(), recent.end(), name);
         return it == recent.end() ? -1 : static_cast<int>(it - recent.begin());
@@ -670,18 +799,148 @@ void CommandPalette::Filter() {
         }
     }
 
-    list->SetItemCount(shown.size());
-    list->SetSelection(shown.empty() ? wxNOT_FOUND : 0);
+    ShowRows(shown.size(), _("No matching commands"));
+}
+
+void CommandPalette::ShowRows(size_t count, wxString const& none) {
+    list->SetItemCount(count);
+    list->SetSelection(count == 0 ? wxNOT_FOUND : 0);
     list->Refresh();
-    GetSizer()->Show(list, !shown.empty());
-    GetSizer()->Show(empty, shown.empty());
-    if (shown.empty()) empty->SetMinSize(list->GetMinSize() - wxSize(FromDIP(24), FromDIP(24)));
+    GetSizer()->Show(list, count != 0);
+    GetSizer()->Show(empty, count == 0);
+    if (count == 0) {
+        empty->SetLabel(none);
+        empty->SetMinSize(list->GetMinSize() - wxSize(FromDIP(24), FromDIP(24)));
+    }
     Layout();
 }
 
+wxString CommandPalette::EmptyMessage() const {
+    return GetSizer()->IsShown(empty) ? empty->GetLabel() : wxString();
+}
+
+void CommandPalette::ReadLines() {
+    if (lines_read) return;
+    lines_read = true;
+    int row = 0;
+    for (auto const& event : c->subtitleAccess->Read().Events) {
+        Line line;
+        line.id = event.Id;
+        line.row = ++row;
+        line.start = event.Start;
+        line.comment = event.Comment;
+        line.text = to_wx(event.GetStrippedText());
+        for (auto code : {"\\N", "\\n", "\\h"}) line.text.Replace(code, " ");
+        line.style = to_wx(event.Style.get());
+        line.actor = to_wx(event.Actor.get());
+        line.keys = palette::MakeTextKeys(Wide(line.text));
+        lines.push_back(std::move(line));
+    }
+}
+
+CommandPalette::Target CommandPalette::LineTarget(Line const& line) const {
+    Target target;
+    target.line_id = line.id;
+    target.text = line.text;
+    target.start = to_wx(agi::Time(line.start).GetAssFormatted());
+    target.detail = wxString::Format("#%d", line.row);
+    if (line.comment) target.detail += wxString::FromUTF8(" · ") + _("Comment");
+    target.detail += wxString::FromUTF8(" · ") + line.style;
+    if (!line.actor.empty()) target.detail += wxString::FromUTF8(" · ") + line.actor;
+    target.comment = line.comment;
+    target.enabled = !c->workspaceTabs || c->workspaceTabs->Permits("grid/line/next");
+    return target;
+}
+
+void CommandPalette::FilterLines(std::wstring_view query) {
+    if (palette::NormaliseQuery(query).empty()) {
+        ShowRows(0, _("Type text to find in the subtitles: words in any order, pinyin or its initials"));
+        return;
+    }
+    ReadLines();
+    size_t found = 0;
+    for (auto const& line : lines) {
+        auto match = palette::MatchQuery(query, line.keys, true);
+        if (!match) continue;
+        if (++found > max_lines) continue;
+        auto target = LineTarget(line);
+        target.match = std::move(*match);
+        targets.push_back(std::move(target));
+    }
+    ShowRows(targets.size(), _("No matching lines"));
+    if (found > max_lines) {
+        // Say so at the end of the list rather than silently cut it
+        Target more;
+        more.text = wxString::Format(_("%zu more lines match: type more to narrow them down"), found - max_lines);
+        more.enabled = false;
+        more.comment = true;
+        targets.push_back(std::move(more));
+        list->SetItemCount(targets.size());
+        list->Refresh();
+    }
+}
+
+void CommandPalette::FilterGoto(std::wstring_view query) {
+    auto wanted = palette::ParseGoto(query);
+    if (wanted.line > 0) {
+        ReadLines();
+        if (wanted.line <= static_cast<int>(lines.size()))
+            targets.push_back(LineTarget(lines[wanted.line - 1]));
+        ShowRows(targets.size(), wxString::Format(_("There is no line %d: the subtitles have %zu"), wanted.line, lines.size()));
+        return;
+    }
+    if (wanted.time < 0) {
+        ShowRows(0, _("Type a line number, or a time such as 1:23.45 or 0:01:23"));
+        return;
+    }
+
+    // The video to that time, and the line on screen then (or the next one)
+    bool video = c->project && c->project->VideoProvider();
+    Target seek;
+    seek.time = wanted.time;
+    seek.text = wxString::Format(_("Seek video to %s"), to_wx(agi::Time(wanted.time).GetAssFormatted()));
+    seek.detail = video ? wxString() : _("No video is open");
+    seek.enabled = video && (!c->workspaceTabs || c->workspaceTabs->Permits("video/jump"));
+    targets.push_back(std::move(seek));
+    ReadLines();
+    Line const *at = nullptr;
+    // Of the lines on screen then, the one that started last
+    int on_screen = 0, latest = -1;
+    for (auto const& event : c->subtitleAccess->Read().Events) {
+        if (!event.Comment && event.Start <= wanted.time && wanted.time < event.End && static_cast<int>(event.Start) > latest) {
+            latest = event.Start;
+            on_screen = event.Id;
+        }
+    }
+    for (auto const& line : lines)
+        if (on_screen && line.id == on_screen) at = &line;
+    if (!at) {
+        for (auto const& line : lines)
+            if (!line.comment && line.start >= wanted.time && (!at || line.start < at->start)) at = &line;
+    }
+    if (at) targets.push_back(LineTarget(*at));
+    // The line first when there is no video to seek
+    if (!video && targets.size() == 2) std::swap(targets[0], targets[1]);
+    ShowRows(targets.size(), wxString());
+}
+
+void CommandPalette::GoToChosen() {
+    if (!chosen_target) return;
+    auto const& target = *chosen_target;
+    if (target.line_id) {
+        for (auto const& event : c->subtitleAccess->Read().Events) {
+            if (event.Id != target.line_id) continue;
+            c->selectionController->SetSelectionAndActiveIDs({target.line_id}, target.line_id);
+            break;
+        }
+    }
+    if (target.time >= 0 && c->project && c->project->VideoProvider())
+        c->videoController->JumpToTime(target.time);
+}
+
 void CommandPalette::Move(int by) {
-    if (shown.empty()) return;
-    int count = static_cast<int>(shown.size());
+    int count = static_cast<int>(list->GetItemCount());
+    if (count == 0) return;
     int index = list->GetSelection() + by;
     if (by == 1 || by == -1) index = (index + count) % count; // arrows wrap around
     else index = std::clamp(index, 0, count - 1);
@@ -715,13 +974,24 @@ int CommandPalette::Selection() const {
 }
 
 void CommandPalette::Select(int index) {
-    if (index < 0 || index >= static_cast<int>(shown.size())) return;
+    if (index < 0 || index >= static_cast<int>(list->GetItemCount())) return;
     list->SetSelection(index);
     list->RefreshAll();
 }
 
 bool CommandPalette::Accept() {
     int index = list->GetSelection();
+    if (mode != Mode::Commands) {
+        if (index < 0 || index >= static_cast<int>(targets.size())) return false;
+        if (!targets[index].enabled || (!targets[index].line_id && targets[index].time < 0)) {
+            wxBell();
+            return false;
+        }
+        chosen_target = targets[index];
+        if (IsModal()) EndModal(wxID_OK);
+        else Hide();
+        return true;
+    }
     if (index < 0 || index >= static_cast<int>(shown.size())) return false;
     auto const& item = ShownItem(index);
     if (!item.enabled) {
@@ -746,5 +1016,6 @@ void CommandPalette::Remember(std::string const& name) {
 std::string ShowCommandPalette(agi::Context *c) {
     CommandPalette palette(c);
     palette.ShowModal();
+    palette.GoToChosen();
     return palette.Chosen();
 }

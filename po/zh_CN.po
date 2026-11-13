@@ -8615,6 +8615,36 @@ msgstr "当前不可用"
 msgid "Type a command name, pinyin, menu, shortcut or command id"
 msgstr "输入命令名称、拼音、菜单、快捷键或命令 ID"
 
+msgid "Find in subtitles"
+msgstr "搜字幕"
+
+msgid "Go to line or time"
+msgstr "跳到行或时间"
+
+msgid "Type text to find in the subtitles: words in any order, pinyin or its initials"
+msgstr "输入要在字幕里找的文字：可分词、不限顺序，可用拼音或首字母"
+
+msgid "No matching lines"
+msgstr "没有匹配的字幕行"
+
+#, c-format
+msgid "%zu more lines match: type more to narrow them down"
+msgstr "还有 %zu 行匹配，多输入一些来缩小范围"
+
+#, c-format
+msgid "There is no line %d: the subtitles have %zu"
+msgstr "没有第 %d 行：字幕共 %zu 行"
+
+msgid "Type a line number, or a time such as 1:23.45 or 0:01:23"
+msgstr "输入行号，或 1:23.45、0:01:23 这样的时间"
+
+#, c-format
+msgid "Seek video to %s"
+msgstr "视频跳到 %s"
+
+msgid "No video is open"
+msgstr "没有打开视频"
+
 msgid "No matching commands"
 msgstr "没有匹配的命令"
 
