@@ -285,9 +285,7 @@ void DrawOutline(wxWindow *window, wxDC &dc) {
 	wxRect r = OutlineRect(block);
 	// From the backdrop's corner to the window's
 	r.Offset(backdrop->ClientToScreen(wxPoint(0, 0)) - window->ClientToScreen(wxPoint(0, 0)));
-	dc.SetPen(wxPen(theme::UiColours().accent, std::max(2, backdrop->FromDIP(2))));
-	dc.SetBrush(*wxTRANSPARENT_BRUSH);
-	dc.DrawRoundedRectangle(r, backdrop->FromDIP(5));
+	flat::DrawOutline(dc, r, backdrop->FromDIP(5), std::max(2, backdrop->FromDIP(2)), theme::UiColours().accent);
 }
 
 bool HandleKey(wxWindow *window, wxKeyEvent &event) {

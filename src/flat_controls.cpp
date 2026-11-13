@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <memory>
 #include <set>
 
 #include <wx/dcbuffer.h>
@@ -40,7 +41,14 @@ Palette Colours(wxWindow const *window) {
 
 void DrawOutline(wxDC &dc, wxRect const& rect, double radius, int thick, wxColour const& colour) {
 	if (rect.width <= 0 || rect.height <= 0) return;
-	if (auto gc = dc.GetGraphicsContext()) {
+	// A raster DC steps its curves: a context of its own over it smooths them
+	std::unique_ptr<wxGraphicsContext> own;
+	auto gc = dc.GetGraphicsContext();
+	if (!gc) {
+		own.reset(wxGraphicsContext::CreateFromUnknownDC(dc));
+		gc = own.get();
+	}
+	if (gc) {
 		auto path = gc->CreatePath();
 		path.AddRoundedRectangle(rect.x, rect.y, rect.width, rect.height, radius);
 		int inner_w = rect.width - 2 * thick, inner_h = rect.height - 2 * thick;
@@ -50,11 +58,13 @@ void DrawOutline(wxDC &dc, wxRect const& rect, double radius, int thick, wxColou
 		gc->SetPen(wxNullGraphicsPen);
 		gc->SetBrush(wxBrush(colour));
 		gc->FillPath(path, wxODDEVEN_RULE);
-		gc->SetPen(dc.GetPen());
-		gc->SetBrush(dc.GetBrush());
+		if (!own) {
+			gc->SetPen(dc.GetPen());
+			gc->SetBrush(dc.GetBrush());
+		}
 		return;
 	}
-	// A raster DC draws a pen inside the rectangle already
+	// No graphics: a pen inside the rectangle
 	dc.SetBrush(*wxTRANSPARENT_BRUSH);
 	dc.SetPen(wxPen(colour, thick));
 	dc.DrawRoundedRectangle(rect, radius);

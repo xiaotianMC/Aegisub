@@ -74,6 +74,18 @@ wxColour Mix(wxColour const& a, wxColour const& b, double alpha) {
 	auto channel = [&](unsigned char x, unsigned char y) { return static_cast<unsigned char>(x * alpha + y * (1 - alpha) + 0.5); };
 	return wxColour(channel(a.Red(), b.Red()), channel(a.Green(), b.Green()), channel(a.Blue(), b.Blue()));
 }
+
+/// A frame @p thick wide inside @p r, as four filled bars: a pen wider
+/// than a pixel gets round, stepped corners on Windows and is centred on
+/// the edge, so a side can fall outside what is drawn
+void FillFrame(wxDC &dc, wxRect const& r, int thick, wxColour const& colour) {
+	dc.SetPen(*wxTRANSPARENT_PEN);
+	dc.SetBrush(wxBrush(colour));
+	dc.DrawRectangle(r.x, r.y, r.width, thick);
+	dc.DrawRectangle(r.x, r.GetBottom() - thick + 1, r.width, thick);
+	dc.DrawRectangle(r.x, r.y, thick, r.height);
+	dc.DrawRectangle(r.GetRight() - thick + 1, r.y, thick, r.height);
+}
 }
 
 BaseGrid::BaseGrid(wxWindow* parent, agi::Context *context)
@@ -476,11 +488,7 @@ void BaseGrid::Draw(wxDC &dc, std::vector<char> const& paint_columns) {
 		// The row the keyboard is on, moved apart from the active line,
 		// while the grid has the keyboard: a thin frame in the accent colour
 		if (i + yPos == cursor_row) {
-			int thin = std::max(1, FromDIP(1));
-			dc.SetPen(wxPen(theme::UiColours().accent, thin));
-			dc.SetBrush(*wxTRANSPARENT_BRUSH);
-			dc.DrawRectangle(thin / 2, y + thin / 2, w - thin, lineHeight - 1 - thin / 2);
-			dc.SetPen(*wxTRANSPARENT_PEN);
+			FillFrame(dc, wxRect(0, y, w, lineHeight - 1), std::max(1, FromDIP(1)), theme::UiColours().accent);
 		}
 
 		// Row divider
@@ -506,8 +514,7 @@ void BaseGrid::Draw(wxDC &dc, std::vector<char> const& paint_columns) {
 	// Selected rows: an outline in the active line's colour round each run
 	// of them, over the dividers
 	{
-		dc.SetPen(wxPen(active_colour, std::max(1, FromDIP(1))));
-		dc.SetBrush(*wxTRANSPARENT_BRUSH);
+		const int thick = std::max(1, FromDIP(1));
 		auto selected = [&](int row) { return !!selection.count(index_line_map[row + yPos]); };
 		for (int i = 0; i < nDraw; ++i) {
 			if (!selected(i)) continue;
@@ -515,7 +522,7 @@ void BaseGrid::Draw(wxDC &dc, std::vector<char> const& paint_columns) {
 			while (last + 1 < nDraw && selected(last + 1)) ++last;
 			int top = (i + 1) * lineHeight - 1;
 			int bottom = (last + 2) * lineHeight - 1;
-			dc.DrawRectangle(0, top, w, bottom - top + 1);
+			FillFrame(dc, wxRect(0, top, w, bottom - top + 1), thick, active_colour);
 			i = last;
 		}
 	}
