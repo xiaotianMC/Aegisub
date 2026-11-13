@@ -146,9 +146,19 @@ std::string WithoutProgress(std::string const& output);
 /// The last @p count lines of @p output, for telling what went wrong
 std::string LastLines(std::string const& output, size_t count);
 
+/// How far through the stage it is in a run is, from what it has printed so
+/// far: while building the timeline, the time of the frame it last
+/// printed ("frame 00:03:21.45") out of @p duration_ms, the video's length;
+/// while reading text, the stretches read ("Subtitle_Dialog_40", every
+/// tenth) out of those it said it has. Nothing in a stage that tells no
+/// progress, or when the video's length is unknown (0) while building.
+std::optional<double> ProgressOf(std::string const& output, int duration_ms);
+
 /// Run @p launch on @p config in a progress dialog over @p parent, its
-/// latest line of output shown as it goes, until it ends or is cancelled,
-/// when it and what it started are killed. From the main thread.
-Outcome Run(Launch const& launch, agi::fs::path const& config, wxWindow *parent);
+/// latest line of output shown as it goes and how far it is through a
+/// video @p duration_ms long (0 if unknown) where it tells, until it ends
+/// or is cancelled, when it and what it started are killed. From the main
+/// thread.
+Outcome Run(Launch const& launch, agi::fs::path const& config, wxWindow *parent, int duration_ms = 0);
 
 }

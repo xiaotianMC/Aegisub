@@ -46,6 +46,7 @@
 #include <libaegisub/fs.h>
 #include <libaegisub/path.h>
 
+#include "../async_video_provider.h"
 #include "../ass_dialogue.h"
 #include "../ass_file.h"
 #include "../format.h"
@@ -161,7 +162,11 @@ struct tool_magiatimeline final : public Command {
 			return;
 		}
 
-		auto outcome = magia_timeline::Run(*launch, config_file, c->parent);
+		// The video's length, for how far through it MagiaTimeline is
+		int duration_ms = 0;
+		if (auto provider = c->project->VideoProvider(); provider && c->project->Timecodes().IsLoaded())
+			duration_ms = c->project->Timecodes().TimeAtFrame(provider->GetFrameCount());
+		auto outcome = magia_timeline::Run(*launch, config_file, c->parent, duration_ms);
 		if (outcome.cancelled) return;
 		bool const wrote = agi::fs::FileExists(output);
 		if (outcome.reported_error || !wrote) {

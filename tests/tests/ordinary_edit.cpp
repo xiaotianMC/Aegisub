@@ -9198,6 +9198,30 @@ TEST(magia_timeline, its_errors_are_read_from_what_it_prints) {
     EXPECT_EQ("50% done\n",magia_timeline::WithoutProgress("50% done\n")) << "a percentage alone is not a bar";
 }
 
+TEST(magia_timeline, how_far_it_is_is_read_from_what_it_prints) {
+    std::string const start="Task 0: a.mp4 -> b\nResolution: 1920x1080\n==== Running Engine ====\n";
+    EXPECT_FALSE(magia_timeline::ProgressOf(start,100000)) << "starting: no telling";
+    EXPECT_FALSE(magia_timeline::ProgressOf(start+"INFO: Could not find files for the given pattern(s).\r\n",100000)) << "what something else it ran said tells nothing";
+
+    std::string const building=start+"==== IIR Building ====\n";
+    EXPECT_EQ(0.0,magia_timeline::ProgressOf(building,100000)) << "building, before its first frame";
+    EXPECT_FALSE(magia_timeline::ProgressOf(building,0)) << "the video's length unknown";
+    EXPECT_DOUBLE_EQ(0.25,*magia_timeline::ProgressOf(building+"frame 00:00:10.00\nframe 00:00:25.00\n",100000));
+    EXPECT_DOUBLE_EQ(0.25,*magia_timeline::ProgressOf(building+"frame 00:00:25.00\r\nsomething said\r\n",100000)) << "the last frame, past what else was said";
+    EXPECT_DOUBLE_EQ(0.61,*magia_timeline::ProgressOf(building+"frame 01:01:00.00\n",6000000)) << "hours and minutes";
+    EXPECT_DOUBLE_EQ(1.0,*magia_timeline::ProgressOf(building+"frame 00:02:00.00\n",100000)) << "past the end it is at the end";
+    EXPECT_DOUBLE_EQ(0.5,*magia_timeline::ProgressOf(start+"==== FPIR Building ====\nframe 00:00:50.00\n",100000)) << "the engine going frame by frame";
+
+    std::string const built=building+"frame 00:01:40.00\n==== IIR Passes ====\niirPassMerge\nTimeline Elapsed 3.00 s\n";
+    EXPECT_FALSE(magia_timeline::ProgressOf(built,100000)) << "past building: no telling";
+
+    std::string const reading=built+"==== Extra Job: ocr ====\nIIRTextExtractionPass: processing 200 intervals\nStandalone output disabled. Writing to ass file.\n";
+    EXPECT_EQ(0.0,magia_timeline::ProgressOf(reading,100000)) << "reading, before the first";
+    EXPECT_DOUBLE_EQ(0.5,*magia_timeline::ProgressOf(reading+"Subtitle_Dialog_0\nSubtitle_Dialog_10\nSubtitle_Dialog_99\n",100000)) << "the hundredth of 200 read";
+    EXPECT_DOUBLE_EQ(0.5,*magia_timeline::ProgressOf(reading+"Subtitle_Dialog_99\n",0)) << "reading needs no video length";
+    EXPECT_FALSE(magia_timeline::ProgressOf(reading+"Subtitle_Dialog_199\n==== IIR to ASS ====\n",100000)) << "past reading: no telling";
+}
+
 namespace {
 /// Stands in for MagiaTimeline's virtual environment's Python: checks it is
 /// run as it would be, says what it was given, and writes what it writes

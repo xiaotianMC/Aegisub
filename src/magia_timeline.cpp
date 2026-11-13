@@ -12,8 +12,11 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <string_view>
 #include <thread>
 
 #include <wx/intl.h>
@@ -504,6 +507,67 @@ std::string LastLines(std::string const& output, size_t count) {
 }
 
 namespace {
+/// "HH:MM:SS.cc", as MagiaTimeline writes a frame's time, in milliseconds
+std::optional<int> ParseClock(std::string const& s) {
+	int h, m, sec, cs, used = 0;
+	if (std::sscanf(s.c_str(), "%d:%d:%d.%d%n", &h, &m, &sec, &cs, &used) != 4 || used != int(s.size()))
+		return std::nullopt;
+	return ((h * 60 + m) * 60 + sec) * 1000 + cs * 10;
+}
+
+/// The number @p s ends with, after its last @p before
+std::optional<int> TrailingNumber(std::string const& s, char before) {
+	size_t const at = s.rfind(before);
+	if (at == std::string::npos || at + 1 == s.size()) return std::nullopt;
+	if (s.find_first_not_of("0123456789", at + 1) != std::string::npos) return std::nullopt;
+	return std::atoi(s.c_str() + at + 1);
+}
+
+bool StartsWith(std::string const& s, std::string_view prefix) {
+	return s.compare(0, prefix.size(), prefix) == 0;
+}
+}
+
+std::optional<double> ProgressOf(std::string const& output, int duration_ms) {
+	std::optional<int> read; // the stretch it last said it read
+	// From the last line back to the start of the stage it is in
+	size_t end = output.size();
+	while (end > 0) {
+		size_t start = output.find_last_of("\r\n", end - 1);
+		start = start == std::string::npos ? 0 : start + 1;
+		std::string const line = output.substr(start, end - start);
+		end = start == 0 ? 0 : start - 1;
+		if (line.empty()) continue;
+
+		if (StartsWith(line, "frame ")) {
+			auto ms = ParseClock(line.substr(6));
+			if (!ms) continue;
+			if (duration_ms <= 0) return std::nullopt;
+			return std::clamp(double(*ms) / duration_ms, 0.0, 1.0);
+		}
+		if (StartsWith(line, "Subtitle_")) {
+			if (!read) read = TrailingNumber(line, '_');
+			continue;
+		}
+		std::string_view const reading = "IIRTextExtractionPass: processing ";
+		if (StartsWith(line, reading)) {
+			int const count = std::atoi(line.c_str() + reading.size());
+			if (count <= 0) return std::nullopt;
+			// Told after reading it, counting from 0
+			return read ? std::min(1.0, double(*read + 1) / count) : 0.0;
+		}
+		if (StartsWith(line, "====")) {
+			// A stage begun: building the timeline, before its first frame
+			bool const building = line == "==== IIR Building ====" || line == "==== FPIR Building ====";
+			if (building && duration_ms > 0) return 0.0;
+			return std::nullopt;
+		}
+		if (StartsWith(line, "Task ")) return std::nullopt;
+	}
+	return std::nullopt;
+}
+
+namespace {
 /// Told on the main thread when the program ends; deletes itself then if
 /// it was given up on before
 class Process final : public wxProcess {
@@ -528,7 +592,7 @@ void Drain(wxInputStream *in, std::string &into) {
 }
 }
 
-Outcome Run(Launch const& launch, agi::fs::path const& config, wxWindow *parent) {
+Outcome Run(Launch const& launch, agi::fs::path const& config, wxWindow *parent, int duration_ms) {
 	Outcome outcome;
 	std::vector<std::wstring> words{launch.program.wstring()};
 	for (auto const& a : Arguments(launch, config))
@@ -562,11 +626,21 @@ Outcome Run(Launch const& launch, agi::fs::path const& config, wxWindow *parent)
 	try {
 		progress.Run([&](agi::ProgressSink *ps) {
 			ps->SetIndeterminate();
+			bool indeterminate = true;
 			std::string shown;
 			while (true) {
 				bool const ended = process->ended;
 				Drain(process->GetInputStream(), outcome.output);
 				Drain(process->GetErrorStream(), outcome.output);
+				// How far, where the stage it is in tells; a sweep where not
+				if (auto share = ProgressOf(outcome.output, duration_ms)) {
+					ps->SetProgress(std::llround(*share * 1000), 1000);
+					indeterminate = false;
+				}
+				else if (!indeterminate) {
+					ps->SetIndeterminate();
+					indeterminate = true;
+				}
 				auto last = Readable(LastLines(outcome.output, 1));
 				if (!last.empty()) last.pop_back();
 				if (!last.empty() && last != shown) {

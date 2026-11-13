@@ -223,6 +223,8 @@ public:
 	}
 
 	void SetIndeterminate() override {
+		// Whatever share comes next is shown, even the one shown before
+		progress = -1;
 		Main().Async([this]{ dialog->SetIndeterminate(); });
 	}
 };
