@@ -146,6 +146,26 @@ bool Unspaced(std::string const& language) {
 	return language.empty();
 }
 
+/// Not said but heard: "（笑い）", "(laughter)", "♪〜"; a line of it alone is
+/// kept as a comment
+bool Bracketed(std::string_view text) {
+	std::string_view t = Trim(text);
+	return (t.starts_with("\xEF\xBC\x88") && t.ends_with("\xEF\xBC\x89")) || (t.starts_with("(") && t.ends_with(")"));
+}
+
+bool IsNote(std::string_view text) {
+	if (Bracketed(text)) return true;
+	std::string_view t = Trim(text);
+	if (t.empty()) return false;
+	while (!t.empty()) {
+		if (t.starts_with("\xE2\x99\xAA")) t.remove_prefix(3); // ♪
+		else if (t.starts_with("\xE3\x80\x9C")) t.remove_prefix(3); // 〜
+		else if (t.starts_with(" ")) t.remove_prefix(1);
+		else return false;
+	}
+	return true;
+}
+
 struct Unit {
 	std::vector<Word> words;
 	std::string speaker;
@@ -341,16 +361,7 @@ class Maker {
 				i = j;
 			}
 		}
-		std::string_view t = Trim(line.text);
-		bool bracketed = (t.starts_with("\xEF\xBC\x88") && t.ends_with("\xEF\xBC\x89")) || (t.starts_with("(") && t.ends_with(")"));
-		bool only_music = !t.empty();
-		for (std::string_view rest = t; !rest.empty();) {
-			if (rest.starts_with("\xE2\x99\xAA")) rest.remove_prefix(3); // ♪
-			else if (rest.starts_with("\xE3\x80\x9C")) rest.remove_prefix(3); // 〜
-			else if (rest.starts_with(" ")) rest.remove_prefix(1);
-			else { only_music = false; break; }
-		}
-		line.note = bracketed || only_music;
+		line.note = IsNote(line.text);
 		return line;
 	}
 
@@ -578,14 +589,16 @@ public:
 				if (!start_new) {
 					auto const& prev = units.back().words.back();
 					bool const other_speaker = !w.speaker.empty() && !prev.speaker.empty() && w.speaker != prev.speaker;
+					// A sound heard, "(laughter)", is a line of its own
+					bool const note_edge = Bracketed(w.text) || Bracketed(prev.text);
 					int const gap = w.start - prev.end;
 					std::string const so_far = Join(units.back().words.begin(), units.back().words.end());
 					bool const ended = EndsSentence(so_far) || pending
 						|| (!by_pauses && gap >= rules.sentence_pause && EndsSentenceForm(so_far));
 					if (i == 0)
-						start_new = other_speaker || ended || (!by_pauses && gap > rules.join_gap) || w.end - units.back().Start() > rules.max_duration;
+						start_new = other_speaker || note_edge || ended || (!by_pauses && gap > rules.join_gap) || w.end - units.back().Start() > rules.max_duration;
 					else
-						start_new = other_speaker || ended || (!by_pauses && gap > rules.pause_break);
+						start_new = other_speaker || note_edge || ended || (!by_pauses && gap > rules.pause_break);
 				}
 				if (start_new) {
 					if (pending) unit_times.back().second = pending->first;
@@ -630,6 +643,66 @@ public:
 };
 }
 
+namespace {
+/// ISO 639-3, as ElevenLabs writes, to the 639-1 the rest of this and ICU
+/// know, for the languages that need it; others are kept as they are
+std::string ShortLanguage(std::string const& code) {
+	static const std::pair<const char *, const char *> codes[] = {
+		{"jpn", "ja"}, {"zho", "zh"}, {"cmn", "zh"}, {"tha", "th"}, {"lao", "lo"},
+		{"mya", "my"}, {"khm", "km"}, {"bod", "bo"}, {"eng", "en"}, {"kor", "ko"},
+		{"fra", "fr"}, {"deu", "de"}, {"spa", "es"}, {"ita", "it"}, {"por", "pt"},
+		{"rus", "ru"}, {"vie", "vi"}, {"ind", "id"}, {"ara", "ar"}, {"hin", "hi"},
+	};
+	for (auto [long_code, short_code] : codes)
+		if (code == long_code) return short_code;
+	return code;
+}
+
+/// ElevenLabs Scribe's: one list of words, spaces and sounds, in seconds,
+/// a speaker_id on each if diarized. Made into a piece for each run of one
+/// speaker, a sound heard its own piece.
+Transcript ReadScribe(json::Object const& obj, json::Array const& words) {
+	Transcript t;
+	t.language = ShortLanguage(String(obj, "language_code"));
+	Segment *seg = nullptr;
+	bool seg_is_event = false;
+	for (auto const& we : words) {
+		json::Object const* w;
+		try { w = &static_cast<json::Object const&>(we); }
+		catch (json::Exception const&) { continue; }
+		std::string const type = String(*w, "type");
+		if (type == "spacing") continue;
+		Word word;
+		word.text = String(*w, "text");
+		if (Trim(word.text).empty()) continue;
+		double v;
+		if (Number(*w, "start", v)) word.start = Ms(v);
+		if (Number(*w, "end", v)) word.end = Ms(v);
+		// A log of the probability
+		if (Number(*w, "logprob", v) && v <= 0) word.score = std::exp(v);
+		word.speaker = String(*w, "speaker_id");
+		bool const event = type == "audio_event";
+		if (event && !IsNote(word.text)) word.text = "(" + std::string(Trim(word.text)) + ")";
+		if (!seg || event || seg_is_event || word.speaker != seg->speaker) {
+			t.segments.emplace_back();
+			seg = &t.segments.back();
+			seg->speaker = word.speaker;
+			seg->start = word.start;
+			seg_is_event = event;
+		}
+		if (seg->start < 0) seg->start = word.start;
+		if (word.end >= 0) seg->end = word.end;
+		else if (word.start >= 0) seg->end = word.start;
+		seg->words.push_back(std::move(word));
+	}
+	for (auto& s : t.segments) {
+		if (s.start < 0) s.start = 0;
+		s.end = std::max(s.end, s.start);
+	}
+	return t;
+}
+}
+
 Transcript ReadJson(std::istream &stream) {
 	json::UnknownElement root;
 	try { json::Reader::Read(root, stream); }
@@ -638,7 +711,12 @@ Transcript ReadJson(std::istream &stream) {
 	try { obj = &static_cast<json::Object const&>(root); }
 	catch (json::Exception const&) { throw agi::InvalidInputException("Not a speech recognition JSON file: it holds no object"); }
 	auto segments = Child<json::Array>(*obj, "segments");
-	if (!segments) throw agi::InvalidInputException("Not a speech recognition JSON file: it has no \"segments\"");
+	if (!segments) {
+		if (auto words = Child<json::Array>(*obj, "words")) return ReadScribe(*obj, *words);
+		if (Child<json::Array>(*obj, "transcripts"))
+			throw agi::InvalidInputException("ElevenLabs gave a transcript for each channel: ask for them combined (multichannel_output_style=combined)");
+		throw agi::InvalidInputException("Not a speech recognition JSON file: it has no \"segments\" or \"words\"");
+	}
 
 	Transcript t;
 	t.language = String(*obj, "language");

@@ -115,7 +115,7 @@ struct autotiming_import_speech final : public Command {
 	CMD_NAME("autotiming/import_speech")
 	STR_MENU("&Import Speech Recognition...")
 	STR_DISP("Import Speech Recognition")
-	STR_HELP("Make lines from what WhisperX or faster-whisper heard, a sentence a line: their JSON with each word's times, timed to the scene changes if they are known")
+	STR_HELP("Make lines from what WhisperX, faster-whisper or ElevenLabs Scribe heard, a sentence a line: their JSON with each word's times, timed to the scene changes if they are known")
 
 	void operator()(agi::Context *c) override {
 		auto filename = OpenFileSelector(c, _("Import Speech Recognition"), "Path/Last/Speech", "", ".json",

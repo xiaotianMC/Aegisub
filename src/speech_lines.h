@@ -38,7 +38,9 @@ struct Transcript {
 
 /// The JSON WhisperX writes, or faster-whisper's of the same shape: its
 /// segments, with their words' times and scores ("score" or "probability")
-/// and speakers when diarized. @throws agi::InvalidInputException
+/// and speakers when diarized; or ElevenLabs Scribe's, its "words" with
+/// their types and speaker_id, its ISO 639-3 language made 639-1.
+/// @throws agi::InvalidInputException
 Transcript ReadJson(std::istream &stream);
 
 struct Line {

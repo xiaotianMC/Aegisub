@@ -4109,6 +4109,43 @@ TEST(speech_lines, whisperx_json_is_read_with_escapes_missing_times_scores_and_s
     EXPECT_THROW(speech::ReadJson(garbage),agi::InvalidInputException);
 }
 
+TEST(speech_lines, elevenlabs_scribe_json_is_read_by_speaker_with_sounds_apart_and_its_language_shortened) {
+    std::istringstream in(R"j({"language_code":"jpn","language_probability":0.98,"text":"こんにちは。(笑い)うん。",
+        "words":[{"text":"こんにちは。","start":1.0,"end":1.8,"type":"word","speaker_id":"speaker_0","logprob":-0.1},
+                 {"text":" ","start":1.8,"end":2.0,"type":"spacing","speaker_id":"speaker_0"},
+                 {"text":"(笑い)","start":2.0,"end":2.6,"type":"audio_event","speaker_id":"speaker_0"},
+                 {"text":"laughter","start":2.6,"end":2.9,"type":"audio_event","speaker_id":"speaker_0"},
+                 {"text":"うん","start":3.0,"end":3.2,"type":"word","speaker_id":"speaker_1"},
+                 {"text":"。","start":3.2,"end":3.3,"type":"word","speaker_id":"speaker_1"}]})j");
+    auto t=speech::ReadJson(in);
+    EXPECT_EQ("ja",t.language) << "ISO 639-3 made the 639-1 the unspaced languages are known by";
+    ASSERT_EQ(4u,t.segments.size()) << "a piece a speaker's run, each sound its own";
+    EXPECT_EQ(1000,t.segments[0].start);EXPECT_EQ(1800,t.segments[0].end);
+    ASSERT_EQ(1u,t.segments[0].words.size()) << "spacing dropped";
+    EXPECT_NEAR(0.905,t.segments[0].words[0].score,0.001);
+    EXPECT_EQ("speaker_0",t.segments[0].speaker);
+    EXPECT_EQ("(笑い)",t.segments[1].words[0].text);
+    EXPECT_EQ("(laughter)",t.segments[2].words[0].text) << "a sound named bare is bracketed";
+    EXPECT_EQ("speaker_1",t.segments[3].speaker);
+    ASSERT_EQ(2u,t.segments[3].words.size());
+    EXPECT_EQ(-1,t.segments[3].words[0].score) << "no logprob, no score";
+
+    auto lines=speech::MakeLines(t,PlainRules(),{});
+    EXPECT_EQ((std::vector<std::string>{"こんにちは。","(笑い)","(laughter)","うん。"}),Texts(lines));
+    ASSERT_EQ(4u,lines.size());
+    EXPECT_FALSE(lines[0].note);EXPECT_TRUE(lines[1].note);EXPECT_TRUE(lines[2].note);
+    EXPECT_EQ("speaker_1",lines[3].speaker);
+
+    std::istringstream channels(R"({"transcripts":[{"words":[]}]})");
+    EXPECT_THROW(speech::ReadJson(channels),agi::InvalidInputException);
+}
+
+TEST(speech_lines, a_sound_heard_never_shares_a_line_with_what_is_said) {
+    speech::Transcript t;t.language="en";
+    t.segments.push_back(SS({SW("Well",0,300),SW("(laughs)",350,700),SW("okay.",750,1000)},"A"));
+    EXPECT_EQ((std::vector<std::string>{"Well","(laughs)","okay."}),Texts(speech::MakeLines(t,PlainRules(),{})));
+}
+
 TEST(speech_lines, a_line_a_sentence_joined_across_pieces_and_ended_by_a_full_stop_or_another_speaker) {
     speech::Transcript t;t.language="ja";
     // Heard in two pieces, no sentence end between: one line
