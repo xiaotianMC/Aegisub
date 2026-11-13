@@ -48,6 +48,11 @@ bool Available(Region const& r) {
 /// The line's rectangle on the backdrop: round the block, in the gap
 wxRect OutlineRect(wxWindow *block) {
 	wxRect r(backdrop->ScreenToClient(block->GetScreenPosition()), block->GetSize());
+	// A block resized by a strip below it (the audio): the strip is the
+	// gap, so the line goes round what is above it, and the block draws
+	// the line in its strip, where the backdrop can't
+	if (auto sash = dynamic_cast<wxSashWindow*>(block); sash && sash->GetSashVisible(wxSASH_BOTTOM))
+		r.height -= sash->GetDefaultBorderSize();
 	int gap = theme::BlockGap(backdrop);
 	return r.Inflate(std::max(1, gap / 2));
 }

@@ -60,6 +60,8 @@ class AudioBox final : public wxSashWindow, private agi::signal::ConnectionScope
 	agi::Context *context;
 
 	agi::signal::Connection audio_open_connection;
+	/// Redraws the strip below when the region line moves
+	agi::signal::Connection outline_changed;
 
 
 	/// Panel containing the children

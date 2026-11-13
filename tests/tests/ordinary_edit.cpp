@@ -47,6 +47,7 @@
 #include "preferences_base.h"
 #include "style_list.h"
 #include "status_info.h"
+#include <wx/sashwin.h>
 #include <wx/checkbox.h>
 #include "include/aegisub/toolbar.h"
 #include "libresrc/libresrc.h"
@@ -9593,6 +9594,54 @@ TEST_F(ordinary_edit, keyboard_regions_go_round_with_f6_and_keep_tab_inside) {
     regions::FocusAfterClicks(bar,grid);
     click_tool();
     EXPECT_EQ(grid,wxWindow::FindFocus());
+}
+
+TEST_F(ordinary_edit, region_line_runs_through_the_strip_under_a_block_resized_from_below) {
+    // The audio is such a block: its strip is the gap to the edit box, so
+    // the backdrop can't draw there and the block draws its piece itself
+    auto frame=new wxFrame(nullptr,-1,"regions");
+    BOOST_SCOPE_EXIT_ALL(&){ regions::Clear(); delete frame; };
+    auto backdrop=new wxPanel(frame);
+    auto sash=new wxSashWindow(backdrop,-1,wxDefaultPosition,wxSize(300,100));
+    sash->SetSashVisible(wxSASH_BOTTOM,true);
+    sash->SetDefaultBorderSize(8);
+    auto inner=new wxPanel(sash);
+    new wxTextCtrl(inner,-1,"in");
+    auto other=new wxTextCtrl(backdrop,-1,"other");
+    auto sizer=new wxBoxSizer(wxVERTICAL);
+    sizer->Add(sash,0,wxLEFT|wxRIGHT|wxTOP,10);
+    sizer->Add(other,0,wxALL,10);
+    backdrop->SetSizer(sizer);
+    regions::Setup(backdrop,{{sash},{other}});
+    frame->SetSize(400,300);frame->Show();backdrop->SetSize(frame->GetClientSize());backdrop->Layout();
+    for(int i=0;i<10;++i) wxYield();
+    other->SetFocus();
+    for(int i=0;i<5;++i) wxYield();
+    ASSERT_TRUE(regions::Next(true));
+    ASSERT_EQ(sash,regions::Outlined());
+
+    auto render=[](wxWindow *window){
+        wxBitmap bitmap(window->GetClientSize());
+        wxMemoryDC dc(bitmap);
+        dc.SetBackground(*wxWHITE_BRUSH);dc.Clear();
+        regions::DrawOutline(window,dc);
+        dc.SelectObject(wxNullBitmap);
+        return bitmap.ConvertToImage();
+    };
+    wxSize size=sash->GetClientSize();
+    auto in_sash=render(sash);
+    bool line=false;
+    for(int y=size.y-8;y<size.y;++y)
+        line|=in_sash.GetRed(size.x/2,y)<200;
+    EXPECT_TRUE(line) << "the bottom of the line, in the strip";
+    EXPECT_EQ(255,in_sash.GetRed(size.x/2,(size.y-8)/2)) << "nothing over the block";
+
+    auto on_backdrop=render(backdrop);
+    wxRect r=sash->GetRect();
+    bool below=false;
+    for(int y=r.GetBottom()+1;y<r.GetBottom()+10;++y)
+        below|=on_backdrop.GetRed(r.x+r.width/2,y)<200;
+    EXPECT_FALSE(below) << "not under the strip, in the next block";
 }
 
 TEST_F(selection_ui, ctrl_moves_the_keyboards_row_and_space_picks_rows_here_and_there) {

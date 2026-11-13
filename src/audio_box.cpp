@@ -41,6 +41,7 @@
 #include "project.h"
 #include "audio_levels.h"
 #include "command/command.h"
+#include "keyboard_regions.h"
 #include "utils.h"
 
 #include <cmath>
@@ -74,6 +75,13 @@ AudioBox::AudioBox(wxWindow *parent, agi::Context *context)
 		wxPaintDC dc(this);
 		dc.SetBackground(wxBrush(GetBackgroundColour()));
 		dc.Clear();
+		// The region line's bottom runs through the strip (docs/keyboard-regions.md)
+		regions::DrawOutline(this, dc);
+	});
+	outline_changed = regions::AddOutlineListener([this] {
+		int strip = GetDefaultBorderSize();
+		wxSize size = GetClientSize();
+		RefreshRect(wxRect(0, size.y - strip, size.x, strip), false);
 	});
 	Bind(wxEVT_SASH_DRAGGED, &AudioBox::OnSashDrag, this);
 
