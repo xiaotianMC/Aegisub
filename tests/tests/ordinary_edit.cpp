@@ -98,6 +98,7 @@
 #include "bilingual.h"
 #include "keyframe_snap.h"
 #include "speech_lines.h"
+#include "speech_transcribe.h"
 #include "scene_detect.h"
 #include "magia_timeline.h"
 #include "dialog_magia_timeline.h"
@@ -4274,6 +4275,126 @@ TEST(speech_lines, a_sound_heard_never_shares_a_line_with_what_is_said) {
     t.segments.push_back(SS({SW("Well",0,300),SW("(laughs)",350,700),SW("okay.",750,1000)},"A"));
     EXPECT_EQ((std::vector<std::string>{"Well","(laughs)","okay."}),Texts(speech::MakeLines(t,PlainRules(),{})));
 }
+
+TEST(transcribe, the_key_comes_from_the_environment_first_and_the_lists_are_split) {
+    EXPECT_EQ("env",transcribe::ApiKey("env","kept"));
+    EXPECT_EQ("kept",transcribe::ApiKey(nullptr," kept\n"));
+    EXPECT_EQ("kept",transcribe::ApiKey("","kept")) << "set but empty is not set";
+    EXPECT_EQ("",transcribe::ApiKey(nullptr,""));
+    EXPECT_EQ((std::vector<std::string>{"en","zh","fr"}),transcribe::SplitCodes("en, zh  fr"));
+    EXPECT_EQ((std::vector<std::string>{"Tokyo Tower","Madoka"}),transcribe::SplitList(" Tokyo Tower, Madoka,\n")) << "a term keeps its spaces";
+    EXPECT_TRUE(transcribe::SplitList("").empty());
+}
+
+TEST(transcribe, the_actors_names_are_terms_to_recognise_each_once_after_the_extras_but_not_a_recognisers_speaker_labels) {
+    AssFile file;
+    for(auto actor:{"Madoka","","Madoka","SPEAKER_00","speaker_1"," Homura "}){auto l=new AssDialogue;l->Actor=actor;file.Events.push_back(*l);}
+    EXPECT_EQ((std::vector<std::string>{"Mami","Madoka","Homura"}),transcribe::Keyterms(file,{"Mami","Madoka"}));
+    EXPECT_EQ((std::vector<std::string>{"Mami","Madoka"}),transcribe::Keyterms(file,{"Mami"},2)) << "no more than the limit";
+}
+
+TEST(transcribe, the_form_sent_to_elevenlabs_has_the_model_the_options_and_each_list_repeated) {
+    transcribe::Request r;r.media="ep01.mkv";r.diarize=false;
+    transcribe::ElevenLabs el;
+    auto fields=transcribe::Form(r,el);
+    auto value=[&](std::string const& name){std::vector<std::string> v;for(auto const& f:fields)if(f.first==name)v.push_back(f.second);return v;};
+    EXPECT_EQ((std::vector<std::string>{"scribe_v3"}),value("model_id"));
+    EXPECT_EQ((std::vector<std::string>{"word"}),value("timestamps_granularity"));
+    EXPECT_EQ((std::vector<std::string>{"false"}),value("diarize"));
+    EXPECT_TRUE(value("language_code").empty()) << "none given, none sent: it is detected";
+    EXPECT_TRUE(value("file").empty()) << "the file is not a text field";
+    r.language="ja";r.secondary_languages={"en","zh"};r.keyterms={"Madoka","Homura"};r.diarize=true;el.model="scribe_v2";
+    fields=transcribe::Form(r,el);
+    EXPECT_EQ((std::vector<std::string>{"scribe_v2"}),value("model_id"));
+    EXPECT_EQ((std::vector<std::string>{"true"}),value("diarize"));
+    EXPECT_EQ((std::vector<std::string>{"ja"}),value("language_code"));
+    EXPECT_EQ((std::vector<std::string>{"en","zh"}),value("secondary_language_codes"));
+    EXPECT_EQ((std::vector<std::string>{"Madoka","Homura"}),value("keyterms"));
+    r.keyterms.assign(150,"x");
+    fields=transcribe::Form(r,el);
+    EXPECT_EQ(100u,value("keyterms").size()) << "no more than 100 terms";
+}
+
+TEST(transcribe, what_elevenlabs_takes_as_it_is_and_what_its_answers_mean) {
+    EXPECT_TRUE(transcribe::Accepted("/v/ep01.mkv"));
+    EXPECT_TRUE(transcribe::Accepted("C:\\a\\song.MP3"));
+    EXPECT_FALSE(transcribe::Accepted("/v/ep01.mka")) << "written out as WAV first";
+    EXPECT_FALSE(transcribe::Accepted("/v/ep01.ts"));
+    EXPECT_EQ("",transcribe::Explain(200,"{}"));
+    auto refused=transcribe::Explain(401,R"({"detail":{"status":"invalid_api_key","message":"Invalid API key"}})");
+    EXPECT_NE(std::string::npos,refused.find("API key")) << refused;
+    EXPECT_NE(std::string::npos,refused.find("Invalid API key")) << refused;
+    EXPECT_NE(std::string::npos,transcribe::Explain(422,R"({"detail":"keyterms: too many"})").find("keyterms: too many"));
+    EXPECT_NE(std::string::npos,transcribe::Explain(500,"<html>Bad Gateway</html>").find("500"));
+    EXPECT_EQ(std::string::npos,transcribe::Explain(500,"<html>Bad Gateway</html>").find("<html>")) << "no markup shown";
+    EXPECT_EQ("24:03",transcribe::Duration(1443000));
+    EXPECT_EQ("1:02:03",transcribe::Duration(3723000));
+    EXPECT_EQ("0:05",transcribe::Duration(5400));
+}
+
+TEST(transcribe, the_users_command_line_gets_the_paths_put_in_its_quotes_taken_off_and_bracketed_parts_dropped_when_empty) {
+    std::string templ="whisperx \"{media}\" --output_dir '{out}' --output_format json [--language {language}] --model large-v3";
+    auto with=transcribe::CommandLine(templ,"/videos/ep 01.mkv","/tmp/out dir","ja");
+    EXPECT_EQ((std::vector<std::string>{"whisperx","/videos/ep 01.mkv","--output_dir","/tmp/out dir","--output_format","json","--language","ja","--model","large-v3"}),with);
+    auto without=transcribe::CommandLine(templ,"/videos/ep 01.mkv","/tmp/out","");
+    EXPECT_EQ((std::vector<std::string>{"whisperx","/videos/ep 01.mkv","--output_dir","/tmp/out","--output_format","json","--model","large-v3"}),without);
+    EXPECT_EQ((std::vector<std::string>{"a","/videos/ep 01.mkv"}),transcribe::CommandLine("a {media}","/videos/ep 01.mkv","o","")) << "a path with spaces stays one word even unquoted";
+    EXPECT_EQ((std::vector<std::string>{"x","",""}),transcribe::CommandLine("x \"\" ''","m","o","")) << "an empty quoted word is a word";
+    EXPECT_TRUE(transcribe::CommandLine("   ","m","o","").empty());
+}
+
+TEST(transcribe, the_json_the_command_wrote_is_the_one_named_after_the_media_else_the_only_one) {
+    agi::fs::path dir=agi::fs::path(std::filesystem::temp_directory_path()/("aegisub-transcribe-test-"+std::to_string(::getpid())));
+    std::filesystem::remove_all(std::filesystem::path(dir));std::filesystem::create_directories(std::filesystem::path(dir));
+    EXPECT_FALSE(transcribe::OutputJson(dir,"/v/ep01.mkv")) << "nothing yet";
+    {std::ofstream(dir/"other.json")<<"{}";}
+    auto only=transcribe::OutputJson(dir,"/v/ep01.mkv");
+    ASSERT_TRUE(only);EXPECT_EQ("other.json",only->filename().string());
+    {std::ofstream(dir/"ep01.json")<<"{}";std::ofstream(dir/"ep01.txt")<<"";}
+    auto named=transcribe::OutputJson(dir,"/v/ep01.mkv");
+    ASSERT_TRUE(named);EXPECT_EQ("ep01.json",named->filename().string());
+    EXPECT_FALSE(transcribe::OutputJson(dir,"/v/ep02.mkv")) << "two, neither its own";
+    std::filesystem::remove_all(std::filesystem::path(dir));
+}
+
+#ifndef _WIN32
+namespace {
+struct TranscribeCancelledSink final : agi::ProgressSink {
+    void SetIndeterminate() override {}
+    void SetTitle(std::string const&) override {}
+    void SetMessage(std::string const&) override {}
+    void SetProgress(int64_t,int64_t) override {}
+    void Log(std::string const&) override {}
+    bool IsCancelled() override { return true; }
+};
+}
+
+TEST(transcribe, a_program_of_the_users_is_run_its_output_and_exit_code_read_and_the_json_it_wrote_found) {
+    agi::fs::path dir=agi::fs::path(std::filesystem::temp_directory_path()/("aegisub-transcribe-run-"+std::to_string(::getpid())));
+    std::filesystem::remove_all(std::filesystem::path(dir));std::filesystem::create_directories(std::filesystem::path(dir));
+    {
+        std::vector<std::string> argv{"sh","-c","printf '{\"words\":[]}' > \"$0/ep01.json\"; echo started; echo 'done 日本語'; exit 3",dir.string()};
+        transcribe::Program program(argv,dir);
+        DialogProgress progress(nullptr,"Transcribing","Running sh...");
+        EXPECT_NO_THROW(progress.Run([&](agi::ProgressSink *ps){ program.Wait(ps); }));
+        EXPECT_EQ(3,program.ExitCode());
+        EXPECT_NE(std::string::npos,program.Output().find("done 日本語")) << program.Output();
+        auto json=transcribe::OutputJson(dir,"/v/ep01.mkv");
+        ASSERT_TRUE(json);
+        auto t=speech::ReadJson(*agi::io::Open(*json));
+        EXPECT_TRUE(t.segments.empty()) << "ElevenLabs' shape, read as it is";
+    }
+    EXPECT_THROW(transcribe::Program({dir.string()+"/no-such-program"},dir),agi::EnvironmentError);
+    {
+        // Cancelled: it is killed and the wait ends in a cancel
+        transcribe::Program slow({"sh","-c","sleep 30"},dir);
+        TranscribeCancelledSink cancelled;
+        EXPECT_THROW(slow.Wait(&cancelled),agi::UserCancelException);
+    }
+    for(int i=0;i<50;++i){wxYield();wxMilliSleep(5);}
+    std::filesystem::remove_all(std::filesystem::path(dir));
+}
+#endif
 
 TEST(speech_lines, a_line_a_sentence_joined_across_pieces_and_ended_by_a_full_stop_or_another_speaker) {
     speech::Transcript t;t.language="ja";

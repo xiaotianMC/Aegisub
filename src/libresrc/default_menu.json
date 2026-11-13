@@ -78,6 +78,7 @@
         { "submenu" : "main/timing/make times continuous", "text" : "Make Times Continuous" }
     ],
     "main/autotiming" : [
+        { "command" : "autotiming/transcribe" },
         { "command" : "autotiming/import_speech" },
         { "command" : "tool/magiatimeline" },
         { "command" : "keyframe/timeline" },

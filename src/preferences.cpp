@@ -257,6 +257,30 @@ void Audio(PreferencesBook *book, Preferences *parent) {
 	p->OptionAdd(speech, _("Mark words heard with less confidence than"), "Tool/Speech Import/Unsure Below", {.min = 0, .max = 1, .inc = 0.05,
 		.help = _("Such words are written in the Effect field as ?word, for the translator to check")});
 
+	auto transcribe = p->PageSizer(_("Transcription"));
+	const wxString backend_arr[] = { _("ElevenLabs Scribe, over the net"), _("A program of your own, run here") };
+	wxArrayString choice_backend(2, backend_arr);
+	p->OptionChoice(transcribe, _("Heard by"), choice_backend, "Tool/Transcribe/Backend", false,
+		_("Transcribe the Audio sends the audio to ElevenLabs, which charges by its length, or runs the command below and reads the JSON it writes"));
+	p->OptionAdd(transcribe, _("Language"), "Tool/Transcribe/Language",
+		{.help = _("The code of what is spoken: ja, zh, en...; empty to have it detected")});
+	p->OptionAdd(transcribe, _("Other languages among it"), "Tool/Transcribe/Secondary Languages",
+		{.help = _("Codes, separated by commas, of languages mixed into the speech, such as English words in Japanese (ElevenLabs)")});
+	p->OptionAdd(transcribe, _("Tell the speakers apart"), "Tool/Transcribe/Diarize",
+		{.help = _("Each line's speaker goes in its Actor field (ElevenLabs)")});
+	p->OptionAdd(transcribe, _("Give the names in the Actor fields as terms to recognise"), "Tool/Transcribe/Keyterms From Actors",
+		{.help = _("Names the recogniser is told of are heard right more often (ElevenLabs)")});
+	p->OptionAdd(transcribe, _("Other terms to recognise"), "Tool/Transcribe/Keyterms",
+		{.help = _("Names and words easily misheard, separated by commas; 100 terms at most in all (ElevenLabs)")});
+	p->OptionAdd(transcribe, _("ElevenLabs model"), "Tool/Transcribe/ElevenLabs/Model",
+		{.help = _("scribe_v3; or scribe_v2, the one before")});
+	p->OptionAdd(transcribe, _("ElevenLabs API key"), "Tool/Transcribe/ElevenLabs/Key",
+		{.help = _("Kept here, in the settings file as plain text. The ELEVENLABS_API_KEY environment variable is used instead when set; empty, the key is asked for")});
+	p->OptionAdd(transcribe, _("Ask before sending audio"), "Tool/Transcribe/Ask",
+		{.help = _("Say how long the audio is and that it leaves this computer, and ask, each time before sending it to ElevenLabs")});
+	p->OptionAdd(transcribe, _("Command"), "Tool/Transcribe/Command",
+		{.help = _("Run with {media} the audio or video file, {out} an empty folder to write a JSON file with each word's times to, and {language} the language above; a part in [brackets] is left out when its value is empty")});
+
 	auto snapping = p->PageSizer(_("Snapping"));
 	p->OptionAdd(snapping, _("Snap markers by default"), "Audio/Snap/Enable");
 	p->OptionAdd(snapping, _("Maximum snap distance (px)"), "Audio/Snap/Distance", {.min = 0, .max = 25});

@@ -671,6 +671,20 @@
 				"Key Start Before" : 200
 			}
 		},
+		"Transcribe" : {
+			"Ask" : true,
+			"Backend" : 0,
+			"Command" : "whisperx \"{media}\" --output_dir \"{out}\" --output_format json [--language {language}]",
+			"Diarize" : true,
+			"ElevenLabs" : {
+				"Key" : "",
+				"Model" : "scribe_v3"
+			},
+			"Keyterms" : "",
+			"Keyterms From Actors" : true,
+			"Language" : "",
+			"Secondary Languages" : ""
+		},
 		"Translation Assistant" : {
 			"Last" : {
 				"X" : -1,

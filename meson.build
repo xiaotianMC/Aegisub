@@ -466,6 +466,7 @@ if get_option('enable_update_checker')
     endif
 
     deps += dependency('libcurl', allow_fallback: true, default_options: curl_options)
+    conf.set('WITH_CURL', 1)
 endif
 
 luajit = dependency('luajit', version: '>=2.0.0', required: get_option('system_luajit'),

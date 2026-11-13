@@ -6,31 +6,44 @@
 #include "../ass_dialogue.h"
 #include "../ass_file.h"
 #include "../ass_style.h"
+#include "../audio_controller.h"
 #include "../async_video_provider.h"
+#include "../dialog_progress.h"
 #include "../bilingual.h"
 #include "../compat.h"
 #include "../format.h"
 #include "../frame_main.h"
 #include "../include/aegisub/context.h"
 #include "../keyframe_snap.h"
+#include "../magia_timeline.h"
 #include "../options.h"
 #include "../project.h"
 #include "../selection_controller.h"
 #include "../speech_lines.h"
+#include "../speech_transcribe.h"
 #include "../subtitle_project_access.h"
 #include "../subtitle_row_list_edit.h"
 #include "../subtitle_value_edit.h"
 #include "../utils.h"
+#include "../video_controller.h"
 
 #include <libaegisub/audio/provider.h>
 #include <libaegisub/exception.h>
 #include <libaegisub/io.h>
 #include <libaegisub/vfr.h>
 
+#include <chrono>
 #include <cmath>
+#include <cstdlib>
+#include <filesystem>
+#include <iterator>
 #include <set>
+#include <sstream>
 
 #include <wx/msgdlg.h>
+#include <wx/richmsgdlg.h>
+#include <wx/textdlg.h>
+#include <wx/utils.h>
 
 namespace {
 using cmd::Command;
@@ -233,6 +246,143 @@ size_t speech::Import(agi::Context *c, speech::Transcript const& said) {
 }
 
 namespace {
+/// Where a run's files go: a folder of its own under the system's, made now
+agi::fs::path TranscribeFolder() {
+	auto const stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+	agi::fs::path folder = agi::fs::path(std::filesystem::temp_directory_path()) / agi::format("aegisub-transcribe-%d-%d", static_cast<int>(wxGetProcessId()), static_cast<int>(stamp % 1000000));
+	agi::fs::CreateDirectory(folder);
+	return folder;
+}
+
+struct autotiming_transcribe final : public Command {
+	CMD_NAME("autotiming/transcribe")
+	STR_MENU("&Transcribe the Audio...")
+	STR_DISP("Transcribe the Audio")
+	STR_HELP("Have the audio heard through, by ElevenLabs Scribe or a program of your own, and make a line of each sentence, timed to the scene changes if they are known")
+	CMD_TYPE(COMMAND_VALIDATE)
+
+	bool Validate(const agi::Context *c) override {
+		return c->project->AudioProvider() && !c->project->AudioName().empty();
+	}
+
+	static void Fail(agi::Context *c, wxString const& message) {
+		wxMessageBox(message, _("Transcribe the Audio"), wxOK | wxICON_ERROR, c->parent);
+	}
+
+	void operator()(agi::Context *c) override {
+		c->videoController->Stop();
+		c->audioController->Stop();
+		auto const audio = c->project->AudioProvider();
+		auto const media = c->project->AudioName();
+		int const duration_ms = static_cast<int>(audio->GetNumSamples() * 1000 / std::max<int64_t>(1, audio->GetSampleRate()));
+
+		transcribe::Request request;
+		request.media = media;
+		request.language = OPT_GET("Tool/Transcribe/Language")->GetString();
+		request.secondary_languages = transcribe::SplitCodes(OPT_GET("Tool/Transcribe/Secondary Languages")->GetString());
+		request.diarize = OPT_GET("Tool/Transcribe/Diarize")->GetBool();
+		auto extra = transcribe::SplitList(OPT_GET("Tool/Transcribe/Keyterms")->GetString());
+		if (OPT_GET("Tool/Transcribe/Keyterms From Actors")->GetBool())
+			request.keyterms = transcribe::Keyterms(c->subtitleAccess->Read(), std::move(extra));
+		else
+			request.keyterms = transcribe::Keyterms(AssFile(), std::move(extra));
+
+		bool const by_elevenlabs = OPT_GET("Tool/Transcribe/Backend")->GetInt() == 0;
+		agi::fs::path folder;
+		std::string json;
+		try {
+			if (by_elevenlabs) {
+				if (!transcribe::CanUpload()) {
+					Fail(c, _("This build of Aegisub has no libcurl, so nothing can be sent to ElevenLabs. Set a program of your own to run in Preferences, Audio, Transcription."));
+					return;
+				}
+				transcribe::ElevenLabs settings;
+				settings.model = OPT_GET("Tool/Transcribe/ElevenLabs/Model")->GetString();
+				settings.key = transcribe::ApiKey(std::getenv("ELEVENLABS_API_KEY"), OPT_GET("Tool/Transcribe/ElevenLabs/Key")->GetString());
+				if (settings.key.empty()) {
+					wxString key = wxGetPasswordFromUser(_("Enter your ElevenLabs API key, from the API keys page of elevenlabs.io.\n\nIt is kept in Aegisub's settings file, as plain text. To keep it out of there, set the ELEVENLABS_API_KEY environment variable instead."),
+						_("Transcribe the Audio"), "", c->parent);
+					settings.key = transcribe::ApiKey(nullptr, from_wx(key));
+					if (settings.key.empty()) return;
+					OPT_SET("Tool/Transcribe/ElevenLabs/Key")->SetString(settings.key);
+				}
+				if (OPT_GET("Tool/Transcribe/Ask")->GetBool()) {
+					wxRichMessageDialog ask(c->parent,
+						agi::wxformat(_("Send %s of audio, %s, to ElevenLabs to hear?"), transcribe::Duration(duration_ms), media.filename().string()),
+						_("Transcribe the Audio"), wxYES_NO | wxICON_QUESTION);
+					ask.SetExtendedMessage(_("The audio leaves this computer for ElevenLabs' servers, which charge your account by its length. Aegisub keeps nothing of the answer but the lines it makes."));
+					ask.ShowCheckBox(_("Don't ask again"));
+					if (ask.ShowModal() != wxID_YES) return;
+					if (ask.IsCheckBoxChecked()) OPT_SET("Tool/Transcribe/Ask")->SetBool(false);
+				}
+				if (!transcribe::Accepted(media)) {
+					// Not a kind of file it takes: the audio as WAV
+					folder = TranscribeFolder();
+					request.media = folder / (media.stem().string() + ".wav");
+					agi::SaveAudioClip(*audio, request.media, 0, duration_ms);
+				}
+				DialogProgress progress(c->parent, _("Transcribe the Audio"), _("Sending the audio to ElevenLabs..."));
+				progress.Run([&](agi::ProgressSink *ps) { json = transcribe::Upload(request, settings, ps); });
+			}
+			else {
+				auto const templ = OPT_GET("Tool/Transcribe/Command")->GetString();
+				if (templ.find_first_not_of(" \t") == std::string::npos) {
+					Fail(c, _("There is no command to run: set one in Preferences, Audio, Transcription."));
+					return;
+				}
+				folder = TranscribeFolder();
+				auto argv = transcribe::CommandLine(templ, media, folder, request.language);
+				transcribe::Program program(argv, folder);
+				DialogProgress progress(c->parent, _("Transcribe the Audio"), agi::wxformat(_("Running %s..."), argv.empty() ? std::string() : argv[0]));
+				progress.Run([&](agi::ProgressSink *ps) { program.Wait(ps); });
+				if (program.ExitCode() != 0)
+					throw agi::EnvironmentError(agi::format(from_wx(_("%s ended with %d:\n%s")), argv[0], program.ExitCode(), magia_timeline::LastLines(program.Output(), 8)));
+				auto file = transcribe::OutputJson(folder, media);
+				if (!file)
+					throw agi::EnvironmentError(agi::format(from_wx(_("%s wrote no JSON file in the folder it was given:\n%s")), argv[0], magia_timeline::LastLines(program.Output(), 8)));
+				auto in = agi::io::Open(*file, true);
+				json.assign(std::istreambuf_iterator<char>(*in), std::istreambuf_iterator<char>());
+			}
+		}
+		catch (agi::UserCancelException const&) {
+			Clean(folder);
+			return;
+		}
+		catch (transcribe::KeyRefused const& e) {
+			OPT_SET("Tool/Transcribe/ElevenLabs/Key")->SetString("");
+			Clean(folder);
+			Fail(c, to_wx(e.GetMessage()) + "\n\n" + _("The key is forgotten; it is asked for again next time."));
+			return;
+		}
+		catch (agi::Exception const& e) {
+			Clean(folder);
+			Fail(c, to_wx(e.GetMessage()));
+			return;
+		}
+		Clean(folder);
+
+		speech::Transcript transcript;
+		try {
+			std::istringstream in(json);
+			transcript = speech::ReadJson(in);
+		}
+		catch (agi::Exception const& e) {
+			Fail(c, to_wx(e.GetMessage()));
+			return;
+		}
+		size_t const lines = speech::Import(c, transcript);
+		if (c->frame)
+			c->frame->StatusTimeout(lines ? fmt_plural(lines, "Heard %d line", "Heard %d lines", static_cast<int>(lines))
+				: _("Nothing was heard"));
+	}
+
+	static void Clean(agi::fs::path const& folder) {
+		if (folder.empty()) return;
+		std::error_code ec;
+		std::filesystem::remove_all(std::filesystem::path(folder), ec);
+	}
+};
+
 struct autotiming_clear_marks final : public Command {
 	CMD_NAME("autotiming/clear_marks")
 	STR_MENU("Clear Auto-Timing &Marks")
@@ -265,5 +415,6 @@ namespace cmd {
 		reg(std::make_unique<autotiming_bilingual>());
 		reg(std::make_unique<autotiming_clear_marks>());
 		reg(std::make_unique<autotiming_import_speech>());
+		reg(std::make_unique<autotiming_transcribe>());
 	}
 }

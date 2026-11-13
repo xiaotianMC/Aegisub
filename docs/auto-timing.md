@@ -4,6 +4,7 @@
 
 | 菜单项 | 命令 | 说明 |
 | --- | --- | --- |
+| 听写音频... | `autotiming/transcribe` | 见下 |
 | 导入语音识别结果... | `autotiming/import_speech` | 见下 |
 | MagiaTimeline 硬字幕打轴... | `tool/magiatimeline` | 从“时间”菜单移过来 |
 | 按画面切换生成时间轴 | `keyframe/timeline` | 见[画面切换检测](scene-detection.md) |
@@ -52,6 +53,18 @@ whisperx ep01.wav --language ja --model large-v3 --diarize --hf_token <令牌> -
 **放到哪里**：字幕还没写东西时替换掉原来的空行，否则按时间插在原有行之间，原有行不动。首选项勾了“每行配一行空的译文行”时，直接按双语轴生成（`JP` 行加空 `CN` 行，样式缺的会补上）。新样式和所有行是一步撤销，新行全部选中。
 
 设置在首选项“音频”页的“语音识别”一节：是否生成双语轴、超过多长拆句、每行至少显示多久、置信度阈值。其他阈值目前是代码里的默认值（`speech::Rules`），等拿真实样片调过再决定要不要开放。
+
+## 听写音频
+
+`autotiming/transcribe`，`src/speech_transcribe.{h,cpp}`。不用自己先跑识别再导入：直接把编辑器里打开的音频交给识别器，结果走和“导入语音识别结果”完全相同的 `speech::ReadJson` → `speech::Import`。识别器在首选项“音频”页“听写”一节选：
+
+- **ElevenLabs Scribe**（联网，按音频时长收费）。用 libcurl 把文件以 multipart 表单 POST 到 `https://api.elevenlabs.io/v1/speech-to-text`，请求头 `xi-api-key`。字段：`model_id`（默认 `scribe_v3`）、`timestamps_granularity=word`、`diarize`、`tag_audio_events=true`，有设置时再加 `language_code`、`secondary_language_codes`（重复字段）、`keyterms`（重复字段，最多 100 个）。关键词默认取字幕 Actor 栏里的名字（去重，`SPEAKER_00` 这类识别器自己起的名字不算），再加设置里手填的。文件直接上传源文件（它收 mp3/wav/flac/ogg/m4a/aac/opus 和 mp4/mkv/mov/avi/webm 等视频）；不在列表里的格式（mka、ts）先用 `agi::SaveAudioClip` 写成 WAV 再传。上传进度显示在进度窗口里，传完等待时改成来回扫的条；取消就中断连接。
+  - **密钥**：先读环境变量 `ELEVENLABS_API_KEY`，没有就用设置里的；都没有就弹密码框问一次，存进设置（明文，界面上写明）。服务器回 401 时清掉存的密钥，下次再问。
+  - **发送前确认**：每次发送前弹窗说明音频时长、文件名、会离开本机并按时长收费，勾“不再询问”后不再弹（设置里可以重新打开）。
+  - 构建时没有 libcurl（`enable_update_checker=false` 时也没有）就提示用自己的程序。`meson.build` 在拉入 curl 时定义 `WITH_CURL`。
+- **自己的程序**（本机运行）。设置里填一条命令模板，默认 `whisperx "{media}" --output_dir "{out}" --output_format json [--language {language}]`：`{media}` 是音频或视频文件，`{out}` 是为这次运行新建的临时文件夹，`{language}` 是设置里的语言；方括号里的部分在其中占位符为空时整段去掉。先按引号分词再代入，所以路径里有空格不用管。用 `wxExecute` 启动（和 MagiaTimeline 一样，见 `magia_timeline::Run`），进度窗口显示它最新输出的一行，取消就连子进程一起杀掉。结束后在临时文件夹里找以媒体文件名命名的 `.json`，没有就取唯一的一个，读完删掉文件夹。
+
+纯逻辑部分（密钥优先级、列表拆分、关键词、表单字段、格式判断、错误说明、命令行拆分、找输出文件）都有测试，`TEST(transcribe, ...)`；网络和进程部分没有自动测试。
 
 ## 双语轴
 
