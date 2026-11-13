@@ -8645,6 +8645,18 @@ msgstr "视频跳到 %s"
 msgid "No video is open"
 msgstr "没有打开视频"
 
+msgid "Settings"
+msgstr "设置"
+
+msgid "Setting"
+msgstr "设置项"
+
+msgid "Settings page"
+msgstr "设置页"
+
+msgid "Type the name of a setting, its pinyin or initials"
+msgstr "输入设置项的名称、拼音或首字母"
+
 msgid "No matching commands"
 msgstr "没有匹配的命令"
 

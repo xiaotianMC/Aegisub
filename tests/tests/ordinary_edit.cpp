@@ -779,7 +779,7 @@ TEST_F(ordinary_edit, command_palette_finds_lines_and_goes_to_lines_and_times) {
     EXPECT_EQ(ids[1], hello.line_id);
     EXPECT_EQ("Hello world", hello.text) << "tags dropped, \\N a space";
     EXPECT_EQ((std::vector<size_t>{6, 7, 8, 9, 10}), hello.match.positions);
-    EXPECT_EQ("0:00:01.00", hello.start);
+    EXPECT_EQ("0:00:01.00", hello.aside);
     EXPECT_TRUE(hello.detail.StartsWith("#2"));
     EXPECT_TRUE(hello.detail.Contains("Kei"));
     EXPECT_TRUE(palette.Targets()[1].comment);
@@ -852,8 +852,136 @@ TEST_F(ordinary_edit, command_palette_finds_lines_and_goes_to_lines_and_times) {
     tabs->ComparisonEnded(false);
 }
 
+TEST_F(ordinary_edit, command_palette_finds_settings_and_opens_them_searched_for) {
+    CommandPalette palette(c.get());
+    palette.SetQuery(",");
+    EXPECT_EQ(CommandPalette::Mode::Settings, palette.CurrentMode());
+    EXPECT_TRUE(palette.Targets().empty());
+    EXPECT_FALSE(palette.EmptyMessage().empty());
+
+    palette.SetQuery(", seek line start");
+    ASSERT_FALSE(palette.Targets().empty());
+    auto const& seek = palette.Targets()[0];
+    EXPECT_EQ("Seek video to line start on selection change", seek.text);
+    EXPECT_EQ(seek.text, seek.setting);
+    EXPECT_FALSE(seek.aside.empty()) << "the page it is on";
+    EXPECT_FALSE(seek.match.positions.empty());
+
+    palette.SetQuery(wxString::FromUTF8("\uff0caudio")); // ，, as a Chinese input method types it
+    auto const& audio = palette.Targets();
+    ASSERT_FALSE(audio.empty());
+    EXPECT_TRUE(std::any_of(audio.begin(), audio.end(), [](auto const& t) { return t.aside.empty() && t.text == "Audio"; })) << "the page itself";
+    palette.SetQuery(",qqqqzzzz");
+    EXPECT_TRUE(palette.Targets().empty());
+
+    // Chosen: once the palette has closed, the settings open searched for it.
+    palette.SetQuery(", seek line start");
+    ASSERT_TRUE(palette.Accept());
+    struct Look : wxModalDialogHook {
+        bool seen = false;
+        Look() { Register(); }
+        int Enter(wxDialog *dialog) override {
+            auto prefs = dynamic_cast<Preferences*>(dialog);
+            if (!prefs) return wxID_NONE;
+            seen = true;
+            EXPECT_FALSE(prefs->MatchingPages().empty());
+            EXPECT_EQ(prefs->MatchingPages().front(), prefs->CurrentPage());
+            EXPECT_FALSE(prefs->MatchingControls(prefs->CurrentPage()).empty());
+            return wxID_CANCEL;
+        }
+        void Exit(wxDialog *) override {}
+    } look;
+    palette.GoToChosen();
+    EXPECT_TRUE(look.seen);
+}
+
+TEST_F(ordinary_edit, command_palette_orders_by_use_and_remembers_what_was_chosen_for_a_query) {
+    // The bonus: more for more uses, less as they get older, never much.
+    EXPECT_EQ(0, palette::UsageBonus(0, 0));
+    EXPECT_GT(palette::UsageBonus(3, 0), palette::UsageBonus(1, 0));
+    EXPECT_GT(palette::UsageBonus(1, 0), palette::UsageBonus(1, 2 * 86400));
+    EXPECT_GT(palette::UsageBonus(1, 2 * 86400), palette::UsageBonus(1, 60 * 86400));
+    EXPECT_EQ(24, palette::UsageBonus(1000, 0));
+    auto use = palette::ParseUsage("time/shift\t3\t1700000000");
+    ASSERT_TRUE(use);
+    EXPECT_EQ("time/shift", use->name);
+    EXPECT_EQ(3, use->count);
+    EXPECT_EQ(1700000000, use->last);
+    EXPECT_EQ("time/shift\t3\t1700000000", palette::FormatUsage(*use));
+    for (auto bad : {"", "time/shift", "time/shift\tx\t1", "\t1\t1", "a\t0\t1"})
+        EXPECT_FALSE(palette::ParseUsage(bad)) << bad;
+
+    auto clear = [] {
+        for (auto option : {"App/Command Palette/Recent", "App/Command Palette/Usage", "App/Command Palette/Queries"})
+            OPT_SET(option)->SetListString({});
+    };
+
+    // Before uses were counted: the recent list is read as one use each.
+    clear();
+    OPT_SET("App/Command Palette/Recent")->SetListString({"app/exit", "grid/tags/hide"});
+    {
+        CommandPalette old(c.get());
+        auto order = old.Shown();
+        ASSERT_GE(order.size(), 2u);
+        EXPECT_EQ("app/exit", order[0]);
+        EXPECT_EQ("grid/tags/hide", order[1]);
+    }
+
+    // The first use counted is one, not one more than the recent list
+    // it was read from before it was written.
+    clear();
+    CommandPalette::Remember("app/exit");
+    EXPECT_TRUE(OPT_GET("App/Command Palette/Usage")->GetListString().at(0).starts_with("app/exit\t1\t"));
+
+    // Used more often comes before used once more lately.
+    clear();
+    for (int i = 0; i < 3; ++i) CommandPalette::Remember("app/exit");
+    CommandPalette::Remember("grid/tags/hide");
+    EXPECT_EQ("grid/tags/hide\t1", OPT_GET("App/Command Palette/Usage")->GetListString().at(0).substr(0, 16));
+    {
+        CommandPalette often(c.get());
+        auto order = often.Shown();
+        ASSERT_GE(order.size(), 2u);
+        EXPECT_EQ("app/exit", order[0]);
+        EXPECT_EQ("grid/tags/hide", order[1]);
+        EXPECT_GT(often.ShownItem(0).usage_bonus, often.ShownItem(1).usage_bonus);
+    }
+
+    // What was chosen for a query comes first for it, and gains a little
+    // while the query is being typed.
+    clear();
+    std::string wanted;
+    {
+        CommandPalette before(c.get());
+        before.SetQuery("sa");
+        auto found = before.Shown();
+        ASSERT_GE(found.size(), 3u);
+        wanted = found[2];
+    }
+    CommandPalette::Remember(wanted, "S A");
+    EXPECT_EQ("sa\t" + wanted, OPT_GET("App/Command Palette/Queries")->GetListString().at(0)) << "kept lower case, without spaces";
+    {
+        CommandPalette after(c.get());
+        after.SetQuery("sa");
+        ASSERT_FALSE(after.Shown().empty());
+        EXPECT_EQ(wanted, after.Shown()[0]);
+        int remembered = after.ShownMatch(0).score;
+        after.SetQuery("s");
+        auto partly = after.Shown();
+        auto at = std::find(partly.begin(), partly.end(), wanted);
+        ASSERT_NE(partly.end(), at);
+        EXPECT_LT(after.ShownMatch(at - partly.begin()).score, remembered);
+    }
+    CommandPalette::Remember("app/exit", "sa");
+    auto queries = OPT_GET("App/Command Palette/Queries")->GetListString();
+    EXPECT_EQ("sa\tapp/exit", queries.at(0));
+    EXPECT_EQ(1, std::count_if(queries.begin(), queries.end(), [](auto const& q) { return q.starts_with("sa\t"); })) << "one choice a query, the latest";
+    clear();
+}
+
 TEST_F(ordinary_edit, command_palette_lists_commands_remembers_choices_and_runs_after_closing) {
-    OPT_SET("App/Command Palette/Recent")->SetListString({});
+    for (auto option : {"App/Command Palette/Recent", "App/Command Palette/Usage", "App/Command Palette/Queries"})
+        OPT_SET(option)->SetListString({});
     {
         CommandPalette palette(c.get());
         auto all = palette.Shown();

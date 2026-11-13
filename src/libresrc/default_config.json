@@ -12,7 +12,9 @@
 		"Classic Icons" : false,
 		"Classic Toolbar" : false,
 		"Command Palette" : {
-			"Recent" : [{"string": ""}]
+			"Queries" : [{"string": ""}],
+			"Recent" : [{"string": ""}],
+			"Usage" : [{"string": ""}]
 		},
 		"First Start" : true,
 		"Hotkey Migrations" : [{"string": "placeholder since empty arrays aren't supported"}],

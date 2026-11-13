@@ -1055,6 +1055,25 @@ wxString Preferences::SearchStatus() const {
 	return fmt_tl("%d matches on %d pages; Enter shows the next", count, matching_pages.size());
 }
 
+std::vector<Preferences::Setting> Preferences::Settings() const {
+	std::vector<Setting> settings;
+	for (auto const& entry : search_entries) {
+		auto page = book->GetPageText(entry.page);
+		if (!entry.window) settings.push_back({page, page, true});
+		else if (auto label = SearchLabel(entry.window); !label.empty())
+			settings.push_back({label, page, false});
+	}
+	return settings;
+}
+
+std::vector<Preferences::Setting> const& SettingLabels(wxWindow *parent) {
+	static std::vector<Preferences::Setting> settings = [&] {
+		Preferences dialog(parent);
+		return dialog.Settings();
+	}();
+	return settings;
+}
+
 void ShowPreferences(wxWindow *parent, wxString const& search) {
 	while (true) {
 		Preferences dialog(parent);

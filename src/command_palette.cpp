@@ -4,6 +4,7 @@
 
 #include "command/command.h"
 #include "compat.h"
+#include "dialogs.h"
 #include "include/aegisub/context.h"
 #include "include/aegisub/hotkey.h"
 #include "include/aegisub/menu.h"
@@ -14,11 +15,13 @@
 #include "subtitle_project_access.h"
 #include "video_controller.h"
 #include "options.h"
+#include "preferences.h"
 #include "theme.h"
 #include "workspace_tabs.h"
 
 #include <algorithm>
 #include <climits>
+#include <ctime>
 #include <map>
 #include <memory>
 
@@ -59,6 +62,34 @@ icu::Transliterator *HanLatin() {
     }();
     return transliterator.get();
 }
+}
+
+std::optional<Usage> ParseUsage(std::string const& entry) {
+    auto first = entry.find('\t');
+    auto second = first == std::string::npos ? first : entry.find('\t', first + 1);
+    if (first == 0 || second == std::string::npos) return std::nullopt;
+    Usage usage;
+    usage.name = entry.substr(0, first);
+    try {
+        usage.count = std::stoi(entry.substr(first + 1, second - first - 1));
+        usage.last = std::stoll(entry.substr(second + 1));
+    }
+    catch (std::exception const&) {
+        return std::nullopt;
+    }
+    if (usage.count < 1) return std::nullopt;
+    return usage;
+}
+
+std::string FormatUsage(Usage const& usage) {
+    return usage.name + '\t' + std::to_string(usage.count) + '\t' + std::to_string(usage.last);
+}
+
+int UsageBonus(int count, long long age) {
+    if (count < 1) return 0;
+    double recency = age < 3600 ? 1.0 : age < 86400 ? 0.8 : age < 7 * 86400 ? 0.5 : age < 30 * 86400 ? 0.3 : 0.1;
+    double often = std::log2(1.0 + count); // 1 use 1, 3 uses 2, 7 uses 3
+    return static_cast<int>(std::lround(std::min(24.0, (6 + 6 * often) * recency)));
 }
 
 std::wstring Pinyin(wchar_t ch) {
@@ -403,7 +434,31 @@ std::wstring CanonicalHotkey(std::wstring_view text, bool typed) {
 }
 
 namespace {
+/// Recently used commands listed first when nothing is typed.
 constexpr size_t max_recent = 12;
+/// Commands whose use is kept, and queries whose choice is.
+constexpr size_t max_usage = 200, max_queries = 100;
+/// What remembering a command for exactly what is typed adds: it comes
+/// first, before anything but a shortcut typed in full.
+constexpr int remembered_exact = 500;
+/// ...and for what is typed so far of a query it was chosen for.
+constexpr int remembered_prefix = 30;
+
+long long Now() {
+    return static_cast<long long>(std::time(nullptr));
+}
+
+std::vector<palette::Usage> ReadUsage() {
+    std::vector<palette::Usage> usage;
+    for (auto const& entry : OPT_GET("App/Command Palette/Usage")->GetListString())
+        if (auto parsed = palette::ParseUsage(entry)) usage.push_back(std::move(*parsed));
+    if (!usage.empty()) return usage;
+    // From before uses were counted: the recent list, a use each, in order
+    long long now = Now();
+    for (auto const& name : OPT_GET("App/Command Palette/Recent")->GetListString())
+        if (!name.empty()) usage.push_back({name, 1, now - static_cast<long long>(usage.size())});
+    return usage;
+}
 constexpr int visible_rows = 10;
 /// At most this many lines found by '@' are listed.
 constexpr size_t max_lines = 500;
@@ -486,11 +541,13 @@ class PaletteList final : public wxVListBox {
             else while (j < text.size() && !marked_at(j, next)) ++j;
             auto run = text.Mid(i, j - i);
             dc.SetFont(marked ? bold : font);
-            if (!marked && x + dc.GetTextExtent(run).x > right)
-                run = wxControl::Ellipsize(run, dc, wxELLIPSIZE_END, right - x);
+            // Out of room: end with an ellipsis, and nothing after it
+            bool cut = x + dc.GetTextExtent(run).x > right;
+            if (cut) run = wxControl::Ellipsize(run, dc, wxELLIPSIZE_END, right - x);
             dc.SetTextForeground(marked && enabled ? accent : colour);
             dc.DrawText(run, x, y);
             x += dc.GetTextExtent(run).x;
+            if (cut) break;
             i = j;
         }
         dc.SetFont(font);
@@ -531,10 +588,10 @@ public:
         int x = rect.x + pad * 4 + IconSize();
         int right = rect.GetRight() - pad * 2;
         dc.SetFont(GetFont());
-        if (!target.start.empty()) {
-            auto size = dc.GetTextExtent(target.start);
+        if (!target.aside.empty()) {
+            auto size = dc.GetTextExtent(target.aside);
             dc.SetTextForeground(colours.list_dim);
-            dc.DrawText(target.start, right - size.x, y);
+            dc.DrawText(target.aside, right - size.x, y);
             right -= size.x + pad * 3;
         }
         auto text_colour = target.enabled && !target.comment ? colours.list_text : colours.list_dim;
@@ -633,12 +690,14 @@ CommandPalette::CommandPalette(agi::Context *c)
     auto hint = new wxStaticText(this, -1, wxString::FromUTF8("↑↓ ") + _("Select") + wxString::FromUTF8("   Enter ") + _("Run") + wxString::FromUTF8("   Esc ") + _("Close"));
     hint->SetForegroundColour(colours.list_dim);
     hint->SetFont(GetFont().Smaller());
-    modes_hint = new wxStaticText(this, -1, wxString::FromUTF8("@ ") + _("Find in subtitles") + wxString::FromUTF8("   : ") + _("Go to line or time"));
+    modes_hint = new wxStaticText(this, -1, wxString(), wxDefaultPosition, wxDefaultSize, wxST_NO_AUTORESIZE | wxST_ELLIPSIZE_END);
+    modes_hint->SetLabel(wxString::FromUTF8("@ ") + _("Find in subtitles") + wxString::FromUTF8("   : ") + _("Go to line or time") + wxString::FromUTF8("   , ") + _("Settings"));
     modes_hint->SetForegroundColour(colours.list_dim);
     modes_hint->SetFont(GetFont().Smaller());
     auto footer = new wxBoxSizer(wxHORIZONTAL);
-    footer->Add(modes_hint, wxSizerFlags().Center());
-    footer->AddStretchSpacer();
+    // The prefixes give way when the palette is narrow: they never widen it
+    modes_hint->SetMinSize(wxSize(FromDIP(40), -1));
+    footer->Add(modes_hint, wxSizerFlags(1).Center().Border(wxRIGHT, FromDIP(12)));
     footer->Add(hint, wxSizerFlags().Center());
 
     auto sizer = new wxBoxSizer(wxVERTICAL);
@@ -649,8 +708,6 @@ CommandPalette::CommandPalette(agi::Context *c)
     SetSizer(sizer);
 
     // Every command, as it is now: names and availability change with the project.
-    recent = OPT_GET("App/Command Palette/Recent")->GetListString();
-    std::erase_if(recent, [](std::string const& name) { return name.empty(); });
     auto paths = menu::CommandPaths();
     for (auto name_view : cmd::get_registered_commands()) {
         if (!Listed(name_view)) continue;
@@ -669,9 +726,24 @@ CommandPalette::CommandPalette(agi::Context *c)
         item.keys = palette::MakeKeys(Wide(item.display), name, Wide(item.original), Wide(item.path));
         items.push_back(std::move(item));
     }
-    std::erase_if(recent, [&](std::string const& name) {
-        return std::none_of(items.begin(), items.end(), [&](Item const& item) { return item.name == name; });
-    });
+    // How often and how lately each was chosen, as it is now
+    {
+        std::map<std::string, Item*> by_name;
+        for (auto& item : items) by_name[item.name] = &item;
+        long long now = Now();
+        int rank = 0;
+        for (auto const& use : ReadUsage()) {
+            auto it = by_name.find(use.name);
+            if (it == by_name.end() || it->second->usage_rank >= 0) continue;
+            it->second->usage_rank = rank++;
+            it->second->usage_bonus = palette::UsageBonus(use.count, now - use.last);
+        }
+        for (auto const& entry : OPT_GET("App/Command Palette/Queries")->GetListString()) {
+            auto tab = entry.find('\t');
+            if (tab == 0 || tab == std::string::npos) continue;
+            remembered.emplace_back(Wide(to_wx(entry.substr(0, tab))), entry.substr(tab + 1));
+        }
+    }
 
     int width = FromDIP(620);
     if (auto top = wxGetTopLevelParent(c->parent)) width = std::min(width, std::max(FromDIP(320), top->GetClientSize().x - FromDIP(40)));
@@ -743,21 +815,27 @@ void CommandPalette::Filter() {
         FilterGoto(std::wstring_view(typed).substr(1));
         return;
     }
+    if (!typed.empty() && IsPrefix(typed[0], L',')) {
+        mode = Mode::Settings;
+        FilterSettings(std::wstring_view(typed).substr(1));
+        return;
+    }
     auto query = palette::NormaliseQuery(typed);
     auto hotkey_query = palette::CanonicalHotkey(typed, true);
-    auto recent_rank = [&](std::string const& name) {
-        auto it = std::find(recent.begin(), recent.end(), name);
-        return it == recent.end() ? -1 : static_cast<int>(it - recent.begin());
-    };
-
     if (query.empty()) {
-        // Recently used first, then all by name.
-        for (auto const& name : recent)
-            for (size_t i = 0; i < items.size(); ++i)
-                if (items[i].name == name) shown.push_back(i);
+        // The most used of late first, then all by name.
+        std::vector<size_t> used;
+        for (size_t i = 0; i < items.size(); ++i)
+            if (items[i].usage_rank >= 0) used.push_back(i);
+        std::sort(used.begin(), used.end(), [&](size_t a, size_t b) {
+            if (items[a].usage_bonus != items[b].usage_bonus) return items[a].usage_bonus > items[b].usage_bonus;
+            return items[a].usage_rank < items[b].usage_rank;
+        });
+        if (used.size() > max_recent) used.resize(max_recent);
+        shown = used;
         std::vector<size_t> rest;
         for (size_t i = 0; i < items.size(); ++i)
-            if (recent_rank(items[i].name) < 0) rest.push_back(i);
+            if (std::find(used.begin(), used.end(), i) == used.end()) rest.push_back(i);
         std::stable_sort(rest.begin(), rest.end(), [&](size_t a, size_t b) {
             return items[a].display.CmpNoCase(items[b].display) < 0;
         });
@@ -784,7 +862,13 @@ void CommandPalette::Filter() {
                 break;
             }
             if (!match) continue;
-            if (int rank = recent_rank(items[i].name); rank >= 0) match->score += 6 + static_cast<int>(max_recent) - rank;
+            match->score += items[i].usage_bonus;
+            // Chosen before for this very query, or one it starts
+            for (auto const& [typed_then, name] : remembered) {
+                if (name != items[i].name || !typed_then.starts_with(query)) continue;
+                match->score += typed_then == query ? remembered_exact : remembered_prefix;
+                break;
+            }
             found.emplace_back(i, std::move(*match));
         }
         std::stable_sort(found.begin(), found.end(), [&](auto const& a, auto const& b) {
@@ -842,7 +926,7 @@ CommandPalette::Target CommandPalette::LineTarget(Line const& line) const {
     Target target;
     target.line_id = line.id;
     target.text = line.text;
-    target.start = to_wx(agi::Time(line.start).GetAssFormatted());
+    target.aside = to_wx(agi::Time(line.start).GetAssFormatted());
     target.detail = wxString::Format("#%d", line.row);
     if (line.comment) target.detail += wxString::FromUTF8(" · ") + _("Comment");
     target.detail += wxString::FromUTF8(" · ") + line.style;
@@ -924,9 +1008,48 @@ void CommandPalette::FilterGoto(std::wstring_view query) {
     ShowRows(targets.size(), wxString());
 }
 
+void CommandPalette::FilterSettings(std::wstring_view query) {
+    if (palette::NormaliseQuery(query).empty()) {
+        ShowRows(0, _("Type the name of a setting, its pinyin or initials"));
+        return;
+    }
+    auto const& settings = SettingLabels(c->parent);
+    if (setting_keys.empty())
+        for (auto const& setting : settings)
+            setting_keys.push_back(palette::MakeTextKeys(Wide(setting.label)));
+
+    std::vector<std::pair<size_t, palette::Match>> found;
+    for (size_t i = 0; i < settings.size(); ++i)
+        // Each word one run, as in the settings' own search: many labels
+        // are whole sentences, where scattered letters match anything
+        if (auto match = palette::MatchQuery(query, setting_keys[i], true))
+            found.emplace_back(i, std::move(*match));
+    // Best first; then pages before what is on them, then in page order
+    std::stable_sort(found.begin(), found.end(), [&](auto const& a, auto const& b) {
+        if (a.second.score != b.second.score) return a.second.score > b.second.score;
+        return settings[a.first].is_page && !settings[b.first].is_page;
+    });
+    for (auto& [index, match] : found) {
+        auto const& setting = settings[index];
+        Target target;
+        target.setting = setting.label;
+        target.text = setting.label;
+        target.text.Replace("\n", " ");
+        target.aside = setting.is_page ? wxString() : setting.page;
+        target.detail = setting.is_page ? _("Settings page") : _("Setting");
+        target.match = std::move(match);
+        targets.push_back(std::move(target));
+    }
+    ShowRows(targets.size(), _("No matching settings"));
+}
+
 void CommandPalette::GoToChosen() {
     if (!chosen_target) return;
     auto const& target = *chosen_target;
+    if (!target.setting.empty()) {
+        ShowPreferences(c->parent, target.setting);
+        return;
+    }
     if (target.line_id) {
         for (auto const& event : c->subtitleAccess->Read().Events) {
             if (event.Id != target.line_id) continue;
@@ -983,7 +1106,8 @@ bool CommandPalette::Accept() {
     int index = list->GetSelection();
     if (mode != Mode::Commands) {
         if (index < 0 || index >= static_cast<int>(targets.size())) return false;
-        if (!targets[index].enabled || (!targets[index].line_id && targets[index].time < 0)) {
+        auto const& target = targets[index];
+        if (!target.enabled || (!target.line_id && target.time < 0 && target.setting.empty())) {
             wxBell();
             return false;
         }
@@ -999,18 +1123,45 @@ bool CommandPalette::Accept() {
         return false;
     }
     chosen = item.name;
-    Remember(chosen);
+    Remember(chosen, input->GetValue());
     if (IsModal()) EndModal(wxID_OK);
     else Hide();
     return true;
 }
 
-void CommandPalette::Remember(std::string const& name) {
+void CommandPalette::Remember(std::string const& name, wxString const& query) {
+    // Read before the recent list below changes: with no uses counted yet
+    // they come from it
+    auto usage = ReadUsage();
+
+    // The plain recent list is still kept, for older versions
     auto recent = OPT_GET("App/Command Palette/Recent")->GetListString();
     std::erase_if(recent, [&](std::string const& entry) { return entry == name || entry.empty(); });
     recent.insert(recent.begin(), name);
     if (recent.size() > max_recent) recent.resize(max_recent);
     OPT_SET("App/Command Palette/Recent")->SetListString(std::move(recent));
+
+    palette::Usage use{name, 0, Now()};
+    if (auto it = std::find_if(usage.begin(), usage.end(), [&](auto const& u) { return u.name == name; }); it != usage.end()) {
+        use.count = it->count;
+        usage.erase(it);
+    }
+    ++use.count;
+    usage.insert(usage.begin(), std::move(use));
+    if (usage.size() > max_usage) usage.resize(max_usage);
+    std::vector<std::string> entries;
+    for (auto const& u : usage) entries.push_back(palette::FormatUsage(u));
+    OPT_SET("App/Command Palette/Usage")->SetListString(std::move(entries));
+
+    auto typed = from_wx(wxString(palette::NormaliseQuery(query.ToStdWstring())));
+    if (typed.empty()) return;
+    auto queries = OPT_GET("App/Command Palette/Queries")->GetListString();
+    std::erase_if(queries, [&](std::string const& entry) {
+        return entry.empty() || entry.starts_with(typed + '\t');
+    });
+    queries.insert(queries.begin(), typed + '\t' + name);
+    if (queries.size() > max_queries) queries.resize(max_queries);
+    OPT_SET("App/Command Palette/Queries")->SetListString(std::move(queries));
 }
 
 std::string ShowCommandPalette(agi::Context *c) {

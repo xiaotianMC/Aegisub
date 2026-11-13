@@ -97,6 +97,23 @@ GotoQuery ParseGoto(std::wstring_view text);
 /// followed by '-' or '+' give a prefix ending in '-' ("ctrl-").
 std::wstring CanonicalHotkey(std::wstring_view text, bool typed);
 
+/// How often and how lately a command was chosen in the palette.
+struct Usage {
+    std::string name;
+    int count = 0;
+    long long last = 0; ///< Seconds since the epoch
+};
+
+/// "name\tcount\tseconds", as kept in App/Command Palette/Usage; none for
+/// an entry that is not one.
+std::optional<Usage> ParseUsage(std::string const& entry);
+std::string FormatUsage(Usage const& usage);
+
+/// What a command's use adds to its score: more for more uses, less as the
+/// last one gets older, at most 24, so it orders close matches but does not
+/// lift a poor one over a good one.
+int UsageBonus(int count, long long age_seconds);
+
 /// The pinyin of one Chinese character, lower case without tones; empty for
 /// other characters or when the system's ICU lacks the transliterator.
 std::wstring Pinyin(wchar_t ch);
@@ -105,15 +122,17 @@ std::wstring Pinyin(wchar_t ch);
 class CommandPalette final : public wxDialog {
 public:
     /// What the palette searches, from the first character typed: commands,
-    /// '@' the dialogue, ':' a line number or a time to go to.
-    enum class Mode { Commands, Lines, Goto };
+    /// '@' the dialogue, ':' a line number or a time to go to, ',' settings.
+    enum class Mode { Commands, Lines, Goto, Settings };
 
-    /// A row of the '@' and ':' modes: a subtitle line, or a time.
+    /// A row of the '@', ':' and ',' modes: a subtitle line, a time or a
+    /// setting.
     struct Target {
         int line_id = 0;   ///< The line to go to, 0 for none
         int time = -1;     ///< The time to seek the video to, -1 for none
-        wxString text;     ///< The line's text, or what happens
-        wxString start;    ///< The line's start time
+        wxString setting;  ///< What to search the settings for, empty for none
+        wxString text;     ///< The line's text, the setting, or what happens
+        wxString aside;    ///< Dim on the right: the start time, the page
         wxString detail;   ///< Below: line number, style, actor
         bool enabled = true;
         bool comment = false;
@@ -132,6 +151,8 @@ public:
         bool enabled = true;
         bool checkable = false, checked = false;
         std::vector<palette::SearchKey> keys;
+        int usage_bonus = 0;  ///< UsageBonus, 0 when never chosen
+        int usage_rank = -1;  ///< 0 for the last chosen, -1 when never
     };
 
 private:
@@ -140,7 +161,9 @@ private:
     class PaletteList *list;
     wxStaticText *empty;
     std::vector<Item> items;
-    std::vector<std::string> recent;
+    /// What was chosen for what was typed, the latest first: the query as
+    /// NormaliseQuery gives it, and the command.
+    std::vector<std::pair<std::wstring, std::string>> remembered;
     /// Indices into @c items in the order shown, and their matches.
     std::vector<size_t> shown;
     std::vector<palette::Match> matches;
@@ -158,11 +181,14 @@ private:
     };
     std::vector<Line> lines;
     bool lines_read = false;
+    /// The settings' labels and their keys, read for ',' the first time.
+    std::vector<std::vector<palette::SearchKey>> setting_keys;
     wxStaticText *modes_hint;
 
     void ReadLines();
     void FilterLines(std::wstring_view query);
     void FilterGoto(std::wstring_view query);
+    void FilterSettings(std::wstring_view query);
     Target LineTarget(Line const& line) const;
     void ShowRows(size_t count, wxString const& none);
     bool composing = false;
@@ -202,8 +228,8 @@ public:
     /// What is said in place of the list when it is empty.
     wxString EmptyMessage() const;
 
-    /// Put @p name first among the recently used commands.
-    static void Remember(std::string const& name);
+    /// Count a use of @p name, now, and that it was chosen for @p query.
+    static void Remember(std::string const& name, wxString const& query = {});
 };
 
 /// Show the palette over the main window. A line or time chosen is gone to

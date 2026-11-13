@@ -112,4 +112,16 @@ public:
 	void RestorePageDefaults();
 	/// What the search found, as shown beside the search box.
 	wxString SearchStatus() const;
+
+	/// A label the search looks at, and the page it is on.
+	struct Setting {
+		wxString label, page;
+		bool is_page = false; ///< The page's own name
+	};
+	/// Every label the search looks at, in page order.
+	std::vector<Setting> Settings() const;
 };
+
+/// Preferences::Settings, read once a run from a dialog made unseen (the
+/// command palette's ',' search): about a third of a second the first time.
+std::vector<Preferences::Setting> const& SettingLabels(wxWindow *parent);
