@@ -6853,6 +6853,52 @@ TEST_F(ordinary_edit, compare_window_decides_detail_fields_by_keyboard) {
     EXPECT_EQ("current", LiveRead(*c).Events.front().Text.get());
     EXPECT_EQ("baseline actor", LiveRead(*c).Events.front().Actor.get());
 }
+TEST_F(ordinary_edit, compare_window_decides_from_the_current_line_bar_and_checks_from_the_gutter) {
+    Input("current");
+    auto path = WriteBaseline(*c, "compare-bar.ass", [](AssFile& f) {
+        f.Events.front().Text = "baseline text";
+        auto line = new AssDialogue; line->Text = "added"; line->Start = 9000; line->End = 9500; f.Events.push_back(*line);
+    });
+    bool found_bar = false, found_check = false;
+    wxString after_bar, checked;
+    CompareHook hook([&](wxWindow* dialog) {
+        auto pane = dialog->FindWindow("compare-right"); ASSERT_NE(nullptr, pane);
+        auto gutter = dialog->FindWindow("compare-gutter"); ASSERT_NE(nullptr, gutter);
+        auto hint = Named<wxStaticText>(dialog, "compare-hint"); ASSERT_NE(nullptr, hint);
+        auto mouse = [](wxWindow* w, wxEventType type, int x, int y) {
+            wxMouseEvent event(type); event.SetPosition({x, y}); event.SetEventObject(w);
+            w->GetEventHandler()->ProcessEvent(event);
+        };
+        // The current difference carries a bar at the pane's right edge;
+        // the other lines have no buttons.
+        auto size = pane->GetClientSize();
+        for (int y = 0; y < size.GetHeight() && !found_bar; y += 2)
+            for (int x = size.GetWidth() - 1; x > size.GetWidth() / 2 && !found_bar; x -= 3) {
+                mouse(pane, wxEVT_MOTION, x, y);
+                if (hint->GetLabelText().StartsWith("Use Left:")) {
+                    found_bar = true;
+                    mouse(pane, wxEVT_LEFT_DOWN, x, y);
+                    after_bar = Label(dialog, "compare-stats");
+                }
+            }
+        // The right line number turns into a check box under the pointer.
+        auto gsize = gutter->GetClientSize();
+        for (int y = 0; y < gsize.GetHeight() && !found_check; y += 2)
+            for (int x = gsize.GetWidth() / 2; x < gsize.GetWidth() && !found_check; x += 2) {
+                mouse(gutter, wxEVT_MOTION, x, y);
+                if (hint->GetLabelText().StartsWith("Select this difference")) {
+                    found_check = true;
+                    mouse(gutter, wxEVT_LEFT_DOWN, x, y);
+                    checked = Label(dialog, "compare-checked-count");
+                }
+            }
+    });
+    EXPECT_FALSE(RunCompare(c.get(), path));
+    EXPECT_TRUE(found_bar);
+    EXPECT_EQ(wxString::FromUTF8("1 pending · 1 left · 0 right · 0 partial"), after_bar);
+    EXPECT_TRUE(found_check);
+    EXPECT_EQ("1 selected", checked);
+}
 TEST_F(ordinary_edit, compare_window_filters_by_category_and_leaves_ignored_fields_alone) {
     Input("current");
     auto start = LiveRead(*c).Events.front().Start, end = LiveRead(*c).Events.front().End;

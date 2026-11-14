@@ -237,11 +237,13 @@ class DiffPane final : public wxWindow {
 
     struct Geometry {
         int width, height;       // drawing area (without scroll bars)
-        int check_x, content_x, content_right, actions_x, overview_x;
+        int content_x, content_right, overview_x;
     };
     Geometry Geo() const;
     int RowAt(int y) const;
     Part PartAt(int row, wxPoint pt) const;
+    /// The bar of buttons over the current difference, and its buttons.
+    wxRect BarRect(Geometry const& g, int y) const;
     wxRect ButtonRect(Geometry const& g, int y, Part part) const;
 
     void OnPaint(wxPaintEvent&);
@@ -345,8 +347,8 @@ class ComparePanel final : public ComparisonPage {
     std::optional<model::Field> field_cursor; // the keyboard's field among the current difference's detail rows
 
     // metrics
-    int row_h = 22, char_w = 7, number_w = 40, arrow_w = 18, band_w = 28, check_w = 24, time_w = 80, style_w = 80, actor_w = 0;
-    int actions_w = 120, overview_w = 12, content_w = 400, button_w = 54, reset_w = 30, label_w = 80, delta_w = 0;
+    int row_h = 22, char_w = 7, number_w = 40, arrow_w = 18, band_w = 28, time_w = 80, style_w = 80, actor_w = 0;
+    int actions_w = 120 /* the current difference's bar */, overview_w = 12, content_w = 400, button_w = 54, reset_w = 30, label_w = 80, delta_w = 0;
     wxFont small_font, bold_font, small_bold_font;
 
     DiffPane *left, *right;
@@ -464,12 +466,11 @@ DiffPane::Geometry DiffPane::Geo() const {
     auto size = GetClientSize();
     g.width = std::max(0, size.GetWidth() - vbar->GetSize().GetWidth());
     g.height = std::max(0, size.GetHeight() - hbar->GetSize().GetHeight());
-    bool r = side == Side::Right;
-    g.check_x = 0;
-    g.content_x = r ? ed.check_w : 0;
-    g.overview_x = r ? g.width - ed.overview_w : g.width;
-    g.actions_x = r ? g.overview_x - ed.actions_w : g.width;
-    g.content_right = std::max(g.content_x, g.actions_x);
+    // Both sides show their lines alike; the right one also has the
+    // overview ruler at its edge.
+    g.content_x = 0;
+    g.overview_x = side == Side::Right ? g.width - ed.overview_w : g.width;
+    g.content_right = g.overview_x;
     return g;
 }
 
@@ -532,12 +533,18 @@ int DiffPane::RowAt(int y) const {
     return row < (int)ed.layout.size() ? row : -1;
 }
 
+wxRect DiffPane::BarRect(Geometry const& g, int y) const {
+    // At the right edge of what is in view, whatever the sideways scrolling.
+    return {g.content_right - ed.actions_w - 6, y + 1, ed.actions_w, ed.row_h - 2};
+}
+
 wxRect DiffPane::ButtonRect(Geometry const& g, int y, Part part) const {
-    int h = ed.row_h - 6, x = g.actions_x + 4;
+    auto bar = BarRect(g, y);
+    int h = bar.height - 6;
     switch (part) {
-        case Part::Reject: return {x, y + 3, ed.button_w, h};
-        case Part::Accept: return {x + ed.button_w + 4, y + 3, ed.button_w, h};
-        case Part::Reset: return {g.actions_x + ed.actions_w - ed.reset_w - 4, y + 3, ed.reset_w, h};
+        case Part::Reject: return {bar.x + 3, bar.y + 3, ed.button_w, h};
+        case Part::Accept: return {bar.x + 3 + ed.button_w + 3, bar.y + 3, ed.button_w, h};
+        case Part::Reset: return {bar.GetRight() - 2 - ed.reset_w, bar.y + 3, ed.reset_w, h};
         default: return {};
     }
 }
@@ -549,8 +556,7 @@ Part DiffPane::PartAt(int row, wxPoint pt) const {
     auto const& lr = ed.layout[row];
     if (lr.IsFold()) return Part::Fold;
     if (lr.IsDetail()) return Part::Content;
-    if (side == Side::Right && ed.ShownDiff(lr.entry)) {
-        if (pt.x < g.content_x) return Part::Check;
+    if (side == Side::Right && ed.IsCurrent(lr.entry)) {
         int y = (row - top) * ed.row_h;
         static constexpr Part pending_parts[] = {Part::Reject, Part::Accept}, decided_parts[] = {Part::Reset};
         bool pending = ed.state.GetDecision(lr.entry) == Decision::Pending;
@@ -617,7 +623,6 @@ void DiffPane::OnMouse(wxMouseEvent& event) {
         auto const& lr = ed.layout[row];
         switch (part) {
             case Part::Fold: ed.ExpandFold(row); return;
-            case Part::Check: ed.ToggleCheck(lr.entry); return;
             case Part::Accept: ed.Decide(lr.entry, Decision::Accepted); return;
             case Part::Reject: ed.Decide(lr.entry, Decision::Rejected); return;
             case Part::Reset: ed.Decide(lr.entry, Decision::Pending); return;
@@ -679,8 +684,7 @@ void DiffPane::OnPaint(wxPaintEvent&) {
         DrawRow(dc, g, row, y);
     dc.SetPen(wxPen(p.border));
     if (side == Side::Right) {
-        dc.DrawLine(g.content_x - 1, 0, g.content_x - 1, g.height);
-        dc.DrawLine(g.actions_x, 0, g.actions_x, g.height);
+        dc.DrawLine(g.overview_x, 0, g.overview_x, g.height);
         DrawOverview(dc, g);
     }
     if (HasFocus()) {
@@ -721,17 +725,6 @@ void DiffPane::DrawRow(wxDC& dc, Geometry const& g, int row, int y) {
         dc.SetBrush(wxBrush(diff ? mix(ed.EdgeColour(entry), bg, 0.55) : p.hatch, wxBRUSHSTYLE_BDIAGONAL_HATCH));
         dc.DrawRectangle(g.content_x, y, g.content_right - g.content_x, ed.row_h);
     }
-    if (side == Side::Right) {
-        dc.SetBrush(wxBrush(diff ? mix(bg, p.gutter, 0.35) : p.gutter));
-        dc.DrawRectangle(0, y, g.content_x - 1, ed.row_h);
-        // Check boxes only where they help: checked ones, the pointed or
-        // current line, and all of them once a selection is being made.
-        if (diff && (ed.state.Checked(entry) || hot || is_current || ed.Selecting())) {
-            int s = std::min(16, ed.row_h - 4);
-            wxRendererNative::Get().DrawCheckBox(this, dc, wxRect((ed.check_w - s) / 2, y + (ed.row_h - s) / 2, s, s),
-                ed.state.Checked(entry) ? int(wxCONTROL_CHECKED) : 0);
-        }
-    }
     if (line) DrawLine(dc, g, entry, y);
     // edges of each run of differences of one kind, carried on by the gutter's bands
     if (diff) {
@@ -739,11 +732,11 @@ void DiffPane::DrawRow(wxDC& dc, Geometry const& g, int row, int y) {
         if (ed.ChunkStart(row)) dc.DrawLine(0, y, g.width, y);
         if (ed.ChunkEnd(row)) dc.DrawLine(0, y + ed.row_h - 1, g.width, y + ed.row_h - 1);
     }
-    if (side == Side::Right) DrawActions(dc, g, entry, row, y);
     if (is_current) {
         dc.SetPen(wxPen(p.current));
         dc.DrawLine(0, y, g.width, y);
         if (ed.GroupEnd(row)) dc.DrawLine(0, y + ed.row_h - 1, g.width, y + ed.row_h - 1);
+        if (side == Side::Right) DrawActions(dc, g, entry, row, y);
     }
 }
 
@@ -891,10 +884,6 @@ void DiffPane::DrawDetail(wxDC& dc, Geometry const& g, int row, int y) {
     dc.SetPen(*wxTRANSPARENT_PEN);
     dc.SetBrush(wxBrush(bg));
     dc.DrawRectangle(0, y, g.width, ed.row_h);
-    if (side == Side::Right) {
-        dc.SetBrush(wxBrush(mix(bg, p.gutter, 0.35)));
-        dc.DrawRectangle(0, y, g.content_x - 1, ed.row_h);
-    }
     // a guide joining the detail rows to their line
     dc.SetBrush(wxBrush(p.current));
     dc.DrawRectangle(g.content_x + 8, y, 2, ed.row_h);
@@ -929,17 +918,6 @@ void DiffPane::DrawDetail(wxDC& dc, Geometry const& g, int row, int y) {
             DrawDelta(dc, entry, f, x + w + 8, y);
         }
     }
-    if (side == Side::Right) {
-        // what this field will be: which side's value is kept
-        dc.SetPen(*wxTRANSPARENT_PEN);
-        dc.SetBrush(wxBrush(p.bg));
-        dc.DrawRectangle(g.actions_x + 1, y, ed.actions_w - 1, ed.row_h);
-        dc.SetFont(ed.small_font);
-        wxString state = !winner ? _("Pending") : *winner == Side::Right ? wxString::FromUTF8("« ") + _("Right side") : wxString::FromUTF8("» ") + _("Left side");
-        dc.SetTextForeground(!winner ? p.gutter_text : p.text);
-        dc.wxDC::DrawText(state, g.actions_x + 8, y + (ed.row_h - dc.GetTextExtent(state).GetHeight()) / 2);
-        dc.SetFont(GetFont());
-    }
     if (ed.GroupEnd(row)) {
         dc.SetPen(wxPen(p.current));
         dc.DrawLine(0, y + ed.row_h - 1, g.width, y + ed.row_h - 1);
@@ -953,32 +931,28 @@ void DiffPane::DrawDetail(wxDC& dc, Geometry const& g, int row, int y) {
 }
 
 void DiffPane::DrawActions(wxDC& dc, Geometry const& g, size_t entry, int row, int y) {
+    // A bar over the end of the current difference, in the colour of the
+    // page with a frame and a soft edge under it, so it reads as lying on
+    // the line: the two sides to choose while pending, else the side kept
+    // and a reset.
     auto const& p = ed.pal;
+    if (!ed.ShownDiff(entry) || g.content_right - g.content_x < ed.actions_w + 12) return;
+    auto bar = BarRect(g, y);
     dc.SetPen(*wxTRANSPARENT_PEN);
+    dc.SetBrush(wxBrush(mix(p.bg, p.text, 0.12)));
+    dc.DrawRoundedRectangle(bar.x + 1, bar.y + 2, bar.width, bar.height, 5);
+    dc.SetPen(wxPen(p.border));
     dc.SetBrush(wxBrush(p.bg));
-    dc.DrawRectangle(g.actions_x + 1, y, ed.actions_w - 1, ed.row_h);
-    if (!ed.ShownDiff(entry)) return;
+    dc.DrawRoundedRectangle(bar, 5);
     Decision d = ed.state.GetDecision(entry);
     dc.SetFont(ed.small_font);
-    auto text_at = [&](wxString const& label, wxColour const& colour) {
-        dc.SetTextForeground(colour);
-        dc.wxDC::DrawText(label, g.actions_x + 8, y + (ed.row_h - dc.GetTextExtent(label).GetHeight()) / 2);
-    };
-    // Buttons only on the pointed and the current line; elsewhere the side
-    // kept, or a ring while pending.
-    if (row != ed.hot && !ed.IsCurrent(entry)) {
-        if (d == Decision::Pending) text_at(wxString::FromUTF8("○"), p.gutter_text);
-        else text_at(decision_label(d), p.text);
-        dc.SetFont(GetFont());
-        return;
-    }
     // Plain fields until pointed at, then the accent: they choose a side,
     // which is neither right nor wrong.
     auto button = [&](Part part, wxString const& label) {
         auto r = ButtonRect(g, y, part);
         bool hot = row == ed.hot && hover_part == part;
-        dc.SetPen(wxPen(hot ? p.accent : p.border));
-        dc.SetBrush(wxBrush(hot ? p.accent : p.bg));
+        dc.SetPen(hot ? wxPen(p.accent) : *wxTRANSPARENT_PEN);
+        dc.SetBrush(wxBrush(hot ? p.accent : mix(p.bg, p.text, 0.06)));
         dc.DrawRoundedRectangle(r, 3);
         dc.SetTextForeground(hot ? *wxWHITE : p.text);
         auto extent = dc.GetTextExtent(label);
@@ -989,7 +963,9 @@ void DiffPane::DrawActions(wxDC& dc, Geometry const& g, size_t entry, int row, i
         button(Part::Accept, _("Use Right"));
     }
     else {
-        text_at(decision_label(d), p.text);
+        auto label = decision_label(d);
+        dc.SetTextForeground(p.text);
+        dc.wxDC::DrawText(label, bar.x + 10, bar.y + (bar.height - dc.GetTextExtent(label).GetHeight()) / 2);
         button(Part::Reset, wxString::FromUTF8("↺"));
     }
     dc.SetFont(GetFont());
@@ -1215,16 +1191,25 @@ void DiffGutter::DrawStrip(wxDC& dc, Side side, int row, int y) {
         dc.DrawRectangle(x0, y, w, rh);
     }
     int text_y = y + (rh - dc.GetCharHeight()) / 2;
-    if (!detail && e.Get(side)) {
+    // The right number is a check box where it is pointed at, checked, or
+    // while a selection is being made.
+    bool hovering_check = row == hover_row && hover_part == Part::Check;
+    if (!left && diff && !detail && (ed.state.Checked(lr.entry) || ed.Selecting() || hovering_check)) {
+        int s = std::min(FromDIP(14), rh - 8);
+        flat::DrawCheck(dc, this, wxRect(number_x + (ed.number_w - s) / 2, y + (rh - s) / 2, s, s),
+            ed.state.Checked(lr.entry) ? 1 : 0, flat::Colours(this));
+    }
+    else if (!detail && e.Get(side)) {
         auto number = wxString::Format("%zu", e.Get(side)->number);
         dc.SetTextForeground(diff || is_current ? p.text : p.gutter_text);
         int nx = left ? number_x + ed.number_w - 5 - dc.GetTextExtent(number).GetWidth() : number_x + 5;
         dc.DrawText(number, nx, text_y);
     }
     if (!diff) return;
-    // The arrows appear on the pointed and the current line (and on its detail
-    // rows); the pane's status icon tells the decision elsewhere.
-    if (row != ed.hot && !is_current) return;
+    // The arrows appear on the pointed and the current line (and on its
+    // detail rows); elsewhere only the side a decided line keeps, quieter.
+    bool active = row == ed.hot || is_current;
+    if (!active && ed.state.GetDecision(lr.entry) == Decision::Pending) return;
     // » takes the left side (Reject), « the right side (Accept).
     Part part = left ? Part::Reject : Part::Accept;
     bool chosen, partial = false;
@@ -1237,8 +1222,9 @@ void DiffGutter::DrawStrip(wxDC& dc, Side side, int row, int y) {
         chosen = d == (left ? Decision::Rejected : Decision::Accepted);
         partial = d == Decision::Partial;
     }
+    if (!active && !chosen && !partial) return;
     bool hot = row == hover_row && hover_part == part && hover_side == side;
-    wxColour colour = hot ? p.accent : p.current;
+    wxColour colour = hot ? p.accent : active ? p.current : mix(p.current, p.bg, 0.35);
     wxRect box(arrow_x + 2, y + 3, ed.arrow_w - 4, rh - 6);
     if (chosen || hot || partial) {
         dc.SetPen(wxPen(partial && !chosen && !hot ? p.border : colour));
@@ -1275,6 +1261,7 @@ void DiffGutter::OnMouse(wxMouseEvent& event) {
         if (lr.IsFold()) part = Part::Fold;
         else if (diff && side == Side::Left && pt.x < c.left_number) part = Part::Reject;
         else if (diff && side == Side::Right && pt.x >= c.right_arrow) part = Part::Accept;
+        else if (diff && side == Side::Right && !lr.IsDetail() && pt.x >= c.right_number) part = Part::Check;
         else part = Part::Content;
     }
     if (type == wxEVT_MOTION) {
@@ -1285,7 +1272,7 @@ void DiffGutter::OnMouse(wxMouseEvent& event) {
         ed.SetHot(row);
         if (row != tip_row || part != tip_part) {
             tip_row = row; tip_part = part;
-            if (part == Part::Reject || part == Part::Accept || part == Part::Fold) SetToolTip(ed.Help(part, true, row));
+            if (part == Part::Reject || part == Part::Accept || part == Part::Fold || part == Part::Check) SetToolTip(ed.Help(part, true, row));
             else if (part == Part::Content) SetToolTip(ed.Tooltip(row, side));
             else UnsetToolTip();
         }
@@ -1296,6 +1283,7 @@ void DiffGutter::OnMouse(wxMouseEvent& event) {
     auto const& lr = ed.layout[row];
     switch (part) {
         case Part::Fold: ed.ExpandFold(row); return;
+        case Part::Check: ed.ToggleCheck(lr.entry); return;
         case Part::Reject:
         case Part::Accept: {
             if (lr.IsDetail()) {
@@ -1533,14 +1521,14 @@ ComparePanel::ComparePanel(wxWindow* parent, agi::Context *c, SubtitleComparison
     });
 
     Measure();
-    // The right pane also holds the check boxes, actions and overview ruler:
-    // it gets that much more width than the left one.
+    // The right pane also holds the overview ruler and room for how far
+    // times moved: it gets that much more width than the left one.
     left->SetMinSize(DipSize(320, 200));
-    right->SetMinSize(wxSize(320 + check_w + actions_w + overview_w + 2 * delta_w, 200));
+    right->SetMinSize(wxSize(320 + overview_w + 2 * delta_w, 200));
     gutter->SetMinSize(wxSize(gutter->Width(), 200));
     Bind(wxEVT_SIZE, [this](wxSizeEvent& event) {
         int panes = GetClientSize().GetWidth() - 16 - gutter->Width();
-        int extra = check_w + actions_w + overview_w + 2 * delta_w;
+        int extra = overview_w + 2 * delta_w;
         left->SetMinSize(wxSize(std::max(320, (panes - extra) / 2), 200));
         event.Skip(); // the default handler lays the sizers out
     });
@@ -1685,7 +1673,7 @@ void ComparePanel::Measure() {
     for (auto d : {Decision::Accepted, Decision::Rejected, Decision::Partial})
         badge = std::max(badge, dc.GetTextExtent(decision_label(d)).GetWidth());
     reset_w = dc.GetTextExtent(wxString::FromUTF8("↺")).GetWidth() + 16;
-    actions_w = std::max(button_w * 2 + 12, badge + reset_w + 20);
+    actions_w = std::max(button_w * 2 + 9, badge + reset_w + 20);
     dc.SetFont(small_bold_font);
     label_w = 0;
     for (auto f : view::FieldOrder()) label_w = std::max(label_w, dc.GetTextExtent(field_label(f)).GetWidth());
