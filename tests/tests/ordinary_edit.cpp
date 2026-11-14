@@ -99,6 +99,7 @@
 #include "keyframe_snap.h"
 #include "speech_lines.h"
 #include "speech_transcribe.h"
+#include "secret.h"
 #include "scene_detect.h"
 #include "magia_timeline.h"
 #include "dialog_magia_timeline.h"
@@ -4276,11 +4277,26 @@ TEST(speech_lines, a_sound_heard_never_shares_a_line_with_what_is_said) {
     EXPECT_EQ((std::vector<std::string>{"Well","(laughs)","okay."}),Texts(speech::MakeLines(t,PlainRules(),{})));
 }
 
-TEST(transcribe, the_key_comes_from_the_environment_first_and_the_lists_are_split) {
-    EXPECT_EQ("env",transcribe::ApiKey("env","kept"));
-    EXPECT_EQ("kept",transcribe::ApiKey(nullptr," kept\n"));
-    EXPECT_EQ("kept",transcribe::ApiKey("","kept")) << "set but empty is not set";
-    EXPECT_EQ("",transcribe::ApiKey(nullptr,""));
+TEST(transcribe, the_key_comes_from_the_environment_then_the_keychain_then_this_run_then_the_settings_file) {
+    using transcribe::KeyPlace;
+    auto found=transcribe::FindKey({"env","chain","held","kept"});
+    EXPECT_EQ("env",found.key);EXPECT_EQ(KeyPlace::Environment,found.place);
+    found=transcribe::FindKey({"","chain","held","kept"});
+    EXPECT_EQ("chain",found.key) << "set but empty is not set";EXPECT_EQ(KeyPlace::Keychain,found.place);
+    found=transcribe::FindKey({nullptr,std::nullopt," held\n","kept"});
+    EXPECT_EQ("held",found.key);EXPECT_EQ(KeyPlace::Session,found.place);
+    found=transcribe::FindKey({nullptr,std::string(""),std::nullopt," kept"});
+    EXPECT_EQ("kept",found.key);EXPECT_EQ(KeyPlace::Setting,found.place);
+    found=transcribe::FindKey({});
+    EXPECT_EQ("",found.key);EXPECT_EQ(KeyPlace::None,found.place);
+    // What a machine without a keychain is given is held for the run
+    secret::Hold("test service","abc");
+    EXPECT_EQ("abc",secret::Held("test service").value_or(""));
+    EXPECT_FALSE(secret::Held("other"));
+    secret::Drop("test service");
+    EXPECT_FALSE(secret::Held("test service"));
+    std::string why;
+    if(!secret::Available(&why))EXPECT_FALSE(why.empty()) << "told why there is none";
     EXPECT_EQ((std::vector<std::string>{"en","zh","fr"}),transcribe::SplitCodes("en, zh  fr"));
     EXPECT_EQ((std::vector<std::string>{"Tokyo Tower","Madoka"}),transcribe::SplitList(" Tokyo Tower, Madoka,\n")) << "a term keeps its spaces";
     EXPECT_TRUE(transcribe::SplitList("").empty());

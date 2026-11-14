@@ -93,9 +93,12 @@ std::string Detail(std::string const& body) {
 }
 }
 
-std::string ApiKey(const char *environment, std::string const& setting) {
-	if (environment && *environment) return Trim(environment);
-	return Trim(setting);
+FoundKey FindKey(KeySources const& sources) {
+	if (sources.environment && !Trim(sources.environment).empty()) return {Trim(sources.environment), KeyPlace::Environment};
+	if (sources.keychain && !Trim(*sources.keychain).empty()) return {Trim(*sources.keychain), KeyPlace::Keychain};
+	if (sources.session && !Trim(*sources.session).empty()) return {Trim(*sources.session), KeyPlace::Session};
+	if (!Trim(sources.setting).empty()) return {Trim(sources.setting), KeyPlace::Setting};
+	return {};
 }
 
 std::vector<std::string> SplitCodes(std::string const& setting) { return Split(setting, ", \t\r\n;"); }

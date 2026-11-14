@@ -36,6 +36,8 @@
 #include "libresrc/libresrc.h"
 #include "options.h"
 #include "preferences_base.h"
+#include "secret.h"
+#include "speech_transcribe.h"
 #include "theme.h"
 #include "video_provider_manager.h"
 
@@ -49,6 +51,7 @@
 
 #include <libaegisub/hotkey.h>
 
+#include <cstdlib>
 #include <unordered_set>
 
 #include <wx/checkbox.h>
@@ -62,6 +65,7 @@
 #include <wx/spinctrl.h>
 #include <wx/statbox.h>
 #include <wx/stattext.h>
+#include <wx/textdlg.h>
 
 namespace {
 wxArrayString get_registered_commands() {
@@ -274,8 +278,51 @@ void Audio(PreferencesBook *book, Preferences *parent) {
 		{.help = _("Names and words easily misheard, separated by commas; 100 terms at most in all (ElevenLabs)")});
 	p->OptionAdd(transcribe, _("ElevenLabs model"), "Tool/Transcribe/ElevenLabs/Model",
 		{.help = _("scribe_v3; or scribe_v2, the one before")});
-	p->OptionAdd(transcribe, _("ElevenLabs API key"), "Tool/Transcribe/ElevenLabs/Key",
-		{.help = _("Kept here, in the settings file as plain text. The ELEVENLABS_API_KEY environment variable is used instead when set; empty, the key is asked for")});
+	{
+		// The key: where it is, and setting or forgetting it. Not a setting
+		// of the file's: the keychain keeps it where there is one.
+		auto status = new wxStaticText(transcribe.box, -1, "");
+		auto set = new FlatButton(transcribe.box, _("Set..."));
+		auto forget = new FlatButton(transcribe.box, _("Forget"));
+		auto const service = transcribe::key_service;
+		auto refresh = [=] {
+			auto env = std::getenv("ELEVENLABS_API_KEY");
+			bool const in_setting = !OPT_GET("Tool/Transcribe/ElevenLabs/Key")->GetString().empty();
+			bool const held = secret::Held(service).has_value();
+			wxString where;
+			if (env && *env) where = _("From the ELEVENLABS_API_KEY environment variable");
+			else if (in_setting) where = _("Kept in the settings file, as plain text");
+			else if (held) where = _("Kept until Aegisub is closed: this machine has no keychain");
+			else if (secret::Available()) where = _("Kept in the system's keychain, once set");
+			else where = _("Asked for each time: this machine has no keychain");
+			status->SetLabel(where);
+			forget->Enable(in_setting || held || secret::Available());
+		};
+		set->Bind(wxEVT_BUTTON, [=](wxCommandEvent&) {
+			bool const keychain = secret::Available();
+			wxString key = wxGetPasswordFromUser(_("Enter your ElevenLabs API key, from the API keys page of elevenlabs.io.") + "\n\n"
+				+ (keychain ? _("It is kept in the system's keychain.") : _("This machine has no keychain Aegisub can use, so it is kept only until Aegisub is closed.")),
+				_("ElevenLabs API key"), "", p);
+			auto found = transcribe::FindKey({nullptr, std::nullopt, std::nullopt, from_wx(key)});
+			if (found.key.empty()) return;
+			OPT_SET("Tool/Transcribe/ElevenLabs/Key")->SetString("");
+			if (!keychain || !secret::Save(service, found.key)) secret::Hold(service, found.key);
+			refresh();
+		});
+		forget->Bind(wxEVT_BUTTON, [=](wxCommandEvent&) {
+			secret::Forget(service);
+			secret::Drop(service);
+			OPT_SET("Tool/Transcribe/ElevenLabs/Key")->SetString("");
+			refresh();
+		});
+		auto row = new wxBoxSizer(wxHORIZONTAL);
+		row->Add(status, wxSizerFlags(1).CentreVertical());
+		row->Add(set, wxSizerFlags().Border(wxLEFT, p->FromDIP(4)));
+		row->Add(forget, wxSizerFlags().Border(wxLEFT, p->FromDIP(4)));
+		p->Row(transcribe, _("ElevenLabs API key"), row,
+			_("Asked for when the audio is first sent, if not set here. The ELEVENLABS_API_KEY environment variable, when set, is used over anything kept"));
+		refresh();
+	}
 	p->OptionAdd(transcribe, _("Ask before sending audio"), "Tool/Transcribe/Ask",
 		{.help = _("Say how long the audio is and that it leaves this computer, and ask, each time before sending it to ElevenLabs")});
 	p->OptionAdd(transcribe, _("Command"), "Tool/Transcribe/Command",

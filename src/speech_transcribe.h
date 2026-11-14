@@ -42,9 +42,27 @@ struct ElevenLabs {
 	std::string key;
 };
 
-/// The key to send: the ELEVENLABS_API_KEY environment variable (@p
-/// environment, null when not set) first, else what the settings keep
-std::string ApiKey(const char *environment, std::string const& setting);
+/// The keychain entry the ElevenLabs key is kept under (secret.h)
+inline constexpr const char *key_service = "Aegisub: ElevenLabs API key";
+
+/// Where the key to send may be, in the order looked
+struct KeySources {
+	/// The ELEVENLABS_API_KEY environment variable; null when not set
+	const char *environment = nullptr;
+	/// What the system's keychain holds
+	std::optional<std::string> keychain;
+	/// What is held for this run, on a machine without a keychain
+	std::optional<std::string> session;
+	/// What the settings file keeps, as plain text, from before the keychain
+	std::string setting;
+};
+enum class KeyPlace { None, Environment, Keychain, Session, Setting };
+struct FoundKey {
+	std::string key;
+	KeyPlace place = KeyPlace::None;
+};
+/// The key to send, trimmed, from the first of @p sources that has one
+FoundKey FindKey(KeySources const& sources);
 
 /// The codes in a setting such as "en, zh" or "en zh": split at commas and
 /// spaces, each trimmed, none empty

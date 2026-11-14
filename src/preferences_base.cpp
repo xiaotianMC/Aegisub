@@ -492,6 +492,10 @@ OptionPage::Mark *OptionPage::Add(PageSection section, wxString const& label, T 
 	return mark;
 }
 
+void OptionPage::Row(PageSection section, wxString const& name, wxSizer *control, wxString const& help) {
+	Add(section, name, control, std::string(), help);
+}
+
 void OptionPage::CellSkip(PageSection) {
 	// Each setting has a row of its own now: nothing to skip
 }

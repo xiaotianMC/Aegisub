@@ -18,6 +18,7 @@
 #include "../magia_timeline.h"
 #include "../options.h"
 #include "../project.h"
+#include "../secret.h"
 #include "../selection_controller.h"
 #include "../speech_lines.h"
 #include "../speech_transcribe.h"
@@ -298,14 +299,27 @@ struct autotiming_transcribe final : public Command {
 				}
 				transcribe::ElevenLabs settings;
 				settings.model = OPT_GET("Tool/Transcribe/ElevenLabs/Model")->GetString();
-				settings.key = transcribe::ApiKey(std::getenv("ELEVENLABS_API_KEY"), OPT_GET("Tool/Transcribe/ElevenLabs/Key")->GetString());
-				if (settings.key.empty()) {
-					wxString key = wxGetPasswordFromUser(_("Enter your ElevenLabs API key, from the API keys page of elevenlabs.io.\n\nIt is kept in Aegisub's settings file, as plain text. To keep it out of there, set the ELEVENLABS_API_KEY environment variable instead."),
-						_("Transcribe the Audio"), "", c->parent);
-					settings.key = transcribe::ApiKey(nullptr, from_wx(key));
-					if (settings.key.empty()) return;
-					OPT_SET("Tool/Transcribe/ElevenLabs/Key")->SetString(settings.key);
+				// A key kept in the settings file, from before there was a
+				// keychain to keep it in, is moved there
+				auto setting = OPT_GET("Tool/Transcribe/ElevenLabs/Key")->GetString();
+				if (!setting.empty() && secret::Available() && secret::Save(transcribe::key_service, setting)) {
+					OPT_SET("Tool/Transcribe/ElevenLabs/Key")->SetString("");
+					setting.clear();
 				}
+				auto found = transcribe::FindKey({std::getenv("ELEVENLABS_API_KEY"), secret::Load(transcribe::key_service),
+					secret::Held(transcribe::key_service), setting});
+				if (found.key.empty()) {
+					bool const keychain = secret::Available();
+					wxString how = keychain ? _("It is kept in the system's keychain.")
+						: _("This machine has no keychain Aegisub can use, so it is kept only until Aegisub is closed.");
+					wxString key = wxGetPasswordFromUser(_("Enter your ElevenLabs API key, from the API keys page of elevenlabs.io.") + "\n\n" + how + "\n"
+						+ _("To give it another way, set the ELEVENLABS_API_KEY environment variable."), _("Transcribe the Audio"), "", c->parent);
+					found = transcribe::FindKey({nullptr, std::nullopt, std::nullopt, from_wx(key)});
+					if (found.key.empty()) return;
+					if (!keychain || !secret::Save(transcribe::key_service, found.key))
+						secret::Hold(transcribe::key_service, found.key);
+				}
+				settings.key = found.key;
 				if (OPT_GET("Tool/Transcribe/Ask")->GetBool()) {
 					wxRichMessageDialog ask(c->parent,
 						agi::wxformat(_("Send %s of audio, %s, to ElevenLabs to hear?"), transcribe::Duration(duration_ms), media.filename().string()),
@@ -349,6 +363,8 @@ struct autotiming_transcribe final : public Command {
 			return;
 		}
 		catch (transcribe::KeyRefused const& e) {
+			secret::Forget(transcribe::key_service);
+			secret::Drop(transcribe::key_service);
 			OPT_SET("Tool/Transcribe/ElevenLabs/Key")->SetString("");
 			Clean(folder);
 			Fail(c, to_wx(e.GetMessage()) + "\n\n" + _("The key is forgotten; it is asked for again next time."));

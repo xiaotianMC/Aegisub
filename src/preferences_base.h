@@ -129,6 +129,8 @@ public:
 	void CellSkip(PageSection section);
 	/// A dim line of explanation in @p section
 	void Note(PageSection section, wxString const& text);
+	/// A row named @p name holding @p control, for what is not a setting
+	void Row(PageSection section, wxString const& name, wxSizer *control, wxString const& help = {});
 
 	/// A row for the option @p opt_name: a check box for a yes or no, a
 	/// field for a number or text, a button for a colour. @return Its control
