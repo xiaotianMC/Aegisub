@@ -304,6 +304,9 @@ public:
 	bool Enable(bool enable = true) override;
 };
 
+/// Line icons a FlatButton can draw before its words, in the words' colour.
+enum class FlatGlyph { None, Up, Down, Undo, Redo, Swap };
+
 /// A drawn button with words on it, as the animation page's are: a rounded
 /// field, a shade darker under the pointer. Sends wxEVT_BUTTON as wxButton
 /// does; Space or Enter presses it when it has the keyboard. The accent kind
@@ -313,6 +316,7 @@ class FlatButton final : public wxWindow {
 	bool accent = false;
 	bool hover = false, pressed = false;
 	wxSize least;
+	FlatGlyph glyph = FlatGlyph::None;
 	agi::signal::Connection theme_changed;
 
 	void OnPaint(wxPaintEvent &);
@@ -326,6 +330,9 @@ public:
 	/// The size the button is at least, however short its label: unlike a
 	/// min size, a longer label set later still widens it
 	void SetLeastSize(wxSize size);
+	/// A line icon before the words, drawn in their colour so that it
+	/// follows the appearance and the accent fill
+	void SetGlyph(FlatGlyph new_glyph);
 
 	/// Send wxEVT_BUTTON, as a click does
 	void Press();

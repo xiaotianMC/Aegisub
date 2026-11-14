@@ -11,10 +11,12 @@
 #include <algorithm>
 #include <cctype>
 #include <memory>
+#include <numbers>
 #include <set>
 
 #include <wx/dcbuffer.h>
 #include <wx/dcgraph.h>
+#include <wx/graphics.h>
 #include <wx/menu.h>
 #include <wx/panel.h>
 #include <wx/settings.h>
@@ -1110,9 +1112,68 @@ bool FlatButton::Enable(bool enable) {
 	return changed;
 }
 
+void FlatButton::SetGlyph(FlatGlyph new_glyph) {
+	if (glyph == new_glyph) return;
+	glyph = new_glyph;
+	InvalidateBestSize();
+	Refresh(false);
+}
+
+namespace {
+/// The icon's box and the gap after it, when there are words
+int glyph_width(wxWindow const* w, FlatGlyph glyph, bool words) {
+	if (glyph == FlatGlyph::None) return 0;
+	return w->FromDIP(14) + (words ? w->FromDIP(6) : 0);
+}
+
+/// @p glyph in a square of @p size at @p origin, drawn on a 16-unit grid
+void draw_glyph(wxGraphicsContext *gc, FlatGlyph glyph, wxPoint2DDouble origin, double size, wxColour const& ink) {
+	double k = size / 16;
+	bool mirror = glyph == FlatGlyph::Redo;
+	auto at = [&](double x, double y) { return wxPoint2DDouble(origin.m_x + (mirror ? 16 - x : x) * k, origin.m_y + y * k); };
+	wxGraphicsPath path = gc->CreatePath();
+	auto polyline = [&](std::initializer_list<std::pair<double, double>> points) {
+		bool first = true;
+		for (auto [x, y] : points) {
+			auto p = at(x, y);
+			if (first) path.MoveToPoint(p); else path.AddLineToPoint(p);
+			first = false;
+		}
+	};
+	switch (glyph) {
+		case FlatGlyph::Up: polyline({{4, 10}, {8, 6}, {12, 10}}); break;
+		case FlatGlyph::Down: polyline({{4, 6}, {8, 10}, {12, 6}}); break;
+		case FlatGlyph::Undo:
+		case FlatGlyph::Redo: {
+			polyline({{5.5, 3.5}, {2.5, 6.5}, {5.5, 9.5}});
+			polyline({{2.8, 6.5}, {9.5, 6.5}});
+			// a half turn back down to the baseline
+			auto centre = at(9.5, 10);
+			constexpr double pi = std::numbers::pi;
+			path.AddArc(centre.m_x, centre.m_y, 3.5 * k, -pi / 2, pi / 2, !mirror);
+			path.AddLineToPoint(at(7, 13.5));
+			break;
+		}
+		case FlatGlyph::Swap:
+			polyline({{3, 5.5}, {13, 5.5}});
+			polyline({{10.5, 3}, {13, 5.5}, {10.5, 8}});
+			polyline({{13, 10.5}, {3, 10.5}});
+			polyline({{5.5, 8}, {3, 10.5}, {5.5, 13}});
+			break;
+		default: return;
+	}
+	gc->SetPen(gc->CreatePen(wxGraphicsPenInfo(ink).Width(std::max(1.0, 1.6 * k)).Cap(wxCAP_ROUND).Join(wxJOIN_ROUND)));
+	gc->SetBrush(*wxTRANSPARENT_BRUSH);
+	gc->StrokePath(path);
+}
+}
+
 wxSize FlatButton::DoGetBestClientSize() const {
-	wxSize extent = GetTextExtent(wxStripMenuCodes(label, wxStrip_Menu));
-	return wxSize(std::max(least.x, extent.x + FromDIP(20)), std::max({least.y, FromDIP(24), extent.y + FromDIP(8)}));
+	auto shown = wxStripMenuCodes(label, wxStrip_Menu);
+	wxSize extent = shown.empty() ? wxSize(0, GetCharHeight()) : GetTextExtent(shown);
+	int icon = glyph_width(this, glyph, !shown.empty());
+	int pad = shown.empty() ? FromDIP(12) : FromDIP(20);
+	return wxSize(std::max(least.x, extent.x + icon + pad), std::max({least.y, FromDIP(24), extent.y + FromDIP(8)}));
 }
 
 void FlatButton::OnPaint(wxPaintEvent &) {
@@ -1143,8 +1204,14 @@ void FlatButton::OnPaint(wxPaintEvent &) {
 	dc.SetFont(GetFont());
 	dc.SetTextForeground(ink);
 	wxString shown = wxStripMenuCodes(label, wxStrip_Menu);
-	wxSize extent = dc.GetTextExtent(shown);
-	dc.DrawText(shown, (size.x - extent.x) / 2, (size.y - extent.y) / 2);
+	wxSize extent = shown.empty() ? wxSize(0, 0) : dc.GetTextExtent(shown);
+	int icon = glyph_width(this, glyph, !shown.empty());
+	int x = (size.x - extent.x - icon) / 2;
+	if (icon) {
+		double s = FromDIP(14);
+		draw_glyph(dc.GetGraphicsContext(), glyph, {double(x), (size.y - s) / 2}, s, ink);
+	}
+	if (!shown.empty()) dc.DrawText(shown, x + icon, (size.y - extent.y) / 2);
 }
 
 // FlatSuggest

@@ -6729,7 +6729,7 @@ TEST_F(ordinary_edit, compare_window_writes_decisions_as_one_undo_step) {
     EXPECT_EQ("Difference 1 of 2", counter);
     EXPECT_EQ("Done", wxStripMenuCodes(finish_first));
     EXPECT_NE(wxNOT_FOUND, report.Find("1 lines modified, 1 added, 0 removed")) << report;
-    EXPECT_EQ("0 pending, 0 accepted, 2 rejected, 0 partial", stats);
+    EXPECT_EQ("0 pending, 2 left side, 0 right side, 0 partial", stats);
     EXPECT_EQ((std::vector<std::string>{"from baseline", "added"}), LiveTexts(*c));
     EXPECT_EQ(id, LiveRead(*c).Events.front().Id);
     EXPECT_EQ("apply comparison", c->subsController->GetUndoDescription());
@@ -6800,7 +6800,7 @@ TEST_F(ordinary_edit, compare_window_takes_only_the_chosen_fields) {
     });
     EXPECT_TRUE(RunCompare(c.get(), path));
     EXPECT_LT(text_y, actor_y); // in field order, text first
-    EXPECT_EQ("0 pending, 0 accepted, 0 rejected, 1 partial", stats);
+    EXPECT_EQ("0 pending, 0 left side, 0 right side, 1 partial", stats);
     EXPECT_EQ("current", LiveRead(*c).Events.front().Text.get());
     EXPECT_EQ("baseline actor", LiveRead(*c).Events.front().Actor.get());
 }
@@ -6838,10 +6838,10 @@ TEST_F(ordinary_edit, compare_window_decides_detail_fields_by_keyboard) {
     EXPECT_TRUE(first.StartsWith("Text: Ctrl+Left")) << first;
     EXPECT_TRUE(second.StartsWith("Actor: Ctrl+Left")) << second;
     EXPECT_EQ(second, clamped);
-    EXPECT_EQ("0 pending, 0 accepted, 0 rejected, 1 partial", after_left);
+    EXPECT_EQ("0 pending, 0 left side, 0 right side, 1 partial", after_left);
     EXPECT_EQ(resting, after_escape);
     EXPECT_TRUE(still_open);
-    EXPECT_EQ("0 pending, 1 accepted, 0 rejected, 0 partial", whole);
+    EXPECT_EQ("0 pending, 0 left side, 1 right side, 0 partial", whole);
     EXPECT_EQ(after_left, undone);
     EXPECT_EQ("current", LiveRead(*c).Events.front().Text.get());
     EXPECT_EQ("baseline actor", LiveRead(*c).Events.front().Actor.get());
@@ -6885,10 +6885,10 @@ TEST_F(ordinary_edit, compare_window_filters_by_category_and_leaves_ignored_fiel
     EXPECT_TRUE(RunCompare(c.get(), path));
     EXPECT_EQ("Difference 1 of 2", all_counter);
     EXPECT_EQ("Difference 1 of 1 (2 in total)", time_counter);
-    EXPECT_EQ("1 pending, 0 accepted, 1 rejected, 0 partial", time_stats);
+    EXPECT_EQ("1 pending, 1 left side, 0 right side, 0 partial", time_stats);
     EXPECT_EQ("Difference 1 of 1 (2 in total)", ignored_counter);
     EXPECT_TRUE(time_hidden);
-    EXPECT_EQ("1 pending, 0 accepted, 1 rejected, 0 partial", ignored_stats);
+    EXPECT_EQ("1 pending, 1 left side, 0 right side, 0 partial", ignored_stats);
     ASSERT_EQ(2u, hook.messages.size());
     EXPECT_NE(wxNOT_FOUND, hook.messages[0].Find("the 1 differences shown")) << hook.messages[0];
     EXPECT_NE(wxNOT_FOUND, hook.messages[1].Find("Ignored fields keep their current choice: Start, End")) << hook.messages[1];
@@ -6965,14 +6965,14 @@ TEST_F(ordinary_edit, compare_page_is_drawn_flat_buttons_checks_and_a_view_switc
         auto sync = Named<FlatCheck>(dialog, "compare-sync"); ASSERT_NE(nullptr, sync);
         sync->Toggle(); sync_off = !sync->GetValue();
         // Alt with a button's underlined letter presses it, as in a dialog.
-        wxKeyEvent alt(wxEVT_CHAR_HOOK); alt.m_keyCode = 'A'; alt.SetAltDown(true);
+        wxKeyEvent alt(wxEVT_CHAR_HOOK); alt.m_keyCode = 'R'; alt.SetAltDown(true);
         dialog->GetEventHandler()->ProcessEvent(alt);
         stats = Label(dialog, "compare-stats");
     });
     EXPECT_FALSE(RunCompare(c.get(), path));
     EXPECT_FALSE(system_controls); EXPECT_TRUE(finish_accent);
     EXPECT_TRUE(everything); EXPECT_TRUE(sync_off);
-    EXPECT_EQ("0 pending, 1 accepted, 0 rejected, 0 partial", stats);
+    EXPECT_EQ("0 pending, 0 left side, 1 right side, 0 partial", stats);
 }
 TEST_F(ordinary_edit, compare_command_refuses_while_editing_and_reports_unreadable_files) {
     CompareHook hook(nullptr);
@@ -7025,11 +7025,11 @@ TEST_F(ordinary_edit, compare_tab_locks_the_editor_until_the_comparison_ends) {
     // Its own shortcuts work there, and no key goes on to the main window.
     auto pane = page->FindWindow("compare-right"); ASSERT_NE(nullptr, pane);
     Press(page, "compare-reject-current");
-    EXPECT_EQ("0 pending, 0 accepted, 1 rejected, 0 partial", Label(page, "compare-stats"));
+    EXPECT_EQ("0 pending, 1 left side, 0 right side, 0 partial", Label(page, "compare-stats"));
     key(pane, 'Z', wxMOD_CONTROL);
-    EXPECT_EQ("1 pending, 0 accepted, 0 rejected, 0 partial", Label(page, "compare-stats"));
+    EXPECT_EQ("1 pending, 0 left side, 0 right side, 0 partial", Label(page, "compare-stats"));
     key(pane, 'Y', wxMOD_CONTROL);
-    EXPECT_EQ("0 pending, 0 accepted, 1 rejected, 0 partial", Label(page, "compare-stats"));
+    EXPECT_EQ("0 pending, 1 left side, 0 right side, 0 partial", Label(page, "compare-stats"));
     key(pane, 'S', wxMOD_CONTROL);
     EXPECT_EQ(1, frame_keys);
 

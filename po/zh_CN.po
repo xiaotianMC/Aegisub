@@ -8162,14 +8162,8 @@ msgstr "时间与文本指向不同的行"
 msgid "no reliable match"
 msgstr "无可靠匹配"
 
-msgid "Accepted"
-msgstr "已接受"
-
-msgid "Rejected"
-msgstr "已拒绝"
-
 msgid "Partial"
-msgstr "部分接受"
+msgstr "部分采用"
 
 msgid "Pending"
 msgstr "待处理"
@@ -8213,11 +8207,11 @@ msgstr "点击展开"
 msgid "Not a comment"
 msgstr "非注释"
 
-msgid "Accept"
-msgstr "应用"
+msgid "Use Left"
+msgstr "用左侧"
 
-msgid "Reject"
-msgstr "放弃"
+msgid "Use Right"
+msgstr "用右侧"
 
 msgid "Compare Subtitles"
 msgstr "比较字幕"
@@ -8237,17 +8231,11 @@ msgstr "下一处差异 (F7)"
 msgid "Difference 9999 of 9999"
 msgstr "第 9999 / 9999 处差异"
 
-msgid "&Accept Change"
-msgstr "应用更改(&A)"
+msgid "Use &Right"
+msgstr "用右侧(&R)"
 
-msgid "Keep the right side of the current difference"
-msgstr "保留当前差异的右侧内容"
-
-msgid "&Reject Change"
-msgstr "放弃更改(&R)"
-
-msgid "Restore the left side of the current difference"
-msgstr "恢复当前差异的左侧内容"
+msgid "Use &Left"
+msgstr "用左侧(&L)"
 
 msgid "Differences only"
 msgstr "仅显示差异"
@@ -8288,41 +8276,41 @@ msgstr "重做 (Ctrl+Y)"
 msgid "Select all differences"
 msgstr "全选差异"
 
-msgid "Accept Selected"
-msgstr "应用所选"
+msgid "Use Left for Selected"
+msgstr "所选用左侧"
 
-msgid "Reject Selected"
-msgstr "放弃所选"
+msgid "Use Right for Selected"
+msgstr "所选用右侧"
 
-msgid "Accept All Changes"
-msgstr "应用全部更改"
+msgid "Use Left for All"
+msgstr "全部用左侧"
 
-msgid "Reject All Changes"
-msgstr "放弃全部更改"
+msgid "Use Right for All"
+msgstr "全部用右侧"
 
 msgid "Write the decisions to the open subtitles as one undoable change and end the comparison"
 msgstr "把决定作为一次可撤销的修改写入当前字幕，并结束比较"
 
-msgid "Accept keeps the right side, Reject restores the left side. Browsing and deciding never change the open subtitles: they change only when you click Write to Project, as one undoable step."
-msgstr "应用更改保留右侧内容，放弃更改恢复左侧内容。浏览和决定都不会修改当前字幕：只有点击“写入工程”时才会写入，并作为一次可撤销的修改。"
+msgid "Use Left takes the left side, Use Right keeps the right side. Browsing and deciding never change the open subtitles: they change only when you click Write to Project, as one undoable step."
+msgstr "“用左侧”采用左侧内容，“用右侧”保留右侧内容。浏览和决定都不会修改当前字幕：只有点击“写入工程”时才会写入，并作为一次可撤销的修改。"
 
-msgid "Take the left side (Reject). Click again to reset."
-msgstr "采用左侧内容（放弃更改）。再次点击重置。"
+msgid "Take the left side. Click again to reset."
+msgstr "采用左侧内容。再次点击重置。"
 
-msgid "Keep the right side (Accept). Click again to reset."
-msgstr "保留右侧内容（应用更改）。再次点击重置。"
+msgid "Keep the right side. Click again to reset."
+msgstr "保留右侧内容。再次点击重置。"
 
-msgid "Accept: keep the right side of this difference. Nothing is written until Write to Project."
-msgstr "应用：保留这处差异右侧的内容。点击“写入工程”之前不会修改字幕。"
+msgid "Use Right: keep the right side of this difference. Nothing is written until Write to Project."
+msgstr "用右侧：保留这处差异右侧的内容。点击“写入工程”之前不会修改字幕。"
 
-msgid "Reject: restore the left side of this difference. Nothing is written until Write to Project."
-msgstr "放弃：恢复这处差异左侧的内容。点击“写入工程”之前不会修改字幕。"
+msgid "Use Left: take the left side of this difference. Nothing is written until Write to Project."
+msgstr "用左侧：采用这处差异左侧的内容。点击“写入工程”之前不会修改字幕。"
 
 msgid "Reset this difference to pending"
 msgstr "把这处差异重置为待处理"
 
-msgid "Select this difference for Accept Selected / Reject Selected (Space)"
-msgstr "勾选这处差异，用于“应用所选 / 放弃所选”（空格键）"
+msgid "Select this difference to decide it with the other selected ones (Space)"
+msgstr "勾选这处差异，与其他勾选的差异一起决定（空格键）"
 
 msgid "Overview of all differences: click or drag to jump"
 msgstr "全部差异概览：点击或拖动跳转"
@@ -8372,8 +8360,8 @@ msgstr "（共 %d 处）"
 msgid "Show:"
 msgstr "显示："
 
-msgid "Show only this kind of difference; Accept All and Reject All then apply to these"
-msgstr "只显示这一类差异；“应用全部更改 / 放弃全部更改”随之只作用于这一类"
+msgid "Show only this kind of difference; Use Left for All and Use Right for All then apply to these"
+msgstr "只显示这一类差异；“全部用左侧 / 全部用右侧”随之只作用于这一类"
 
 msgid "Show every kind of difference"
 msgstr "显示所有类别的差异"
@@ -8435,8 +8423,8 @@ msgstr "第 %d / %d 处差异"
 msgid "%d differences"
 msgstr "共 %d 处差异"
 
-msgid "%d pending, %d accepted, %d rejected, %d partial"
-msgstr "待处理 %d · 已接受 %d · 已拒绝 %d · 部分接受 %d"
+msgid "%d pending, %d left side, %d right side, %d partial"
+msgstr "待处理 %d · 用左侧 %d · 用右侧 %d · 部分采用 %d"
 
 msgid "%d selected"
 msgstr "已勾选 %d 处"
@@ -8453,11 +8441,11 @@ msgstr "完成(&D)"
 msgid "&Write to Project (%d)"
 msgstr "写入工程(&W) (%d)"
 
-msgid "These differences are already accepted."
-msgstr "这些差异都已接受。"
+msgid "These differences already use the right side."
+msgstr "这些差异已经都用右侧。"
 
-msgid "These differences are already rejected."
-msgstr "这些差异都已拒绝。"
+msgid "These differences already use the left side."
+msgstr "这些差异已经都用左侧。"
 
 msgid "all %d differences"
 msgstr "全部 %d 处差异"
@@ -8465,11 +8453,11 @@ msgstr "全部 %d 处差异"
 msgid "the %d selected differences"
 msgstr "所选的 %d 处差异"
 
-msgid "Accept (keep the right side)"
-msgstr "应用更改（保留右侧）"
+msgid "Use the right side"
+msgstr "用右侧"
 
-msgid "Reject (restore the left side)"
-msgstr "放弃更改（恢复左侧）"
+msgid "Use the left side"
+msgstr "用左侧"
 
 msgid "%s: %s?"
 msgstr "%s：%s？"
@@ -8483,11 +8471,11 @@ msgstr "有 %d 处已做出相反的决定，将被覆盖。"
 msgid "This can be undone in this window. The open subtitles change only when you write to the project."
 msgstr "可以在此窗口中撤销。只有写入工程时才会修改当前字幕。"
 
-msgid "Accept Change"
-msgstr "应用更改"
+msgid "Take the left side of the current difference (Ctrl+Left)"
+msgstr "采用当前差异左侧的内容（Ctrl+←）"
 
-msgid "Reject Change"
-msgstr "放弃更改"
+msgid "Keep the right side of the current difference (Ctrl+Right)"
+msgstr "保留当前差异右侧的内容（Ctrl+→）"
 
 msgid "Reset to Pending"
 msgstr "重置为待处理"
