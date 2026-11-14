@@ -467,6 +467,10 @@ if get_option('enable_update_checker')
 
     deps += dependency('libcurl', allow_fallback: true, default_options: curl_options)
     conf.set('WITH_CURL', 1)
+    if host_machine.system() == 'windows'
+        # The system's proxy setting, which curl does not read itself
+        deps += cc.find_library('winhttp', required: true)
+    endif
 endif
 
 luajit = dependency('luajit', version: '>=2.0.0', required: get_option('system_luajit'),

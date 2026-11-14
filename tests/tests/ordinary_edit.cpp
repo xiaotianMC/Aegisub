@@ -4381,6 +4381,20 @@ TEST(transcribe, the_users_command_line_gets_the_paths_put_in_its_quotes_taken_o
     EXPECT_TRUE(transcribe::CommandLine("   ","m","o","").empty());
 }
 
+TEST(transcribe, windows_proxy_settings_become_curls_the_https_entry_first_then_one_for_all_then_socks) {
+    EXPECT_EQ(transcribe::ProxyFromSystem(""), "");
+    EXPECT_EQ(transcribe::ProxyFromSystem("127.0.0.1:7890"), "http://127.0.0.1:7890");
+    EXPECT_EQ(transcribe::ProxyFromSystem("http=a:1;https=b:2;ftp=c:3"), "http://b:2");
+    EXPECT_EQ(transcribe::ProxyFromSystem("HTTPS=b:2"), "http://b:2");
+    EXPECT_EQ(transcribe::ProxyFromSystem("http=a:1;ftp=c:3"), "");
+    EXPECT_EQ(transcribe::ProxyFromSystem("http=a:1;socks=s:1080"), "socks4a://s:1080");
+    EXPECT_EQ(transcribe::ProxyFromSystem("p1:8080; p2:8080"), "http://p1:8080");
+    EXPECT_EQ(transcribe::ProxyFromSystem("socks5://127.0.0.1:7891"), "socks5://127.0.0.1:7891");
+    EXPECT_EQ(transcribe::NoProxyFromSystem(""), "");
+    EXPECT_EQ(transcribe::NoProxyFromSystem("<local>;localhost;127.*;10.*;*.lan;example.com"), "localhost,.lan,example.com");
+    EXPECT_EQ(transcribe::NoProxyFromSystem("a.com;*"), "*");
+}
+
 TEST(transcribe, the_json_the_command_wrote_is_the_one_named_after_the_media_else_the_only_one) {
     agi::fs::path dir=agi::fs::path(std::filesystem::temp_directory_path()/("aegisub-transcribe-test-"+std::to_string(::getpid())));
     std::filesystem::remove_all(std::filesystem::path(dir));std::filesystem::create_directories(std::filesystem::path(dir));

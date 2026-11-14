@@ -93,6 +93,14 @@ std::string Explain(long status, std::string const& body);
 /// @p ms as m:ss or h:mm:ss
 std::string Duration(int ms);
 
+/// The proxy for an https address in Windows' proxy setting, as WinINet
+/// keeps it ("host:port", "http=host:port;https=host:port", a list from a
+/// PAC script), as a URL for curl; empty when it names none for https
+std::string ProxyFromSystem(std::string const& setting);
+/// Windows' list of addresses not to proxy ("<local>;*.example.com;10.*")
+/// as curl's ("example.com"): what curl cannot match is left out
+std::string NoProxyFromSystem(std::string const& bypass);
+
 /// Whether anything can be sent: not when built without libcurl
 bool CanUpload();
 

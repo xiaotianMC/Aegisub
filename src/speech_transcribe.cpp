@@ -30,6 +30,10 @@
 
 #ifdef WITH_CURL
 #include <curl/curl.h>
+#ifdef _WIN32
+#include <windows.h>
+#include <winhttp.h>
+#endif
 #endif
 
 namespace transcribe {
@@ -168,10 +172,101 @@ std::string Duration(int ms) {
 	return agi::format("%d:%02d", s / 60, s % 60);
 }
 
+namespace {
+std::string Lower(std::string s) {
+	for (auto& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+	return s;
+}
+}
+
+std::string ProxyFromSystem(std::string const& setting) {
+	std::string https, plain, socks;
+	for (auto const& entry : Split(setting, "; \t\r\n")) {
+		auto const eq = entry.find('=');
+		if (eq == std::string::npos) {
+			if (plain.empty()) plain = entry;
+			continue;
+		}
+		auto const scheme = Lower(Trim(std::string_view(entry).substr(0, eq)));
+		auto const where = Trim(std::string_view(entry).substr(eq + 1));
+		if (where.empty()) continue;
+		if (scheme == "https" && https.empty()) https = where;
+		else if (scheme == "socks" && socks.empty()) socks = where;
+	}
+	// WinINet sends https to its https= entry, else to a socks= one; a lone
+	// host:port is for every scheme
+	if (!https.empty()) return https.find("://") == std::string::npos ? "http://" + https : https;
+	if (!plain.empty()) return plain.find("://") == std::string::npos ? "http://" + plain : plain;
+	if (!socks.empty()) return socks.find("://") == std::string::npos ? "socks4a://" + socks : socks;
+	return {};
+}
+
+std::string NoProxyFromSystem(std::string const& bypass) {
+	std::string out;
+	for (auto entry : Split(bypass, "; \t\r\n,")) {
+		// <local>, names without a dot, cannot be put to curl; nor can a *
+		// anywhere but leading
+		if (entry == "<local>") continue;
+		if (entry == "*") { out = "*"; break; }
+		if (entry.compare(0, 2, "*.") == 0) entry.erase(0, 1);
+		if (entry.find('*') != std::string::npos) continue;
+		if (!out.empty()) out += ',';
+		out += entry;
+	}
+	return out;
+}
+
 #ifdef WITH_CURL
 bool CanUpload() { return true; }
 
 namespace {
+#ifdef _WIN32
+/// What Windows' Internet settings say to send an https address through
+/// (curl only looks at https_proxy and the like), a PAC script asked when
+/// there is one; nothing when the user has a proxy of their own in those
+struct SystemProxy { std::string proxy, bypass; };
+SystemProxy WindowsProxy(const wchar_t *url) {
+	for (auto name : {"https_proxy", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"})
+		if (auto v = getenv(name); v && *v) return {};
+
+	WINHTTP_CURRENT_USER_IE_PROXY_CONFIG ie{};
+	if (!WinHttpGetIEProxyConfigForCurrentUser(&ie)) return {};
+	auto take = [](wchar_t *&s) {
+		std::string out = s ? from_wx(wxString(s)) : std::string();
+		if (s) GlobalFree(s);
+		s = nullptr;
+		return out;
+	};
+	SystemProxy out;
+	if (ie.lpszAutoConfigUrl || (ie.fAutoDetect && !ie.lpszProxy)) {
+		if (auto session = WinHttpOpen(L"Aegisub", WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0)) {
+			WINHTTP_AUTOPROXY_OPTIONS options{};
+			if (ie.lpszAutoConfigUrl) {
+				options.dwFlags = WINHTTP_AUTOPROXY_CONFIG_URL;
+				options.lpszAutoConfigUrl = ie.lpszAutoConfigUrl;
+			}
+			else {
+				options.dwFlags = WINHTTP_AUTOPROXY_AUTO_DETECT;
+				options.dwAutoDetectFlags = WINHTTP_AUTO_DETECT_TYPE_DHCP | WINHTTP_AUTO_DETECT_TYPE_DNS_A;
+			}
+			options.fAutoLogonIfChallenged = TRUE;
+			WINHTTP_PROXY_INFO info{};
+			if (WinHttpGetProxyForUrl(session, url, &options, &info)) {
+				auto proxy = take(info.lpszProxy);
+				auto bypass = take(info.lpszProxyBypass);
+				if (info.dwAccessType == WINHTTP_ACCESS_TYPE_NAMED_PROXY) out = {proxy, bypass};
+			}
+			WinHttpCloseHandle(session);
+		}
+	}
+	auto proxy = take(ie.lpszProxy);
+	auto bypass = take(ie.lpszProxyBypass);
+	take(ie.lpszAutoConfigUrl);
+	if (out.proxy.empty()) out = {proxy, bypass};
+	return out;
+}
+#endif
+
 size_t WriteToString(char *contents, size_t size, size_t nmemb, std::string *s) {
 	s->append(contents, size * nmemb);
 	return size * nmemb;
@@ -258,11 +353,32 @@ std::string Upload(Request const& request, ElevenLabs const& settings, agi::Prog
 	curl_easy_setopt(h.c, CURLOPT_XFERINFODATA, &progress);
 	curl_easy_setopt(h.c, CURLOPT_CONNECTTIMEOUT, 30L);
 	curl_easy_setopt(h.c, CURLOPT_FOLLOWLOCATION, 0L);
+	char error[CURL_ERROR_SIZE] = "";
+	curl_easy_setopt(h.c, CURLOPT_ERRORBUFFER, error);
+
+	std::string proxy;
+#ifdef _WIN32
+	// Schannel fails the handshake when it cannot ask whether the
+	// certificate was revoked, as where the servers that say are blocked
+	curl_easy_setopt(h.c, CURLOPT_SSL_OPTIONS, static_cast<long>(CURLSSLOPT_REVOKE_BEST_EFFORT));
+	auto const windows = WindowsProxy(L"https://api.elevenlabs.io/v1/speech-to-text");
+	proxy = ProxyFromSystem(windows.proxy);
+	std::string const no_proxy = NoProxyFromSystem(windows.bypass);
+	if (!proxy.empty()) {
+		curl_easy_setopt(h.c, CURLOPT_PROXY, proxy.c_str());
+		if (!no_proxy.empty()) curl_easy_setopt(h.c, CURLOPT_NOPROXY, no_proxy.c_str());
+	}
+#endif
 
 	auto const res = curl_easy_perform(h.c);
 	if (res == CURLE_ABORTED_BY_CALLBACK) throw agi::UserCancelException("cancelled");
-	if (res != CURLE_OK)
-		throw agi::EnvironmentError(agi::format(from_wx(_("Could not reach ElevenLabs: %s.")), curl_easy_strerror(res)));
+	if (res != CURLE_OK) {
+		std::string why = *error ? Trim(error) : curl_easy_strerror(res);
+		if (!why.empty() && why.back() == '.') why.pop_back();
+		if (proxy.empty())
+			throw agi::EnvironmentError(agi::format(from_wx(_("Could not reach ElevenLabs: %s.")), why));
+		throw agi::EnvironmentError(agi::format(from_wx(_("Could not reach ElevenLabs through the proxy %s: %s.")), proxy, why));
+	}
 	long status = 0;
 	curl_easy_getinfo(h.c, CURLINFO_RESPONSE_CODE, &status);
 	if (status == 401) throw KeyRefused(Explain(status, body));
