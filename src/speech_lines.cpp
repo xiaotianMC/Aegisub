@@ -3,7 +3,6 @@
 
 #include "speech_lines.h"
 
-#include <libaegisub/audio/provider.h>
 #include <libaegisub/cajun/reader.h>
 #include <libaegisub/cajun/visitor.h>
 #include <libaegisub/exception.h>
@@ -174,36 +173,9 @@ struct Unit {
 	int End() const { return words.back().end; }
 };
 
-/// How long @p text takes to say, roughly, in morae: a kanji two, a small
-/// kana or long vowel mark half, a digit two, other letters one
-double Morae(std::string_view text) {
-	double n = 0;
-	for (size_t i = 0; i < text.size();) {
-		unsigned char c = text[i];
-		size_t len = c < 0x80 ? 1 : c >= 0xF0 ? 4 : c >= 0xE0 ? 3 : 2;
-		char32_t cp = FirstChar(text.substr(i));
-		i += len;
-		if (cp == ' ' || cp == 0x3000) continue;
-		if (cp >= 0x4E00 && cp <= 0x9FFF) n += 2;
-		else if (cp >= '0' && cp <= '9') n += 2;
-		else if (cp == 0x30FC || cp == 0x3063 || cp == 0x30C3 || (cp >= 0x3041 && cp <= 0x3049 && cp % 2) || cp == 0x3083 || cp == 0x3085 || cp == 0x3087
-			|| (cp >= 0x30A1 && cp <= 0x30A9 && cp % 2) || cp == 0x30E3 || cp == 0x30E5 || cp == 0x30E7) n += 0.5;
-		else n += 1;
-	}
-	return n;
-}
-
-/// Whether a sentence cannot end just before @p next: ん, っ, ー or a small kana
-bool Continues(char32_t next) {
-	return next == 0x3093 || next == 0x3063 || next == 0x30FC || next == 0x30F3 || next == 0x30C3
-		|| (next >= 0x3041 && next <= 0x3049 && next % 2) || next == 0x3083 || next == 0x3085 || next == 0x3087
-		|| (next >= 0x30A1 && next <= 0x30A9 && next % 2) || next == 0x30E3 || next == 0x30E5 || next == 0x30E7;
-}
-
 class Maker {
 	Rules const& rules;
 	std::vector<int> const& cuts;
-	std::vector<std::pair<int, int>> const& quiet;
 	std::string language;
 	bool unspaced;
 	int next_group = 1;
@@ -431,123 +403,9 @@ class Maker {
 		}
 	}
 
-	/// Where in the audio each segment's sentences end. WhisperX's times for
-	/// Japanese, a character at a time, can be seconds off, so a sentence end
-	/// is looked for both where it puts it and where it would be at an even
-	/// pace through the segment's speech; and the sentence ends, in order,
-	/// are paired with the pauses, in order, the nearest they can be.
-	/// @return For each word a sentence ends after, the pause after it
-	std::map<std::pair<size_t, size_t>, std::pair<int, int>> PauseBreaks(std::vector<std::vector<Word>> const& segments) const {
-		std::map<std::pair<size_t, size_t>, std::pair<int, int>> breaks;
-		if (quiet.empty() || !unspaced) return breaks;
-
-		auto in_quiet = [&](int t) -> std::pair<int, int> const* {
-			for (auto const& q : quiet) if (q.first <= t && t < q.second) return &q;
-			return nullptr;
-		};
-
-		struct Candidate { size_t seg, word; int said, even; bool sure; };
-		std::vector<Candidate> candidates;
-		for (size_t s = 0; s < segments.size(); ++s) {
-			auto const& words = segments[s];
-			// The segment's speech: from its first word to the next segment's,
-			// or for the last, to the pause the sound ends with
-			int lo = words.front().start;
-			int hi = s + 1 < segments.size() ? segments[s + 1].front().start : words.back().end;
-			if (s + 1 == segments.size() && quiet.back().first >= hi) hi = quiet.back().first;
-			if (auto q = in_quiet(lo)) lo = q->second;
-			if (auto q = in_quiet(hi - 1)) hi = q->first;
-			if (hi <= lo) continue;
-			// Its speaking time, without the pauses within
-			std::vector<std::pair<int, int>> speech;
-			int at = lo;
-			for (auto const& q : quiet) {
-				if (q.second <= at || q.first >= hi) continue;
-				if (q.first > at) speech.emplace_back(at, q.first);
-				at = std::max(at, q.second);
-			}
-			if (at < hi) speech.emplace_back(at, hi);
-			double total_time = 0;
-			for (auto const& sp : speech) total_time += sp.second - sp.first;
-			double total_morae = 0;
-			for (auto const& w : words) total_morae += Morae(w.text);
-			if (total_time <= 0 || total_morae <= 0) continue;
-			auto even_time = [&](double morae) {
-				double left = morae / total_morae * total_time;
-				for (auto const& sp : speech) {
-					if (left <= sp.second - sp.first) return sp.first + static_cast<int>(left);
-					left -= sp.second - sp.first;
-				}
-				return speech.back().second;
-			};
-
-			double morae = 0;
-			for (size_t i = 0; i < words.size(); ++i) {
-				morae += Morae(words[i].text);
-				bool const last = i + 1 == words.size();
-				if (!last && Continues(FirstChar(Trim(words[i + 1].text)))) continue;
-				std::string const before = Join(words.begin() + (i >= 8 ? i - 8 : 0), words.begin() + i + 1);
-				if (!EndsSentenceForm(before)) continue;
-				if (!last) {
-					// Not within a word: くだ|さい, ありがとう|ございます
-					std::string const after = Join(words.begin() + i + 1, words.begin() + std::min(words.size(), i + 9));
-					if (after.starts_with("\xE3\x81\x94\xE3\x81\x96") // ござ
-						|| after.starts_with("\xE3\x81\x95\xE3\x81\x84") // (くだ, な)さい
-						|| after.starts_with("\xE3\x81\xAD") || after.starts_with("\xE3\x82\x88")) continue; // ね よ
-					std::string const around = before + after;
-					if (!WordBoundaries(around).count(static_cast<int>(before.size()))) continue;
-				}
-				// た, だ, か... end a sentence less surely than です or ました
-				bool const sure = EndsSentence(before) || !EndsWithAny(Trim(before), {
-					"\xE3\x81\x9F", "\xE3\x81\xA0", "\xE3\x82\x88", "\xE3\x82\x8F", "\xE3\x81\x8B", "\xE3\x81\xAA"}) // た だ よ わ か な
-					|| EndsWithAny(Trim(before), {"\xE3\x81\x97\xE3\x81\x9F", "\xE3\x81\xA3\xE3\x81\x9F"}); // した った
-				candidates.push_back({s, i, words[i].end, even_time(morae), sure});
-			}
-		}
-
-		// The pauses long enough to end a sentence at, paired in order with
-		// the sentence ends: the most pairs, each its nearest
-		constexpr int reach = 2000;
-		auto distance = [](int t, std::pair<int, int> const& q) { return std::max({0, q.first - t, t - q.second}); };
-		auto score = [&](Candidate const& c, std::pair<int, int> const& q) {
-			int d = std::min(distance(c.said, q), distance(c.even, q));
-			return d > reach ? -1 : reach - d + std::min(q.second - q.first, rules.pause_break) - (c.sure ? 0 : reach / 2);
-		};
-		size_t const n = candidates.size(), m = quiet.size();
-		std::vector<std::vector<int>> best(n + 1, std::vector<int>(m + 1, 0));
-		for (size_t i = 1; i <= n; ++i) {
-			for (size_t j = 1; j <= m; ++j) {
-				best[i][j] = std::max(best[i - 1][j], best[i][j - 1]);
-				int sc = score(candidates[i - 1], quiet[j - 1]);
-				if (sc >= 0) best[i][j] = std::max(best[i][j], best[i - 1][j - 1] + sc);
-			}
-		}
-		for (size_t i = n, j = m; i > 0 && j > 0;) {
-			if (best[i][j] == best[i - 1][j]) --i;
-			else if (best[i][j] == best[i][j - 1]) --j;
-			else {
-				breaks[{candidates[i - 1].seg, candidates[i - 1].word}] = quiet[j - 1];
-				--i; --j;
-			}
-		}
-		return breaks;
-	}
-
-	/// @p u's words put, in proportion, between @p start and @p end
-	static void Retime(Unit &u, int start, int end) {
-		int const from = u.Start(), to = u.End();
-		end = std::max(end, start + 1);
-		double const scale = to > from ? double(end - start) / (to - from) : 0;
-		for (auto& w : u.words) {
-			w.start = start + static_cast<int>((w.start - from) * scale);
-			w.end = start + static_cast<int>((w.end - from) * scale);
-		}
-		u.words.back().end = end;
-	}
-
 public:
-	Maker(Rules const& rules, std::vector<int> const& cuts, std::vector<std::pair<int, int>> const& quiet, std::string language)
-	: rules(rules), cuts(cuts), quiet(quiet), language(std::move(language)), unspaced(Unspaced(this->language)) { }
+	Maker(Rules const& rules, std::vector<int> const& cuts, std::string language)
+	: rules(rules), cuts(cuts), language(std::move(language)), unspaced(Unspaced(this->language)) { }
 
 	std::vector<Line> Make(Transcript const& t) {
 		// Each segment's words, with times for those the aligner left out
@@ -574,13 +432,8 @@ public:
 		// Sentences: a segment joins the one before when that did not end
 		// one, the pause is short and the speaker the same; within one, a
 		// sentence end, a long pause or another speaker starts the next.
-		// With the audio's pauses known, they say where sentences end and
-		// the words' own gaps do not.
-		auto const pause_breaks = PauseBreaks(segments);
-		bool const by_pauses = !pause_breaks.empty();
+		// The words keep the times the recogniser gave them.
 		std::vector<Unit> units;
-		std::vector<std::pair<int, int>> unit_times; // -1 where the words' own
-		std::pair<int, int> const* pending = nullptr;
 		for (size_t si = 0; si < segments.size(); ++si) {
 			auto const& words = segments[si];
 			for (size_t i = 0; i < words.size(); ++i) {
@@ -593,40 +446,17 @@ public:
 					bool const note_edge = Bracketed(w.text) || Bracketed(prev.text);
 					int const gap = w.start - prev.end;
 					std::string const so_far = Join(units.back().words.begin(), units.back().words.end());
-					bool const ended = EndsSentence(so_far) || pending
-						|| (!by_pauses && gap >= rules.sentence_pause && EndsSentenceForm(so_far));
+					bool const ended = EndsSentence(so_far)
+						|| (gap >= rules.sentence_pause && EndsSentenceForm(so_far));
 					if (i == 0)
-						start_new = other_speaker || note_edge || ended || (!by_pauses && gap > rules.join_gap) || w.end - units.back().Start() > rules.max_duration;
+						start_new = other_speaker || note_edge || ended || gap > rules.join_gap || w.end - units.back().Start() > rules.max_duration;
 					else
-						start_new = other_speaker || note_edge || ended || (!by_pauses && gap > rules.pause_break);
+						start_new = other_speaker || note_edge || ended || gap > rules.pause_break;
 				}
-				if (start_new) {
-					if (pending) unit_times.back().second = pending->first;
-					units.push_back({{}, w.speaker, 0});
-					unit_times.emplace_back(pending ? pending->second : -1, -1);
-				}
-				pending = nullptr;
+				if (start_new) units.push_back({{}, w.speaker, 0});
 				units.back().words.push_back(w);
-				auto it = pause_breaks.find({si, i});
-				if (it != pause_breaks.end()) pending = &it->second;
 			}
 		}
-		if (pending && !unit_times.empty()) unit_times.back().second = pending->first;
-		for (size_t k = 0; k < units.size(); ++k) {
-			auto [start, end] = unit_times[k];
-			if (start < 0 && end < 0) continue;
-			if (start < 0) start = std::min(units[k].Start(), end - 1);
-			if (end < 0) {
-				end = units[k].End();
-				// Its words heard before where it begins: to the pause after
-				if (end <= start) {
-					end = start + (units[k].End() - units[k].Start());
-					for (auto const& q : quiet) if (q.first > start) { end = q.first; break; }
-				}
-			}
-			Retime(units[k], start, end);
-		}
-
 		std::vector<Unit> split;
 		for (auto& u : units) {
 			std::vector<Unit> long_split;
@@ -751,75 +581,32 @@ Transcript ReadJson(std::istream &stream) {
 	return t;
 }
 
-std::vector<float> Levels(agi::AudioProvider const& audio, int step_ms) {
-	std::vector<float> levels;
-	int const rate = audio.GetSampleRate(), channels = audio.GetChannels(), bytes = audio.GetBytesPerSample();
-	bool const is_float = audio.AreSamplesFloat();
-	if (rate <= 0 || channels <= 0 || (bytes != 2 && !(is_float && bytes == 4))) return levels;
-	int64_t const step = int64_t(rate) * step_ms / 1000;
-	if (step <= 0) return levels;
-	std::vector<char> buf(static_cast<size_t>(step * channels * bytes));
-	for (int64_t start = 0; start + step <= audio.GetNumSamples(); start += step) {
-		audio.GetAudio(buf.data(), start, step);
-		double sum = 0;
-		for (int64_t i = 0; i < step * channels; ++i) {
-			double v = is_float ? reinterpret_cast<float const*>(buf.data())[i] : reinterpret_cast<int16_t const*>(buf.data())[i] / 32768.0;
-			sum += v * v;
-		}
-		levels.push_back(static_cast<float>(10 * std::log10(sum / double(step * channels) + 1e-10)));
-	}
-	return levels;
+std::vector<Line> MakeLines(Transcript const& transcript, Rules const& rules, std::vector<int> const& cuts) {
+	return Maker(rules, cuts, transcript.language).Make(transcript);
 }
 
-
-std::vector<std::pair<int, int>> FindQuiet(std::vector<float> const& levels, int step_ms, int min_ms) {
-	std::vector<std::pair<int, int>> quiet;
-	if (levels.size() < 10 || step_ms <= 0) return quiet;
-	auto sorted = levels;
-	std::sort(sorted.begin(), sorted.end());
-	float const floor = sorted[sorted.size() / 10];
-	float const loud = sorted[sorted.size() * 95 / 100];
-	float const threshold = std::max(floor + 6.f, floor + 0.3f * (loud - floor));
-	for (size_t i = 0; i < levels.size();) {
-		if (levels[i] >= threshold) { ++i; continue; }
-		size_t j = i;
-		while (j < levels.size() && levels[j] < threshold) ++j;
-		if (static_cast<int>(j - i) * step_ms >= min_ms)
-			quiet.emplace_back(static_cast<int>(i) * step_ms, static_cast<int>(j) * step_ms);
-		i = j;
+std::vector<int> SceneCuts(std::vector<int> const& keyframes) {
+	std::vector<int> frames = keyframes;
+	std::sort(frames.begin(), frames.end());
+	frames.erase(std::unique(frames.begin(), frames.end()), frames.end());
+	// The encoder's interval: the commonest distance between keyframes, a
+	// frame either way the same, if it is most of them
+	std::map<int, int> counts;
+	for (size_t i = 1; i < frames.size(); ++i) ++counts[frames[i] - frames[i - 1]];
+	int interval = 0, most = 0, total = 0;
+	for (auto [d, n] : counts) {
+		total += n;
+		int near = n;
+		if (auto it = counts.find(d - 1); it != counts.end()) near += it->second;
+		if (auto it = counts.find(d + 1); it != counts.end()) near += it->second;
+		if (near > most) { most = near; interval = d; }
 	}
-	return quiet;
-}
-
-void TrimToSpeech(Transcript &transcript, std::vector<std::pair<int, int>> const& quiet) {
-	if (quiet.empty()) return;
-	for (auto& seg : transcript.segments) {
-		for (auto& w : seg.words) {
-			if (w.start < 0 || w.end <= w.start) continue;
-			// The parts of the word outside the quiet: its first and last
-			int first = -1, last = -1, at = w.start;
-			auto it = std::upper_bound(quiet.begin(), quiet.end(), std::make_pair(w.start, INT_MAX));
-			if (it != quiet.begin()) --it;
-			for (; it != quiet.end() && it->first < w.end; ++it) {
-				if (it->second <= at) continue;
-				if (it->first > at) {
-					if (first < 0) first = at;
-					last = it->first;
-				}
-				at = std::max(at, it->second);
-			}
-			if (at < w.end) {
-				if (first < 0) first = at;
-				last = w.end;
-			}
-			if (first < 0) continue; // All quiet: as the aligner put it
-			w.start = first;
-			w.end = std::max(last, first + 1);
-		}
-	}
-}
-
-std::vector<Line> MakeLines(Transcript const& transcript, Rules const& rules, std::vector<int> const& cuts, std::vector<std::pair<int, int>> const& quiet) {
-	return Maker(rules, cuts, quiet, transcript.language).Make(transcript);
+	if (most < 3 || most * 2 < total) return frames;
+	// A keyframe that interval after the one before was put there by the
+	// count, not by a change of scene
+	std::vector<int> cuts;
+	for (size_t i = 0; i < frames.size(); ++i)
+		if (i == 0 || std::abs(frames[i] - frames[i - 1] - interval) > 1) cuts.push_back(frames[i]);
+	return cuts;
 }
 }

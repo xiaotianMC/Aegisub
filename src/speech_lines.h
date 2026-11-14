@@ -9,7 +9,7 @@
 #include <utility>
 #include <vector>
 
-namespace agi { class AudioProvider; struct Context; }
+namespace agi { struct Context; }
 
 /// Speech recognition's output made into subtitle lines: a line a sentence,
 /// each one the translator can take on its own
@@ -75,26 +75,15 @@ struct Rules {
 	int cut_side = 300, cut_pause = 200, min_pause = 100;
 };
 
-/// The audio's loudness in dB, every @p step_ms, its channels together
-std::vector<float> Levels(agi::AudioProvider const& audio, int step_ms);
-
-/// Where no one is speaking, as [start, end) in milliseconds: from the
-/// sound's loudness in dB every @p step_ms, the stretches of at least
-/// @p min_ms well below its loud parts, relative to its quiet ones so music
-/// or a crowd under the voices does not hide them
-std::vector<std::pair<int, int>> FindQuiet(std::vector<float> const& levels, int step_ms, int min_ms = 150);
-
-/// Each word's time without the quiet in it. Aligning Japanese a character
-/// at a time, WhisperX leaves no gaps: a pause becomes part of the character
-/// before or after it, and is found again this way.
-void TrimToSpeech(Transcript &transcript, std::vector<std::pair<int, int>> const& quiet);
-
 /// @p cuts, the scene changes' times, sorted; empty if none are known.
-/// @p quiet, FindQuiet's pauses if the audio is known: sentences then end
-/// at them, each line's ends at the pause's.
+/// Each word keeps the time the recogniser gave it.
 /// Lines are in time order, their ends not yet snapped to the frames.
-std::vector<Line> MakeLines(Transcript const& transcript, Rules const& rules, std::vector<int> const& cuts,
-	std::vector<std::pair<int, int>> const& quiet = {});
+std::vector<Line> MakeLines(Transcript const& transcript, Rules const& rules, std::vector<int> const& cuts);
+
+/// The scene changes among a video's @p keyframes (frame numbers): those
+/// the encoder put every so many frames, whatever was shown, left out. A
+/// video cut for the web often has nothing but those.
+std::vector<int> SceneCuts(std::vector<int> const& keyframes);
 
 /// @p transcript's lines put in the subtitles, in one undo step: in place of
 /// them if nothing is written yet, else among them by time. Snapped to the

@@ -4464,24 +4464,49 @@ TEST(speech_lines, a_line_a_sentence_joined_across_pieces_and_ended_by_a_full_st
     for(auto const& l:lines)EXPECT_EQ(0,l.group);
 }
 
-TEST(speech_lines, without_punctuation_sentences_end_at_the_audio_pauses_though_the_characters_times_are_off) {
-    // As WhisperX aligns Japanese: a character at a time, no gaps, and here
-    // all of it squeezed into the first 2.6 s of the 6 s it is said in
-    speech::Transcript t;t.language="ja";
-    std::vector<speech::Word> chars;
-    std::string const text="私はクロですありがとうございました見てくださいね";
-    for(size_t i=0,k=0;i<text.size();i+=3,++k)chars.push_back(SW(text.substr(i,3),int(k)*100,int(k+1)*100));
-    t.segments.push_back(SS(chars));
-    std::vector<std::pair<int,int>> const quiet{{1500,1900},{4000,4400},{6000,7000}};
-    auto lines=speech::MakeLines(t,PlainRules(),{},quiet);
-    // Not ありがとう|ございました, くだ|さい nor before ね
-    EXPECT_EQ((std::vector<std::string>{"私はクロです","ありがとうございました","見てくださいね"}),Texts(lines));
+TEST(speech_lines, scribes_japanese_a_character_at_a_time_keeps_its_times_and_its_stops_at_the_sentences_ends) {
+    // As ElevenLabs gave it for a real clip: each character timed, each 、
+    // and 。 taking no time at the end of the character before, pauses after
+    std::string const json=R"j({"language_code":"jpn","words":[
+        {"text":"皆","start":4.68,"end":4.9,"type":"word","speaker_id":"speaker_0"},
+        {"text":"さ","start":4.9,"end":4.96,"type":"word","speaker_id":"speaker_0"},
+        {"text":"ん","start":5.04,"end":5.12,"type":"word","speaker_id":"speaker_0"},
+        {"text":"こ","start":5.12,"end":5.2,"type":"word","speaker_id":"speaker_0"},
+        {"text":"ん","start":5.2,"end":5.34,"type":"word","speaker_id":"speaker_0"},
+        {"text":"に","start":5.34,"end":5.46,"type":"word","speaker_id":"speaker_0"},
+        {"text":"ち","start":5.46,"end":5.68,"type":"word","speaker_id":"speaker_0"},
+        {"text":"は","start":5.68,"end":5.72,"type":"word","speaker_id":"speaker_0"},
+        {"text":"。","start":5.72,"end":5.72,"type":"word","speaker_id":"speaker_0"},
+        {"text":"は","start":7.08,"end":7.24,"type":"word","speaker_id":"speaker_0"},
+        {"text":"い","start":7.32,"end":7.36,"type":"word","speaker_id":"speaker_0"},
+        {"text":"、","start":7.36,"end":7.36,"type":"word","speaker_id":"speaker_0"},
+        {"text":"ゴ","start":7.84,"end":7.94,"type":"word","speaker_id":"speaker_0"},
+        {"text":"ジ","start":7.94,"end":8.06,"type":"word","speaker_id":"speaker_0"},
+        {"text":"ラ","start":8.06,"end":8.16,"type":"word","speaker_id":"speaker_0"},
+        {"text":"で","start":8.2,"end":8.3,"type":"word","speaker_id":"speaker_0"},
+        {"text":"し","start":8.3,"end":8.4,"type":"word","speaker_id":"speaker_0"},
+        {"text":"た","start":8.4,"end":8.6,"type":"word","speaker_id":"speaker_0"},
+        {"text":"。","start":8.6,"end":8.6,"type":"word","speaker_id":"speaker_0"},
+        {"text":"う","start":9.2,"end":9.3,"type":"word","speaker_id":"speaker_0"},
+        {"text":"ん","start":9.3,"end":9.5,"type":"word","speaker_id":"speaker_0"}]})j";
+    std::istringstream in(json);
+    auto lines=speech::MakeLines(speech::ReadJson(in),PlainRules(),{});
+    EXPECT_EQ((std::vector<std::string>{"皆さんこんにちは。","はい、ゴジラでした。","うん"}),Texts(lines));
     ASSERT_EQ(3u,lines.size());
-    EXPECT_EQ(1500,lines[0].end);
-    EXPECT_EQ(1900,lines[1].start);EXPECT_EQ(4000,lines[1].end);
-    EXPECT_EQ(4400,lines[2].start);EXPECT_EQ(6000,lines[2].end);
-    // Without the pauses, by the characters' times: one line
-    EXPECT_EQ(1u,speech::MakeLines(t,PlainRules(),{}).size());
+    EXPECT_EQ(4680,lines[0].start);EXPECT_EQ(5720,lines[0].end);
+    EXPECT_EQ(7080,lines[1].start);EXPECT_EQ(8600,lines[1].end);
+    EXPECT_EQ(9200,lines[2].start);
+}
+
+TEST(speech_lines, keyframes_put_every_so_many_frames_are_not_scene_changes_those_between_are) {
+    // A clip from the web: a keyframe every 3 s at 60 fps, nothing else
+    EXPECT_EQ((std::vector<int>{0}),speech::SceneCuts({0,180,361,541,720,901,1080}));
+    // The encoder's 250 between scene changes it found
+    EXPECT_EQ((std::vector<int>{0,100,437,900}),speech::SceneCuts({0,100,350,437,687,900,1150,1400}));
+    // Keyframes with no interval among them are all scene changes
+    EXPECT_EQ((std::vector<int>{0,40,95,300,420}),speech::SceneCuts({0,40,95,300,420}));
+    EXPECT_EQ((std::vector<int>{}),speech::SceneCuts({}));
+    EXPECT_EQ((std::vector<int>{0,250}),speech::SceneCuts({0,250}));
 }
 
 TEST(speech_lines, a_long_sentence_is_split_where_a_clause_ends_and_both_parts_share_a_group) {
