@@ -677,7 +677,6 @@
 			"Command" : "whisperx \"{media}\" --output_dir \"{out}\" --output_format json [--language {language}]",
 			"Diarize" : true,
 			"ElevenLabs" : {
-				"Key" : "",
 				"Model" : "scribe_v3"
 			},
 			"Keyterms" : "",

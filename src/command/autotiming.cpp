@@ -299,22 +299,15 @@ struct autotiming_transcribe final : public Command {
 				}
 				transcribe::ElevenLabs settings;
 				settings.model = OPT_GET("Tool/Transcribe/ElevenLabs/Model")->GetString();
-				// A key kept in the settings file, from before there was a
-				// keychain to keep it in, is moved there
-				auto setting = OPT_GET("Tool/Transcribe/ElevenLabs/Key")->GetString();
-				if (!setting.empty() && secret::Available() && secret::Save(transcribe::key_service, setting)) {
-					OPT_SET("Tool/Transcribe/ElevenLabs/Key")->SetString("");
-					setting.clear();
-				}
 				auto found = transcribe::FindKey({std::getenv("ELEVENLABS_API_KEY"), secret::Load(transcribe::key_service),
-					secret::Held(transcribe::key_service), setting});
+					secret::Held(transcribe::key_service)});
 				if (found.key.empty()) {
 					bool const keychain = secret::Available();
 					wxString how = keychain ? _("It is kept in the system's keychain.")
 						: _("This machine has no keychain Aegisub can use, so it is kept only until Aegisub is closed.");
 					wxString key = wxGetPasswordFromUser(_("Enter your ElevenLabs API key, from the API keys page of elevenlabs.io.") + "\n\n" + how + "\n"
 						+ _("To give it another way, set the ELEVENLABS_API_KEY environment variable."), _("Transcribe the Audio"), "", c->parent);
-					found = transcribe::FindKey({nullptr, std::nullopt, std::nullopt, from_wx(key)});
+					found.key = transcribe::TrimKey(from_wx(key));
 					if (found.key.empty()) return;
 					if (!keychain || !secret::Save(transcribe::key_service, found.key))
 						secret::Hold(transcribe::key_service, found.key);
@@ -365,7 +358,6 @@ struct autotiming_transcribe final : public Command {
 		catch (transcribe::KeyRefused const& e) {
 			secret::Forget(transcribe::key_service);
 			secret::Drop(transcribe::key_service);
-			OPT_SET("Tool/Transcribe/ElevenLabs/Key")->SetString("");
 			Clean(folder);
 			Fail(c, to_wx(e.GetMessage()) + "\n\n" + _("The key is forgotten; it is asked for again next time."));
 			return;

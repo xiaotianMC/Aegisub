@@ -53,16 +53,18 @@ struct KeySources {
 	std::optional<std::string> keychain;
 	/// What is held for this run, on a machine without a keychain
 	std::optional<std::string> session;
-	/// What the settings file keeps, as plain text, from before the keychain
-	std::string setting;
 };
-enum class KeyPlace { None, Environment, Keychain, Session, Setting };
+enum class KeyPlace { None, Environment, Keychain, Session };
 struct FoundKey {
 	std::string key;
 	KeyPlace place = KeyPlace::None;
 };
-/// The key to send, trimmed, from the first of @p sources that has one
+/// The key to send, trimmed, from the first of @p sources that has one. It
+/// is never written to the settings file: that is read by anything and
+/// goes wherever the settings are copied.
 FoundKey FindKey(KeySources const& sources);
+/// @p entered by the user, trimmed
+std::string TrimKey(std::string const& entered);
 
 /// The codes in a setting such as "en, zh" or "en zh": split at commas and
 /// spaces, each trimmed, none empty

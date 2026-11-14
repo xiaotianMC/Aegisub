@@ -287,32 +287,28 @@ void Audio(PreferencesBook *book, Preferences *parent) {
 		auto const service = transcribe::key_service;
 		auto refresh = [=] {
 			auto env = std::getenv("ELEVENLABS_API_KEY");
-			bool const in_setting = !OPT_GET("Tool/Transcribe/ElevenLabs/Key")->GetString().empty();
 			bool const held = secret::Held(service).has_value();
 			wxString where;
 			if (env && *env) where = _("From the ELEVENLABS_API_KEY environment variable");
-			else if (in_setting) where = _("Kept in the settings file, as plain text");
 			else if (held) where = _("Kept until Aegisub is closed: this machine has no keychain");
 			else if (secret::Available()) where = _("Kept in the system's keychain, once set");
 			else where = _("Asked for each time: this machine has no keychain");
 			status->SetLabel(where);
-			forget->Enable(in_setting || held || secret::Available());
+			forget->Enable(held || secret::Available());
 		};
 		set->Bind(wxEVT_BUTTON, [=](wxCommandEvent&) {
 			bool const keychain = secret::Available();
 			wxString key = wxGetPasswordFromUser(_("Enter your ElevenLabs API key, from the API keys page of elevenlabs.io.") + "\n\n"
 				+ (keychain ? _("It is kept in the system's keychain.") : _("This machine has no keychain Aegisub can use, so it is kept only until Aegisub is closed.")),
 				_("ElevenLabs API key"), "", p);
-			auto found = transcribe::FindKey({nullptr, std::nullopt, std::nullopt, from_wx(key)});
-			if (found.key.empty()) return;
-			OPT_SET("Tool/Transcribe/ElevenLabs/Key")->SetString("");
-			if (!keychain || !secret::Save(service, found.key)) secret::Hold(service, found.key);
+			auto entered = transcribe::TrimKey(from_wx(key));
+			if (entered.empty()) return;
+			if (!keychain || !secret::Save(service, entered)) secret::Hold(service, entered);
 			refresh();
 		});
 		forget->Bind(wxEVT_BUTTON, [=](wxCommandEvent&) {
 			secret::Forget(service);
 			secret::Drop(service);
-			OPT_SET("Tool/Transcribe/ElevenLabs/Key")->SetString("");
 			refresh();
 		});
 		auto row = new wxBoxSizer(wxHORIZONTAL);

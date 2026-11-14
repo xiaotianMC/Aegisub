@@ -59,7 +59,7 @@ whisperx ep01.wav --language ja --model large-v3 --diarize --hf_token <令牌> -
 `autotiming/transcribe`，`src/speech_transcribe.{h,cpp}`。不用自己先跑识别再导入：直接把编辑器里打开的音频交给识别器，结果走和“导入语音识别结果”完全相同的 `speech::ReadJson` → `speech::Import`。识别器在首选项“音频”页“听写”一节选：
 
 - **ElevenLabs Scribe**（联网，按音频时长收费）。用 libcurl 把文件以 multipart 表单 POST 到 `https://api.elevenlabs.io/v1/speech-to-text`，请求头 `xi-api-key`。字段：`model_id`（默认 `scribe_v3`）、`timestamps_granularity=word`、`diarize`、`tag_audio_events=true`，有设置时再加 `language_code`、`secondary_language_codes`（重复字段）、`keyterms`（重复字段，最多 100 个）。关键词默认取字幕 Actor 栏里的名字（去重，`SPEAKER_00` 这类识别器自己起的名字不算），再加设置里手填的。文件直接上传源文件（它收 mp3/wav/flac/ogg/m4a/aac/opus 和 mp4/mkv/mov/avi/webm 等视频）；不在列表里的格式（mka、ts）先用 `agi::SaveAudioClip` 写成 WAV 再传。上传进度显示在进度窗口里，传完等待时改成来回扫的条；取消就中断连接。
-  - **密钥**（`src/secret.{h,cpp}`，`transcribe::FindKey`）：按顺序找环境变量 `ELEVENLABS_API_KEY`、系统钥匙串、本次运行里记住的、设置文件里的。都没有就弹密码框问一次：有钥匙串就存进钥匙串（`wxSecretStore`：Windows 凭据管理器、macOS Keychain、Linux Secret Service），没有就只在本次运行里记住，弹窗会说明是哪种。设置文件里旧版存的明文密钥，在有钥匙串的机器上第一次用时搬进钥匙串并清掉。服务器回 401 时三处都清掉，下次再问。首选项里这一行不是文本框，只显示密钥在哪里，带“设置…”和“忘掉”两个按钮。
+  - **密钥**（`src/secret.{h,cpp}`，`transcribe::FindKey`）：按顺序找环境变量 `ELEVENLABS_API_KEY`、系统钥匙串、本次运行里记住的。都没有就弹密码框问一次：有钥匙串就存进钥匙串（`wxSecretStore`：Windows 凭据管理器、macOS Keychain、Linux Secret Service），没有就只在本次运行里记住，弹窗会说明是哪种。**绝不写进设置文件**：`config.json` 谁都能读，还会跟着设置被拷贝、同步、贴出来。服务器回 401 时钥匙串和本次记住的都清掉，下次再问。首选项里这一行不是文本框，只显示密钥在哪里，带“设置…”和“忘掉”两个按钮。
   - 钥匙串要靠 wxWidgets 编译时开了 `wxUSE_SECRETSTORE`：自带的 wx 在 Windows 和 macOS 上默认开，Linux 上要装 `libsecret-1-dev` 才会开（CMake 的 AUTO）；发行版的 wx 包可能关着（Ubuntu 的 wx 3.2 就是）。关着或者机器上没有钥匙环守护进程时，就走“只在本次运行里记住”。
   - **发送前确认**：每次发送前弹窗说明音频时长、文件名、会离开本机并按时长收费，勾“不再询问”后不再弹（设置里可以重新打开）。
   - 构建时没有 libcurl（`enable_update_checker=false` 时也没有）就提示用自己的程序。`meson.build` 在拉入 curl 时定义 `WITH_CURL`。

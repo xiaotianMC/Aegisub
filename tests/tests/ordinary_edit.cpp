@@ -4277,18 +4277,21 @@ TEST(speech_lines, a_sound_heard_never_shares_a_line_with_what_is_said) {
     EXPECT_EQ((std::vector<std::string>{"Well","(laughs)","okay."}),Texts(speech::MakeLines(t,PlainRules(),{})));
 }
 
-TEST(transcribe, the_key_comes_from_the_environment_then_the_keychain_then_this_run_then_the_settings_file) {
+TEST(transcribe, the_key_comes_from_the_environment_then_the_keychain_then_this_run_and_never_the_settings_file) {
     using transcribe::KeyPlace;
-    auto found=transcribe::FindKey({"env","chain","held","kept"});
+    auto found=transcribe::FindKey({"env","chain","held"});
     EXPECT_EQ("env",found.key);EXPECT_EQ(KeyPlace::Environment,found.place);
-    found=transcribe::FindKey({"","chain","held","kept"});
+    found=transcribe::FindKey({"","chain","held"});
     EXPECT_EQ("chain",found.key) << "set but empty is not set";EXPECT_EQ(KeyPlace::Keychain,found.place);
-    found=transcribe::FindKey({nullptr,std::nullopt," held\n","kept"});
+    found=transcribe::FindKey({nullptr,std::nullopt," held\n"});
     EXPECT_EQ("held",found.key);EXPECT_EQ(KeyPlace::Session,found.place);
-    found=transcribe::FindKey({nullptr,std::string(""),std::nullopt," kept"});
-    EXPECT_EQ("kept",found.key);EXPECT_EQ(KeyPlace::Setting,found.place);
-    found=transcribe::FindKey({});
+    found=transcribe::FindKey({nullptr,std::string(""),std::nullopt});
     EXPECT_EQ("",found.key);EXPECT_EQ(KeyPlace::None,found.place);
+    EXPECT_EQ("abc",transcribe::TrimKey(" abc\n"));
+    std::ifstream defaults(std::string(AEGISUB_SOURCE_ROOT)+"/src/libresrc/default_config.json");
+    std::string config((std::istreambuf_iterator<char>(defaults)),std::istreambuf_iterator<char>());
+    ASSERT_FALSE(config.empty());
+    EXPECT_EQ(std::string::npos,config.find("\"Key\"")) << "no setting for a key: it is never written as plain text";
     // What a machine without a keychain is given is held for the run
     secret::Hold("test service","abc");
     EXPECT_EQ("abc",secret::Held("test service").value_or(""));

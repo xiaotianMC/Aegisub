@@ -97,9 +97,10 @@ FoundKey FindKey(KeySources const& sources) {
 	if (sources.environment && !Trim(sources.environment).empty()) return {Trim(sources.environment), KeyPlace::Environment};
 	if (sources.keychain && !Trim(*sources.keychain).empty()) return {Trim(*sources.keychain), KeyPlace::Keychain};
 	if (sources.session && !Trim(*sources.session).empty()) return {Trim(*sources.session), KeyPlace::Session};
-	if (!Trim(sources.setting).empty()) return {Trim(sources.setting), KeyPlace::Setting};
 	return {};
 }
+
+std::string TrimKey(std::string const& entered) { return Trim(entered); }
 
 std::vector<std::string> SplitCodes(std::string const& setting) { return Split(setting, ", \t\r\n;"); }
 std::vector<std::string> SplitList(std::string const& setting) { return Split(setting, ",\r\n;"); }
