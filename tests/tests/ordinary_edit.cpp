@@ -4305,6 +4305,25 @@ TEST(transcribe, the_key_comes_from_the_environment_then_the_keychain_then_this_
     EXPECT_TRUE(transcribe::SplitList("").empty());
 }
 
+TEST(secret, the_keychain_keeps_a_secret_gives_it_back_and_forgets_it_where_there_is_one) {
+    std::string why;
+    if(!secret::Available(&why)){
+        std::cout<<"  no keychain here ("<<why<<"): the round trip is not tried\n";
+        EXPECT_FALSE(secret::Load("Aegisub test: keychain"));
+        EXPECT_FALSE(secret::Save("Aegisub test: keychain","x"));
+        return;
+    }
+    secret::Forget("Aegisub test: keychain");
+    EXPECT_FALSE(secret::Load("Aegisub test: keychain")) << "nothing kept yet";
+    ASSERT_TRUE(secret::Save("Aegisub test: keychain","sk_日本語 secret"));
+    EXPECT_EQ("sk_日本語 secret",secret::Load("Aegisub test: keychain").value_or("")) << "back as it was, UTF-8 and spaces kept";
+    ASSERT_TRUE(secret::Save("Aegisub test: keychain","second"));
+    EXPECT_EQ("second",secret::Load("Aegisub test: keychain").value_or("")) << "saving again replaces";
+    EXPECT_TRUE(secret::Forget("Aegisub test: keychain"));
+    EXPECT_FALSE(secret::Load("Aegisub test: keychain"));
+    EXPECT_FALSE(secret::Forget("Aegisub test: keychain")) << "nothing to forget";
+}
+
 TEST(transcribe, the_actors_names_are_terms_to_recognise_each_once_after_the_extras_but_not_a_recognisers_speaker_labels) {
     AssFile file;
     for(auto actor:{"Madoka","","Madoka","SPEAKER_00","speaker_1"," Homura "}){auto l=new AssDialogue;l->Actor=actor;file.Events.push_back(*l);}
