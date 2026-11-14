@@ -129,6 +129,22 @@ wxString describe(subtitle_apply::Report const& r) {
     return out;
 }
 
+/// One line for the foot: what writing will do, or the first reason it cannot.
+wxString summarize(subtitle_apply::Report const& r) {
+    if (!r.Ok()) {
+        auto full = describe(r);
+        auto lines = wxSplit(full, '\n');
+        wxString out = lines.size() > 1 ? lines[1] : full;
+        if (lines.size() > 2) out += fmt_tl(" (+%d more)", (int)lines.size() - 2);
+        return fmt_tl("Cannot write: %s", out);
+    }
+    wxString out = fmt_tl("Writing changes %d lines, adds %d, removes %d", (int)r.modified, (int)r.added, (int)r.deleted);
+    if (!r.imported_styles.empty()) out += wxString::FromUTF8(" · ") + fmt_tl("copies %d styles", (int)r.imported_styles.size());
+    if (!r.missing_styles.empty()) out += wxString::FromUTF8(" · ") + fmt_tl("%d styles missing", (int)r.missing_styles.size());
+    if (!r.imported_keys.empty()) out += wxString::FromUTF8(" · ") + _("copies extra data");
+    return out;
+}
+
 // ---- colours ----
 // Each kind of thing has a colour of its own: the line colours say what
 // changed (added green, removed red, modified blue); a decision is told by
@@ -339,12 +355,18 @@ class ComparePanel final : public ComparisonPage {
     FlatButton *prev, *next, *accept_current, *reject_current, *undo, *redo;
     FlatButton *accept_checked, *reject_checked, *accept_all, *reject_all, *finish;
     FlatCheck *check_all, *sync_box;
+    FlatButton *filter_button;
+    std::vector<std::pair<view::Category, FlatCheck*>> ignore_boxes;
+    bool filters_open = false;
+    wxBoxSizer *main_sizer, *chips, *select_group, *all_group;
+    wxStaticText *left_role, *right_role;
+    wxString chips_key;
     FlatSwitch *view_switch;
     std::vector<std::pair<std::optional<view::Category>, FlatButton*>> category_buttons;
     wxBoxSizer *filter_bar;
-    wxTextCtrl *report;
+    wxStaticText *report;
     wxStaticText *hint;
-    wxString default_hint, detail_hint;
+    wxString detail_hint;
     /// The changed fields of the current difference that have detail rows.
     std::vector<model::Field> DetailFields() const;
 
@@ -1309,7 +1331,9 @@ ComparePanel::ComparePanel(wxWindow* parent, agi::Context *c, SubtitleComparison
     auto project_file = c->subsController->Filename();
     project_name = project_file.empty() ? _("Untitled") : wxString(project_file.filename().wstring());
 
-    // Toolbar: navigation, actions on the current difference, view options, undo.
+    // Three bands round the panes: the toolbar, the pane headers, the foot.
+    // Toolbar: where you are, deciding the current difference, what is
+    // shown, how far the decisions have come, undo.
     auto bar = new wxBoxSizer(wxHORIZONTAL);
     theme::UseSurface(this);
     int gap = FromDIP(4);
@@ -1326,29 +1350,42 @@ ComparePanel::ComparePanel(wxWindow* parent, agi::Context *c, SubtitleComparison
         bar->Add(b, wxSizerFlags().Center().Border(wxRIGHT, gap));
         return b;
     };
-    prev = add(ID_PREV, _("Previous"), _("Previous difference (Shift+F7)"), "compare-prev", FlatGlyph::Up);
-    next = add(ID_NEXT, _("Next"), _("Next difference (F7)"), "compare-next", FlatGlyph::Down);
-    counter = new wxStaticText(this, -1, "", wxDefaultPosition, wxDefaultSize, wxST_NO_AUTORESIZE);
+    auto separator = [&] { bar->AddSpacer(3 * gap); };
+    prev = make(ID_PREV, {}, _("Previous difference (Shift+F7)"), "compare-prev", FlatGlyph::Up);
+    next = make(ID_NEXT, {}, _("Next difference (F7)"), "compare-next", FlatGlyph::Down);
+    counter = new wxStaticText(this, -1, "", wxDefaultPosition, wxDefaultSize, wxST_NO_AUTORESIZE | wxALIGN_CENTRE_HORIZONTAL);
     counter->SetName("compare-counter");
-    counter->SetMinSize(wxSize(GetTextExtent(_("Difference 9999 of 9999") + fmt_tl(" (%d in total)", 9999)).GetWidth() + 16, -1));
-    bar->Add(counter, wxSizerFlags().Center().Border(wxLEFT | wxRIGHT, 6));
+    counter->SetFont(GetFont().Bold());
+    counter->SetMinSize(wxSize(counter->GetTextExtent("9999 / 9999").GetWidth() + FromDIP(12), -1));
+    bar->Add(prev, wxSizerFlags().Center());
+    bar->Add(counter, wxSizerFlags().Center());
+    bar->Add(next, wxSizerFlags().Center());
+    separator();
     reject_current = add(ID_REJECT_CURRENT, _("Use &Left"), _("Take the left side of the current difference (Ctrl+Left)"), "compare-reject-current");
     accept_current = add(ID_ACCEPT_CURRENT, _("Use &Right"), _("Keep the right side of the current difference (Ctrl+Right)"), "compare-accept-current");
-    bar->AddStretchSpacer();
+    separator();
     view_switch = new FlatSwitch(this, {_("Differences only"), _("Everything")});
     view_switch->SetName("compare-view");
     view_switch->SetItemToolTip(0, _("Fold long runs of identical lines, keeping context around each difference"));
     view_switch->SetItemToolTip(1, _("Show every line"));
-    sync_box = new FlatCheck(this, _("Sync scrolling"));
-    sync_box->SetName("compare-sync"); sync_box->SetValue(true);
-    sync_box->SetToolTip(_("Scroll both sides together. When off, each side scrolls on its own and selecting a line locates it on the other side."));
-    auto swap = add(wxID_ANY, _("Swap Sides"),
-        _("Show the open subtitles on the other side. Decisions keep their effect on the open subtitles."), "compare-swap", FlatGlyph::Swap);
+    bar->Add(view_switch, wxSizerFlags().Center().Border(wxRIGHT, 2 * gap));
+    filter_button = add(wxID_ANY, _("Filter"), _("Show one kind of difference, leave fields out of the comparison, sync scrolling"), "compare-filter", FlatGlyph::Filter);
+    // What the filters do while their row is closed, each removable on its own.
+    chips = new wxBoxSizer(wxHORIZONTAL);
+    bar->Add(chips, wxSizerFlags().Center());
+    // The counts take what room is left, shortened with an ellipsis when
+    // the chips need it (the whole of them in the tooltip).
+    stats = new wxStaticText(this, -1, "", wxDefaultPosition, wxDefaultSize, wxST_NO_AUTORESIZE | wxST_ELLIPSIZE_END | wxALIGN_RIGHT);
+    stats->SetForegroundColour(flat::Colours(this).dim);
+    stats->SetName("compare-stats");
+    bar->Add(stats, wxSizerFlags(1).Center().Border(wxLEFT | wxRIGHT, 3 * gap));
     undo = add(ID_UNDO, {}, _("Undo the last decision (Ctrl+Z)"), "compare-undo", FlatGlyph::Undo);
-    redo = add(ID_REDO, {}, _("Redo (Ctrl+Y)"), "compare-redo", FlatGlyph::Redo);
+    redo = make(ID_REDO, {}, _("Redo (Ctrl+Y)"), "compare-redo", FlatGlyph::Redo);
+    bar->Add(redo, wxSizerFlags().Center());
 
-    // Filter bar: one category at a time, the chosen one in the accent
-    // colour, and field groups to leave out.
+    // The filters' row, under the toolbar while the Filter button is on: one
+    // category at a time, the chosen one in the accent colour, field groups
+    // to leave out, and the scrolling.
     filter_bar = new wxBoxSizer(wxHORIZONTAL);
     filter_bar->Add(flat::DimLabel(this, flat::WithoutColon(_("Show:"))), wxSizerFlags().Center().Border(wxRIGHT, 2 * gap));
     auto add_category = [&](std::optional<view::Category> category) {
@@ -1372,15 +1409,21 @@ ComparePanel::ComparePanel(wxWindow* parent, agi::Context *c, SubtitleComparison
             ApplyFilter();
         });
         filter_bar->Add(box, wxSizerFlags().Center().Border(wxRIGHT, 3 * gap));
+        ignore_boxes.emplace_back(group, box);
     }
-    // How much of the files to show, at the right of the filters.
     filter_bar->AddStretchSpacer();
-    filter_bar->Add(sync_box, wxSizerFlags().Center().Border(wxRIGHT, 3 * gap));
-    filter_bar->Add(view_switch, wxSizerFlags().Center());
+    sync_box = new FlatCheck(this, _("Sync scrolling"));
+    sync_box->SetName("compare-sync"); sync_box->SetValue(true);
+    sync_box->SetToolTip(_("Scroll both sides together. When off, each side scrolls on its own and selecting a line locates it on the other side."));
+    filter_bar->Add(sync_box, wxSizerFlags().Center());
 
-    // Pane titles and panes.
-    left_title = new wxStaticText(this, -1, "");
-    right_title = new wxStaticText(this, -1, "");
+    // Pane headers: each side's role and file, the swap between them.
+    auto swap = make(wxID_ANY, {}, _("Swap Sides") + ": " +
+        _("Show the open subtitles on the other side. Decisions keep their effect on the open subtitles."), "compare-swap", FlatGlyph::Swap);
+    left_role = flat::DimLabel(this, _("Base version"));
+    right_role = flat::DimLabel(this, _("Current version"));
+    left_title = new wxStaticText(this, -1, "", wxDefaultPosition, wxDefaultSize, wxST_ELLIPSIZE_MIDDLE);
+    right_title = new wxStaticText(this, -1, "", wxDefaultPosition, wxDefaultSize, wxST_ELLIPSIZE_MIDDLE);
     left_title->SetName("compare-left-title"); right_title->SetName("compare-right-title");
     auto bold = GetFont().Bold();
     left_title->SetFont(bold); right_title->SetFont(bold);
@@ -1391,82 +1434,103 @@ ComparePanel::ComparePanel(wxWindow* parent, agi::Context *c, SubtitleComparison
     auto right_header = new DiffHeader(this, *this, right);
     left->SetHeader(left_header);
     right->SetHeader(right_header);
+    int title_h = swap->GetBestSize().GetHeight() + 2 * gap;
+    auto title_row = [&](wxStaticText* role, wxStaticText* title) {
+        auto row = new wxBoxSizer(wxHORIZONTAL);
+        row->Add(role, wxSizerFlags().Center().Border(wxLEFT | wxRIGHT, 2 * gap));
+        row->Add(title, wxSizerFlags(1).Center());
+        row->SetMinSize(wxSize(-1, title_h));
+        return row;
+    };
 
-    // Batch actions.
+    // The foot: deciding many at once, what writing will do, and the
+    // buttons that end the comparison. Hovering over the panes' controls
+    // tells what they do where the summary is.
     check_all = new FlatCheck(this, _("Select all differences"));
     check_all->SetName("compare-check-all");
-    checked_count = flat::DimLabel(this, "");
+    checked_count = new wxStaticText(this, -1, "");
     checked_count->SetName("compare-checked-count");
+    checked_count->SetFont(GetFont().Bold());
     reject_checked = make(wxID_ANY, _("Use Left for Selected"), {}, "compare-reject-checked");
     accept_checked = make(wxID_ANY, _("Use Right for Selected"), {}, "compare-accept-checked");
-    reject_all = make(wxID_ANY, _("Use Left for All"), {}, "compare-reject-all");
-    accept_all = make(wxID_ANY, _("Use Right for All"), {}, "compare-accept-all");
-    auto batch = new wxBoxSizer(wxHORIZONTAL);
-    batch->Add(check_all, wxSizerFlags().Center().Border(wxRIGHT, 2 * gap));
-    batch->Add(checked_count, wxSizerFlags().Center().Border(wxRIGHT, 3 * gap));
-    batch->Add(reject_checked, wxSizerFlags().Center().Border(wxRIGHT, gap));
-    batch->Add(accept_checked, wxSizerFlags().Center());
-    batch->AddStretchSpacer();
-    stats = flat::DimLabel(this, "");
-    stats->SetName("compare-stats");
-    batch->Add(stats, wxSizerFlags().Center().Border(wxRIGHT, 3 * gap));
-    batch->Add(reject_all, wxSizerFlags().Center().Border(wxRIGHT, gap));
-    batch->Add(accept_all, wxSizerFlags().Center());
+    reject_all = make(wxID_ANY, _("Use Left for All"), _("Take the left side of every difference shown"), "compare-reject-all");
+    accept_all = make(wxID_ANY, _("Use Right for All"), _("Keep the right side of every difference shown"), "compare-accept-all");
+    // Selected ones or all of them: one pair of buttons at a time.
+    select_group = new wxBoxSizer(wxHORIZONTAL);
+    select_group->Add(checked_count, wxSizerFlags().Center().Border(wxRIGHT, 3 * gap));
+    select_group->Add(reject_checked, wxSizerFlags().Center().Border(wxRIGHT, gap));
+    select_group->Add(accept_checked, wxSizerFlags().Center());
+    all_group = new wxBoxSizer(wxHORIZONTAL);
+    all_group->Add(reject_all, wxSizerFlags().Center().Border(wxRIGHT, gap));
+    all_group->Add(accept_all, wxSizerFlags().Center());
 
-    report = new wxTextCtrl(this, -1, "", wxDefaultPosition, wxSize(-1, GetCharHeight() * 4), wxTE_MULTILINE | wxTE_READONLY);
+    report = new wxStaticText(this, -1, "", wxDefaultPosition, wxDefaultSize, wxST_NO_AUTORESIZE | wxST_ELLIPSIZE_END);
     report->SetName("compare-report");
+    hint = new wxStaticText(this, -1, "", wxDefaultPosition, wxDefaultSize, wxST_NO_AUTORESIZE | wxST_ELLIPSIZE_END);
+    hint->SetName("compare-hint");
+    hint->SetForegroundColour(pal.accent);
+    hint->Hide();
+    detail_hint = _("This line changed several fields, listed under it: Ctrl+Up/Down picks a field, Ctrl+Left takes the left side, Ctrl+Right keeps the right side.");
 
-    // The foot, as flat::DialogButtons lays out a dialog's: Cancel, then the
-    // button the page is for in the accent colour (first on Windows).
+    // Cancel, then the button the page is for in the accent colour (first
+    // on Windows), as flat::DialogButtons lays out a dialog's.
     finish = new FlatButton(this, "", wxID_OK, true);
     auto cancel = new FlatButton(this, "", wxID_CANCEL);
     for (auto b : {finish, cancel}) b->SetLeastSize(wxSize(FromDIP(76), FromDIP(28)));
     cancel->SetToolTip(_("End the comparison without writing to the subtitles"));
-    auto buttons = new wxBoxSizer(wxHORIZONTAL);
-    buttons->AddStretchSpacer();
-#ifdef __WXMSW__
-    buttons->Add(finish, wxSizerFlags().Border(wxRIGHT, FromDIP(6)));
-    buttons->Add(cancel);
-#else
-    buttons->Add(cancel, wxSizerFlags().Border(wxRIGHT, FromDIP(6)));
-    buttons->Add(finish);
-#endif
     finish->SetToolTip(_("Write the decisions to the open subtitles as one undoable change and end the comparison"));
 
+    auto foot = new wxBoxSizer(wxHORIZONTAL);
+    foot->Add(check_all, wxSizerFlags().Center().Border(wxRIGHT, 3 * gap));
+    foot->Add(select_group, wxSizerFlags().Center());
+    foot->Add(all_group, wxSizerFlags().Center());
+    foot->AddSpacer(5 * gap);
+    foot->Add(report, wxSizerFlags(1).Center());
+    foot->Add(hint, wxSizerFlags(1).Center());
+    foot->AddSpacer(3 * gap);
+#ifdef __WXMSW__
+    foot->Add(finish, wxSizerFlags().Center().Border(wxRIGHT, FromDIP(6)));
+    foot->Add(cancel, wxSizerFlags().Center());
+#else
+    foot->Add(cancel, wxSizerFlags().Center().Border(wxRIGHT, FromDIP(6)));
+    foot->Add(finish, wxSizerFlags().Center());
+#endif
+
     auto left_column = new wxBoxSizer(wxVERTICAL);
-    left_column->Add(left_title, wxSizerFlags().Border(wxLEFT | wxBOTTOM, 4));
+    left_column->Add(title_row(left_role, left_title), wxSizerFlags().Expand());
     left_column->Add(left_header, wxSizerFlags().Expand());
     left_column->Add(left, wxSizerFlags(1).Expand());
     auto right_column = new wxBoxSizer(wxVERTICAL);
-    right_column->Add(right_title, wxSizerFlags().Border(wxLEFT | wxBOTTOM, 4));
+    right_column->Add(title_row(right_role, right_title), wxSizerFlags().Expand());
     right_column->Add(right_header, wxSizerFlags().Expand());
     right_column->Add(right, wxSizerFlags(1).Expand());
     // The left column's width is set on resize so both sides show as much text.
-    // The gutter starts level with the panes, below the titles and headers.
+    // The gutter starts level with the panes, below the headers; the swap
+    // sits over it, between the files it swaps.
     auto gutter_column = new wxBoxSizer(wxVERTICAL);
-    gutter_column->AddSpacer(left_title->GetBestSize().GetHeight() + 4 + left_header->GetBestSize().GetHeight());
+    auto swap_row = new wxBoxSizer(wxHORIZONTAL);
+    swap_row->Add(swap, wxSizerFlags().Center());
+    swap_row->SetMinSize(wxSize(-1, title_h));
+    gutter_column->Add(swap_row, wxSizerFlags().Center());
+    gutter_column->AddSpacer(left_header->GetBestSize().GetHeight());
     gutter_column->Add(gutter, wxSizerFlags(1).Expand());
     auto panes = new wxBoxSizer(wxHORIZONTAL);
     panes->Add(left_column, wxSizerFlags().Expand());
     panes->Add(gutter_column, wxSizerFlags().Expand());
     panes->Add(right_column, wxSizerFlags(1).Expand());
 
-    default_hint = _("Use Left takes the left side, Use Right keeps the right side. Browsing and deciding never change the open subtitles: they change only when you click Write to Project, as one undoable step.");
-    hint = new wxStaticText(this, -1, default_hint, wxDefaultPosition, wxDefaultSize, wxST_NO_AUTORESIZE | wxST_ELLIPSIZE_END);
-    hint->SetName("compare-hint");
-    detail_hint = _("This line changed several fields, listed under it: Ctrl+Up/Down picks a field, Ctrl+Left takes the left side, Ctrl+Right keeps the right side.");
-    hint->SetForegroundColour(flat::Colours(this).dim);
-
-    auto main = new wxBoxSizer(wxVERTICAL);
-    main->Add(bar, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxTOP, 8));
-    main->Add(filter_bar, wxSizerFlags().Expand().Border(wxALL, 8));
-    main->Add(panes, wxSizerFlags(1).Expand().Border(wxLEFT | wxRIGHT, 8));
-    main->Add(batch, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxTOP, 8));
-    main->Add(hint, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxTOP, 8));
-    main->Add(report, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxTOP, 8));
-    main->Add(buttons, wxSizerFlags().Expand().Border(wxALL, 8));
+    main_sizer = new wxBoxSizer(wxVERTICAL);
+    main_sizer->Add(bar, wxSizerFlags().Expand().Border(wxALL, 8));
+    main_sizer->Add(filter_bar, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxBOTTOM, 8));
+    main_sizer->Add(panes, wxSizerFlags(1).Expand().Border(wxLEFT | wxRIGHT, 8));
+    main_sizer->Add(foot, wxSizerFlags().Expand().Border(wxALL, 8));
     SetName("compare-page");
-    SetSizer(main);
+    SetSizer(main_sizer);
+    filter_button->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+        filters_open = !filters_open;
+        UpdateFilterBar();
+        Layout();
+    });
 
     Measure();
     // The right pane also holds the check boxes, actions and overview ruler:
@@ -1531,7 +1595,7 @@ ComparePanel::ComparePanel(wxWindow* parent, agi::Context *c, SubtitleComparison
     // Follow the appearance while open.
     theme_changed = theme::AddChangeListener([this] {
         pal = make_palette();
-        hint->SetForegroundColour(field_cursor || hot >= 0 ? pal.accent : flat::Colours(this).dim);
+        hint->SetForegroundColour(pal.accent);
         UpdateTitles();
         for (auto w : {static_cast<wxWindow*>(left), static_cast<wxWindow*>(right), static_cast<wxWindow*>(gutter)}) w->Refresh(false);
         for (auto w : GetChildren()) if (dynamic_cast<DiffHeader*>(w)) w->Refresh(false);
@@ -1745,13 +1809,19 @@ wxString ComparePanel::Help(Part part, bool in_gutter, int row) const {
 }
 
 void ComparePanel::ShowHelp(Part part, bool in_gutter, int row) {
+    // What the pointed control does takes the summary's place in the foot
+    // for as long as it is pointed at; with detail rows open, the keys that
+    // decide them stay there while nothing is.
     auto text = Help(part, in_gutter, row);
-    // With detail rows open, the resting hint tells how to decide them by keyboard.
-    bool resting = text.empty();
-    if (resting) text = DetailFields().empty() ? default_hint : detail_hint;
-    if (hint->GetLabelText() == text) return;
-    hint->SetForegroundColour(resting ? flat::Colours(this).dim : pal.accent);
+    if (text.empty() && !DetailFields().empty()) text = detail_hint;
+    bool show = !text.empty();
+    if (hint->GetLabelText() == text && hint->IsShown() == show) return;
     hint->SetLabelText(text);
+    if (hint->IsShown() != show) {
+        hint->Show(show);
+        report->Show(!show);
+        hint->GetContainingSizer()->Layout();
+    }
 }
 
 bool ComparePanel::ChunkStart(int row) const {
@@ -1770,10 +1840,11 @@ bool ComparePanel::ChunkEnd(int row) const {
 }
 
 void ComparePanel::UpdateTitles() {
+    // The file's name, and on the open subtitles' side what writing changes.
     auto project_tag = wxString::FromUTF8("  ·  ") + _("target project");
     bool project_right = state.ProjectSide() == Side::Right;
-    left_title->SetLabel(fmt_tl("Original (base): %s", project_right ? file_name : project_name) + (project_right ? wxString() : project_tag));
-    right_title->SetLabel(fmt_tl("Modified (current): %s", project_right ? project_name : file_name) + (project_right ? project_tag : wxString()));
+    left_title->SetLabel(project_right ? file_name : project_name + project_tag);
+    right_title->SetLabel(project_right ? project_name + project_tag : file_name);
     left_title->SetForegroundColour(project_right ? wxNullColour : pal.accent);
     right_title->SetForegroundColour(project_right ? pal.accent : wxNullColour);
 }
@@ -1785,13 +1856,47 @@ void ComparePanel::UpdateFilterBar() {
         if (auto category = state.CategoryOf(e, filter.ignored)) { ++counts[*category]; ++all; }
     }
     bool changed = false;
+    // Categories with nothing to show are left out. Showing a button shows
+    // it whatever its row, so the row is shown or hidden first and the
+    // buttons only while it is open.
+    if (main_sizer->IsShown(filter_bar) != filters_open) changed = true;
+    main_sizer->Show(filter_bar, filters_open);
     for (auto& [category, button] : category_buttons) {
         int n = category ? counts[*category] : all;
         auto label = (category ? category_label(*category) : _("All")) + wxString::Format(" %d", n);
         if (button->GetLabel() != label) { button->SetLabel(label); changed = true; }
         button->SetAccent(filter.category == category);
-        bool show = !category || n > 0 || filter.category == category;
+        bool show = filters_open && (!category || n > 0 || filter.category == category);
         if (button->IsShown() != show) { button->Show(show); changed = true; }
+    }
+    filter_button->SetAccent(filters_open);
+    // While the filters' row is closed, what it sets shows next to its
+    // button, each with a click to take it off.
+    std::vector<std::pair<wxString, std::function<void()>>> active;
+    if (!filters_open) {
+        if (filter.category) active.emplace_back(category_label(*filter.category), [this] { filter.category.reset(); });
+        for (auto [group, box] : ignore_boxes) {
+            if (!(filter.ignored & view::CategoryFields(group))) continue;
+            active.emplace_back(fmt_tl("Ignoring %s", group_label(group)), [this, group, box] {
+                filter.ignored &= ~view::CategoryFields(group);
+                box->SetValue(false);
+            });
+        }
+    }
+    wxString key;
+    for (auto const& a : active) key += a.first + "\n";
+    if (key != chips_key) {
+        chips_key = key;
+        chips->Clear(true);
+        for (auto& [label, clear] : active) {
+            auto chip = new FlatButton(this, label + wxString::FromUTF8("  ×"));
+            chip->SetToolTip(_("Take this filter off"));
+            chip->SetLeastSize(wxSize(-1, FromDIP(26)));
+            // Rebuilding the chips destroys this one: after its click is done.
+            chip->Bind(wxEVT_BUTTON, [this, clear](wxCommandEvent&) { clear(); CallAfter([this] { ApplyFilter(); }); });
+            chips->Add(chip, wxSizerFlags().Center().Border(wxRIGHT, FromDIP(4)));
+        }
+        changed = true;
     }
     if (changed) Layout();
 }
@@ -1799,16 +1904,26 @@ void ComparePanel::UpdateFilterBar() {
 void ComparePanel::Changed() {
     size_t total = shown.size();
     auto index = CurrentIndex();
-    wxString count = index ? fmt_tl("Difference %d of %d", (int)*index + 1, (int)total) : fmt_tl("%d differences", (int)total);
-    if (filter.Active()) count += fmt_tl(" (%d in total)", (int)state.Diffs().size());
-    counter->SetLabel(count);
-    stats->SetLabel(fmt_tl("%d pending, %d left side, %d right side, %d partial",
+    // "3 / 14": where the current difference is among those shown.
+    counter->SetLabel(index ? wxString::Format("%d / %d", (int)*index + 1, (int)total) : wxString::Format("%d", (int)total));
+    wxString where = index ? fmt_tl("Difference %d of %d", (int)*index + 1, (int)total) : fmt_tl("%d differences", (int)total);
+    if (filter.Active()) where += fmt_tl(" (%d in total)", (int)state.Diffs().size());
+    counter->SetToolTip(where);
+    stats->SetLabel(fmt_tl("%d pending · %d left · %d right · %d partial",
         (int)state.Count(Decision::Pending), (int)state.Count(Decision::Rejected),
         (int)state.Count(Decision::Accepted), (int)state.Count(Decision::Partial)));
+    stats->SetToolTip(stats->GetLabel());
     size_t checked = 0;
     for (auto e : state.CheckedEntries()) checked += ShownDiff(e);
     checked_count->SetLabel(fmt_tl("%d selected", (int)checked));
     check_all->SetValue(total && checked == total);
+    // Buttons for the selected ones while there are any, else for all shown.
+    auto foot = check_all->GetContainingSizer();
+    if (foot->IsShown(select_group) != (checked > 0) || foot->IsShown(all_group) != (checked == 0)) {
+        foot->Show(select_group, checked > 0);
+        foot->Show(all_group, checked == 0);
+        foot->Layout();
+    }
     accept_checked->Enable(checked > 0);
     reject_checked->Enable(checked > 0);
     accept_all->Enable(total > 0); reject_all->Enable(total > 0);
@@ -1821,18 +1936,23 @@ void ComparePanel::Changed() {
 
     auto choices = state.Choices();
     if (choices.empty()) {
-        report->SetValue(state.Count(Decision::Pending)
+        report->SetLabelText(state.Count(Decision::Pending)
             ? _("No decision changes the open subtitles yet. Pending differences leave them as they are.")
             : _("The decisions leave the open subtitles as they are."));
+        report->SetToolTip(report->GetLabelText());
+        report->SetForegroundColour(flat::Colours(this).dim);
         finish->SetLabel(_("&Done"));
         finish->Enable(true);
     }
     else {
         auto r = c->subsController->CheckApply(comparison, choices);
-        report->SetValue(describe(r));
+        report->SetLabelText(summarize(r));
+        report->SetToolTip(describe(r));
+        report->SetForegroundColour(r.Ok() ? flat::Colours(this).text : pal.del_mark);
         finish->SetLabel(fmt_tl("&Write to Project (%d)", (int)choices.size()));
         finish->Enable(r.Ok());
     }
+    report->Refresh();
     finish->GetContainingSizer()->Layout();
     // The resting hint follows the current difference (keys for its detail rows).
     if (!field_cursor && hot < 0) ShowHelp(Part::None, false, -1);
@@ -2068,7 +2188,13 @@ void ComparePanel::OnFinish() {
         End(false);
         return;
     }
-    if (!r.Ok()) { report->SetValue(describe(r)); finish->Enable(false); return; }
+    if (!r.Ok()) {
+        report->SetLabelText(summarize(r));
+        report->SetToolTip(describe(r));
+        report->SetForegroundColour(pal.del_mark);
+        finish->Enable(false);
+        return;
+    }
     End(true);
 }
 

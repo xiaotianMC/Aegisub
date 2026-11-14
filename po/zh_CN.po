@@ -8255,6 +8255,48 @@ msgstr "同步滚动"
 msgid "Scroll both sides together. When off, each side scrolls on its own and selecting a line locates it on the other side."
 msgstr "两侧一起滚动。关闭后两侧各自滚动，选中一行时会在另一侧定位到对应行。"
 
+msgid "Filter"
+msgstr "筛选"
+
+msgid "Show one kind of difference, leave fields out of the comparison, sync scrolling"
+msgstr "只显示一类差异、不比较某些字段、同步滚动"
+
+msgid "Ignoring %s"
+msgstr "忽略%s"
+
+msgid "Take this filter off"
+msgstr "去掉这个筛选条件"
+
+msgid "Base version"
+msgstr "基准版本"
+
+msgid "Current version"
+msgstr "当前版本"
+
+msgid "Take the left side of every difference shown"
+msgstr "所有显示的差异都采用左侧内容"
+
+msgid "Keep the right side of every difference shown"
+msgstr "所有显示的差异都保留右侧内容"
+
+msgid "Cannot write: %s"
+msgstr "无法写入：%s"
+
+msgid " (+%d more)"
+msgstr "（另有 %d 条）"
+
+msgid "Writing changes %d lines, adds %d, removes %d"
+msgstr "写入将修改 %d 行，新增 %d 行，删除 %d 行"
+
+msgid "copies %d styles"
+msgstr "复制 %d 个样式"
+
+msgid "%d styles missing"
+msgstr "缺少 %d 个样式"
+
+msgid "copies extra data"
+msgstr "复制附加数据"
+
 msgid "Swap Sides"
 msgstr "交换左右"
 
@@ -8290,9 +8332,6 @@ msgstr "全部用右侧"
 
 msgid "Write the decisions to the open subtitles as one undoable change and end the comparison"
 msgstr "把决定作为一次可撤销的修改写入当前字幕，并结束比较"
-
-msgid "Use Left takes the left side, Use Right keeps the right side. Browsing and deciding never change the open subtitles: they change only when you click Write to Project, as one undoable step."
-msgstr "“用左侧”采用左侧内容，“用右侧”保留右侧内容。浏览和决定都不会修改当前字幕：只有点击“写入工程”时才会写入，并作为一次可撤销的修改。"
 
 msgid "Take the left side. Click again to reset."
 msgstr "采用左侧内容。再次点击重置。"
@@ -8399,12 +8438,6 @@ msgstr "%s：Ctrl+← 采用左侧，Ctrl+→ 保留右侧，Esc 退出字段选
 msgid "target project"
 msgstr "目标工程"
 
-msgid "Original (base): %s"
-msgstr "基准版本：%s"
-
-msgid "Modified (current): %s"
-msgstr "当前版本：%s"
-
 msgid "No difference selected."
 msgstr "未选中差异。"
 
@@ -8423,8 +8456,8 @@ msgstr "第 %d / %d 处差异"
 msgid "%d differences"
 msgstr "共 %d 处差异"
 
-msgid "%d pending, %d left side, %d right side, %d partial"
-msgstr "待处理 %d · 用左侧 %d · 用右侧 %d · 部分采用 %d"
+msgid "%d pending · %d left · %d right · %d partial"
+msgstr "待处理 %d · 左 %d · 右 %d · 部分 %d"
 
 msgid "%d selected"
 msgstr "已勾选 %d 处"

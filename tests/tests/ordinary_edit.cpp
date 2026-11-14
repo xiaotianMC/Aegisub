@@ -6681,9 +6681,15 @@ wxString Label(wxWindow* dialog, char const* name) {
     auto w = Named(dialog, name);
     return w ? w->GetLabel() : wxString();
 }
+// The foot's one-line summary, then the whole report its tooltip holds.
 wxString Report(wxWindow* dialog) {
-    auto t = Named<wxTextCtrl>(dialog, "compare-report");
-    return t ? t->GetValue() : wxString();
+    auto t = Named<wxStaticText>(dialog, "compare-report");
+    return t ? t->GetLabelText() + "\n" + t->GetToolTipText() : wxString();
+}
+// Where the current difference is, then the counter's tooltip saying it in words.
+wxString Counter(wxWindow* dialog) {
+    auto t = Named(dialog, "compare-counter");
+    return t ? t->GetLabel() + " | " + t->GetToolTipText() : wxString();
 }
 // Open the comparison tab for @p path and settle it with the active hook.
 // True if the comparison ended by writing to the subtitles.
@@ -6711,12 +6717,12 @@ TEST_F(ordinary_edit, compare_window_writes_decisions_as_one_undo_step) {
     wxString counter, finish_first, report, stats;
     CompareHook hook([&](wxWindow* dialog) {
         writer_blocked = !c->subtitleAccess->TryWrite();
-        counter = Label(dialog, "compare-counter");
+        counter = Counter(dialog);
         finish_first = dialog->FindWindow(wxID_OK)->GetLabel();
         EXPECT_NE(wxNOT_FOUND, Label(dialog, "compare-right-title").Find("target project"));
         Press(dialog, "compare-reject-current");          // restore the file's text
         Press(dialog, "compare-next");
-        EXPECT_EQ("Difference 2 of 2", Label(dialog, "compare-counter"));
+        EXPECT_EQ("2 / 2 | Difference 2 of 2", Counter(dialog));
         Press(dialog, "compare-reject-current");          // restore the file's line
         unchanged_while_deciding = LiveTexts(*c) == std::vector<std::string>{"current"};
         report = Report(dialog);
@@ -6726,10 +6732,11 @@ TEST_F(ordinary_edit, compare_window_writes_decisions_as_one_undo_step) {
     EXPECT_TRUE(RunCompare(c.get(), path));
     EXPECT_EQ(1, hook.shown); EXPECT_TRUE(hook.messages.empty());
     EXPECT_TRUE(writer_blocked); EXPECT_TRUE(unchanged_while_deciding);
-    EXPECT_EQ("Difference 1 of 2", counter);
+    EXPECT_EQ("1 / 2 | Difference 1 of 2", counter);
     EXPECT_EQ("Done", wxStripMenuCodes(finish_first));
+    EXPECT_TRUE(report.StartsWith("Writing changes 1 lines, adds 1, removes 0\n")) << report;
     EXPECT_NE(wxNOT_FOUND, report.Find("1 lines modified, 1 added, 0 removed")) << report;
-    EXPECT_EQ("0 pending, 2 left side, 0 right side, 0 partial", stats);
+    EXPECT_EQ(wxString::FromUTF8("0 pending · 2 left · 0 right · 0 partial"), stats);
     EXPECT_EQ((std::vector<std::string>{"from baseline", "added"}), LiveTexts(*c));
     EXPECT_EQ(id, LiveRead(*c).Events.front().Id);
     EXPECT_EQ("apply comparison", c->subsController->GetUndoDescription());
@@ -6800,7 +6807,7 @@ TEST_F(ordinary_edit, compare_window_takes_only_the_chosen_fields) {
     });
     EXPECT_TRUE(RunCompare(c.get(), path));
     EXPECT_LT(text_y, actor_y); // in field order, text first
-    EXPECT_EQ("0 pending, 0 left side, 0 right side, 1 partial", stats);
+    EXPECT_EQ(wxString::FromUTF8("0 pending · 0 left · 0 right · 1 partial"), stats);
     EXPECT_EQ("current", LiveRead(*c).Events.front().Text.get());
     EXPECT_EQ("baseline actor", LiveRead(*c).Events.front().Actor.get());
 }
@@ -6838,10 +6845,10 @@ TEST_F(ordinary_edit, compare_window_decides_detail_fields_by_keyboard) {
     EXPECT_TRUE(first.StartsWith("Text: Ctrl+Left")) << first;
     EXPECT_TRUE(second.StartsWith("Actor: Ctrl+Left")) << second;
     EXPECT_EQ(second, clamped);
-    EXPECT_EQ("0 pending, 0 left side, 0 right side, 1 partial", after_left);
+    EXPECT_EQ(wxString::FromUTF8("0 pending · 0 left · 0 right · 1 partial"), after_left);
     EXPECT_EQ(resting, after_escape);
     EXPECT_TRUE(still_open);
-    EXPECT_EQ("0 pending, 0 left side, 1 right side, 0 partial", whole);
+    EXPECT_EQ(wxString::FromUTF8("0 pending · 0 left · 1 right · 0 partial"), whole);
     EXPECT_EQ(after_left, undone);
     EXPECT_EQ("current", LiveRead(*c).Events.front().Text.get());
     EXPECT_EQ("baseline actor", LiveRead(*c).Events.front().Actor.get());
@@ -6864,31 +6871,32 @@ TEST_F(ordinary_edit, compare_window_filters_by_category_and_leaves_ignored_fiel
             auto b = Named<FlatCheck>(dialog, name); ASSERT_NE(nullptr, b);
             if (b->GetValue() != value) b->Toggle();
         };
-        all_counter = Label(dialog, "compare-counter");
+        Press(dialog, "compare-filter");                 // the filters' row
+        all_counter = Counter(dialog);
         EXPECT_EQ("Time only 1", Named<FlatButton>(dialog, "compare-category-Time")->GetLabel());
         EXPECT_FALSE(Named<FlatButton>(dialog, "compare-category-Text")->IsShown()); // nothing of that kind
         // Only the time change: Reject All covers just what is shown.
         toggle("compare-category-Time");
-        time_counter = Label(dialog, "compare-counter");
+        time_counter = Counter(dialog);
         Press(dialog, "compare-reject-all");
         time_stats = Label(dialog, "compare-stats");
         Press(dialog, "compare-undo");
         // Ignoring times instead: the time change is no longer a difference.
         toggle("compare-category-all");
         check("compare-ignore-Time", true);
-        ignored_counter = Label(dialog, "compare-counter");
+        ignored_counter = Counter(dialog);
         time_hidden = !Named<FlatButton>(dialog, "compare-category-Time")->IsShown();
         Press(dialog, "compare-reject-all");
         ignored_stats = Label(dialog, "compare-stats");
         button(dialog->FindWindow(wxID_OK), wxID_OK);
     });
     EXPECT_TRUE(RunCompare(c.get(), path));
-    EXPECT_EQ("Difference 1 of 2", all_counter);
-    EXPECT_EQ("Difference 1 of 1 (2 in total)", time_counter);
-    EXPECT_EQ("1 pending, 1 left side, 0 right side, 0 partial", time_stats);
-    EXPECT_EQ("Difference 1 of 1 (2 in total)", ignored_counter);
+    EXPECT_EQ("1 / 2 | Difference 1 of 2", all_counter);
+    EXPECT_EQ("1 / 1 | Difference 1 of 1 (2 in total)", time_counter);
+    EXPECT_EQ(wxString::FromUTF8("1 pending · 1 left · 0 right · 0 partial"), time_stats);
+    EXPECT_EQ("1 / 1 | Difference 1 of 1 (2 in total)", ignored_counter);
     EXPECT_TRUE(time_hidden);
-    EXPECT_EQ("1 pending, 1 left side, 0 right side, 0 partial", ignored_stats);
+    EXPECT_EQ(wxString::FromUTF8("1 pending · 1 left · 0 right · 0 partial"), ignored_stats);
     ASSERT_EQ(2u, hook.messages.size());
     EXPECT_NE(wxNOT_FOUND, hook.messages[0].Find("the 1 differences shown")) << hook.messages[0];
     EXPECT_NE(wxNOT_FOUND, hook.messages[1].Find("Ignored fields keep their current choice: Start, End")) << hook.messages[1];
@@ -6921,7 +6929,7 @@ TEST_F(ordinary_edit, compare_window_shows_refusals_and_batch_actions_confirm_th
     });
     EXPECT_FALSE(RunCompare(c.get(), path));
     EXPECT_TRUE(disabled); EXPECT_TRUE(enabled_after_all); EXPECT_TRUE(undone);
-    EXPECT_NE(wxNOT_FOUND, report.Find("Bound lines must be applied together")) << report;
+    EXPECT_TRUE(report.StartsWith("Cannot write: Bound lines must be applied together")) << report;
     ASSERT_EQ(1u, hook.messages.size());
     EXPECT_NE(wxNOT_FOUND, hook.messages[0].Find("all 2 differences")) << hook.messages[0];
     EXPECT_NE(wxNOT_FOUND, hook.messages[0].Find("1 of them will change")) << hook.messages[0];
@@ -6972,7 +6980,7 @@ TEST_F(ordinary_edit, compare_page_is_drawn_flat_buttons_checks_and_a_view_switc
     EXPECT_FALSE(RunCompare(c.get(), path));
     EXPECT_FALSE(system_controls); EXPECT_TRUE(finish_accent);
     EXPECT_TRUE(everything); EXPECT_TRUE(sync_off);
-    EXPECT_EQ("0 pending, 0 left side, 1 right side, 0 partial", stats);
+    EXPECT_EQ(wxString::FromUTF8("0 pending · 0 left · 1 right · 0 partial"), stats);
 }
 TEST_F(ordinary_edit, compare_command_refuses_while_editing_and_reports_unreadable_files) {
     CompareHook hook(nullptr);
@@ -7025,11 +7033,11 @@ TEST_F(ordinary_edit, compare_tab_locks_the_editor_until_the_comparison_ends) {
     // Its own shortcuts work there, and no key goes on to the main window.
     auto pane = page->FindWindow("compare-right"); ASSERT_NE(nullptr, pane);
     Press(page, "compare-reject-current");
-    EXPECT_EQ("0 pending, 1 left side, 0 right side, 0 partial", Label(page, "compare-stats"));
+    EXPECT_EQ(wxString::FromUTF8("0 pending · 1 left · 0 right · 0 partial"), Label(page, "compare-stats"));
     key(pane, 'Z', wxMOD_CONTROL);
-    EXPECT_EQ("1 pending, 0 left side, 0 right side, 0 partial", Label(page, "compare-stats"));
+    EXPECT_EQ(wxString::FromUTF8("1 pending · 0 left · 0 right · 0 partial"), Label(page, "compare-stats"));
     key(pane, 'Y', wxMOD_CONTROL);
-    EXPECT_EQ("0 pending, 1 left side, 0 right side, 0 partial", Label(page, "compare-stats"));
+    EXPECT_EQ(wxString::FromUTF8("0 pending · 1 left · 0 right · 0 partial"), Label(page, "compare-stats"));
     key(pane, 'S', wxMOD_CONTROL);
     EXPECT_EQ(1, frame_keys);
 

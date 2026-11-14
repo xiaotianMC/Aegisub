@@ -1154,6 +1154,7 @@ void draw_glyph(wxGraphicsContext *gc, FlatGlyph glyph, wxPoint2DDouble origin, 
 			path.AddLineToPoint(at(7, 13.5));
 			break;
 		}
+		case FlatGlyph::Filter: polyline({{2.5, 3.5}, {13.5, 3.5}, {9.3, 8.5}, {9.3, 12.5}, {6.7, 13.5}, {6.7, 8.5}, {2.5, 3.5}}); break;
 		case FlatGlyph::Swap:
 			polyline({{3, 5.5}, {13, 5.5}});
 			polyline({{10.5, 3}, {13, 5.5}, {10.5, 8}});

@@ -305,7 +305,7 @@ public:
 };
 
 /// Line icons a FlatButton can draw before its words, in the words' colour.
-enum class FlatGlyph { None, Up, Down, Undo, Redo, Swap };
+enum class FlatGlyph { None, Up, Down, Undo, Redo, Swap, Filter };
 
 /// A drawn button with words on it, as the animation page's are: a rounded
 /// field, a shade darker under the pointer. Sends wxEVT_BUTTON as wxButton
