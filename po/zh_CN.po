@@ -11202,3 +11202,378 @@ msgstr "上一行并跳转视频"
 #: ../src/command/video.cpp
 msgid "Move to the previous subtitle line and jump the video to its start"
 msgstr "转到上一行字幕，视频跳到它的开头"
+
+msgid "The subtitle or its dependencies changed. Select the line again to restart."
+msgstr "字幕或其依赖已变化。请重新选择该行以重新开始。"
+
+msgid "The subtitles changed while this style was being edited. Please reopen the style editor."
+msgstr "编辑此样式期间字幕已变化。请重新打开样式编辑器。"
+
+msgid "The style being edited no longer exists."
+msgstr "正在编辑的样式已不存在。"
+
+msgid "Analysing the video..."
+msgstr "正在分析视频..."
+
+msgid "Reading the subtitles' text..."
+msgstr "正在识别字幕文字..."
+
+msgid "Writing the result..."
+msgstr "正在写入结果..."
+
+msgid "ElevenLabs did not accept the API key."
+msgstr "ElevenLabs 不接受此 API 密钥。"
+
+msgid "The ElevenLabs account's plan does not allow this."
+msgstr "该 ElevenLabs 账户的套餐不支持此操作。"
+
+msgid "ElevenLabs found the audio too large."
+msgstr "ElevenLabs 认为音频太大。"
+
+msgid "ElevenLabs refused how the request was made."
+msgstr "ElevenLabs 拒绝了此请求的格式。"
+
+msgid "ElevenLabs is taking too many requests from this account: wait a while."
+msgstr "此账户向 ElevenLabs 发出的请求过多，请稍后再试。"
+
+msgid "ElevenLabs answered %d."
+msgstr "ElevenLabs 返回了 %d。"
+
+msgid "Waiting for ElevenLabs to hear it through..."
+msgstr "正在等待 ElevenLabs 听写完成..."
+
+msgid "Could not reach ElevenLabs: %s."
+msgstr "无法连接 ElevenLabs：%s。"
+
+msgid "Could not reach ElevenLabs through the proxy %s: %s."
+msgstr "无法通过代理 %s 连接 ElevenLabs：%s。"
+
+msgid "This build of Aegisub has no libcurl, so nothing can be sent to ElevenLabs."
+msgstr "此版本的 Aegisub 没有 libcurl，无法向 ElevenLabs 发送任何内容。"
+
+msgid "There is no command to run."
+msgstr "没有要运行的命令。"
+
+msgid "There is no program %s to run: is it installed and on the path?"
+msgstr "找不到要运行的程序 %s：它是否已安装并在 PATH 中？"
+
+msgid "Could not start %s."
+msgstr "无法启动 %s。"
+
+msgid "Transcription"
+msgstr "听写"
+
+msgid "ElevenLabs Scribe, over the net"
+msgstr "ElevenLabs Scribe（联网）"
+
+msgid "A program of your own, run here"
+msgstr "自己的程序（在本机运行）"
+
+msgid "Heard by"
+msgstr "听写方式"
+
+msgid "Transcribe the Audio sends the audio to ElevenLabs, which charges by its length, or runs the command below and reads the JSON it writes"
+msgstr "“听写音频”会把音频发给 ElevenLabs（按时长计费），或者运行下面的命令并读取它写出的 JSON"
+
+msgid "The code of what is spoken: ja, zh, en...; empty to have it detected"
+msgstr "所说语言的代码：ja、zh、en……；留空则自动检测"
+
+msgid "Other languages among it"
+msgstr "夹杂的其他语言"
+
+msgid "Codes, separated by commas, of languages mixed into the speech, such as English words in Japanese (ElevenLabs)"
+msgstr "语音中夹杂的语言代码，用逗号分隔，例如日语里的英语单词（ElevenLabs）"
+
+msgid "Tell the speakers apart"
+msgstr "区分说话人"
+
+msgid "Each line's speaker goes in its Actor field (ElevenLabs)"
+msgstr "每行的说话人写入其“说话人”栏（ElevenLabs）"
+
+msgid "Give the names in the Actor fields as terms to recognise"
+msgstr "把“说话人”栏里的名字作为识别关键词"
+
+msgid "Names the recogniser is told of are heard right more often (ElevenLabs)"
+msgstr "事先告知识别器的名字更容易被听对（ElevenLabs）"
+
+msgid "Other terms to recognise"
+msgstr "其他识别关键词"
+
+msgid "Names and words easily misheard, separated by commas; 100 terms at most in all (ElevenLabs)"
+msgstr "容易听错的名字和词语，用逗号分隔；总共最多 100 个（ElevenLabs）"
+
+msgid "ElevenLabs model"
+msgstr "ElevenLabs 模型"
+
+msgid "scribe_v3; or scribe_v2, the one before"
+msgstr "scribe_v3；或上一代的 scribe_v2"
+
+msgid "Set..."
+msgstr "设置..."
+
+msgid "Forget"
+msgstr "清除"
+
+msgid "From the ELEVENLABS_API_KEY environment variable"
+msgstr "来自环境变量 ELEVENLABS_API_KEY"
+
+msgid "Kept until Aegisub is closed: this machine has no keychain"
+msgstr "保留到 Aegisub 关闭：此计算机没有钥匙串"
+
+msgid "Kept in the system's keychain, once set"
+msgstr "设置后保存在系统钥匙串中"
+
+msgid "Asked for each time: this machine has no keychain"
+msgstr "每次询问：此计算机没有钥匙串"
+
+msgid "Enter your ElevenLabs API key, from the API keys page of elevenlabs.io."
+msgstr "请输入 ElevenLabs API 密钥，可在 elevenlabs.io 的 API keys 页面获取。"
+
+msgid "It is kept in the system's keychain."
+msgstr "它会保存在系统钥匙串中。"
+
+msgid "This machine has no keychain Aegisub can use, so it is kept only until Aegisub is closed."
+msgstr "此计算机没有 Aegisub 可用的钥匙串，因此只保留到 Aegisub 关闭。"
+
+msgid "ElevenLabs API key"
+msgstr "ElevenLabs API 密钥"
+
+msgid "Asked for when the audio is first sent, if not set here. The ELEVENLABS_API_KEY environment variable, when set, is used over anything kept"
+msgstr "如果这里没有设置，首次发送音频时会询问。设置了环境变量 ELEVENLABS_API_KEY 时，优先使用它"
+
+msgid "Ask before sending audio"
+msgstr "发送音频前询问"
+
+msgid "Say how long the audio is and that it leaves this computer, and ask, each time before sending it to ElevenLabs"
+msgstr "每次发送到 ElevenLabs 之前，说明音频时长及其将离开本机，并征求确认"
+
+msgid "Run with {media} the audio or video file, {out} an empty folder to write a JSON file with each word's times to, and {language} the language above; a part in [brackets] is left out when its value is empty"
+msgstr "运行时 {media} 为音频或视频文件，{out} 为一个空文件夹（程序在其中写出带每个词时间的 JSON 文件），{language} 为上面的语言；[方括号] 中的部分在其值为空时省略"
+
+msgid "The attachment \"%s\" was not extracted because its filename is unsafe."
+msgstr "附件“%s”的文件名不安全，未导出。"
+
+msgid "Attachment not extracted"
+msgstr "附件未导出"
+
+msgid "The file \"%s\" already exists. Do you want to replace it?"
+msgstr "文件“%s”已存在。要替换它吗？"
+
+msgid "Replace existing file?"
+msgstr "替换现有文件？"
+
+msgid "The subtitle project changed or editing is unavailable. Video properties were not applied."
+msgstr "字幕项目已变化或当前无法编辑，视频属性未应用。"
+
+msgid "Video Properties"
+msgstr "视频属性"
+
+msgid "Var&iable"
+msgstr "可变(&I)"
+
+msgid "Recent files"
+msgstr "最近打开的文件"
+
+msgid "Backup of original file"
+msgstr "原文件的备份"
+
+msgid "Subtitle open notification"
+msgstr "字幕打开通知"
+
+msgid "Saving after the change failed: "
+msgstr "更改后保存失败："
+
+msgid "apply comparison"
+msgstr "应用比较"
+
+msgid "Cannot reload Automation script \"%s\" while one of its macros is running."
+msgstr "自动化脚本“%s”的宏正在运行，无法重新载入。"
+
+msgid "Macro \"%s\" is already running."
+msgstr "宏“%s”已在运行。"
+
+msgid "Cannot run macro \"%s\": %s"
+msgstr "无法运行宏“%s”：%s"
+
+msgid "The result of macro \"%s\" was discarded: %s"
+msgstr "宏“%s”的结果已丢弃：%s"
+
+msgid "The list of loaded automation scripts was not stored in the subtitles because they are being compared."
+msgstr "字幕正在比较中，已载入的自动化脚本列表未保存到字幕。"
+
+msgid "The subtitles or their dependencies changed. Start again before applying."
+msgstr "字幕或其依赖已变化。请重新开始后再应用。"
+
+msgid "Files cannot be opened or closed while the editor is still updating. Try again."
+msgstr "编辑器仍在更新，暂时无法打开或关闭文件。请重试。"
+
+msgid "The subtitles are being compared. Finish the comparison before opening or closing files."
+msgstr "字幕正在比较中。请先完成比较，再打开或关闭文件。"
+
+msgid "The subtitles were opened, but some follow-up steps failed:"
+msgstr "字幕已打开，但部分后续步骤失败："
+
+msgid "Error closing subtitles"
+msgstr "关闭字幕时出错"
+
+msgid "The subtitles were closed, but some follow-up steps failed:"
+msgstr "字幕已关闭，但部分后续步骤失败："
+
+msgid "Load linked AviSynth script?"
+msgstr "载入链接的 AviSynth 脚本？"
+
+msgid "Trust author && load"
+msgstr "信任作者并载入"
+
+msgid "Do not load"
+msgstr "不载入"
+
+msgid "Error closing audio"
+msgstr "关闭音频时出错"
+
+msgid "Error closing video"
+msgstr "关闭视频时出错"
+
+msgid "Error closing timecodes"
+msgstr "关闭时间码文件时出错"
+
+msgid "Error closing keyframes"
+msgstr "关闭关键帧时出错"
+
+msgid "This build of Aegisub was made without a keychain."
+msgstr "此版本的 Aegisub 编译时未带钥匙串支持。"
+
+msgid "Make lines from what WhisperX, faster-whisper or ElevenLabs Scribe heard, a sentence a line: their JSON with each word's times, timed to the scene changes if they are known"
+msgstr "把 WhisperX、faster-whisper 或 ElevenLabs Scribe 的识别结果做成字幕，一句一行：读取带每个词时间的 JSON，已知镜头切换时对齐到镜头切换"
+
+msgid "&Transcribe the Audio..."
+msgstr "听写音频(&T)..."
+
+msgid "Transcribe the Audio"
+msgstr "听写音频"
+
+msgid "Have the audio heard through, by ElevenLabs Scribe or a program of your own, and make a line of each sentence, timed to the scene changes if they are known"
+msgstr "用 ElevenLabs Scribe 或自己的程序听写音频，每句做成一行，已知镜头切换时对齐到镜头切换"
+
+msgid "This build of Aegisub has no libcurl, so nothing can be sent to ElevenLabs. Set a program of your own to run in Preferences, Audio, Transcription."
+msgstr "此版本的 Aegisub 没有 libcurl，无法向 ElevenLabs 发送任何内容。请在 首选项 > 音频 > 听写 中设置自己的程序。"
+
+msgid "To give it another way, set the ELEVENLABS_API_KEY environment variable."
+msgstr "也可以通过设置环境变量 ELEVENLABS_API_KEY 来提供。"
+
+msgid "Send %s of audio, %s, to ElevenLabs to hear?"
+msgstr "把 %s 长的音频“%s”发送给 ElevenLabs 听写？"
+
+msgid "The audio leaves this computer for ElevenLabs' servers, which charge your account by its length. Aegisub keeps nothing of the answer but the lines it makes."
+msgstr "音频会离开本机发往 ElevenLabs 的服务器，并按时长从你的账户计费。Aegisub 除了生成的字幕行外，不保留返回结果的任何内容。"
+
+msgid "Don't ask again"
+msgstr "不再询问"
+
+msgid "Sending the audio to ElevenLabs..."
+msgstr "正在把音频发送给 ElevenLabs..."
+
+msgid "There is no command to run: set one in Preferences, Audio, Transcription."
+msgstr "没有要运行的命令：请在 首选项 > 音频 > 听写 中设置。"
+
+msgid "Running %s..."
+msgstr "正在运行 %s..."
+
+msgid "The key is forgotten; it is asked for again next time."
+msgstr "密钥已清除，下次会重新询问。"
+
+msgid "Nothing was heard"
+msgstr "没有听写出任何内容"
+
+msgid "Style Panel &Keyboard"
+msgstr "样式面板键盘(&K)"
+
+msgid "Style Panel Keyboard"
+msgstr "样式面板键盘"
+
+msgid "Move the keyboard to the style panel, showing it if it is hidden; from the panel, back to the subtitle text"
+msgstr "把键盘焦点移到样式面板（隐藏时先显示）；在面板中时则回到字幕文本"
+
+msgid "Hide"
+msgstr "隐藏"
+
+msgid "Hide the application"
+msgstr "隐藏本程序"
+
+msgid "Hide others"
+msgstr "隐藏其他"
+
+msgid "Hide all other applications"
+msgstr "隐藏其他所有程序"
+
+msgid "Show all applications"
+msgstr "显示所有程序"
+
+msgid "Audio and Video Formats"
+msgstr "音频和视频格式"
+
+msgid "Bind selected subtitles into a persistent multi-selection group"
+msgstr "把选中的字幕绑定为持久的多选组"
+
+msgid "Heard %d line"
+msgid_plural "Heard %d lines"
+msgstr[0] "听写出 %d 行"
+
+msgid ""
+"The new subtitles were installed, but some parts of the interface could not switch to them.\n"
+"\n"
+"Editing, saving and opening files are disabled to protect the document. Close Aegisub to recover."
+msgstr ""
+"新字幕已装入，但界面的某些部分未能切换过去。\n"
+"\n"
+"为保护文档，编辑、保存和打开文件已被禁用。请关闭 Aegisub 以恢复。"
+
+msgid ""
+"The subtitle file references AviSynth scripts. AviSynth scripts can execute arbitrary code with your user permissions. Only load them if you trust the subtitle's author. You do not need to load these scripts to view or edit this subtitle file.\n"
+"\n"
+"Scripts:"
+msgstr ""
+"此字幕文件引用了 AviSynth 脚本。AviSynth 脚本能以你的用户权限执行任意代码。只有信任字幕作者时才载入它们。查看或编辑此字幕文件不需要载入这些脚本。\n"
+"\n"
+"脚本："
+
+msgid ""
+"The subtitle file references an AviSynth script. AviSynth scripts can execute arbitrary code with your user permissions. Only load it if you trust the subtitle's author. You do not need to load this script to view or edit this subtitle file.\n"
+"\n"
+"Script:"
+msgstr ""
+"此字幕文件引用了一个 AviSynth 脚本。AviSynth 脚本能以你的用户权限执行任意代码。只有信任字幕作者时才载入它。查看或编辑此字幕文件不需要载入此脚本。\n"
+"\n"
+"脚本："
+
+msgid ""
+"\n"
+"\n"
+"Do you want to load these scripts now?"
+msgstr ""
+"\n"
+"\n"
+"现在载入这些脚本吗？"
+
+msgid ""
+"\n"
+"\n"
+"Do you want to load this script now?"
+msgstr ""
+"\n"
+"\n"
+"现在载入此脚本吗？"
+
+msgid ""
+"%s ended with %d:\n"
+"%s"
+msgstr ""
+"%s 以返回值 %d 结束：\n"
+"%s"
+
+msgid ""
+"%s wrote no JSON file in the folder it was given:\n"
+"%s"
+msgstr ""
+"%s 没有在给它的文件夹里写出 JSON 文件：\n"
+"%s"

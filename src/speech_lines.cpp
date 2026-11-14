@@ -596,10 +596,10 @@ std::vector<int> SceneCuts(std::vector<int> const& keyframes) {
 	int interval = 0, most = 0, total = 0;
 	for (auto [d, n] : counts) {
 		total += n;
-		int near = n;
-		if (auto it = counts.find(d - 1); it != counts.end()) near += it->second;
-		if (auto it = counts.find(d + 1); it != counts.end()) near += it->second;
-		if (near > most) { most = near; interval = d; }
+		int close = n;
+		if (auto it = counts.find(d - 1); it != counts.end()) close += it->second;
+		if (auto it = counts.find(d + 1); it != counts.end()) close += it->second;
+		if (close > most) { most = close; interval = d; }
 	}
 	if (most < 3 || most * 2 < total) return frames;
 	// A keyframe that interval after the one before was put there by the
