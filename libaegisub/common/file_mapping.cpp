@@ -85,12 +85,15 @@ char *map(int64_t s_offset, uint64_t length, boost::interprocess::mode_t mode,
 namespace agi {
 file_mapping::file_mapping(agi::fs::path const& filename, bool temporary)
 #ifdef _WIN32
+// A temporary file goes when its last handle is closed, as on POSIX where
+// it is unlinked at once: else what the audio cache wrote, the whole audio
+// decoded, stayed in the temp folder for good
 : handle(CreateFileW(filename.wstring().c_str(),
-	temporary ? read_write : read_only,
+	temporary ? static_cast<DWORD>(read_write) | DELETE : static_cast<DWORD>(read_only),
 	temporary ? FILE_SHARE_READ | FILE_SHARE_WRITE : FILE_SHARE_READ,
 	nullptr,
 	temporary ? OPEN_ALWAYS : OPEN_EXISTING,
-	0, 0))
+	temporary ? FILE_FLAG_DELETE_ON_CLOSE : 0, 0))
 {
 	if (handle == ipcdetail::invalid_file()) {
 		switch (GetLastError()) {

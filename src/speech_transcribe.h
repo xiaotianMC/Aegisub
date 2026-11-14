@@ -9,6 +9,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -120,6 +121,12 @@ std::string Upload(Request const& request, ElevenLabs const& settings, agi::Prog
 /// there only with a language.
 std::vector<std::string> CommandLine(std::string const& templ, agi::fs::path const& media,
                                      agi::fs::path const& out, std::string const& language);
+
+/// A folder of its own for a run's files, made now in @p temp
+agi::fs::path RunFolder(agi::fs::path const& temp);
+/// Whether @p name is that of a folder RunFolder makes, for those a run
+/// that was killed left
+bool IsRunFolder(std::string_view name);
 
 /// The JSON the command wrote in @p folder: the one named after @p media
 /// if there, else the only one; nothing if there are none or several others

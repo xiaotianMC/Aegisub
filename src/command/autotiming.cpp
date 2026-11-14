@@ -31,6 +31,7 @@
 #include <libaegisub/audio/provider.h>
 #include <libaegisub/exception.h>
 #include <libaegisub/io.h>
+#include <libaegisub/path.h>
 #include <libaegisub/vfr.h>
 
 #include <chrono>
@@ -238,12 +239,9 @@ size_t speech::Import(agi::Context *c, speech::Transcript const& transcript) {
 }
 
 namespace {
-/// Where a run's files go: a folder of its own under the system's, made now
+/// Where a run's files go: a folder of its own under the temp folder, made now
 agi::fs::path TranscribeFolder() {
-	auto const stamp = std::chrono::steady_clock::now().time_since_epoch().count();
-	agi::fs::path folder = agi::fs::path(std::filesystem::temp_directory_path()) / agi::format("aegisub-transcribe-%d-%d", static_cast<int>(wxGetProcessId()), static_cast<int>(stamp % 1000000));
-	agi::fs::CreateDirectory(folder);
-	return folder;
+	return transcribe::RunFolder(config::path->Decode("?temp"));
 }
 
 struct autotiming_transcribe final : public Command {

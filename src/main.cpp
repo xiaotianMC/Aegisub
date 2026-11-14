@@ -52,15 +52,18 @@
 #include "libresrc/libresrc.h"
 #include "options.h"
 #include "project.h"
+#include "speech_transcribe.h"
 #include "subs_controller.h"
 #include "startup_window.h"
 #include "audio_colorscheme.h"
+#include "audio_provider_factory.h"
 #include "subtitles_provider_libass.h"
 #include "utils.h"
 #include "value_event.h"
 #include "version.h"
 #include "xdg_desktop_portal_utils.h"
 
+#include <libaegisub/audio/provider.h>
 #include <libaegisub/dispatch.h>
 #include <libaegisub/format_path.h>
 #include <libaegisub/fs.h>
@@ -343,6 +346,15 @@ bool AegisubApp::OnInit() {
 
 	StartupLog("Clean old autosave files");
 	CleanCache(config::path->Decode(OPT_GET("Path/Auto/Save")->GetString()), "*.AUTOSAVE.ass", 100, 1000);
+
+	// What runs that crashed or were killed left: a transcription's folder,
+	// the audio it wrote out among it, and on Windows before files were
+	// made to go with their last handle, the HD audio cache
+	StartupLog("Clean files earlier runs left");
+	agi::dispatch::Background().Async([temp = config::path->Decode("?temp"), audio = AudioCacheFolder(*config::path)] {
+		RemoveLeftovers(temp, transcribe::IsRunFolder, std::chrono::hours(24));
+		RemoveLeftovers(audio, agi::IsHDAudioCacheFile, std::chrono::hours(1));
+	});
 
 	StartupLog("Initialization complete");
 	return true;

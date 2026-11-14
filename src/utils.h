@@ -31,7 +31,9 @@
 
 #include <libaegisub/fs.h>
 
+#include <chrono>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -99,6 +101,13 @@ void ResetAltUsedForWheel();
 /// @param max_size Maximum size of directory in MB
 /// @param max_files Maximum number of files
 void CleanCache(agi::fs::path const& directory, std::string const& file_type, uint64_t max_size, uint64_t max_files = -1);
+
+/// Remove from @p directory what an earlier run left there, files or
+/// folders, as when it was ended without cleaning up: each entry whose name
+/// @p left says is one and not changed within @p age. What cannot be
+/// removed, as when another run is using it, is passed over.
+/// @return How many were removed
+size_t RemoveLeftovers(agi::fs::path const& directory, std::function<bool(std::string_view)> const& left, std::chrono::seconds age);
 
 /// @brief Templated abs() function
 template <typename T> T tabs(T x) { return x < 0 ? -x : x; }

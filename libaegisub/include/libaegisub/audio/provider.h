@@ -21,6 +21,7 @@
 
 #include <atomic>
 #include <memory>
+#include <string_view>
 #include <vector>
 
 namespace agi {
@@ -91,6 +92,9 @@ std::unique_ptr<AudioProvider> CreateConvertAudioProvider(std::unique_ptr<AudioP
 std::unique_ptr<AudioProvider> CreateLockAudioProvider(std::unique_ptr<AudioProvider> source_provider);
 std::unique_ptr<AudioProvider> CreateHDAudioProvider(std::unique_ptr<AudioProvider> source_provider,
                                                      agi::fs::path const& dir);
+/// Whether @p name is that of a file the HD cache writes, for what a run
+/// that ended without closing it left
+bool IsHDAudioCacheFile(std::string_view name);
 std::unique_ptr<AudioProvider> CreateRAMAudioProvider(std::unique_ptr<AudioProvider> source_provider);
 
 void SaveAudioClip(AudioProvider const& provider, agi::fs::path const& path, int start_time, int end_time);

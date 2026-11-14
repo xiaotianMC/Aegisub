@@ -26,6 +26,7 @@
 #include "options.h"
 #include "command/command.h"
 #include "include/aegisub/hotkey.h"
+#include <libaegisub/audio/provider.h>
 #include <libaegisub/hotkey.h>
 #include <tuple>
 #include <typeinfo>
@@ -4407,6 +4408,48 @@ TEST(transcribe, the_json_the_command_wrote_is_the_one_named_after_the_media_els
     ASSERT_TRUE(named);EXPECT_EQ("ep01.json",named->filename().string());
     EXPECT_FALSE(transcribe::OutputJson(dir,"/v/ep02.mkv")) << "two, neither its own";
     std::filesystem::remove_all(std::filesystem::path(dir));
+}
+
+TEST(transcribe, a_runs_folder_is_known_by_its_name_and_no_other_is_taken_for_one) {
+    agi::fs::path dir=agi::fs::path(std::filesystem::temp_directory_path()/("aegisub-runfolder-test-"+std::to_string(::getpid())));
+    std::filesystem::remove_all(std::filesystem::path(dir));std::filesystem::create_directories(std::filesystem::path(dir));
+    auto made=transcribe::RunFolder(dir);
+    EXPECT_TRUE(std::filesystem::is_directory(std::filesystem::path(made)));
+    EXPECT_TRUE(transcribe::IsRunFolder(made.filename().string())) << made.filename().string();
+    EXPECT_TRUE(transcribe::IsRunFolder("aegisub-transcribe-1234-567890"));
+    EXPECT_FALSE(transcribe::IsRunFolder("aegisub-transcribe-test-1234")) << "the tests' own";
+    EXPECT_FALSE(transcribe::IsRunFolder("aegisub-transcribe-1234"));
+    EXPECT_FALSE(transcribe::IsRunFolder("aegisub-transcribe-1234-"));
+    EXPECT_FALSE(transcribe::IsRunFolder("aegisub-transcribe-1234-5x"));
+    EXPECT_FALSE(transcribe::IsRunFolder("aegisub-magiatimeline"));
+    std::filesystem::remove_all(std::filesystem::path(dir));
+}
+
+TEST(utils, leftovers_are_removed_when_named_so_and_old_and_nothing_else) {
+    namespace sfs=std::filesystem;
+    sfs::path dir=sfs::temp_directory_path()/("aegisub-leftovers-test-"+std::to_string(::getpid()));
+    sfs::remove_all(dir);sfs::create_directories(dir);
+    auto const old=sfs::file_time_type::clock::now()-std::chrono::hours(48);
+    sfs::create_directories(dir/"aegisub-transcribe-1-2"/"inner");
+    {std::ofstream(dir/"aegisub-transcribe-1-2"/"ep01.wav")<<"riff";}
+    sfs::last_write_time(dir/"aegisub-transcribe-1-2",old);
+    sfs::create_directories(dir/"aegisub-transcribe-3-4");
+    {std::ofstream(dir/"aegisub-audio-5-6")<<"pcm";}
+    sfs::last_write_time(dir/"aegisub-audio-5-6",old);
+    {std::ofstream(dir/"someone-elses.tmp")<<"x";}
+    sfs::last_write_time(dir/"someone-elses.tmp",old);
+
+    EXPECT_EQ(1u,RemoveLeftovers(agi::fs::path(dir),transcribe::IsRunFolder,std::chrono::hours(24)));
+    EXPECT_FALSE(sfs::exists(dir/"aegisub-transcribe-1-2")) << "old, and everything in it";
+    EXPECT_TRUE(sfs::exists(dir/"aegisub-transcribe-3-4")) << "new: a run may be using it";
+    EXPECT_TRUE(sfs::exists(dir/"aegisub-audio-5-6")) << "not what was asked for";
+    EXPECT_TRUE(sfs::exists(dir/"someone-elses.tmp"));
+
+    EXPECT_EQ(1u,RemoveLeftovers(agi::fs::path(dir),agi::IsHDAudioCacheFile,std::chrono::hours(1)));
+    EXPECT_FALSE(sfs::exists(dir/"aegisub-audio-5-6"));
+    EXPECT_TRUE(sfs::exists(dir/"someone-elses.tmp"));
+    EXPECT_EQ(0u,RemoveLeftovers(agi::fs::path(dir/"not-there"),transcribe::IsRunFolder,std::chrono::hours(0))) << "a folder that is not there is nothing to do";
+    sfs::remove_all(dir);
 }
 
 #ifndef _WIN32

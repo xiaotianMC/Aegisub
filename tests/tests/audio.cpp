@@ -21,6 +21,7 @@
 #include <libaegisub/path.h>
 #include <libaegisub/util.h>
 
+#include <filesystem>
 #include <fstream>
 
 TEST(lagi_audio, dummy_blank) {
@@ -223,6 +224,29 @@ TEST(lagi_audio, hd_cache) {
 
 	for (size_t i = 0; i < 512; ++i)
 		ASSERT_EQ(static_cast<uint16_t>((1 << 22) - 256 + i), buff[i]);
+}
+
+TEST(lagi_audio, hd_cache_file_goes_with_the_provider) {
+	auto dir = agi::Path().Decode("?temp") / "aegisub-hd-cache-test";
+	std::filesystem::remove_all(dir);
+	std::filesystem::create_directories(dir);
+	{
+		auto provider = agi::CreateHDAudioProvider(std::make_unique<TestAudioProvider<>>(), dir);
+		while (provider->GetDecodedSamples() != provider->GetNumSamples()) agi::util::sleep_for(0);
+	}
+	EXPECT_TRUE(std::filesystem::is_empty(dir)) << "the cache file was left behind";
+	std::filesystem::remove_all(dir);
+}
+
+TEST(lagi_audio, hd_cache_file_names) {
+	EXPECT_TRUE(agi::IsHDAudioCacheFile("aegisub-audio-1763100000-4242"));
+	EXPECT_TRUE(agi::IsHDAudioCacheFile("audio-1763100000-4242")) << "as named before";
+	EXPECT_FALSE(agi::IsHDAudioCacheFile("audio-1763100000-4242.wav"));
+	EXPECT_FALSE(agi::IsHDAudioCacheFile("audio-1763100000"));
+	EXPECT_FALSE(agi::IsHDAudioCacheFile("audio--4242"));
+	EXPECT_FALSE(agi::IsHDAudioCacheFile("audio-abc-4242"));
+	EXPECT_FALSE(agi::IsHDAudioCacheFile("my-audio-1-2"));
+	EXPECT_FALSE(agi::IsHDAudioCacheFile("aegisub-audio-"));
 }
 
 TEST(lagi_audio, convert_8bit) {

@@ -52,7 +52,7 @@ class HDAudioProvider final : public AudioProviderWrapper {
 		if ((uint64_t)num_samples * bytes_per_sample > fs::FreeSpace(dir))
 			throw AudioProviderError("Not enough free disk space in " + dir.string() + " to cache the audio");
 
-		return format("audio-%lld-%lld", time(nullptr),
+		return format("aegisub-audio-%lld-%lld", time(nullptr),
 		              boost::interprocess::ipcdetail::get_current_process_id());
 	}
 
@@ -81,6 +81,22 @@ public:
 }
 
 namespace agi {
+bool IsHDAudioCacheFile(std::string_view name) {
+	auto digits = [&](size_t &at) {
+		size_t const from = at;
+		while (at < name.size() && name[at] >= '0' && name[at] <= '9') ++at;
+		return at > from;
+	};
+	// Named so before, when Windows did not take them away
+	for (std::string_view prefix : {"aegisub-audio-", "audio-"}) {
+		if (!name.starts_with(prefix)) continue;
+		size_t at = prefix.size();
+		if (!digits(at) || at == name.size() || name[at++] != '-' || !digits(at)) return false;
+		return at == name.size();
+	}
+	return false;
+}
+
 std::unique_ptr<AudioProvider> CreateHDAudioProvider(std::unique_ptr<AudioProvider> src, agi::fs::path const& dir) {
 	return std::make_unique<HDAudioProvider>(std::move(src), dir);
 }

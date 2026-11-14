@@ -442,6 +442,27 @@ std::vector<std::string> CommandLine(std::string const& templ, agi::fs::path con
 	return words;
 }
 
+namespace {
+constexpr std::string_view run_prefix = "aegisub-transcribe-";
+}
+
+agi::fs::path RunFolder(agi::fs::path const& temp) {
+	auto const stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+	agi::fs::path folder = temp / agi::format("%s%d-%d", std::string(run_prefix), static_cast<int>(wxGetProcessId()), static_cast<int>(stamp % 1000000));
+	agi::fs::CreateDirectory(folder);
+	return folder;
+}
+
+bool IsRunFolder(std::string_view name) {
+	if (!name.starts_with(run_prefix)) return false;
+	name.remove_prefix(run_prefix.size());
+	auto const dash = name.find('-');
+	auto number = [](std::string_view n) {
+		return !n.empty() && std::all_of(n.begin(), n.end(), [](char c) { return c >= '0' && c <= '9'; });
+	};
+	return dash != std::string_view::npos && number(name.substr(0, dash)) && number(name.substr(dash + 1));
+}
+
 std::optional<agi::fs::path> OutputJson(agi::fs::path const& folder, agi::fs::path const& media) {
 	auto const wanted = media.stem().string() + ".json";
 	std::vector<std::string> found;

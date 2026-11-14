@@ -213,6 +213,30 @@ void SetClipboard(wxBitmap const& new_data) {
 	}
 }
 
+size_t RemoveLeftovers(agi::fs::path const& directory, std::function<bool(std::string_view)> const& left, std::chrono::seconds age) {
+	namespace sfs = std::filesystem;
+	std::error_code ec;
+	auto const now = sfs::file_time_type::clock::now();
+	std::vector<sfs::path> stale;
+	for (sfs::directory_iterator it(directory, ec), end; !ec && it != end; it.increment(ec)) {
+		auto const name = it->path().filename().u8string();
+		if (!left(std::string_view(reinterpret_cast<const char *>(name.data()), name.size()))) continue;
+		std::error_code tec;
+		auto const changed = sfs::last_write_time(it->path(), tec);
+		if (tec || now - changed < age) continue;
+		stale.push_back(it->path());
+	}
+	size_t removed = 0;
+	for (auto const& path : stale) {
+		std::error_code rec;
+		if (sfs::remove_all(path, rec) > 0 && !rec) {
+			++removed;
+			LOG_D("utils/leftovers") << "removed " << agi::fs::path(path);
+		}
+	}
+	return removed;
+}
+
 void CleanCache(agi::fs::path const& directory, std::string const& file_type, uint64_t max_size, uint64_t max_files) {
 	static std::unique_ptr<agi::dispatch::Queue> queue;
 	if (!queue)
