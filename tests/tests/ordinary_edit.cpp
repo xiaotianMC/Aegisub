@@ -7067,6 +7067,35 @@ TEST_F(ordinary_edit, compare_window_simplifies_override_tags_as_the_grid_does) 
     EXPECT_EQ(0, full);
     OPT_SET("Subtitle/Grid/Hide Overrides")->SetInt(1);
 }
+TEST_F(ordinary_edit, compare_window_shows_only_pending_differences_keeping_the_one_being_decided) {
+    Input("current");
+    auto path = WriteBaseline(*c, "compare-pending.ass", [](AssFile& f) {
+        f.Events.front().Text = "baseline text";
+        auto line = new AssDialogue; line->Text = "added"; line->Start = 9000; line->End = 9500; f.Events.push_back(*line);
+    });
+    wxString filtered, decided, moved_on, undone, chip;
+    CompareHook hook([&](wxWindow* dialog) {
+        Press(dialog, "compare-filter");
+        auto box = Named<FlatCheck>(dialog, "compare-pending"); ASSERT_NE(nullptr, box);
+        box->Toggle();
+        filtered = Counter(dialog);
+        Press(dialog, "compare-reject-current");   // decided, but still the one on show
+        decided = Counter(dialog);
+        Press(dialog, "compare-next");              // moving on leaves it behind
+        moved_on = Counter(dialog);
+        Press(dialog, "compare-undo");              // pending again: back in the list
+        undone = Counter(dialog);
+        Press(dialog, "compare-filter");            // closed: the setting as a chip
+        for (auto child : dialog->GetChildren())
+            if (auto b = dynamic_cast<FlatButton*>(child); b && b->IsShown() && b->GetLabel().StartsWith("Pending only")) chip = b->GetLabel();
+    });
+    EXPECT_FALSE(RunCompare(c.get(), path));
+    EXPECT_EQ("1 / 2 | Difference 1 of 2 (2 in total)", filtered);
+    EXPECT_EQ("1 / 2 | Difference 1 of 2 (2 in total)", decided);
+    EXPECT_EQ("1 / 1 | Difference 1 of 1 (2 in total)", moved_on);
+    EXPECT_EQ("2 / 2 | Difference 2 of 2 (2 in total)", undone);
+    EXPECT_TRUE(chip.StartsWith("Pending only")) << chip;
+}
 TEST_F(ordinary_edit, compare_window_filters_by_category_and_leaves_ignored_fields_alone) {
     Input("current");
     auto start = LiveRead(*c).Events.front().Start, end = LiveRead(*c).Events.front().End;

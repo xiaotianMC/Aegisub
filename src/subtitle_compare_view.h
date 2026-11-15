@@ -45,11 +45,15 @@ char const* CategoryName(Category);
 model::Fields CategoryFields(Category);
 
 /// What the window shows: fields left out of the comparison view, and
-/// optionally a single category. Hidden differences stay pending.
+/// optionally a single category. Hidden differences keep their decision.
 struct Filter {
     model::Fields ignored = 0;
     std::optional<Category> category;
-    bool Active() const { return ignored || category; }
+    /// Only differences still pending, and @p keep (the one being decided,
+    /// so deciding it does not take it away from under the pointer).
+    bool pending_only = false;
+    std::optional<size_t> keep;
+    bool Active() const { return ignored || category || pending_only; }
 };
 
 /// Byte range of a UTF-8 string.

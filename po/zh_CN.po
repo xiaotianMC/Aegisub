@@ -8432,6 +8432,12 @@ msgstr "只显示这一类差异；“全部用左侧 / 全部用右侧”随之
 msgid "Show every kind of difference"
 msgstr "显示所有类别的差异"
 
+msgid "Pending only"
+msgstr "仅未处理"
+
+msgid "Show only the differences not yet decided. The one you decide stays until you move on."
+msgstr "只显示还没有决定的差异。正在决定的那一处保留到移到别处为止。"
+
 msgid "Ignore:"
 msgstr "忽略："
 

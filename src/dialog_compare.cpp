@@ -395,7 +395,7 @@ class ComparePanel final : public ComparisonPage {
     wxStaticText *left_title, *right_title, *counter, *stats, *checked_count;
     FlatButton *prev, *next, *accept_current, *reject_current, *undo, *redo;
     FlatButton *accept_checked, *reject_checked, *accept_all, *reject_all, *finish;
-    FlatCheck *check_all, *sync_box;
+    FlatCheck *check_all, *sync_box, *pending_box;
     FlatButton *filter_button;
     std::vector<std::pair<view::Category, FlatCheck*>> ignore_boxes;
     bool filters_open = false;
@@ -1602,6 +1602,16 @@ ComparePanel::ComparePanel(wxWindow* parent, agi::Context *c, SubtitleComparison
     };
     add_category(std::nullopt);
     for (auto category : view::CategoryOrder()) add_category(category);
+    // What is left to decide: those decided go, except the one being decided.
+    pending_box = new FlatCheck(this, _("Pending only"));
+    pending_box->SetName("compare-pending");
+    pending_box->SetToolTip(_("Show only the differences not yet decided. The one you decide stays until you move on."));
+    pending_box->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent&) {
+        filter.pending_only = pending_box->GetValue();
+        ApplyFilter();
+    });
+    filter_bar->AddSpacer(2 * gap);
+    filter_bar->Add(pending_box, wxSizerFlags().Center());
     filter_bar->AddSpacer(4 * gap);
     filter_bar->Add(flat::DimLabel(this, flat::WithoutColon(_("Ignore:"))), wxSizerFlags().Center().Border(wxRIGHT, 2 * gap));
     for (auto group : {view::Category::Time, view::Category::Text, view::Category::StyleActor, view::Category::OtherFields}) {
@@ -1989,6 +1999,7 @@ void ComparePanel::Relayout(std::optional<size_t> anchor) {
 }
 
 void ComparePanel::ApplyFilter() {
+    filter.keep = current;
     shown = state.VisibleDiffs(filter);
     // A category that no longer has anything to show falls back to all.
     if (filter.category && shown.empty()) {
@@ -2111,7 +2122,11 @@ void ComparePanel::UpdateTitles() {
 void ComparePanel::UpdateFilterBar() {
     std::map<view::Category, int> counts;
     int all = 0;
+    // Counted as shown: pending ones only, while only those are shown.
+    view::Filter any_category = filter;
+    any_category.category.reset();
     for (auto e : state.Diffs()) {
+        if (!state.Visible(e, any_category)) continue;
         if (auto category = state.CategoryOf(e, filter.ignored)) { ++counts[*category]; ++all; }
     }
     bool changed = false;
@@ -2134,6 +2149,10 @@ void ComparePanel::UpdateFilterBar() {
     std::vector<std::pair<wxString, std::function<void()>>> active;
     if (!filters_open) {
         if (filter.category) active.emplace_back(category_label(*filter.category), [this] { filter.category.reset(); });
+        if (filter.pending_only) active.emplace_back(_("Pending only"), [this] {
+            filter.pending_only = false;
+            pending_box->SetValue(false);
+        });
         for (auto [group, box] : ignore_boxes) {
             if (!(filter.ignored & view::CategoryFields(group))) continue;
             active.emplace_back(fmt_tl("Ignoring %s", group_label(group)), [this, group, box] {
@@ -2170,6 +2189,12 @@ void ComparePanel::UpdateFilterBar() {
 }
 
 void ComparePanel::Changed() {
+    // Showing only what is pending, decisions and moving on change what is shown.
+    if (filter.pending_only) {
+        filter.keep = current;
+        auto now = state.VisibleDiffs(filter);
+        if (now != shown) { shown = std::move(now); Relayout(current); }
+    }
     size_t total = shown.size();
     auto index = CurrentIndex();
     // "3 / 14": where the current difference is among those shown.

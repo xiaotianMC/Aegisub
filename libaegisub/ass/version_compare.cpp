@@ -80,10 +80,13 @@ std::vector<Item> Compare(Document const& baseline, Document const& current, Can
         CheckCancelled(cancel); --be; --ce;
         pairs.push_back({be, ce, MatchReason::EqualSequence});
     }
-    // Three matching passes plus an equal-run cleanup. Each scans disjoint gaps; no n*m matrix
-    // and no recursive rescanning of progressively smaller intervals.
-    for (int pass = 0; pass < 4; ++pass) {
-        Fields match_fields = pass == 1 ? Start | End : pass == 2 ? Text : fields;
+    // Four matching passes plus an equal-run cleanup. Each scans disjoint gaps; no n*m matrix
+    // and no recursive rescanning of progressively smaller intervals. The fourth
+    // tells apart lines shown together (a title, its caption, a speaker's line
+    // over the same time) whose texts all changed: their time is shared, but
+    // not with the same style.
+    for (int pass = 0; pass < 5; ++pass) {
+        Fields match_fields = pass == 1 ? Start | End : pass == 2 ? Text : pass == 3 ? Start | End | Style : fields;
         if ((fields & match_fields) != match_fields) continue;
         std::sort(pairs.begin(), pairs.end(), [](Pair a, Pair b) { return a.b < b.b; });
         auto anchors = pairs;
@@ -100,7 +103,7 @@ std::vector<Item> Compare(Document const& baseline, Document const& current, Can
                 CheckCancelled(cancel);
                 pairs.push_back({--b_end, --c_end, MatchReason::EqualSequence});
             }
-            if (pass == 3) { b0 = anchor.b + 1; c0 = anchor.c + 1; continue; }
+            if (pass == 4) { b0 = anchor.b + 1; c0 = anchor.c + 1; continue; }
             Index bi, ci, bt, ct, btime, ctime;
             auto build = [&](auto const& rows, size_t begin, size_t end, Index& index, Fields f) {
                 for (size_t i = begin; i < end; ++i) {
@@ -137,7 +140,8 @@ std::vector<Item> Compare(Document const& baseline, Document const& current, Can
                 if (time && text && *time != *text) {
                     why_b[b] = why_c[*time] = why_c[*text] = Ambiguity::ConflictingEvidence; continue;
                 }
-                candidates.push_back({b, c, pass == 0 ? MatchReason::ExactFields : pass == 1 ? MatchReason::UniqueTime : MatchReason::UniqueText});
+                candidates.push_back({b, c, pass == 0 ? MatchReason::ExactFields : pass == 1 ? MatchReason::UniqueTime
+                    : pass == 2 ? MatchReason::UniqueText : MatchReason::UniqueTimeAndStyle});
             }
             // Mark BOTH endpoints of every inversion, rather than picking an
             // arbitrary LIS and then silently matching moved lines by time.

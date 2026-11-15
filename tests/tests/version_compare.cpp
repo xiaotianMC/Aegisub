@@ -103,6 +103,24 @@ TEST(version_compare, same_time_uses_unique_text_without_forcing_duplicate_time_
     auto r = Compare(b, c); EXPECT_EQ(2u, count(r, Kind::Modified));
     for (auto const& i : r) EXPECT_EQ(MatchReason::UniqueText, i.reason);
 }
+TEST(version_compare, lines_shown_together_are_told_apart_by_their_style) {
+    // A speaker's line, a title and its caption over one time, every text
+    // edited: neither the time nor a text is unique, the time with the style is.
+    auto styled = [](std::string text, std::string style) { Row r = row(std::move(text), 5690); r.style = std::move(style); return r; };
+    auto b = document({row("before", 0), styled("给动物角色们设计独特又有趣的专属语尾", "Pink"), styled("今日的打工", "Title"),
+        styled("设计有趣语尾的打工", "Caption"), row("after", 20000)});
+    auto c = document({row("before", 0), styled("是给动物角色们设计独特又有趣的口癖", "Pink"), styled("今天的打工", "Title"),
+        styled("设计有趣口癖的打工", "Caption"), row("after", 20000)});
+    auto r = Compare(b, c); invariants(b, c, r);
+    EXPECT_EQ(3u, count(r, Kind::Modified)); EXPECT_EQ(0u, count(r, Kind::Added)); EXPECT_EQ(0u, count(r, Kind::Deleted));
+    for (auto const& i : r)
+        if (i.kind == Kind::Modified) { EXPECT_EQ(MatchReason::UniqueTimeAndStyle, i.reason); EXPECT_EQ(Text, i.changed); EXPECT_EQ(i.baseline, i.current); }
+    // Two of one style at that time stay unmatched: nothing tells them apart.
+    b.rows[2].style = "Pink"; c.rows[2].style = "Pink";
+    r = Compare(b, c); invariants(b, c, r);
+    EXPECT_EQ(1u, count(r, Kind::Modified)) << "only the caption";
+    EXPECT_EQ(2u, count(r, Kind::Added));
+}
 TEST(version_compare, crossing_matches_and_reordering_are_additions_and_deletions) {
     auto c = document({row("a", 0), row("b", 1000), row("c", 2000)});
     auto b = document({c.rows[2], c.rows[1], c.rows[0]});
