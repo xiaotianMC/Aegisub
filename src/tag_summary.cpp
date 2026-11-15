@@ -240,9 +240,12 @@ wxString MarkName(Mark const& mark) {
 std::vector<Piece> Summarize(std::string_view text) {
 	std::vector<Piece> pieces;
 	bool drawing = false;
-	auto add_run = [&](std::string_view run) {
-		if (run.empty()) return;
+	auto add_run = [&](size_t begin, size_t end) {
+		if (begin >= end) return;
+		std::string_view run = text.substr(begin, end - begin);
 		Piece piece;
+		piece.begin = begin;
+		piece.end = end;
 		if (drawing) piece.drawing_points = DrawingPoints(run);
 		else piece.text = std::string(run);
 		pieces.push_back(std::move(piece));
@@ -253,13 +256,15 @@ std::vector<Piece> Summarize(std::string_view text) {
 		if (open == std::string_view::npos) break;
 		size_t close = text.find('}', open);
 		if (close == std::string_view::npos) break;
-		add_run(text.substr(start, open - start));
+		add_run(start, open);
 		std::string_view body = text.substr(open + 1, close - open - 1);
 		start = close + 1;
 
 		Piece block;
 		block.block = true;
 		block.raw = std::string(text.substr(open, close - open + 1));
+		block.begin = open;
+		block.end = close + 1;
 		if (body.find('\\') == std::string_view::npos) {
 			// No tags: a note for whoever reads the script
 			Mark note;
@@ -278,7 +283,7 @@ std::vector<Piece> Summarize(std::string_view text) {
 			[](Mark const& m) { return m.kind == Kind::Karaoke; });
 		pieces.push_back(std::move(block));
 	}
-	add_run(text.substr(std::min(start, text.size())));
+	add_run(std::min(start, text.size()), text.size());
 	return pieces;
 }
 

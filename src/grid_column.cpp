@@ -28,6 +28,7 @@
 #include "video_controller.h"
 #include "format.h"
 #include "libresrc/libresrc.h"
+#include "tag_chips.h"
 #include "tag_summary.h"
 
 #include <libaegisub/character_count.h>
@@ -396,10 +397,7 @@ class GridColumnText final : public GridColumn {
 
 	/// The pieces of the lines' texts drawn lately, by text
 	mutable std::unordered_map<std::string, std::vector<tag_summary::Piece>> summaries;
-	/// The icons drawn, by name, size and whether dimmed, for the appearance
-	/// they were made in
-	mutable std::map<std::tuple<std::string, int, bool>, wxBitmap> icons;
-	mutable int icons_made_for = -1;
+	mutable tag_chips::Painter chips;
 
 	std::vector<tag_summary::Piece> const& Summary(const AssDialogue *d) const {
 		auto const& text = d->Text.get();
@@ -417,40 +415,15 @@ class GridColumnText final : public GridColumn {
 		wxString text; ///< For a run
 	};
 
-	struct Metrics {
-		int height; ///< Of a chip: the row's text and a pixel either side
-		int icon;   ///< Icons are square
-		int pad, gap, bar;
-		explicit Metrics(wxDC &dc) {
-			height = dc.GetCharHeight() + 2;
-			icon = std::max(8, (dc.GetCharHeight() * 4 + 2) / 5);
-			pad = std::max(2, icon * 3 / 10);
-			gap = std::max(2, icon / 5);
-			bar = std::max(5, icon / 2);
-		}
-	};
-	static constexpr size_t max_marks = 3; ///< Icons in a chip; more are "+N"
-
-	int ChipWidth(wxDC &dc, Metrics const& m, tag_summary::Piece const& piece) const {
-		if (piece.karaoke) return m.bar;
-		size_t n = std::min(piece.marks.size(), max_marks);
-		int width = 2 * m.pad + static_cast<int>(n) * m.icon + static_cast<int>(n ? n - 1 : 0) * m.gap;
-		if (piece.marks.size() > max_marks)
-			width += m.gap + dc.GetTextExtent(fmt_wx("+%d", piece.marks.size() - max_marks)).x;
-		return width;
-	}
-
 	std::vector<Placed> Lay(wxDC &dc, int x, const AssDialogue *d) const {
-		Metrics m(dc);
+		tag_chips::Metrics m(dc);
 		std::vector<Placed> placed;
-		// Apart from the text either side, as a word is
-		const int spacing = std::max(4, m.icon * 2 / 5);
 		size_t chars = 0;
 		for (auto const& piece : Summary(d)) {
 			if (piece.block) {
-				int width = ChipWidth(dc, m, piece);
-				placed.push_back({x + spacing / 2, x + spacing / 2 + width, &piece, {}});
-				x += width + spacing;
+				int width = chips.Width(dc, m, piece);
+				placed.push_back({x + m.spacing / 2, x + m.spacing / 2 + width, &piece, {}});
+				x += width + m.spacing;
 				continue;
 			}
 			wxString text = tag_summary::PlainText(piece);
@@ -463,134 +436,6 @@ class GridColumnText final : public GridColumn {
 			if (chars >= 512) break;
 		}
 		return placed;
-	}
-
-	wxBitmap Icon(wxDC &dc, const char *name, int size, bool dimmed) const {
-		int appearance = theme::IsDark() ? 1 : 0;
-		if (icons_made_for != appearance) {
-			icons.clear();
-			icons_made_for = appearance;
-		}
-		auto key = std::make_tuple(std::string(name), size, dimmed);
-		auto it = icons.find(key);
-		if (it != icons.end()) return it->second;
-		wxBitmap bitmap;
-		if (auto body = libresrc_modern_icon(name)) {
-			double scale = dc.GetContentScaleFactor();
-			int pixels = static_cast<int>(size * scale + 0.5);
-			bitmap = libresrc_modern_bundle(body, size).GetBitmap(wxSize(pixels, pixels));
-			if (bitmap.IsOk() && dimmed) {
-				// Switched off: faint, as a style left out is
-				wxImage image = bitmap.ConvertToImage();
-				if (!image.HasAlpha()) image.InitAlpha();
-				unsigned char *alpha = image.GetAlpha();
-				for (int i = 0, n = image.GetWidth() * image.GetHeight(); i < n; ++i)
-					alpha[i] = static_cast<unsigned char>(alpha[i] * 2 / 5);
-				bitmap = wxBitmap(image);
-			}
-			if (bitmap.IsOk()) bitmap.SetScaleFactor(scale);
-		}
-		return icons[key] = bitmap;
-	}
-
-	/// A colour tag's colour, shaped by which it is: filled for the primary,
-	/// crossed for the secondary, a ring for the border, a square offset
-	/// for the shadow; a faint edge in the text colour round each, so a
-	/// colour close to the row's still shows
-	static void DrawColour(wxDC &dc, tag_summary::Mark const& mark, wxRect r, wxColour ink, wxColour back) {
-		wxColour colour(mark.colour.r, mark.colour.g, mark.colour.b);
-		wxColour edge = theme::Mix(back, ink, 0.4);
-		int side = std::max(6, r.width * 4 / 5);
-		wxRect sq(r.x + (r.width - side) / 2, r.y + (r.height - side) / 2, side, side);
-		int radius = std::max(1, side / 5);
-		switch (mark.index) {
-			case 3: {
-				int ring = std::max(2, side / 5);
-				dc.SetPen(wxPen(edge));
-				dc.SetBrush(wxBrush(colour));
-				dc.DrawRoundedRectangle(sq, radius);
-				dc.SetBrush(wxBrush(back));
-				dc.DrawRoundedRectangle(sq.Deflate(ring), std::max(1, radius - ring / 2));
-				break;
-			}
-			case 4: {
-				int offset = std::max(2, side / 5);
-				wxRect shadow(sq.x + offset, sq.y + offset, side - offset, side - offset);
-				dc.SetPen(wxPen(edge));
-				dc.SetBrush(wxBrush(colour));
-				dc.DrawRoundedRectangle(shadow, radius);
-				dc.SetPen(wxPen(ink));
-				dc.SetBrush(wxBrush(back));
-				dc.DrawRoundedRectangle(wxRect(sq.x, sq.y, side - offset, side - offset), radius);
-				break;
-			}
-			default:
-				dc.SetPen(wxPen(edge));
-				dc.SetBrush(wxBrush(colour));
-				dc.DrawRoundedRectangle(sq, radius);
-				if (mark.index == 2) {
-					dc.SetPen(wxPen(theme::Mix(colour, ink, 0.7), std::max(1, side / 9)));
-					dc.DrawLine(sq.GetRight() - 1, sq.y + 1, sq.x + 1, sq.GetBottom() - 1);
-				}
-		}
-	}
-
-	/// \an as a 3×3 grid of dots, the one it names a solid square
-	static void DrawAlign(wxDC &dc, int an, wxRect r, wxColour ink, wxColour back) {
-		int column = (an - 1) % 3, row = 2 - (an - 1) / 3;
-		int step = std::max(3, r.width * 5 / 16);
-		int x0 = r.x + r.width / 2 - step, y0 = r.y + r.height / 2 - step;
-		int dot = std::max(2, r.width / 8), mark = std::max(4, r.width / 3);
-		dc.SetPen(*wxTRANSPARENT_PEN);
-		for (int j = 0; j < 3; ++j)
-			for (int i = 0; i < 3; ++i) {
-				int cx = x0 + i * step, cy = y0 + j * step;
-				if (i == column && j == row) {
-					dc.SetBrush(wxBrush(ink));
-					dc.DrawRoundedRectangle(cx - mark / 2, cy - mark / 2, mark, mark, std::max(1, mark / 4));
-				}
-				else {
-					dc.SetBrush(wxBrush(theme::Mix(back, ink, 0.45)));
-					dc.DrawRectangle(cx - dot / 2, cy - dot / 2, dot, dot);
-				}
-			}
-	}
-
-	void DrawChip(wxDC &dc, Placed const& p, int y, Metrics const& m) const {
-		wxColour ink = dc.GetTextForeground();
-		wxColour back = dc.GetBrush().IsOk() ? dc.GetBrush().GetColour() : theme::Surface();
-		auto const& piece = *p.piece;
-		if (piece.karaoke) {
-			// Between syllables: a thin bar
-			int width = std::max(2, m.icon / 7);
-			dc.SetPen(*wxTRANSPARENT_PEN);
-			dc.SetBrush(wxBrush(theme::Mix(back, ink, 0.45)));
-			dc.DrawRoundedRectangle(p.left + (p.right - p.left - width) / 2, y + 1 + m.height / 5, width, m.height * 3 / 5, width / 2);
-			return;
-		}
-		wxColour chip = theme::Mix(back, ink, 0.08);
-		dc.SetPen(wxPen(theme::Mix(back, ink, 0.18)));
-		dc.SetBrush(wxBrush(chip));
-		dc.DrawRoundedRectangle(p.left, y + 1, p.right - p.left, m.height, std::max(2, m.height / 3));
-		int x = p.left + m.pad, top = y + 1 + (m.height - m.icon) / 2;
-		for (size_t i = 0; i < std::min(piece.marks.size(), max_marks); ++i) {
-			auto const& mark = piece.marks[i];
-			wxRect r(x, top, m.icon, m.icon);
-			if (mark.kind == tag_summary::Kind::Colour) DrawColour(dc, mark, r, ink, chip);
-			else if (mark.kind == tag_summary::Kind::Align) DrawAlign(dc, mark.index, r, ink, chip);
-			else if (auto name = tag_summary::IconName(mark.kind)) {
-				wxBitmap bitmap = Icon(dc, name, m.icon, mark.off);
-				if (bitmap.IsOk()) dc.DrawBitmap(bitmap, x, top, true);
-			}
-			x += m.icon + m.gap;
-		}
-		if (piece.marks.size() > max_marks) {
-			wxColour old = dc.GetTextForeground();
-			dc.SetTextForeground(theme::Mix(chip, ink, 0.6));
-			dc.DrawText(fmt_wx("+%d", piece.marks.size() - max_marks), x, y + 1 + (m.height - dc.GetCharHeight()) / 2);
-			dc.SetTextForeground(old);
-		}
-		dc.SetBrush(wxBrush(back));
 	}
 
 public:
@@ -641,11 +486,11 @@ public:
 			GridColumn::Paint(dc, x, y, d, c);
 			return;
 		}
-		Metrics m(dc);
+		tag_chips::Metrics m(dc);
 		wxColour ink = dc.GetTextForeground();
 		wxColour back = dc.GetBrush().IsOk() ? dc.GetBrush().GetColour() : theme::Surface();
 		for (auto const& p : Lay(dc, TextLeft(x, 0), d)) {
-			if (p.piece->block) DrawChip(dc, p, y, m);
+			if (p.piece->block) chips.Draw(dc, *p.piece, p.left, p.right, y, m, back);
 			else if (p.piece->drawing_points >= 0) {
 				// A drawing's commands: how many points, quietly
 				dc.SetTextForeground(theme::Mix(back, ink, 0.6));

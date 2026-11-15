@@ -52,6 +52,8 @@ struct Piece {
 	bool karaoke = false;
 	/// The block as written, braces and all
 	std::string raw;
+	/// Where the piece is in the line's text, in bytes
+	size_t begin = 0, end = 0;
 };
 
 /// The pieces of a line's text. A block holding only \p0, ending a drawing,

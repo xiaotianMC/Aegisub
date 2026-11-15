@@ -15,11 +15,14 @@
 #include "flat_dialog.h"
 #include "format.h"
 #include "include/aegisub/context.h"
+#include "options.h"
 #include "project.h"
 #include "subs_controller.h"
 #include "subtitle_compare.h"
 #include "subtitle_compare_view.h"
 #include "subtitle_format.h"
+#include "tag_chips.h"
+#include "tag_summary.h"
 #include "theme.h"
 #include "workspace_tabs.h"
 
@@ -41,6 +44,7 @@
 #include <map>
 #include <optional>
 #include <span>
+#include <unordered_map>
 
 namespace {
 namespace model = agi::ass::compare;
@@ -234,6 +238,8 @@ class DiffPane final : public wxWindow {
     int tip_row = -1;
     Part tip_part = Part::None;
     bool dragging_overview = false;
+    const tag_summary::Piece* tip_block = nullptr;
+    int wheel_rest[2] = {0, 0}; // what the wheel turned short of a step, down and across
 
     struct Geometry {
         int width, height;       // drawing area (without scroll bars)
@@ -252,11 +258,31 @@ class DiffPane final : public wxWindow {
     void OnKey(wxKeyEvent& event);
     void OnScroll(wxScrollEvent&);
     void DrawRow(wxDC& dc, Geometry const& g, int row, int y);
+    /// The frame round the keyboard's line, while either pane has the focus.
+    void DrawCursor(wxDC& dc, Geometry const& g, int y);
     void DrawLine(wxDC& dc, Geometry const& g, size_t entry, int y);
     void DrawDetail(wxDC& dc, Geometry const& g, int row, int y);
+    /// A piece of a line's text as drawn: a run of the text itself, a chip
+    /// for a {…} block (tags simplified), a label standing for a drawing's
+    /// commands, or where a hidden block was.
+    struct TextPiece {
+        enum Kind { Run, Chip, Label, Gap } kind = Run;
+        size_t begin = 0, end = 0;  // bytes of the text
+        int left = 0, right = 0;    // x
+        bool changed = false;       // touches a changed token
+        const tag_summary::Piece* block = nullptr;
+        wxString label;
+    };
+    /// Lay the text of @p entry on this side out from @p x, as the tag mode
+    /// shows it (@p full: tags as written whatever the mode).
+    std::vector<TextPiece> LayText(wxDC& dc, size_t entry, int x, bool highlight, bool full) const;
     /// The text of @p entry on this side from @p x, changed tokens highlighted
     /// if @p highlight. Returns the x after it.
-    int DrawText(wxDC& dc, size_t entry, int x, int y, bool highlight, bool lost);
+    int DrawText(wxDC& dc, size_t entry, int x, int y, bool highlight, bool lost, bool full = false);
+    /// Where the text column starts, in row coordinates.
+    int TextX(Geometry const& g) const;
+    /// The tag block under @p pt on @p row, when tags are simplified.
+    const tag_summary::Piece* BlockAt(int row, wxPoint pt);
     void DrawDelta(wxDC& dc, size_t entry, model::Field f, int x, int y);
     void DrawActions(wxDC& dc, Geometry const& g, size_t entry, int row, int y);
     void DrawOverview(wxDC& dc, Geometry const& g);
@@ -284,6 +310,9 @@ public:
     /// Scroll so that rows @p first to @p last are visible, if they were not.
     void Reveal(int first, int last = -1);
     void UpdateBars();
+    /// Scroll by what the wheel turned, keeping what falls short of a step
+    /// (fine wheels and touchpads turn a fraction of one at a time).
+    void Wheel(wxMouseEvent& event);
 };
 
 // The strip between the panes, as in Meld: each side's line numbers next to
@@ -311,6 +340,7 @@ class DiffGutter final : public wxWindow {
 public:
     DiffGutter(wxWindow* parent, ComparePanel& ed);
     int Width() const;
+    bool AcceptsFocus() const override { return false; }
 };
 
 // The names of the columns above a pane, lined up with its cells and
@@ -322,6 +352,7 @@ class DiffHeader final : public wxWindow {
 public:
     DiffHeader(wxWindow* parent, ComparePanel& ed, DiffPane* pane);
     wxSize DoGetBestClientSize() const override;
+    bool AcceptsFocus() const override { return false; }
 };
 
 class ComparePanel final : public ComparisonPage {
@@ -345,6 +376,14 @@ class ComparePanel final : public ComparisonPage {
     std::optional<size_t> current;      // the current difference (an entry)
     int hot = -1;                       // row under the pointer, in any pane or the gutter
     std::optional<model::Field> field_cursor; // the keyboard's field among the current difference's detail rows
+    int cursor_row = -1;                // the keyboard's line, in both panes
+
+    // override tags as the subtitle grid shows them: in full, simplified, hidden
+    const agi::OptionValue* tag_mode;
+    agi::signal::Connection tag_mode_changed;
+    mutable std::unordered_map<std::string, std::vector<tag_summary::Piece>> summaries;
+    tag_chips::Painter chips_painter;
+    FlatSwitch* tags_switch;
 
     // metrics
     int row_h = 22, char_w = 7, number_w = 40, arrow_w = 18, band_w = 28, time_w = 80, style_w = 80, actor_w = 0;
@@ -387,6 +426,8 @@ class ComparePanel final : public ComparisonPage {
     void OnFinish();
     /// Handle the window's own shortcuts; false for keys left to the focused control.
     bool OnKey(wxKeyEvent& event);
+    /// The keyboard's help for the line it is on, or empty.
+    wxString CursorHelp() const;
     /// Release the comparison and remove the tab.
     void End(bool applied);
 public:
@@ -418,6 +459,18 @@ public:
     void ChooseSide(Side side);
     void ToggleCheck(size_t entry);
     void ExpandFold(int row);
+    /// Put the keyboard's line on @p row (clamped), in view in @p from's pane.
+    void PlaceCursor(int row, Side from);
+    /// Move the keyboard's line by @p delta rows, from where it is if @p from's
+    /// pane shows it, else from that pane's top row.
+    void MoveCursor(int delta, Side from);
+    /// Enter on the keyboard's line: open a fold, or make its difference current.
+    void ActivateCursor(Side from);
+    /// Space: select the keyboard's difference, else the current one.
+    void CheckCursor();
+    /// 0 tags in full, 1 simplified, 2 hidden.
+    int TagMode() const { return tag_mode->GetInt(); }
+    std::vector<tag_summary::Piece> const& Summary(std::string const& text) const;
     void Scrolled(Side from);
     void ContextMenu(DiffPane* pane, size_t entry, wxPoint pos);
     wxString Tooltip(int row, Side side) const;
@@ -457,8 +510,22 @@ DiffPane::DiffPane(wxWindow* parent, ComparePanel& ed, Side side)
         for (auto type : {wxEVT_SCROLL_TOP, wxEVT_SCROLL_BOTTOM, wxEVT_SCROLL_LINEUP, wxEVT_SCROLL_LINEDOWN,
                 wxEVT_SCROLL_PAGEUP, wxEVT_SCROLL_PAGEDOWN, wxEVT_SCROLL_THUMBTRACK, wxEVT_SCROLL_THUMBRELEASE, wxEVT_SCROLL_CHANGED})
             bar->Bind(type, &DiffPane::OnScroll, this);
-    Bind(wxEVT_SET_FOCUS, [this](wxFocusEvent& e) { Refresh(false); e.Skip(); });
-    Bind(wxEVT_KILL_FOCUS, [this](wxFocusEvent& e) { Refresh(false); e.Skip(); });
+    for (auto bar : {vbar, hbar}) {
+        // The wheel over a bar scrolls as over the rows (once: not the bar's own way too).
+        bar->Bind(wxEVT_MOUSEWHEEL, [this](wxMouseEvent& e) { Wheel(e); });
+        // Tab goes from pane to pane, not into their bars.
+        bar->DisableFocusFromKeyboard();
+    }
+    // The keyboard's line shows in both panes while either has the focus,
+    // and the foot says what the keys do on it.
+    auto focus_changed = [this](wxFocusEvent& e) {
+        Refresh(false);
+        if (auto other = this->ed.PaneFor(view::Other(this->side))) other->Refresh(false);
+        CallAfter([this] { this->ed.ShowHelp(Part::None, false, -1); });
+        e.Skip();
+    };
+    Bind(wxEVT_SET_FOCUS, focus_changed);
+    Bind(wxEVT_KILL_FOCUS, focus_changed);
 }
 
 DiffPane::Geometry DiffPane::Geo() const {
@@ -522,6 +589,21 @@ void DiffPane::Redraw() {
     ed.RefreshGutter();
 }
 
+void DiffPane::Wheel(wxMouseEvent& event) {
+    int across = event.GetWheelAxis() == wxMOUSE_WHEEL_HORIZONTAL || event.ShiftDown() ? 1 : 0;
+    int turned = event.GetWheelRotation();
+    int& rest = wheel_rest[across];
+    if (rest && (rest > 0) != (turned > 0)) rest = 0; // turned back: start afresh
+    rest += turned;
+    int delta = std::max(1, event.GetWheelDelta());
+    int steps = rest / delta;
+    if (!steps) return;
+    rest -= steps * delta;
+    int lines = steps * std::max(1, event.GetLinesPerAction());
+    if (across) SetView(top, xoff + lines * ed.char_w * 4, true);
+    else SetView(top - lines, xoff, true);
+}
+
 void DiffPane::OnScroll(wxScrollEvent& event) {
     if (event.GetEventObject() == vbar) SetView(vbar->GetThumbPosition(), xoff, true);
     else SetView(top, hbar->GetThumbPosition(), true);
@@ -570,12 +652,7 @@ void DiffPane::OnMouse(wxMouseEvent& event) {
     auto client_pt = event.GetPosition();
     auto pt = client_pt - wxPoint(RowsX(), 0);
     auto g = Geo();
-    if (event.GetEventType() == wxEVT_MOUSEWHEEL) {
-        int lines = event.GetWheelRotation() / std::max(1, event.GetWheelDelta()) * std::max(1, event.GetLinesPerAction());
-        if (event.GetWheelAxis() == wxMOUSE_WHEEL_HORIZONTAL || event.ShiftDown()) SetView(top, xoff + lines * ed.char_w * 4, true);
-        else SetView(top - lines, xoff, true);
-        return;
-    }
+    if (event.GetEventType() == wxEVT_MOUSEWHEEL) { Wheel(event); return; }
     if (event.GetEventType() == wxEVT_LEAVE_WINDOW) {
         if (hover_part != Part::None) { hover_part = Part::None; Refresh(false); }
         ed.SetHot(-1);
@@ -602,9 +679,12 @@ void DiffPane::OnMouse(wxMouseEvent& event) {
         // Buttons explain themselves; elsewhere the tooltip shows the line.
         auto help = ed.Help(part, false, row);
         Part tip = help.empty() ? Part::Content : part;
-        if (row != tip_row || tip != tip_part) {
-            tip_row = row; tip_part = tip;
+        // Over a simplified block: what its tags do.
+        auto block = help.empty() && part == Part::Content ? BlockAt(row, pt) : nullptr;
+        if (row != tip_row || tip != tip_part || block != tip_block) {
+            tip_row = row; tip_part = tip; tip_block = block;
             if (!help.empty()) SetToolTip(help);
+            else if (block) SetToolTip(tag_summary::Describe(*block));
             else if (row >= 0 && !ed.layout[row].IsFold()) SetToolTip(ed.Tooltip(row, side));
             else UnsetToolTip();
         }
@@ -621,6 +701,7 @@ void DiffPane::OnMouse(wxMouseEvent& event) {
         }
         if (row < 0) return;
         auto const& lr = ed.layout[row];
+        ed.cursor_row = row;
         switch (part) {
             case Part::Fold: ed.ExpandFold(row); return;
             case Part::Accept: ed.Decide(lr.entry, Decision::Accepted); return;
@@ -644,6 +725,10 @@ void DiffPane::OnMouse(wxMouseEvent& event) {
 
 void DiffPane::OnKey(wxKeyEvent& event) {
     int vis = VisibleRows();
+    if (event.GetKeyCode() == WXK_TAB && !event.ControlDown() && !event.AltDown()) {
+        Navigate(event.ShiftDown() ? wxNavigationKeyEvent::IsBackward : wxNavigationKeyEvent::IsForward);
+        return;
+    }
     // Ctrl+arrows decide: up and down pick a field of the current difference,
     // left and right take that side (of the field, or of the whole line).
     if (event.GetModifiers() == wxMOD_CONTROL) {
@@ -655,18 +740,20 @@ void DiffPane::OnKey(wxKeyEvent& event) {
             default: break;
         }
     }
+    if (event.HasAnyModifiers()) { event.Skip(); return; }
+    // Up and down move the keyboard's line, the view following it.
     switch (event.GetKeyCode()) {
-        case WXK_UP: SetView(top - 1, xoff, true); break;
-        case WXK_DOWN: SetView(top + 1, xoff, true); break;
-        case WXK_PAGEUP: SetView(top - vis, xoff, true); break;
-        case WXK_PAGEDOWN: SetView(top + vis, xoff, true); break;
-        case WXK_HOME: SetView(0, xoff, true); break;
-        case WXK_END: SetView((int)ed.layout.size(), xoff, true); break;
+        case WXK_UP: ed.MoveCursor(-1, side); break;
+        case WXK_DOWN: ed.MoveCursor(1, side); break;
+        case WXK_PAGEUP: ed.MoveCursor(-vis, side); break;
+        case WXK_PAGEDOWN: ed.MoveCursor(vis, side); break;
+        case WXK_HOME: ed.PlaceCursor(0, side); break;
+        case WXK_END: ed.PlaceCursor((int)ed.layout.size() - 1, side); break;
         case WXK_LEFT: SetView(top, xoff - ed.char_w * 4, true); break;
         case WXK_RIGHT: SetView(top, xoff + ed.char_w * 4, true); break;
-        case WXK_SPACE:
-            if (auto entry = ed.CurrentEntry()) ed.ToggleCheck(*entry);
-            break;
+        case WXK_RETURN:
+        case WXK_NUMPAD_ENTER: ed.ActivateCursor(side); break;
+        case WXK_SPACE: ed.CheckCursor(); break;
         default: event.Skip();
     }
 }
@@ -680,8 +767,10 @@ void DiffPane::OnPaint(wxPaintEvent&) {
     dc.Clear();
     dc.SetFont(GetFont());
     int rows = (int)ed.layout.size();
-    for (int row = top, y = 0; row < rows && y < g.height; ++row, y += ed.row_h)
+    for (int row = top, y = 0; row < rows && y < g.height; ++row, y += ed.row_h) {
         DrawRow(dc, g, row, y);
+        if (row == ed.cursor_row) DrawCursor(dc, g, y);
+    }
     dc.SetPen(wxPen(p.border));
     if (side == Side::Right) {
         dc.DrawLine(g.overview_x, 0, g.overview_x, g.height);
@@ -692,6 +781,16 @@ void DiffPane::OnPaint(wxPaintEvent&) {
         dc.SetBrush(*wxTRANSPARENT_BRUSH);
         dc.DrawRectangle(0, 0, g.width, g.height);
     }
+}
+
+void DiffPane::DrawCursor(wxDC& dc, Geometry const& g, int y) {
+    // The keyboard's line: solid in the focused pane, dashed in the other;
+    // none while the keyboard is elsewhere.
+    bool focused = HasFocus();
+    if (!focused && !ed.PaneFor(view::Other(side))->HasFocus()) return;
+    dc.SetPen(wxPen(ed.pal.accent, 1, focused ? wxPENSTYLE_SOLID : wxPENSTYLE_SHORT_DASH));
+    dc.SetBrush(*wxTRANSPARENT_BRUSH);
+    dc.DrawRectangle(g.content_x + 1, y, std::max(0, g.content_right - g.content_x - 2), ed.row_h);
 }
 
 void DiffPane::DrawRow(wxDC& dc, Geometry const& g, int row, int y) {
@@ -740,37 +839,151 @@ void DiffPane::DrawRow(wxDC& dc, Geometry const& g, int row, int y) {
     }
 }
 
-int DiffPane::DrawText(wxDC& dc, size_t entry, int x, int y, bool highlight, bool lost) {
+std::vector<DiffPane::TextPiece> DiffPane::LayText(wxDC& dc, size_t entry, int x, bool highlight, bool full) const {
+    auto const& e = ed.state.Entries()[entry];
+    auto const& text = e.Get(side)->Value(model::Text);
+    auto const& spans = side == Side::Left ? e.text.left : e.text.right;
+    size_t limit = std::min(text.size(), size_t(4000));
+    auto touched = [&](size_t a, size_t b) {
+        if (!highlight) return false;
+        for (auto const& span : spans)
+            if (span.begin < b && span.end > a) return true;
+        return false;
+    };
+    auto run_width = [&](size_t a, size_t b) {
+        auto part = to_wx(text.substr(a, b - a));
+        part.Replace("\n", " ");
+        return dc.GetTextExtent(part).GetWidth();
+    };
+    std::vector<TextPiece> out;
+    int mode = full ? 0 : ed.TagMode();
+    if (mode == 0) {
+        TextPiece run;
+        run.end = limit;
+        run.left = x;
+        run.right = x + run_width(0, limit);
+        run.changed = touched(0, limit);
+        out.push_back(run);
+        return out;
+    }
+    tag_chips::Metrics m(dc);
+    // A block ending a drawing has no piece: nothing is drawn for its bytes.
+    for (auto const& piece : ed.Summary(text)) {
+        if (piece.begin >= limit) break;
+        TextPiece tp;
+        tp.begin = piece.begin;
+        tp.end = std::min(piece.end, limit);
+        tp.changed = touched(piece.begin, piece.end);
+        if (piece.block) {
+            tp.block = &piece;
+            if (mode == 2) {
+                // Hidden, but a changed block keeps a mark where it was.
+                tp.kind = TextPiece::Gap;
+                tp.left = x;
+                tp.right = x + (tp.changed ? 4 : 0);
+            }
+            else {
+                tp.kind = TextPiece::Chip;
+                tp.left = x + m.spacing / 2;
+                tp.right = tp.left + ed.chips_painter.Width(dc, m, piece);
+                tp.right = std::max(tp.right, tp.left + 1);
+            }
+            x = tp.right + (tp.kind == TextPiece::Chip ? m.spacing / 2 : 0);
+        }
+        else if (piece.drawing_points >= 0) {
+            tp.kind = TextPiece::Label;
+            tp.label = tag_summary::PlainText(piece);
+            tp.left = x;
+            tp.right = x + dc.GetTextExtent(tp.label).GetWidth();
+            x = tp.right;
+        }
+        else {
+            tp.left = x;
+            tp.right = x + run_width(tp.begin, tp.end);
+            x = tp.right;
+        }
+        out.push_back(std::move(tp));
+    }
+    return out;
+}
+
+int DiffPane::DrawText(wxDC& dc, size_t entry, int x, int y, bool highlight, bool lost, bool full) {
     auto const& p = ed.pal;
     auto const& e = ed.state.Entries()[entry];
     auto const& text = e.Get(side)->Value(model::Text);
     auto const& spans = side == Side::Left ? e.text.left : e.text.right;
     wxColour hl = side == Side::Right ? p.ins_char : p.del_char;
+    wxColour mark_bg = lost ? mix(hl, p.bg, 0.5) : hl;
     int text_y = y + (ed.row_h - dc.GetCharHeight()) / 2;
-    size_t pos = 0;
-    auto draw = [&](size_t a, size_t b, bool mark) {
-        if (a >= b) return;
-        auto part = to_wx(text.substr(a, b - a));
-        part.Replace("\n", " ");
-        int w = dc.GetTextExtent(part).GetWidth();
-        if (mark) {
-            dc.SetPen(*wxTRANSPARENT_PEN);
-            dc.SetBrush(wxBrush(lost ? mix(hl, p.bg, 0.5) : hl));
-            dc.DrawRectangle(x, y + 3, std::max(w, 3), ed.row_h - 6);
+    auto pieces = LayText(dc, entry, x, highlight, full);
+    for (auto const& tp : pieces) {
+        if (tp.kind == TextPiece::Run) {
+            // The text itself, its changed tokens on the highlight colour.
+            int px = tp.left;
+            auto draw = [&](size_t a, size_t b, bool mark) {
+                if (a >= b) return;
+                auto part = to_wx(text.substr(a, b - a));
+                part.Replace("\n", " ");
+                int w = dc.GetTextExtent(part).GetWidth();
+                if (mark) {
+                    dc.SetPen(*wxTRANSPARENT_PEN);
+                    dc.SetBrush(wxBrush(mark_bg));
+                    dc.DrawRectangle(px, y + 3, std::max(w, 3), ed.row_h - 6);
+                }
+                dc.SetTextForeground(lost ? p.dim : p.text);
+                dc.wxDC::DrawText(part, px, text_y);
+                px += w;
+            };
+            size_t pos = tp.begin;
+            if (highlight) {
+                for (auto const& span : spans) {
+                    size_t a = std::clamp(span.begin, tp.begin, tp.end), b = std::clamp(span.end, tp.begin, tp.end);
+                    if (a >= b) continue;
+                    draw(pos, a, false);
+                    draw(a, b, true);
+                    pos = b;
+                }
+            }
+            draw(pos, tp.end, false);
+            continue;
         }
-        dc.SetTextForeground(lost ? p.dim : p.text);
-        dc.wxDC::DrawText(part, x, text_y);
-        x += w;
-    };
-    if (highlight) {
-        for (auto const& span : spans) {
-            draw(pos, std::min(span.begin, text.size()), false);
-            draw(std::min(span.begin, text.size()), std::min(span.end, text.size()), true);
-            pos = std::min(span.end, text.size());
+        if (tp.changed) {
+            // A changed block (or drawing) is marked as a whole.
+            dc.SetPen(*wxTRANSPARENT_PEN);
+            dc.SetBrush(wxBrush(mark_bg));
+            if (tp.kind == TextPiece::Gap) dc.DrawRectangle(tp.left + 1, y + 3, 3, ed.row_h - 6);
+            else dc.DrawRoundedRectangle(tp.left - 2, y + 3, tp.right - tp.left + 4, ed.row_h - 6, 3);
+        }
+        if (tp.kind == TextPiece::Label) {
+            dc.SetTextForeground(lost ? p.dim : mix(p.text, p.bg, 0.4));
+            dc.wxDC::DrawText(tp.label, tp.left, text_y);
+        }
+        else if (tp.kind == TextPiece::Chip) {
+            tag_chips::Metrics m(dc);
+            wxColour back = tp.changed ? mark_bg : ed.ShownDiff(entry) ? ed.RowColour(entry, side) : p.bg;
+            dc.SetTextForeground(lost ? p.dim : p.text);
+            ed.chips_painter.Draw(dc, *tp.block, tp.left, tp.right, y + (ed.row_h - m.height) / 2 - 1, m, back);
         }
     }
-    draw(pos, std::min(text.size(), size_t(4000)), false);
-    return x;
+    return pieces.empty() ? x : pieces.back().right;
+}
+
+int DiffPane::TextX(Geometry const& g) const {
+    int time_w = ed.time_w + (side == Side::Right ? ed.delta_w : 0);
+    return g.content_x + 6 - xoff + time_w * 2 + ed.style_w + ed.actor_w;
+}
+
+const tag_summary::Piece* DiffPane::BlockAt(int row, wxPoint pt) {
+    if (ed.TagMode() != 1 || row < 0 || row >= (int)ed.layout.size()) return nullptr;
+    auto const& lr = ed.layout[row];
+    if (lr.IsFold() || lr.IsDetail() || !ed.state.Entries()[lr.entry].Get(side)) return nullptr;
+    auto g = Geo();
+    if (pt.x < g.content_x || pt.x >= g.content_right) return nullptr;
+    wxClientDC dc(this);
+    dc.SetFont(GetFont());
+    for (auto const& tp : LayText(dc, lr.entry, TextX(g), false, false))
+        if (tp.kind == TextPiece::Chip && pt.x >= tp.left - 1 && pt.x < tp.right + 1) return tp.block;
+    return nullptr;
 }
 
 void DiffPane::DrawDelta(wxDC& dc, size_t entry, model::Field f, int x, int y) {
@@ -901,7 +1114,8 @@ void DiffPane::DrawDetail(wxDC& dc, Geometry const& g, int row, int y) {
         dc.SetFont(GetFont());
         x += ed.label_w;
         if (f == model::Text) {
-            int end = DrawText(dc, entry, x, y, true, lost);
+            // In full: the tags themselves are what is told apart here.
+            int end = DrawText(dc, entry, x, y, true, lost, true);
             if (lost && end > x) { dc.SetPen(wxPen(p.dim)); dc.DrawLine(x, y + ed.row_h / 2, end, y + ed.row_h / 2); }
         }
         else {
@@ -1004,6 +1218,7 @@ DiffHeader::DiffHeader(wxWindow* parent, ComparePanel& ed, DiffPane* pane)
     SetName(pane->GetSide() == Side::Left ? "compare-left-header" : "compare-right-header");
     Bind(wxEVT_PAINT, &DiffHeader::OnPaint, this);
     Bind(wxEVT_SIZE, [this](wxSizeEvent&) { Refresh(false); });
+    Bind(wxEVT_MOUSEWHEEL, [pane](wxMouseEvent& e) { pane->Wheel(e); });
 }
 
 wxSize DiffHeader::DoGetBestClientSize() const {
@@ -1240,8 +1455,9 @@ void DiffGutter::DrawStrip(wxDC& dc, Side side, int row, int y) {
 void DiffGutter::OnMouse(wxMouseEvent& event) {
     auto type = event.GetEventType();
     if (type == wxEVT_MOUSEWHEEL) {
-        int lines = event.GetWheelRotation() / std::max(1, event.GetWheelDelta()) * std::max(1, event.GetLinesPerAction());
-        for (auto pane : {ed.left, ed.right}) pane->SetView(pane->Top() - lines, pane->XOffset());
+        // Both sides: together when in sync (the right one leads), else each.
+        ed.right->Wheel(event);
+        if (!ed.sync) ed.left->Wheel(event);
         return;
     }
     if (type == wxEVT_LEAVE_WINDOW) {
@@ -1315,6 +1531,7 @@ ComparePanel::ComparePanel(wxWindow* parent, agi::Context *c, SubtitleComparison
 , state(comparison.Current(), comparison.Baseline(), comparison.Fields(), comparison.Items())
 , pal(make_palette())
 , file_name(name)
+, tag_mode(OPT_GET("Subtitle/Grid/Hide Overrides"))
 {
     auto project_file = c->subsController->Filename();
     project_name = project_file.empty() ? _("Untitled") : wxString(project_file.filename().wstring());
@@ -1400,6 +1617,16 @@ ComparePanel::ComparePanel(wxWindow* parent, agi::Context *c, SubtitleComparison
         ignore_boxes.emplace_back(group, box);
     }
     filter_bar->AddStretchSpacer();
+    // Override tags shown as the subtitle grid shows them, the one setting for both.
+    filter_bar->Add(flat::DimLabel(this, flat::WithoutColon(_("Tags:"))), wxSizerFlags().Center().Border(wxRIGHT, 2 * gap));
+    tags_switch = new FlatSwitch(this, {_("Full"), _("Simplified"), _("Hidden")});
+    tags_switch->SetName("compare-tags");
+    tags_switch->SetItemToolTip(0, _("Show override tags as written"));
+    tags_switch->SetItemToolTip(1, _("Show each {...} block of override tags as a chip of icons saying what it does; point at one for its tags. The subtitle grid shows them the same way."));
+    tags_switch->SetItemToolTip(2, _("Leave override tags out; a changed block keeps a mark where it was"));
+    tags_switch->SetSelection(std::clamp<int>(TagMode(), 0, 2));
+    tags_switch->on_choose = [](int index) { OPT_SET("Subtitle/Grid/Hide Overrides")->SetInt(index); };
+    filter_bar->Add(tags_switch, wxSizerFlags().Center().Border(wxRIGHT, 4 * gap));
     sync_box = new FlatCheck(this, _("Sync scrolling"));
     sync_box->SetName("compare-sync"); sync_box->SetValue(true);
     sync_box->SetToolTip(_("Scroll both sides together. When off, each side scrolls on its own and selecting a line locates it on the other side."));
@@ -1579,6 +1806,29 @@ ComparePanel::ComparePanel(wxWindow* parent, agi::Context *c, SubtitleComparison
     Bind(wxEVT_CHAR_HOOK, [this](wxKeyEvent& event) {
         if (!OnKey(event)) event.DoAllowNextEvent();
     });
+    // The wheel anywhere over a side (its file's name, its column names,
+    // what has no window of its own) scrolls that side; between them, both.
+    auto both = [this](wxMouseEvent& e) { right->Wheel(e); if (!sync) left->Wheel(e); };
+    Bind(wxEVT_MOUSEWHEEL, [this, both](wxMouseEvent& event) {
+        wxPoint pt = event.GetPosition();
+        wxRect sides(left->GetPosition(), right->GetRect().GetBottomRight());
+        sides.SetTop(left_title->GetPosition().y - FromDIP(8));
+        if (!sides.Contains(pt)) return;
+        if (pt.x < gutter->GetPosition().x) left->Wheel(event);
+        else if (pt.x >= right->GetPosition().x) right->Wheel(event);
+        else both(event);
+    });
+    // Mouse events do not reach the page from its children: those over the sides say so.
+    for (auto label : {left_role, left_title}) label->Bind(wxEVT_MOUSEWHEEL, [this](wxMouseEvent& e) { left->Wheel(e); });
+    for (auto label : {right_role, right_title}) label->Bind(wxEVT_MOUSEWHEEL, [this](wxMouseEvent& e) { right->Wheel(e); });
+    swap->Bind(wxEVT_MOUSEWHEEL, both);
+    // The grid's tag setting, changed here or there.
+    tag_mode_changed = OPT_SUB("Subtitle/Grid/Hide Overrides", [this](agi::OptionValue const& opt) {
+        tags_switch->SetSelection(std::clamp<int>((int)opt.GetInt(), 0, 2));
+        Measure();
+        left->UpdateBars(); right->UpdateBars();
+        left->Refresh(false); right->Refresh(false);
+    });
 
     // Follow the appearance while open.
     theme_changed = theme::AddChangeListener([this] {
@@ -1598,6 +1848,11 @@ bool ComparePanel::OnKey(wxKeyEvent& event) {
     if ((key == WXK_F7 && mods == wxMOD_NONE) || (key == WXK_DOWN && mods == wxMOD_ALT)) { Go(1); return true; }
     if ((key == WXK_F7 && mods == wxMOD_SHIFT) || (key == WXK_UP && mods == wxMOD_ALT)) { Go(-1); return true; }
     if (mods == wxMOD_ALT && flat::PressMnemonic(this, key)) return true;
+    // F6: from one side to the other (to the right one from elsewhere).
+    if (key == WXK_F6 && (mods == wxMOD_NONE || mods == wxMOD_SHIFT)) {
+        (right->HasFocus() ? left : right)->SetFocus();
+        return true;
+    }
     if (key == 'Z' && mods == wxMOD_CONTROL) { if (state.Undo()) Changed(); return true; }
     if ((key == 'Y' && mods == wxMOD_CONTROL) || (key == 'Z' && mods == (wxMOD_CONTROL | wxMOD_SHIFT))) {
         if (state.Redo()) Changed();
@@ -1614,7 +1869,9 @@ void ComparePanel::Started() {
         while (!GroupEnd(last)) ++last;
         right->Reveal(row, last);
         left->SetView(right->Top(), right->XOffset());
+        cursor_row = row;
     }
+    else if (!layout.empty()) cursor_row = 0;
     right->SetFocus();
 }
 
@@ -1648,7 +1905,10 @@ void ComparePanel::Measure() {
             max_number = std::max(max_number, line->number);
             styles.insert(line->Value(model::Style));
             if (!line->Value(model::Actor).empty()) actors.insert(line->Value(model::Actor));
-            int w = estimate(line->Value(model::Text));
+            int w = 0;
+            if (TagMode() == 0) w = estimate(line->Value(model::Text));
+            else for (auto const& piece : Summary(line->Value(model::Text)))
+                w += piece.block ? (TagMode() == 1 ? char_w * 5 : 0) : estimate(from_wx(tag_summary::PlainText(piece)));
             for (auto f : view::FieldOrder())
                 if (!is_column(f) && (e.changed & f)) w += estimate(line->Value(f)) + char_w * 16;
             text = std::max(text, w);
@@ -1686,6 +1946,9 @@ void ComparePanel::Relayout(std::optional<size_t> anchor) {
     bool had = !layout.empty() && anchor && *anchor < row_of.size();
     int off_r = had ? row_of[*anchor] - right->Top() : 0;
     int off_l = had ? row_of[*anchor] - left->Top() : 0;
+    // The keyboard's line stays on what it was on.
+    std::optional<Row> at_cursor;
+    if (cursor_row >= 0 && cursor_row < (int)layout.size()) at_cursor = layout[cursor_row];
 
     layout.clear();
     auto cur = CurrentEntry();
@@ -1710,6 +1973,13 @@ void ComparePanel::Relayout(std::optional<size_t> anchor) {
         if (lr.IsDetail()) continue;
         for (size_t k = 0; k < std::max<size_t>(1, lr.hidden); ++k) row_of[lr.entry + k] = (int)r;
     }
+    if (at_cursor && !layout.empty()) {
+        cursor_row = row_of[at_cursor->entry];
+        if (at_cursor->IsDetail())
+            for (int r = 0; r < (int)layout.size(); ++r)
+                if (layout[r].entry == at_cursor->entry && layout[r].field == at_cursor->field) cursor_row = r;
+    }
+    if (cursor_row >= (int)layout.size()) cursor_row = (int)layout.size() - 1;
     int top_r = anchor ? row_of[*anchor] - off_r : 0;
     int top_l = anchor ? row_of[*anchor] - off_l : 0;
     right->SetView(top_r, right->XOffset());
@@ -1801,6 +2071,7 @@ void ComparePanel::ShowHelp(Part part, bool in_gutter, int row) {
     // for as long as it is pointed at; with detail rows open, the keys that
     // decide them stay there while nothing is.
     auto text = Help(part, in_gutter, row);
+    if (text.empty()) text = CursorHelp();
     if (text.empty() && !DetailFields().empty()) text = detail_hint;
     bool show = !text.empty();
     if (hint->GetLabelText() == text && hint->IsShown() == show) return;
@@ -1876,12 +2147,21 @@ void ComparePanel::UpdateFilterBar() {
     if (key != chips_key) {
         chips_key = key;
         chips->Clear(true);
+        wxWindow* after = filter_button;
         for (auto& [label, clear] : active) {
             auto chip = new FlatButton(this, label + wxString::FromUTF8("  ×"));
             chip->SetToolTip(_("Take this filter off"));
             chip->SetLeastSize(wxSize(-1, FromDIP(26)));
-            // Rebuilding the chips destroys this one: after its click is done.
-            chip->Bind(wxEVT_BUTTON, [this, clear](wxCommandEvent&) { clear(); CallAfter([this] { ApplyFilter(); }); });
+            // Tab reaches them where they are, after the Filter button.
+            chip->MoveAfterInTabOrder(after);
+            after = chip;
+            // Rebuilding the chips destroys this one: after its click is done,
+            // the keyboard going back to the Filter button if it was on it.
+            chip->Bind(wxEVT_BUTTON, [this, clear, chip](wxCommandEvent&) {
+                bool focused = wxWindow::FindFocus() == chip;
+                clear();
+                CallAfter([this, focused] { ApplyFilter(); if (focused) filter_button->SetFocus(); });
+            });
             chips->Add(chip, wxSizerFlags().Center().Border(wxRIGHT, FromDIP(4)));
         }
         changed = true;
@@ -1963,6 +2243,7 @@ void ComparePanel::Go(int delta) {
     current = shown[i];
     Relayout();
     int row = row_of[*current], last = row;
+    cursor_row = row;
     while (!GroupEnd(last)) ++last;
     right->Reveal(row, last); left->Reveal(row, last);
     if (sync) left->SetView(right->Top(), right->XOffset());
@@ -1970,6 +2251,7 @@ void ComparePanel::Go(int delta) {
 }
 
 void ComparePanel::Select(size_t entry, Side from) {
+    if (cursor_row < 0 || cursor_row >= (int)layout.size() || layout[cursor_row].entry != entry) cursor_row = row_of[entry];
     if (ShownDiff(entry) && current != entry) {
         current = entry;
         Relayout(entry); // the clicked line stays where it is; its details open below it
@@ -2059,6 +2341,59 @@ void ComparePanel::ExpandFold(int row) {
     // The hidden lines open in place: the fold's first line takes its row.
     Relayout(entry);
     Changed();
+}
+
+void ComparePanel::PlaceCursor(int row, Side from) {
+    if (layout.empty()) return;
+    cursor_row = std::clamp(row, 0, (int)layout.size() - 1);
+    auto pane = PaneFor(from);
+    pane->Reveal(cursor_row);
+    if (sync) PaneFor(view::Other(from))->SetView(pane->Top(), pane->XOffset());
+    else PaneFor(view::Other(from))->Reveal(cursor_row);
+    ShowHelp(Part::None, false, -1);
+    left->Refresh(false); right->Refresh(false);
+}
+
+void ComparePanel::MoveCursor(int delta, Side from) {
+    auto pane = PaneFor(from);
+    int row = cursor_row;
+    // Scrolled away from it: start from what is in view.
+    if (row < pane->Top() || row >= pane->Top() + pane->VisibleRows())
+        row = delta > 0 ? pane->Top() - 1 : pane->Top() + pane->VisibleRows();
+    PlaceCursor(row + delta, from);
+}
+
+void ComparePanel::ActivateCursor(Side from) {
+    if (cursor_row < 0 || cursor_row >= (int)layout.size()) return;
+    auto const& lr = layout[cursor_row];
+    if (lr.IsFold()) { ExpandFold(cursor_row); PlaceCursor(cursor_row, from); }
+    else if (lr.IsDetail()) SetFieldCursor(*lr.field);
+    else if (ShownDiff(lr.entry)) { Select(lr.entry, from); PlaceCursor(row_of[lr.entry], from); }
+}
+
+void ComparePanel::CheckCursor() {
+    if (cursor_row >= 0 && cursor_row < (int)layout.size()) {
+        auto const& lr = layout[cursor_row];
+        if (!lr.IsFold() && ShownDiff(lr.entry)) { ToggleCheck(lr.entry); return; }
+    }
+    if (auto entry = CurrentEntry()) ToggleCheck(*entry);
+}
+
+wxString ComparePanel::CursorHelp() const {
+    if (!left->HasFocus() && !right->HasFocus()) return {};
+    if (cursor_row < 0 || cursor_row >= (int)layout.size()) return {};
+    auto const& lr = layout[cursor_row];
+    if (lr.IsFold()) return _("Enter shows the hidden lines");
+    if (lr.IsDetail() || !ShownDiff(lr.entry) || IsCurrent(lr.entry)) return {};
+    return _("Enter makes this the current difference, Space selects it");
+}
+
+std::vector<tag_summary::Piece> const& ComparePanel::Summary(std::string const& text) const {
+    auto it = summaries.find(text);
+    if (it != summaries.end()) return it->second;
+    // Only those lately drawn, as in the grid
+    if (summaries.size() > 4000) summaries.clear();
+    return summaries.emplace(text, tag_summary::Summarize(text)).first->second;
 }
 
 void ComparePanel::Scrolled(Side from) {

@@ -135,6 +135,7 @@ aegisub_src = files(
     'scene_detect.cpp',
     'scroll_effect.cpp',
     'script_panel.cpp',
+    'tag_chips.cpp',
     'tag_summary.cpp',
     'search_replace_engine.cpp',
     'selection_controller.cpp',

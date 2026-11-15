@@ -8249,6 +8249,33 @@ msgstr "折叠连续的相同内容，只保留每处差异附近的上下文"
 msgid "Show every line"
 msgstr "显示所有字幕行"
 
+msgid "Tags:"
+msgstr "标签："
+
+msgid "Full"
+msgstr "完整"
+
+msgid "Simplified"
+msgstr "简化"
+
+msgid "Hidden"
+msgstr "隐藏"
+
+msgid "Show override tags as written"
+msgstr "按原文显示覆盖标签"
+
+msgid "Show each {...} block of override tags as a chip of icons saying what it does; point at one for its tags. The subtitle grid shows them the same way."
+msgstr "把每个 {...} 覆盖标签块显示为说明其作用的图标块，鼠标指向可查看其中的标签。字幕表格使用同一设置。"
+
+msgid "Leave override tags out; a changed block keeps a mark where it was"
+msgstr "不显示覆盖标签；变化过的标签块在原位置留下标记"
+
+msgid "Enter shows the hidden lines"
+msgstr "Enter 展开隐藏的行"
+
+msgid "Enter makes this the current difference, Space selects it"
+msgstr "Enter 设为当前差异，空格勾选"
+
 msgid "Sync scrolling"
 msgstr "同步滚动"
 

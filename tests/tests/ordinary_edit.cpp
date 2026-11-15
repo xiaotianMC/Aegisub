@@ -2614,6 +2614,13 @@ TEST(tag_summary, says_what_each_block_of_tags_does) {
     EXPECT_TRUE(tip.EndsWith("{\\fad(200,200)\\pos(640,80)}")) << "the block as written last";
     EXPECT_EQ(u("Note: 译注：双关"),Describe(pieces[4]));
     EXPECT_EQ(u("Primary colour: #FF0000\n{\\c&H0000FF&}"),Describe(pieces[2]));
+    // Where each piece is in the text, in bytes: the comparison page marks
+    // changed blocks by it
+    std::string whole="{\\fad(200,200)\\pos(640,80)}你好{\\c&H0000FF&}世界{译注：双关}";
+    for (size_t i=1;i<pieces.size();++i) EXPECT_EQ(pieces[i-1].end,pieces[i].begin);
+    EXPECT_EQ(0u,pieces[0].begin); EXPECT_EQ(whole.size(),pieces[4].end);
+    EXPECT_EQ(pieces[0].raw,whole.substr(pieces[0].begin,pieces[0].end-pieces[0].begin));
+    EXPECT_EQ("你好",whole.substr(pieces[1].begin,pieces[1].end-pieces[1].begin));
 
     // The longest name first: \bord not \b, \be and \blur one kind, \fscx not \fs
     auto one=Summarize("{\\bord2\\be1\\b1\\blur3\\fscx120\\fscy80\\fs40\\fsp2\\an8}x");
@@ -2653,6 +2660,7 @@ TEST(tag_summary, says_what_each_block_of_tags_does) {
     EXPECT_EQ((std::vector<Kind>{Kind::Align,Kind::Pos,Kind::Drawing}),kinds(d[0]));
     EXPECT_EQ(4,d[1].drawing_points);
     EXPECT_EQ("after",d[2].text);
+    EXPECT_EQ(std::string("{\\an7\\pos(10,10)\\p1}m 0 0 l 100 0 100 100 0 100{\\p0}").size(),d[2].begin) << "past the block left out";
     EXPECT_EQ("(4 points)",PlainText(d[1]));
 
     // Braces left open: text as written
@@ -6898,6 +6906,166 @@ TEST_F(ordinary_edit, compare_window_decides_from_the_current_line_bar_and_check
     EXPECT_EQ(wxString::FromUTF8("1 pending · 1 left · 0 right · 0 partial"), after_bar);
     EXPECT_TRUE(found_check);
     EXPECT_EQ("1 selected", checked);
+}
+namespace {
+// A pane's vertical scroll bar: its range is the number of rows, its thumb the top row.
+wxScrollBar* RowsBar(wxWindow* pane) {
+    for (auto child : pane->GetChildren())
+        if (auto bar = dynamic_cast<wxScrollBar*>(child); bar && bar->IsVertical()) return bar;
+    return nullptr;
+}
+void Key(wxWindow* target, wxEventType type, int code, int mods = wxMOD_NONE) {
+    wxKeyEvent event(type); event.m_keyCode = code;
+    event.SetControlDown(mods & wxMOD_CONTROL); event.SetShiftDown(mods & wxMOD_SHIFT);
+    event.SetEventObject(target);
+    target->GetEventHandler()->ProcessEvent(event);
+}
+void Wheel(wxWindow* target, int rotation, bool shift = false) {
+    wxMouseEvent event(wxEVT_MOUSEWHEEL);
+    event.m_wheelRotation = rotation; event.m_wheelDelta = 120; event.m_linesPerAction = 3;
+    event.SetShiftDown(shift); event.SetEventObject(target);
+    target->GetEventHandler()->ProcessEvent(event);
+}
+}
+TEST_F(ordinary_edit, compare_window_moves_a_line_cursor_by_keyboard) {
+    // Fifteen lines, the first and the last changed: the seven between their
+    // context fold into one row.
+    std::string lines;
+    for (int i = 1; i <= 14; ++i) lines += (i > 1 ? "\n" : "") + std::string("line ") + std::to_string(i);
+    cmd::PasteSubtitleLines(c.get(), lines);
+    ASSERT_EQ(15u, LiveRead(*c).Events.size());
+    auto path = WriteBaseline(*c, "compare-cursor.ass", [](AssFile& f) {
+        f.Events.front().Text = "first changed";
+        f.Events.back().Text = "last changed";
+    });
+    int folded = 0, unfolded = 0;
+    wxString start_counter, after_enter, after_space, after_home_space, help_on_fold;
+    wxWindow *focus_f6 = nullptr, *focus_back = nullptr;
+    CompareHook hook([&](wxWindow* dialog) {
+        auto right = dialog->FindWindow("compare-right"); ASSERT_NE(nullptr, right);
+        auto left = dialog->FindWindow("compare-left"); ASSERT_NE(nullptr, left);
+        auto hint = Named<wxStaticText>(dialog, "compare-hint"); ASSERT_NE(nullptr, hint);
+        auto bar = RowsBar(right); ASSERT_NE(nullptr, bar);
+        start_counter = Counter(dialog);
+        folded = bar->GetRange();
+        // From the first difference, down past its three lines of context to the fold.
+        for (int i = 0; i < 4; ++i) Key(right, wxEVT_KEY_DOWN, WXK_DOWN);
+        right->SetFocus();
+        wxTheApp->ProcessPendingEvents();
+        help_on_fold = hint->IsShown() ? hint->GetLabelText() : wxString();
+        Key(right, wxEVT_KEY_DOWN, WXK_RETURN);              // opens it in place
+        unfolded = bar->GetRange();
+        Key(right, wxEVT_KEY_DOWN, WXK_END);                 // the last line: the second difference
+        Key(right, wxEVT_KEY_DOWN, WXK_RETURN);
+        after_enter = Counter(dialog);
+        Key(right, wxEVT_KEY_DOWN, WXK_SPACE);
+        after_space = Label(dialog, "compare-checked-count");
+        Key(right, wxEVT_KEY_DOWN, WXK_HOME);                // the first difference, not current
+        Key(right, wxEVT_KEY_DOWN, WXK_SPACE);               // selects the line it is on
+        after_home_space = Label(dialog, "compare-checked-count");
+        // F6 from side to side.
+        Key(dialog, wxEVT_CHAR_HOOK, WXK_F6);
+        focus_f6 = wxWindow::FindFocus();
+        Key(dialog, wxEVT_CHAR_HOOK, WXK_F6);
+        focus_back = wxWindow::FindFocus();
+        EXPECT_EQ(left, focus_f6);
+        EXPECT_EQ(right, focus_back);
+        // Tab goes from pane to pane past what only the mouse uses (moving
+        // the focus is the toolkit's, which a window never shown does not do).
+        for (auto name : {"compare-gutter", "compare-left-header", "compare-right-header"})
+            EXPECT_FALSE(dialog->FindWindow(name)->AcceptsFocusFromKeyboard()) << name;
+        for (auto pane : {left, right})
+            for (auto child : pane->GetChildren())
+                EXPECT_FALSE(child->AcceptsFocusFromKeyboard()) << "a pane's scroll bar";
+        EXPECT_TRUE(right->AcceptsFocusFromKeyboard());
+    });
+    EXPECT_FALSE(RunCompare(c.get(), path));
+    EXPECT_EQ("1 / 2 | Difference 1 of 2", start_counter);
+    EXPECT_EQ(9, folded) << "a difference, three lines, the fold, three lines, a difference";
+    EXPECT_EQ(15, unfolded);
+    if (!help_on_fold.empty()) EXPECT_TRUE(help_on_fold.StartsWith("Enter shows the hidden lines")) << help_on_fold;
+    EXPECT_EQ("2 / 2 | Difference 2 of 2", after_enter);
+    EXPECT_EQ("1 selected", after_space);
+    EXPECT_EQ("2 selected", after_home_space);
+}
+TEST_F(ordinary_edit, compare_window_scrolls_by_the_wheel_wherever_it_is_over_the_sides) {
+    std::string lines;
+    for (int i = 1; i <= 80; ++i) lines += (i > 1 ? "\n" : "") + std::string("line ") + std::to_string(i);
+    cmd::PasteSubtitleLines(c.get(), lines);
+    auto path = WriteBaseline(*c, "compare-wheel.ass", [](AssFile& f) { f.Events.front().Text = "changed"; });
+    int over_bar = -1, over_header = -1, over_gutter = -1, fine = -1, left_top = -1, back = -1;
+    bool across = false;
+    CompareHook hook([&](wxWindow* dialog) {
+        Named<FlatSwitch>(dialog, "compare-view")->Choose(1);  // every line
+        auto right = dialog->FindWindow("compare-right"); ASSERT_NE(nullptr, right);
+        auto bar = RowsBar(right), left_bar = RowsBar(dialog->FindWindow("compare-left"));
+        ASSERT_NE(nullptr, bar); ASSERT_NE(nullptr, left_bar);
+        ASSERT_GT(bar->GetRange(), bar->GetThumbSize()) << "more lines than fit";
+        int top = bar->GetThumbPosition();
+        Wheel(bar, -120); over_bar = bar->GetThumbPosition() - top;
+        Wheel(dialog->FindWindow("compare-right-header"), -120); over_header = bar->GetThumbPosition() - top;
+        Wheel(dialog->FindWindow("compare-gutter"), -120); over_gutter = bar->GetThumbPosition() - top;
+        // A fine wheel's eighths add up to one step.
+        for (int i = 0; i < 8; ++i) Wheel(right, -15);
+        fine = bar->GetThumbPosition() - top;
+        left_top = left_bar->GetThumbPosition() - top;           // in sync
+        Wheel(right, 120); back = bar->GetThumbPosition() - top;
+        auto hbar = [](wxWindow* pane) -> wxScrollBar* {
+            for (auto child : pane->GetChildren())
+                if (auto b = dynamic_cast<wxScrollBar*>(child); b && !b->IsVertical()) return b;
+            return nullptr;
+        }(right);
+        ASSERT_NE(nullptr, hbar);
+        int x = hbar->GetThumbPosition();
+        Wheel(right, 120, true);
+        Wheel(right, -120, true);
+        across = hbar->GetRange() <= hbar->GetThumbSize() || hbar->GetThumbPosition() != x || x == 0;
+    });
+    RunCompare(c.get(), path);
+    EXPECT_EQ(3, over_bar);
+    EXPECT_EQ(6, over_header);
+    EXPECT_EQ(9, over_gutter);
+    EXPECT_EQ(12, fine);
+    EXPECT_EQ(12, left_top);
+    EXPECT_EQ(9, back);
+    EXPECT_TRUE(across);
+}
+TEST_F(ordinary_edit, compare_window_simplifies_override_tags_as_the_grid_does) {
+    OPT_SET("Subtitle/Grid/Hide Overrides")->SetInt(0);
+    Input("{\\fad(100,100)}current");
+    auto path = WriteBaseline(*c, "compare-tags.ass", [](AssFile& f) { f.Events.front().Text = "{\\fad(200,200)}current"; });
+    int simplified = -1, hidden = -1, full = -1;
+    wxString tip, counter_hidden;
+    CompareHook hook([&](wxWindow* dialog) {
+        Press(dialog, "compare-filter");
+        auto tags = Named<FlatSwitch>(dialog, "compare-tags"); ASSERT_NE(nullptr, tags);
+        EXPECT_EQ(0, tags->GetSelection());
+        tags->Choose(1);
+        simplified = OPT_GET("Subtitle/Grid/Hide Overrides")->GetInt();
+        // Pointing at the chip tells what its tags do.
+        auto right = dialog->FindWindow("compare-right"); ASSERT_NE(nullptr, right);
+        auto size = right->GetClientSize();
+        for (int y = 2; y < std::min(size.GetHeight(), 60) && tip.empty(); y += 4)
+            for (int x = 0; x < size.GetWidth() && tip.empty(); x += 2) {
+                wxMouseEvent event(wxEVT_MOTION); event.SetPosition({x, y}); event.SetEventObject(right);
+                right->GetEventHandler()->ProcessEvent(event);
+                if (right->GetToolTipText().StartsWith("Fade")) tip = right->GetToolTipText();
+            }
+        tags->Choose(2);
+        hidden = OPT_GET("Subtitle/Grid/Hide Overrides")->GetInt();
+        counter_hidden = Counter(dialog);
+        // Set elsewhere (the grid's menu): the page follows.
+        OPT_SET("Subtitle/Grid/Hide Overrides")->SetInt(0);
+        full = tags->GetSelection();
+    });
+    RunCompare(c.get(), path);
+    EXPECT_EQ(1, simplified);
+    EXPECT_NE(wxNOT_FOUND, tip.Find("Fade: in 100 ms, out 100 ms")) << tip;
+    EXPECT_TRUE(tip.EndsWith("{\\fad(100,100)}")) << tip;
+    EXPECT_EQ(2, hidden);
+    EXPECT_EQ("1 / 1 | Difference 1 of 1", counter_hidden) << "a change of tags alone is still a difference";
+    EXPECT_EQ(0, full);
+    OPT_SET("Subtitle/Grid/Hide Overrides")->SetInt(1);
 }
 TEST_F(ordinary_edit, compare_window_filters_by_category_and_leaves_ignored_fields_alone) {
     Input("current");
