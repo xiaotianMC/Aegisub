@@ -223,7 +223,7 @@ std::string TimeLeft(double elapsed_seconds, int done) {
 	// Rounded up: it comes in tenths, and is better done before it said
 	if (left < 30) return from_wx(_("less than a minute left"));
 	int const minutes = static_cast<int>(std::ceil(left / 60));
-	return from_wx(wxString::Format(wxPLURAL("about %d minute left", "about %d minutes left", minutes), minutes));
+	return from_wx(fmt_plural(minutes, "about %d minute left", "about %d minutes left", minutes));
 }
 
 std::string Missing(ProcessorFeatures const& have) {

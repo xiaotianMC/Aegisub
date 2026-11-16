@@ -11296,11 +11296,11 @@ msgstr "ElevenLabs 返回了 %d。"
 msgid "Waiting for ElevenLabs to hear it through..."
 msgstr "正在等待 ElevenLabs 听写完成..."
 
-msgid "Could not reach ElevenLabs: %s."
-msgstr "无法连接 ElevenLabs：%s。"
+msgid "Could not reach %s: %s."
+msgstr "无法连接 %s：%s。"
 
-msgid "Could not reach ElevenLabs through the proxy %s: %s."
-msgstr "无法通过代理 %s 连接 ElevenLabs：%s。"
+msgid "Could not reach %s through the proxy %s: %s."
+msgstr "无法连接 %s（通过代理 %s）：%s。"
 
 msgid "This build of Aegisub has no libcurl, so nothing can be sent to ElevenLabs."
 msgstr "此版本的 Aegisub 没有 libcurl，无法向 ElevenLabs 发送任何内容。"
@@ -11532,6 +11532,193 @@ msgstr "没有要运行的命令：请在 首选项 > 音频 > 听写 中设置�
 
 msgid "Running %s..."
 msgstr "正在运行 %s..."
+
+msgid "Could not write %s: is the disk full?"
+msgstr "无法写入 %s：磁盘是否已满？"
+
+msgid "%s answered %d to the download."
+msgstr "下载时 %s 返回了 %d。"
+
+msgid "The download from %s stopped short; try again to go on from where it stopped."
+msgstr "从 %s 的下载中途断开了；再试一次会从断开处接着下载。"
+
+msgid "This build of Aegisub has no libcurl, so nothing can be downloaded."
+msgstr "此版本的 Aegisub 没有 libcurl，无法下载任何内容。"
+
+msgid "Whisper, built in, on this computer"
+msgstr "Whisper（内置，在本机运行）"
+
+msgid "Transcribe the Audio sends the audio to ElevenLabs, which charges by its length; runs the command below and reads the JSON it writes; or hears it here with Whisper, free, given a model file"
+msgstr "“听写音频”会把音频发给 ElevenLabs（按时长计费）；或者运行下面的命令并读取它写出的 JSON；或者用 Whisper 在本机免费听写（需要模型文件）"
+
+msgid "Whisper model file"
+msgstr "Whisper 模型文件"
+
+msgid "A ggml model, such as ggml-large-v3-turbo-q5_0.bin or, on a slower computer, ggml-small-q5_1.bin; asked for when first needed if empty"
+msgstr "ggml 格式的模型，例如 ggml-large-v3-turbo-q5_0.bin，较慢的电脑可用 ggml-small-q5_1.bin；留空则在第一次用到时询问"
+
+msgid "Download or Choose..."
+msgstr "下载或选择..."
+
+msgid "Whisper models"
+msgstr "Whisper 模型"
+
+msgid "Downloads a model offered, checked to be as published, into the models folder; or takes a file you have"
+msgstr "把提供的模型下载到模型文件夹，并校验与发布的一致；也可以使用你已有的模型文件"
+
+msgid "Use the graphics card for Whisper"
+msgstr "Whisper 使用显卡"
+
+msgid "Much faster where it can; none it can use was found, so the processor is used"
+msgstr "能用显卡时快得多；没有找到可用的显卡，将使用处理器"
+
+msgid "Much faster where it can; found: %s"
+msgstr "能用显卡时快得多；已找到：%s"
+
+msgid "Whisper threads"
+msgstr "Whisper 线程数"
+
+msgid "0 for as many as the processor has, up to 8"
+msgstr "0 表示与处理器的线程数相同，最多 8 个"
+
+msgid "less than a minute left"
+msgstr "剩余不到 1 分钟"
+
+msgid "about %d minute left"
+msgid_plural "about %d minutes left"
+msgstr[0] "大约还剩 %d 分钟"
+
+msgid "Whisper built in needs a processor with %s, which this one does not have."
+msgstr "内置的 Whisper 需要支持 %s 的处理器，这台电脑的处理器不支持。"
+
+msgid "There is no audio to hear."
+msgstr "没有可听写的音频。"
+
+msgid "There is no model file %s."
+msgstr "模型文件 %s 不存在。"
+
+msgid "Whisper does not know the language %s: give its two-letter code, such as ja or zh."
+msgstr "Whisper 不认识语言 %s：请填写两个字母的语言代码，例如 ja 或 zh。"
+
+msgid "Loading the speech recognition model..."
+msgstr "正在加载语音识别模型..."
+
+msgid "Could not load %s as a Whisper model: is it a ggml model file, and whole?"
+msgstr "无法把 %s 作为 Whisper 模型加载：请确认它是 ggml 模型文件，并且完整。"
+
+msgid "Hearing the audio through..."
+msgstr "正在听写音频..."
+
+msgid "Hearing the audio through: %s"
+msgstr "正在听写音频：%s"
+
+msgid "Whisper could not hear the audio through (%d): see the log for why."
+msgstr "Whisper 未能听写完音频（%d）：原因请查看日志。"
+
+msgid "This build of Aegisub has no Whisper built in."
+msgstr "此版本的 Aegisub 没有内置 Whisper。"
+
+msgid "Could not read %s."
+msgstr "无法读取 %s。"
+
+msgid "Checking the download..."
+msgstr "正在校验下载的文件..."
+
+msgid "What was downloaded is not %s as published: it has been thrown away. Try again, or another source."
+msgstr "下载到的文件与发布的 %s 不一致，已删除。请重试，或换一个下载源。"
+
+msgid "Could not put the model at %s: %s."
+msgstr "无法把模型放到 %s：%s。"
+
+msgid "There is not room for the model in %s: %s more is needed."
+msgstr "%s 的空间放不下这个模型：还需要 %s。"
+
+msgid "Downloading %s, %s..."
+msgstr "正在下载 %s（%s）..."
+
+msgid "Small: quick, for a computer without a fast graphics card"
+msgstr "Small：速度快，适合没有高性能显卡的电脑"
+
+msgid "Large v3 Turbo: more accurate; slow without a fast graphics card"
+msgstr "Large v3 Turbo：更准确；没有高性能显卡时较慢"
+
+msgid "Large v3: the most accurate, and the slowest"
+msgstr "Large v3：最准确，也最慢"
+
+msgid "Whisper Model"
+msgstr "Whisper 模型"
+
+msgid "Whisper hears the audio on this computer, free, and sends nothing anywhere. It needs a model, downloaded once."
+msgstr "Whisper 在本机免费听写音频，不向任何地方发送内容。它需要一个模型，只需下载一次。"
+
+msgid "Model"
+msgstr "模型"
+
+msgid "Download from"
+msgstr "下载源"
+
+msgid "Change..."
+msgstr "更改..."
+
+msgid "Use a Model File I Have..."
+msgstr "使用已有的模型文件..."
+
+msgid "Download"
+msgstr "下载"
+
+msgid "downloaded"
+msgstr "已下载"
+
+msgid "Hugging Face"
+msgstr "Hugging Face"
+
+msgid "hf-mirror.com, reachable from mainland China"
+msgstr "hf-mirror.com（中国大陆可访问）"
+
+msgid "Another address..."
+msgstr "其他地址..."
+
+msgid "Kept in %s (%s free)"
+msgstr "存放在 %s（可用 %s）"
+
+msgid "This model is downloaded already."
+msgstr "这个模型已经下载好了。"
+
+msgid "%s is downloaded, then checked to be the model as published."
+msgstr "将下载 %s，下载后校验是否与发布的模型一致。"
+
+msgid "Use"
+msgstr "使用"
+
+msgid "The address of a folder holding the ggml model files, each file's name put after it:"
+msgstr "存放 ggml 模型文件的文件夹地址（下载时会在后面加上文件名）："
+
+msgid "Where to keep Whisper models"
+msgstr "选择存放 Whisper 模型的位置"
+
+msgid "Choose a Whisper model file, such as ggml-large-v3-turbo-q5_0.bin"
+msgstr "选择 Whisper 模型文件，例如 ggml-large-v3-turbo-q5_0.bin"
+
+msgid "Whisper models (*.bin)"
+msgstr "Whisper 模型 (*.bin)"
+
+msgid "Downloading %s..."
+msgstr "正在下载 %s..."
+
+msgid "This build of Aegisub has no Whisper built in. Choose another way to hear the audio in Preferences, Audio, Transcription."
+msgstr "此版本的 Aegisub 没有内置 Whisper。请在 首选项 > 音频 > 听写 中选择其他听写方式。"
+
+msgid "Whisper built in needs a processor with %s, which this one does not have. Choose another way to hear the audio in Preferences, Audio, Transcription."
+msgstr "内置的 Whisper 需要支持 %s 的处理器，这台电脑的处理器不支持。请在 首选项 > 音频 > 听写 中选择其他听写方式。"
+
+msgid "Hear %s of audio with %s on the processor alone?"
+msgstr "要只用处理器听写 %s 长的音频（模型 %s）吗？"
+
+msgid "There is no graphics card Whisper can use, and a large model on the processor can take as long as the audio or longer. The small model is several times quicker; choose it in Preferences, Audio, Transcription."
+msgstr "没有 Whisper 可用的显卡。大模型只用处理器运行时，耗时可能和音频一样长甚至更长。Small 模型要快好几倍，可在 首选项 > 音频 > 听写 中选择。"
+
+msgid "Preparing the audio..."
+msgstr "正在准备音频..."
 
 msgid "The key is forgotten; it is asked for again next time."
 msgstr "密钥已清除，下次会重新询问。"
