@@ -502,6 +502,9 @@ if not whisper_opt.disabled()
         whisper_proj = cmake.subproject('whisper.cpp', options: whisper_cmake, required: whisper_opt)
         if whisper_proj.found()
             whisper_dep = whisper_proj.dependency('whisper')
+            if whisper_vulkan
+                conf.set('WITH_WHISPER_VULKAN', 1)
+            endif
         endif
     endif
     if whisper_dep.found()

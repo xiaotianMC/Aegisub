@@ -128,6 +128,12 @@ void ShowAboutDialog(wxWindow *parent) {
 #ifdef WITH_LIBPORTAL
 		"    libportal - Copyright (c) libportal authors;\n"
 #endif
+#ifdef WITH_WHISPER
+		"    whisper.cpp, ggml - Copyright (c) The ggml authors;\n"
+#endif
+#ifdef WITH_WHISPER_VULKAN
+		"    Vulkan-Hpp - Copyright (c) The Khronos Group Inc.;\n"
+#endif
 		+ _("\nSee the help file for full credits.\n")
 #ifdef BUILD_CREDIT
 		+ fmt_tl("Built by %s on %s.", GetAegisubBuildCredit(), GetAegisubBuildTime())
