@@ -101,7 +101,14 @@ wxBitmap Painter::Icon(wxDC &dc, const char *name, int size, bool dimmed) {
 	if (it != icons.end()) return it->second;
 	wxBitmap bitmap;
 	if (auto body = libresrc_modern_icon(name)) {
+		// Pixels to a unit of the DC: where units are pixels, as on
+		// Windows, the DC still names the system's scale, which the size
+		// (from the DC's font) already has in it
+#ifdef wxHAS_DPI_INDEPENDENT_PIXELS
 		double scale = dc.GetContentScaleFactor();
+#else
+		double scale = 1.0;
+#endif
 		int pixels = static_cast<int>(size * scale + 0.5);
 		bitmap = libresrc_modern_bundle(body, size).GetBitmap(wxSize(pixels, pixels));
 		if (bitmap.IsOk() && dimmed) {

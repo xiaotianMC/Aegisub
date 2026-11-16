@@ -120,6 +120,8 @@ private:
 	void UpdateParts();
 	/// The colours for the theme: the field's, the notice's
 	void Recolour();
+	/// The text's colour, or the hint's while the hint is shown
+	void ColourText();
 	void OnPaint();
 	/// The track the thumb runs on, in the panel
 	wxRect BarTrack() const;

@@ -333,8 +333,9 @@ ScriptPanel::ScriptPanel(wxWindow *parent, agi::Context *c)
 		drag_from = -1;
 		Refresh(false);
 	});
-	text->Bind(wxEVT_SET_FOCUS, [this](wxFocusEvent &e) { e.Skip(); Refresh(false); });
-	text->Bind(wxEVT_KILL_FOCUS, [this](wxFocusEvent &e) { e.Skip(); Refresh(false); });
+	// After the hint's own handler, which puts the hint in or takes it out
+	text->Bind(wxEVT_SET_FOCUS, [this](wxFocusEvent &e) { e.Skip(); ColourText(); Refresh(false); });
+	text->Bind(wxEVT_KILL_FOCUS, [this](wxFocusEvent &e) { e.Skip(); ColourText(); Refresh(false); });
 
 	Bind(wxEVT_PAINT, [this](wxPaintEvent &) { OnPaint(); });
 	Bind(wxEVT_SIZE, [this](wxSizeEvent &e) { e.Skip(); Refresh(false); });
@@ -386,12 +387,38 @@ void ScriptPanel::Recolour() {
 	wxColour ink = wxSystemSettings::GetColour(wxSYS_COLOUR_BTNTEXT);
 	text->SetBackgroundColour(theme::Mix(surface, ink, theme::IsDark() ? 0.08 : 0.05));
 	clip->SetBackgroundColour(text->GetBackgroundColour());
-	text->SetForegroundColour(ink);
+#ifdef __WXMSW__
+	// In dark mode the box gives its characters the system's window colour
+	// as a background of their own, black over the field: none, so the
+	// field's shows through
+	{
+		CHARFORMAT2W format{};
+		format.cbSize = sizeof(format);
+		format.dwMask = CFM_BACKCOLOR;
+		format.dwEffects = CFE_AUTOBACKCOLOR;
+		auto box = static_cast<HWND>(text->GetHWND());
+		::SendMessage(box, EM_SETCHARFORMAT, SCF_DEFAULT, reinterpret_cast<LPARAM>(&format));
+		::SendMessage(box, EM_SETCHARFORMAT, SCF_ALL, reinterpret_cast<LPARAM>(&format));
+	}
+#endif
+	ColourText();
 	notice->SetBackgroundColour(ui.notice_back);
 	notice_text->SetForegroundColour(ui.notice_text);
 	notice->Refresh();
 	text->Refresh();
 	Refresh();
+}
+
+void ScriptPanel::ColourText() {
+	wxColour ink = wxSystemSettings::GetColour(wxSYS_COLOUR_BTNTEXT);
+	wxColour colour = ink;
+#ifdef __WXMSW__
+	// The hint is the box's text there while it is empty and without the
+	// keyboard: faint, as a hint is, and fainter on a light field
+	if (!text->HasFocus() && text->GetValue().empty())
+		colour = theme::Mix(text->GetBackgroundColour(), ink, theme::IsDark() ? 0.55 : 0.4);
+#endif
+	if (text->GetForegroundColour() != colour) text->SetForegroundColour(colour);
 }
 
 void ScriptPanel::OnPaint() {
@@ -559,6 +586,7 @@ void ScriptPanel::Split() {
 }
 
 void ScriptPanel::UpdateParts() {
+	ColourText();
 	auto split = static_cast<StylePanel::TextButton*>(parts["split"]);
 	split->SetLabel(before_split ? _("Undo the split") : _("One sentence a line"));
 	split->Enable(before_split || !text->GetValue().empty());
