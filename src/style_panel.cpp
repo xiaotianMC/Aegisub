@@ -433,7 +433,7 @@ void StylePanel::BindEditing() {
 	static_cast<Field*>(parts["font"])->SetChooser([this] {
 		auto field = parts["font"];
 		auto popup = new FontPopup(this, InstalledFonts(), field->Shown() == mixed ? wxString() : field->Shown(),
-			[this](wxString const& font) { ChooseFont(font); });
+			[this](wxString const& font) { ChooseFontName(font); });
 		popup->Open(field);
 	});
 	static_cast<Field*>(parts["weight"])->SetChooser([this] { ShowWeightMenu(); });
@@ -688,7 +688,7 @@ void StylePanel::OpenStyleEditor() {
 	DialogStyleEditor(c->parent, style, c, nullptr, "", fonts).ShowModal();
 }
 
-void StylePanel::ChooseFont(wxString const& font) {
+void StylePanel::ChooseFontName(wxString const& font) {
 	style_edit::Apply(c, style_edit::Property::Font, [&](StyleLook &l) { l.font = from_wx(font); });
 }
 

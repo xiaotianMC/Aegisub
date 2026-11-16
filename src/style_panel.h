@@ -68,8 +68,9 @@ public:
 	/// Open the box for typing into the number field @p name, as a click does
 	void StartEditing(std::string const& name);
 	wxTextCtrl *EditBox(std::string const& name);
-	/// Use @p font, as choosing it from the font list does
-	void ChooseFont(wxString const& font);
+	/// Use @p font, as choosing it from the font list does (not ChooseFont,
+	/// which windows.h makes ChooseFontW where it is included)
+	void ChooseFontName(wxString const& font);
 	/// Use @p weight and slant, as the weight menu does
 	void ChooseWeight(int weight, bool italic);
 	/// Tick or untick "fill", "outline", "background" or "shadow"

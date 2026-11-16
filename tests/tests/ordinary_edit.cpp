@@ -1875,7 +1875,7 @@ TEST_F(ordinary_edit, style_panel_changes_the_text_through_its_controls) {
     EXPECT_EQ("{\\i1\\an9\\fsp1.5}Hello world",line());
 
     // Font and weight
-    panel->ChooseFont("Test Font");
+    panel->ChooseFontName("Test Font");
     EXPECT_EQ("{\\i1\\an9\\fsp1.5\\fnTest Font}Hello world",line());
     panel->ChooseWeight(700,false);
     EXPECT_EQ("{\\an9\\fsp1.5\\fnTest Font\\b1}Hello world",line());
