@@ -58,8 +58,10 @@ std::optional<agi::fs::path> ChooseWhisperModel(wxWindow *parent) {
 	theme::UseSurface(&d);
 	int const gap = d.FromDIP(10), row = d.FromDIP(6);
 
-	auto intro = new wxStaticText(&d, -1, _("Whisper hears the audio on this computer, free, and sends nothing anywhere. It needs a model, downloaded once."));
-	intro->Wrap(d.FromDIP(460));
+	auto intro = new wxStaticText(&d, -1, _("Whisper hears the audio on this computer, free, and sends nothing anywhere.\nIt needs a model, downloaded once."));
+	// A sentence a line, as wxWidgets wraps only at spaces, which Chinese and
+	// Japanese have none of between words; wrapped still if one is longer
+	intro->Wrap(d.FromDIP(560));
 
 	auto model_choice = new FlatChoice(&d, _("Model"));
 	auto source_choice = new FlatChoice(&d, _("Download from"));

@@ -229,7 +229,7 @@ jobs:
         if: startsWith(matrix.config.os, 'ubuntu-')
         run: |
           sudo apt-get update
-          sudo apt-get install ninja-build build-essential libx11-dev libfreetype6-dev pkg-config libfontconfig1-dev libass-dev libasound2-dev libffms2-dev intltool libboost-all-dev libhunspell-dev libcurl4-openssl-dev libuchardet-dev libgtest-dev libgmock-dev libwxgtk3.2-dev libportal-gtk3-dev
+          sudo apt-get install ninja-build build-essential libx11-dev libfreetype6-dev pkg-config libfontconfig1-dev libass-dev libasound2-dev libffms2-dev intltool libboost-all-dev libhunspell-dev libcurl4-openssl-dev libuchardet-dev libgtest-dev libgmock-dev libwxgtk3.2-dev libportal-gtk3-dev xvfb
 
           # busted for the automation test suite (LuaJIT is Lua 5.1 to luarocks)
           sudo apt-get install -y lua5.1 liblua5.1-0-dev luarocks
@@ -271,9 +271,16 @@ jobs:
 
       # --suite limits this to our own tests, excluding those of subproject deps
       - name: Run test
+        if: runner.os != 'Linux'
         run: |
           ${{ matrix.config.devenv }}
           meson test -C build --verbose --suite Aegisub
+
+      # The ordinary editing tests open windows: on a virtual display, as the
+      # runner has none
+      - name: Run test (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a meson test -C build --verbose --suite Aegisub
 
       - name: Check cross-built tests executed
         if: matrix.config.cross_args
