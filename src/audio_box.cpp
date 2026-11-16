@@ -46,6 +46,8 @@
 
 #include <cmath>
 #include <wx/panel.h>
+#include <wx/brush.h>
+#include <wx/dcclient.h>
 #include <wx/scrolbar.h>
 #include <wx/sizer.h>
 #include <wx/string.h>

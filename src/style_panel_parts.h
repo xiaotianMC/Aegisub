@@ -23,6 +23,7 @@
 #include <wx/dcbuffer.h>
 #include <wx/dcgraph.h>
 #include <wx/settings.h>
+#include <wx/sizer.h>
 #include <wx/textctrl.h>
 
 namespace style_parts {
