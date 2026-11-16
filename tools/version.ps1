@@ -77,6 +77,16 @@ if ($exactGitTag -match $semVerMatch) {
       break;
     }
   }
+  # No version tag to be found, as in a fork without the tags: the version
+  # meson.build gives, so that the resource still has one
+  if (-not $version.ContainsKey('RESOURCE_BASE_VERSION')) {
+    $mesonBuild = Get-Content -Raw (Join-Path $repositoryRootPath 'meson.build')
+    if ($mesonBuild -match "\bversion:\s*'(\d+)\.(\d+)\.(\d+)'") {
+      $version['TAGGED_RELEASE'] = $false
+      $version['RESOURCE_BASE_VERSION'] = $Matches[1..3]
+      $version['INSTALLER_VERSION'] = ($Matches[1..3] -join '.')
+    }
+  }
 }
 
 $version['BUILD_GIT_VERSION_NUMBER'] = $gitRevision
