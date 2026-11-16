@@ -53,7 +53,7 @@ whisperx ep01.wav --language ja --model large-v3 --diarize --hf_token <令牌> -
 
 ## 听写音频
 
-`autotiming/transcribe`，`src/speech_transcribe.{h,cpp}`。不用自己先跑识别再导入：直接把编辑器里打开的音频交给识别器，结果走和“导入语音识别结果”完全相同的 `speech::ReadJson` → `speech::Import`。识别器在首选项“音频”页“听写”一节选：
+`autotiming/transcribe`，`src/speech_transcribe.{h,cpp}`。不用自己先跑识别再导入：直接把编辑器里打开的音频交给识别器，结果走和“导入语音识别结果”完全相同的 `speech::ReadJson` → `speech::Import`（内置 Whisper 直接给出 `speech::Transcript`，不经过 JSON）。识别器在首选项“音频”页“听写”一节选：
 
 - **ElevenLabs Scribe**（联网，按音频时长收费）。用 libcurl 把文件以 multipart 表单 POST 到 `https://api.elevenlabs.io/v1/speech-to-text`，请求头 `xi-api-key`。字段：`model_id`（默认 `scribe_v3`）、`timestamps_granularity=word`、`diarize`、`tag_audio_events=true`，有设置时再加 `language_code`、`secondary_language_codes`（重复字段）、`keyterms`（重复字段，最多 100 个）。关键词默认取字幕 Actor 栏里的名字（去重，`SPEAKER_00` 这类识别器自己起的名字不算），再加设置里手填的。文件直接上传源文件（它收 mp3/wav/flac/ogg/m4a/aac/opus 和 mp4/mkv/mov/avi/webm 等视频）；不在列表里的格式（mka、ts）先用 `agi::SaveAudioClip` 写成 WAV 再传。上传进度显示在进度窗口里，传完等待时改成来回扫的条；取消就中断连接。
   - **密钥**（`src/secret.{h,cpp}`，`transcribe::FindKey`）：按顺序找环境变量 `ELEVENLABS_API_KEY`、系统钥匙串、本次运行里记住的。都没有就弹密码框问一次：有钥匙串就存进钥匙串（`wxSecretStore`：Windows 凭据管理器、macOS Keychain、Linux Secret Service），没有就只在本次运行里记住，弹窗会说明是哪种。**绝不写进设置文件**：`config.json` 谁都能读，还会跟着设置被拷贝、同步、贴出来。服务器回 401 时钥匙串和本次记住的都清掉，下次再问。首选项里这一行不是文本框，只显示密钥在哪里，带“设置…”和“忘掉”两个按钮。
@@ -63,7 +63,18 @@ whisperx ep01.wav --language ja --model large-v3 --diarize --hf_token <令牌> -
   - 构建时没有 libcurl（`enable_update_checker=false` 时也没有）就提示用自己的程序。`meson.build` 在拉入 curl 时定义 `WITH_CURL`。
 - **自己的程序**（本机运行）。设置里填一条命令模板，默认 `whisperx "{media}" --output_dir "{out}" --output_format json [--language {language}]`：`{media}` 是音频或视频文件，`{out}` 是为这次运行新建的临时文件夹，`{language}` 是设置里的语言；方括号里的部分在其中占位符为空时整段去掉。先按引号分词再代入，所以路径里有空格不用管。用 `wxExecute` 启动（和 MagiaTimeline 一样，见 `magia_timeline::Run`），进度窗口显示它最新输出的一行，取消就连子进程一起杀掉。结束后在临时文件夹里找以媒体文件名命名的 `.json`，没有就取唯一的一个，读完删掉文件夹。
 
-纯逻辑部分（密钥优先级、列表拆分、关键词、表单字段、格式判断、错误说明、命令行拆分、找输出文件）都有测试，`TEST(transcribe, ...)`；网络和进程部分没有自动测试。
+- **Whisper**（内置，本机运行，免费）。`src/transcribe_local.{h,cpp}`，whisper.cpp 1.9.5（`subprojects/whisper.cpp.wrap`，Meson 的 CMake 子项目，静态链接进 Aegisub，选项 `-Dwhisper`、`-Dwhisper_gpu`；没有 CMake 时跳过，定义 `WITH_WHISPER`）。
+  - **音频**：编辑器里的音频用 `agi::ResampleToFloat`（`libaegisub/audio/resample.cpp`，Kaiser 窗 sinc 多相滤波，任意两种采样率之间都精确）转成 16 kHz float 交给它，不写临时文件。
+  - **参数**：beam search，`token_timestamps`，`suppress_nst`；提示词是关键词（同 ElevenLabs 的来源），中文另在前面加“以下是普通话的句子。”，不然常写成繁体。线程数默认等于处理器线程数，最多 8。
+  - **token 变成词**（`FromWhisper`）：被拆在两个 token 里的 UTF-8 字符先拼回；汉字、假名、泰文这类不用空格的文字每块一个词（断句交给后面的 ICU），拉丁文接到下一个空格为止；标点并到前一个词上，但不改它的结束时间（否则会把词尾拖过后面的停顿）；词的结束不晚于下一个词的开始，也不超出所在的段。时间用 token 自己的 t0/t1。没用 DTW：它给的时刻接近词的结束而不是开始，而且和 flash attention 不能同时开。
+  - **VAD**：Silero（`ggml-silero-v6.2.0.bin`，885 KB）跟模型一起下载，模型文件夹或模型旁边有就用，只听有人声的部分，静音和音乐里不会编出字来。开 VAD 时 token 的时间要用 `whisper_full_get_token_t0/t1` 取（换回原音频的时间轴），`token_data` 里的是裁掉静音后的时间。
+  - **模型**（`src/transcribe_models.{h,cpp}`，窗口在 `src/dialog_whisper_model.cpp`）：提供 small（190 MB）、large-v3-turbo（574 MB）、large-v3（1.1 GB），各写明适合什么电脑；下载源可选 Hugging Face、hf-mirror.com（中国大陆可访问）或自填地址。默认存在 `?local/models`（便携版就是程序旁边），窗口里可以改，并显示所在磁盘的剩余空间。下载先写到 `.part`：断了或取消了，下次从断点续传（`CURLOPT_RESUME_FROM_LARGE`；服务器不支持范围请求、回 200 或 416 时从头再下一次）；`CURLOPT_FAILONERROR` 保证错误页不会被当成模型存下；一分钟没有数据就放弃。下完核对 Hugging Face 公布的 SHA-256（`agi::Sha256`，`libaegisub/common/sha256.cpp`），对上了才改成正式文件名，对不上就删掉。下载前先检查磁盘空间。curl 的设置（`Prepare`）和出错说明与 ElevenLabs 共用，所以 Windows 的系统代理对下载同样有效。还没有模型时，听写音频会先弹这个窗口；首选项里也有入口。
+  - **显卡**：macOS 用 Metal，Windows 和 Linux 用 Vulkan，着色器都嵌在程序里（Vulkan 的约 42 MB，压缩后约 4 MB）。Vulkan 加载器在运行时才打开，不链接，没有 Vulkan 的电脑照样能启动 Aegisub，Whisper 改用处理器。用显卡加载模型失败时退回处理器重试。首选项里显示找到的显卡。CI 的 Windows 任务安装 Vulkan SDK（版本固定，校验 SHA-256），并且用 `-Dwhisper_gpu=enabled` 要求必须编进去；Linux 上装了 Vulkan 头文件、glslc 和 SPIRV-Headers 才会开（三样都要事先检查：ggml 的 CMake 失败的话，整个 Whisper 都会被去掉）。
+  - **处理器**：ggml-cpu 按 Haswell 的指令集编译（SSE4.2、AVX、AVX2、FMA、F16C、BMI2），缺一个就会在运行时崩溃，而不是报错。所以先用 CPUID 检查（`ProcessorLacks`，AVX 还要确认系统保存了它的寄存器），在下载模型之前就说明缺了什么。`Gpu()` 也先做这个检查，因为一问 ggml 有哪些设备，就会启动它的处理器后端，而首选项页面打开时就会问。ggml-cpu 没有静态初始化代码，所以 Aegisub 启动时不会执行这些指令。
+  - **进度**：进度窗口按目前的速度估算剩余时间（`TimeLeft`，向上取整到分钟）。没有可用的显卡、模型又大（超过 300 MB）、音频超过 10 分钟时，开始前先问一句，可以勾“不再询问”。
+  - **wrap 补丁**（`subprojects/packagefiles/`）：Meson 运行 CMake 的命令时不经过 shell，并且只用单配置的 Ninja。所以 Metal 着色器嵌入时的 `sed` 改为直接读文件，不用 `<` 重定向；`$<CONFIG>` 换成 `Release`；不交叉编译时，着色器生成器作为普通目标编译，不用 ExternalProject（它的 stamp 文件 Meson 找不到，会让每次编译都把着色器和之后的一切重做一遍）；Vulkan 加载器改为运行时加载，ggml 只通过它的 dispatcher 调 Vulkan。
+
+纯逻辑部分（密钥优先级、列表拆分、关键词、表单字段、格式判断、错误说明、命令行拆分、找输出文件）都有测试，`TEST(transcribe, ...)`；网络和进程部分没有自动测试。Whisper 的测试见下面“测试”一节。
 
 ## 双语轴
 
@@ -107,3 +118,7 @@ whisperx ep01.wav --language ja --model large-v3 --diarize --hf_token <令牌> -
 - `ordinary_edit.clear_auto_timing_marks_leaves_the_rest_of_the_effect_field`
 - `ordinary_edit.timeline_from_scene_changes_gives_the_shots_with_no_line_one_and_keeps_the_rest`
 - `ordinary_edit.one_scene_snap_distance_set_before_goes_out_and_a_little_way_in`
+- `transcribe_local.*`：token 拼成词的各条规则（拆开的字符、不用空格的文字、日文里的英文、词尾不越过下一个词和所在段、标点）；剩余时间的说法；缺了哪些指令集。设了 `AEGISUB_WHISPER_MODEL` 时用真模型听 whisper.cpp 自带的 `samples/jfk.wav`，走编辑器的音频路径；再设 `AEGISUB_WHISPER_VAD` 时，在前后各加 20 秒噪音，检查噪音里没有听出字、时间仍是原音频的。
+- `transcribe_models.*`：提供的模型、地址和大小的写法；用 `file://` 测断点续传、`.part` 比文件还大时从头下、哈希不对时丢弃；设了 `AEGISUB_RANGELESS_SERVER` 时测不支持范围请求的服务器；设了 `AEGISUB_NETWORK_TESTS` 时真从 Hugging Face 下载 VAD 模型。
+- `lagi_sha256.*`：标准测试向量、分块输入、一个 Whisper 模型公布的哈希。
+- `lagi_audio.resample_*`：各相位对常数的增益为 1、保留新奈奎斯特频率以下的音调、滤掉以上的而不是折叠下来、同采样率时直接转成 float、只收 16 位单声道、可以取消。
