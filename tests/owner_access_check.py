@@ -158,6 +158,10 @@ else:
             command = shlex.split(entry["command"], posix=os.name != "nt")
             if os.name == "nt":  # non-POSIX split keeps quotes; subprocess re-quotes as needed
                 command = [a[1:-1].replace('\\"', '"') if len(a) > 1 and a[0] == a[-1] == '"' else a for a in command]
+        # The compiler itself, not a cache in front of it (CI has sccache),
+        # which would also say nothing of which compiler it is
+        while len(command) > 1 and Path(command[0]).stem.lower() in ("sccache", "ccache"):
+            command = command[1:]
         msvc = Path(command[0]).stem.lower() in ("cl", "clang-cl")
         base, skip = [], False
         for a in command:
