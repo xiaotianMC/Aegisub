@@ -30,6 +30,7 @@
 class wxButton;
 class wxSearchCtrl;
 class wxStaticText;
+class wxTextCtrl;
 class PreferencesBook;
 namespace agi { class OptionValue; }
 

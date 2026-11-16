@@ -78,6 +78,7 @@
 #ifdef __WXMSW__
 #include <wx/display.h>
 #include <wx/msw/wrapwin.h>
+#include <wx/textctrl.h>
 #endif
 
 namespace {

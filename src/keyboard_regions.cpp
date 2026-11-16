@@ -11,6 +11,7 @@
 
 #include <wx/dcclient.h>
 #include <wx/event.h>
+#include <wx/eventfilter.h>
 #include <wx/panel.h>
 #include <wx/sashwin.h>
 #include <wx/scrolbar.h>

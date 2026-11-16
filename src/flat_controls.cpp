@@ -16,6 +16,7 @@
 
 #include <wx/dcbuffer.h>
 #include <wx/dcgraph.h>
+#include <wx/eventfilter.h>
 #include <wx/graphics.h>
 #include <wx/menu.h>
 #include <wx/panel.h>

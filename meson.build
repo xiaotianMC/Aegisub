@@ -692,7 +692,11 @@ if get_option('tests')
         objects: ordinary_objects,
         include_directories: [libaegisub_inc, libresrc_inc, version_inc, include_directories('src')],
         dependencies: [tests_deps, deps], link_with: [libresrc, libaegisub],
-        cpp_args: aegisub_defines + ['-DAEGISUB_SOURCE_ROOT="@0@"'.format(meson.project_source_root())],
+        # The feature flags as Aegisub has them: given as arguments where it
+        # has no precompiled header, else read from acconf.h by it, which
+        # these tests do not use
+        cpp_args: (get_option('b_pch') ? conf_defines : []) + aegisub_defines
+            + ['-DAEGISUB_SOURCE_ROOT="@0@"'.format(meson.project_source_root())],
         win_subsystem: 'console')
     test('ordinary editing integration', find_program('tests/run_isolated.py'),
         args: [ordinary_runner, '--output-root', meson.current_build_dir() / 'ordinary-data'])

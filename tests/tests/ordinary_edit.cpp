@@ -1,6 +1,5 @@
 // Copyright (c) 2026, Aegisub contributors
 // SPDX-License-Identifier: ISC
-#include "acconf.h"
 #include <gtest/gtest.h>
 #include <set>
 #include "include/aegisub/context.h"
@@ -10057,6 +10056,9 @@ TEST(magia_timeline, the_stage_it_is_in_is_read_from_what_it_prints) {
     EXPECT_EQ(Stage::Writing,magia_timeline::StageOf(analysing+"==== IIR to ASS ====\nResult written to b.ass\n")) << "without reading";
 }
 
+// MagiaTimeline stood in for by a shell script as its virtual environment's
+// Python, which Windows cannot run
+#ifndef _WIN32
 namespace {
 /// Stands in for MagiaTimeline's virtual environment's Python: checks it is
 /// run as it would be, says what it was given, and writes what it writes
@@ -10410,6 +10412,7 @@ TEST_F(ordinary_edit, magiatimeline_is_run_as_chosen_in_its_dialog_and_the_choic
     used=ReadText(folder/"used.yml");
     EXPECT_NE(std::string::npos,used.find("  doPaddle: true\n  paddleLang: \"japan\"\n  doTesseract: false\n")) << used;
 }
+#endif
 
 TEST(script_text, the_thumb_shows_how_much_is_on_the_screen_and_where) {
     EXPECT_FALSE(script_text::ThumbFor(0,100,100,200,20)) << "it all fits";

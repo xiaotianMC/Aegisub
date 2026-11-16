@@ -9,6 +9,7 @@
 
 #include <algorithm>
 
+#include <wx/bmpbndl.h>
 #include <wx/dc.h>
 #include <wx/image.h>
 

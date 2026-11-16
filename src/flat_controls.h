@@ -12,6 +12,7 @@
 
 #include <wx/bmpbndl.h>
 #include <wx/popupwin.h>
+#include <wx/stattext.h>
 #include <wx/window.h>
 
 class wxMouseEvent;
