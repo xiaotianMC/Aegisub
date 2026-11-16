@@ -684,6 +684,8 @@
 			"Language" : "",
 			"Local" : {
 				"Model" : "",
+				"Model Folder" : "",
+				"Source" : "huggingface",
 				"Threads" : 0,
 				"Use GPU" : true
 			},

@@ -20,6 +20,8 @@
 #include <atomic>
 #include <cctype>
 #include <chrono>
+#include <fstream>
+#include <filesystem>
 #include <sstream>
 #include <thread>
 
@@ -272,6 +274,39 @@ size_t WriteToString(char *contents, size_t size, size_t nmemb, std::string *s) 
 	return size * nmemb;
 }
 
+/// What every request of ours is sent with: who is asking, how long to wait
+/// to connect, and on Windows its proxy and schannel's revocation check.
+/// @return The proxy it goes through, for telling what went wrong
+std::string Prepare(CURL *c, std::string const& url, char *error) {
+	curl_easy_setopt(c, CURLOPT_URL, url.c_str());
+	curl_easy_setopt(c, CURLOPT_USERAGENT, agi::format("Aegisub %s", GetAegisubLongVersionString()).c_str());
+	curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 30L);
+	curl_easy_setopt(c, CURLOPT_ERRORBUFFER, error);
+	std::string proxy;
+#ifdef _WIN32
+	// Schannel fails the handshake when it cannot ask whether the
+	// certificate was revoked, as where the servers that say are blocked
+	curl_easy_setopt(c, CURLOPT_SSL_OPTIONS, static_cast<long>(CURLSSLOPT_REVOKE_BEST_EFFORT));
+	auto const windows = WindowsProxy(wxString::FromUTF8(url).wc_str());
+	proxy = ProxyFromSystem(windows.proxy);
+	std::string const no_proxy = NoProxyFromSystem(windows.bypass);
+	if (!proxy.empty()) {
+		curl_easy_setopt(c, CURLOPT_PROXY, proxy.c_str());
+		if (!no_proxy.empty()) curl_easy_setopt(c, CURLOPT_NOPROXY, no_proxy.c_str());
+	}
+#endif
+	return proxy;
+}
+
+/// What curl said went wrong in reaching @p who, its own detail if it gave one
+agi::EnvironmentError Unreachable(std::string const& who, CURLcode res, char const *error, std::string const& proxy) {
+	std::string why = *error ? Trim(error) : curl_easy_strerror(res);
+	if (!why.empty() && why.back() == '.') why.pop_back();
+	if (proxy.empty())
+		return agi::EnvironmentError(agi::format(from_wx(_("Could not reach %s: %s.")), who, why));
+	return agi::EnvironmentError(agi::format(from_wx(_("Could not reach %s through the proxy %s: %s.")), who, proxy, why));
+}
+
 /// The file read for the form part, by a stream opened from its path as
 /// written, which the C functions curl would use cannot on Windows
 struct FileSource {
@@ -342,51 +377,141 @@ std::string Upload(Request const& request, ElevenLabs const& settings, agi::Prog
 
 	std::string body;
 	Progress progress{ps};
-	curl_easy_setopt(h.c, CURLOPT_URL, "https://api.elevenlabs.io/v1/speech-to-text");
+	char error[CURL_ERROR_SIZE] = "";
+	std::string const proxy = Prepare(h.c, "https://api.elevenlabs.io/v1/speech-to-text", error);
 	curl_easy_setopt(h.c, CURLOPT_MIMEPOST, h.mime);
 	curl_easy_setopt(h.c, CURLOPT_HTTPHEADER, h.headers);
-	curl_easy_setopt(h.c, CURLOPT_USERAGENT, agi::format("Aegisub %s", GetAegisubLongVersionString()).c_str());
 	curl_easy_setopt(h.c, CURLOPT_WRITEFUNCTION, WriteToString);
 	curl_easy_setopt(h.c, CURLOPT_WRITEDATA, &body);
 	curl_easy_setopt(h.c, CURLOPT_NOPROGRESS, 0L);
 	curl_easy_setopt(h.c, CURLOPT_XFERINFOFUNCTION, Progress::Tell);
 	curl_easy_setopt(h.c, CURLOPT_XFERINFODATA, &progress);
-	curl_easy_setopt(h.c, CURLOPT_CONNECTTIMEOUT, 30L);
 	curl_easy_setopt(h.c, CURLOPT_FOLLOWLOCATION, 0L);
-	char error[CURL_ERROR_SIZE] = "";
-	curl_easy_setopt(h.c, CURLOPT_ERRORBUFFER, error);
-
-	std::string proxy;
-#ifdef _WIN32
-	// Schannel fails the handshake when it cannot ask whether the
-	// certificate was revoked, as where the servers that say are blocked
-	curl_easy_setopt(h.c, CURLOPT_SSL_OPTIONS, static_cast<long>(CURLSSLOPT_REVOKE_BEST_EFFORT));
-	auto const windows = WindowsProxy(L"https://api.elevenlabs.io/v1/speech-to-text");
-	proxy = ProxyFromSystem(windows.proxy);
-	std::string const no_proxy = NoProxyFromSystem(windows.bypass);
-	if (!proxy.empty()) {
-		curl_easy_setopt(h.c, CURLOPT_PROXY, proxy.c_str());
-		if (!no_proxy.empty()) curl_easy_setopt(h.c, CURLOPT_NOPROXY, no_proxy.c_str());
-	}
-#endif
 
 	auto const res = curl_easy_perform(h.c);
 	if (res == CURLE_ABORTED_BY_CALLBACK) throw agi::UserCancelException("cancelled");
-	if (res != CURLE_OK) {
-		std::string why = *error ? Trim(error) : curl_easy_strerror(res);
-		if (!why.empty() && why.back() == '.') why.pop_back();
-		if (proxy.empty())
-			throw agi::EnvironmentError(agi::format(from_wx(_("Could not reach ElevenLabs: %s.")), why));
-		throw agi::EnvironmentError(agi::format(from_wx(_("Could not reach ElevenLabs through the proxy %s: %s.")), proxy, why));
-	}
+	if (res != CURLE_OK) throw Unreachable("ElevenLabs", res, error, proxy);
 	long status = 0;
 	curl_easy_getinfo(h.c, CURLINFO_RESPONSE_CODE, &status);
 	if (status == 401) throw KeyRefused(Explain(status, body));
 	if (auto why = Explain(status, body); !why.empty()) throw agi::EnvironmentError(why);
 	return body;
 }
+namespace {
+/// "huggingface.co" of "https://huggingface.co/...", for telling who could
+/// not be reached
+std::string Host(std::string const& url) {
+	auto from = url.find("://");
+	from = from == std::string::npos ? 0 : from + 3;
+	auto const to = url.find_first_of("/:?#", from);
+	return url.substr(from, to == std::string::npos ? std::string::npos : to - from);
+}
+
+/// Where what is downloaded is written: after what is there already if the
+/// server sends the rest asked for, from the start if it sends it all
+struct PartFile {
+	std::filesystem::path path;
+	CURL *c = nullptr;
+	int64_t offset = 0;
+	bool opened = false, failed = false;
+	std::ofstream out;
+
+	static size_t Write(char *data, size_t size, size_t n, void *arg) {
+		auto self = static_cast<PartFile*>(arg);
+		if (!self->opened) {
+			self->opened = true;
+			long status = 0;
+			curl_easy_getinfo(self->c, CURLINFO_RESPONSE_CODE, &status);
+			if (status == 200 && self->offset > 0) self->offset = 0;
+			self->out.open(self->path, std::ios::binary | (self->offset > 0 ? std::ios::app : std::ios::trunc));
+		}
+		self->out.write(data, static_cast<std::streamsize>(size * n));
+		if (!self->out) {
+			self->failed = true;
+			return 0;
+		}
+		return size * n;
+	}
+};
+
+struct DownloadProgress {
+	agi::ProgressSink *ps;
+	PartFile *file;
+	int64_t size;
+	static int Tell(void *arg, curl_off_t dltotal, curl_off_t dlnow, curl_off_t, curl_off_t) {
+		auto self = static_cast<DownloadProgress*>(arg);
+		if (!self->ps) return 0;
+		if (self->ps->IsCancelled()) return 1;
+		int64_t const total = self->size > 0 ? self->size : self->file->offset + dltotal;
+		if (total > 0) self->ps->SetProgress(self->file->offset + dlnow, total);
+		return 0;
+	}
+};
+}
+
+void Download(std::string const& url, agi::fs::path const& part, int64_t size, agi::ProgressSink *ps) {
+	std::error_code ec;
+	int64_t have = std::filesystem::exists(part, ec) ? static_cast<int64_t>(std::filesystem::file_size(part, ec)) : 0;
+	if (ec) have = 0;
+	if (size > 0 && have > size) {
+		std::filesystem::remove(part, ec);
+		have = 0;
+	}
+	if (size > 0 && have == size) return;
+
+	for (int attempt = 0;; ++attempt) {
+		struct Handle {
+			CURL *c = curl_easy_init();
+			~Handle() { if (c) curl_easy_cleanup(c); }
+		} h;
+		if (!h.c) throw agi::EnvironmentError(from_wx(_("Curl could not be initialized.")));
+		PartFile file{part, h.c, have};
+		DownloadProgress progress{ps, &file, size};
+		char error[CURL_ERROR_SIZE] = "";
+		std::string const proxy = Prepare(h.c, url, error);
+		curl_easy_setopt(h.c, CURLOPT_FOLLOWLOCATION, 1L);
+		curl_easy_setopt(h.c, CURLOPT_MAXREDIRS, 8L);
+		// An error page is not the file
+		curl_easy_setopt(h.c, CURLOPT_FAILONERROR, 1L);
+		curl_easy_setopt(h.c, CURLOPT_RESUME_FROM_LARGE, static_cast<curl_off_t>(have));
+		// Given up when stalled a minute, not however long the file takes
+		curl_easy_setopt(h.c, CURLOPT_LOW_SPEED_LIMIT, 1L);
+		curl_easy_setopt(h.c, CURLOPT_LOW_SPEED_TIME, 60L);
+		curl_easy_setopt(h.c, CURLOPT_WRITEFUNCTION, PartFile::Write);
+		curl_easy_setopt(h.c, CURLOPT_WRITEDATA, &file);
+		curl_easy_setopt(h.c, CURLOPT_NOPROGRESS, 0L);
+		curl_easy_setopt(h.c, CURLOPT_XFERINFOFUNCTION, DownloadProgress::Tell);
+		curl_easy_setopt(h.c, CURLOPT_XFERINFODATA, &progress);
+
+		auto const res = curl_easy_perform(h.c);
+		file.out.close();
+		long status = 0;
+		curl_easy_getinfo(h.c, CURLINFO_RESPONSE_CODE, &status);
+		if (res == CURLE_ABORTED_BY_CALLBACK) throw agi::UserCancelException("cancelled");
+		if (file.failed)
+			throw agi::EnvironmentError(agi::format(from_wx(_("Could not write %s: is the disk full?")), part.string()));
+		// What is kept does not go with what the server has now, or it will
+		// not send only the rest: begun again
+		bool const mismatch = res == CURLE_HTTP_RETURNED_ERROR && status == 416;
+		if ((mismatch || res == CURLE_RANGE_ERROR) && have > 0 && attempt == 0) {
+			std::filesystem::remove(part, ec);
+			have = 0;
+			continue;
+		}
+		if (res == CURLE_HTTP_RETURNED_ERROR)
+			throw agi::EnvironmentError(agi::format(from_wx(_("%s answered %d to the download.")), Host(url), status));
+		if (res != CURLE_OK) throw Unreachable(Host(url), res, error, proxy);
+		break;
+	}
+	auto const got = static_cast<int64_t>(std::filesystem::file_size(part, ec));
+	if (ec || (size > 0 && got != size))
+		throw agi::EnvironmentError(agi::format(from_wx(_("The download from %s stopped short; try again to go on from where it stopped.")), Host(url)));
+}
 #else
 bool CanUpload() { return false; }
+void Download(std::string const&, agi::fs::path const&, int64_t, agi::ProgressSink *) {
+	throw agi::EnvironmentError(from_wx(_("This build of Aegisub has no libcurl, so nothing can be downloaded.")));
+}
 std::string Upload(Request const&, ElevenLabs const&, agi::ProgressSink *) {
 	throw agi::EnvironmentError(from_wx(_("This build of Aegisub has no libcurl, so nothing can be sent to ElevenLabs.")));
 }

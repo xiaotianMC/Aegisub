@@ -9,6 +9,7 @@
 #include "../audio_controller.h"
 #include "../async_video_provider.h"
 #include "../dialog_progress.h"
+#include "../dialogs.h"
 #include "../bilingual.h"
 #include "../compat.h"
 #include "../format.h"
@@ -45,7 +46,6 @@
 #include <set>
 #include <sstream>
 
-#include <wx/filedlg.h>
 #include <wx/msgdlg.h>
 #include <wx/richmsgdlg.h>
 #include <wx/textdlg.h>
@@ -296,13 +296,11 @@ struct autotiming_transcribe final : public Command {
 				auto const chosen = OPT_GET("Tool/Transcribe/Local/Model")->GetString();
 				if (!chosen.empty()) settings.model = config::path->Decode(chosen);
 				if (settings.model.empty() || !agi::fs::FileExists(settings.model)) {
-					wxString file = wxFileSelector(_("Choose a Whisper model file, such as ggml-large-v3-turbo-q5_0.bin"),
-						settings.model.empty() ? wxString() : to_wx(settings.model.parent_path().string()), "", "bin",
-						_("Whisper models (*.bin)") + "|*.bin|" + _("All Files") + " (*.*)|*.*",
-						wxFD_OPEN | wxFD_FILE_MUST_EXIST, c->parent);
-					if (file.empty()) return;
-					settings.model = agi::fs::path(from_wx(file));
-					OPT_SET("Tool/Transcribe/Local/Model")->SetString(from_wx(file));
+					// None yet: one downloaded, or a file of the user's
+					auto model = ChooseWhisperModel(c->parent);
+					if (!model) return;
+					settings.model = *model;
+					OPT_SET("Tool/Transcribe/Local/Model")->SetString(model->string());
 				}
 				settings.use_gpu = OPT_GET("Tool/Transcribe/Local/Use GPU")->GetBool();
 				settings.threads = static_cast<int>(OPT_GET("Tool/Transcribe/Local/Threads")->GetInt());

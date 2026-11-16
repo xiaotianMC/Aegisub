@@ -1,5 +1,6 @@
 // Copyright (c) 2026, Aegisub contributors
 // SPDX-License-Identifier: ISC
+#include "acconf.h"
 #include <gtest/gtest.h>
 #include <set>
 #include "include/aegisub/context.h"
@@ -29,6 +30,10 @@
 #include <libaegisub/audio/provider.h>
 #include <libaegisub/audio/resample.h>
 #include <libaegisub/hotkey.h>
+#include <libaegisub/sha256.h>
+#ifdef WITH_CURL
+#include <curl/curl.h>
+#endif
 #include <tuple>
 #include <typeinfo>
 #include "flat_dialog.h"
@@ -102,6 +107,7 @@
 #include "speech_lines.h"
 #include "speech_transcribe.h"
 #include "transcribe_local.h"
+#include "transcribe_models.h"
 #include "secret.h"
 #include "scene_detect.h"
 #include "magia_timeline.h"
@@ -4574,6 +4580,121 @@ TEST(transcribe_local, whisper_hears_a_sample_through_the_editors_audio_path) {
         std::printf("  line %d-%d %s\n",l.start,l.end,l.text.c_str());
     }
 }
+
+TEST(transcribe_models, the_models_offered_their_addresses_and_sizes) {
+    auto const& models=transcribe::Models();
+    ASSERT_EQ(3u,models.size());
+    EXPECT_EQ("ggml-small-q5_1.bin",models[0].file);
+    for(size_t i=1;i<models.size();++i) EXPECT_LT(models[i-1].bytes,models[i].bytes) << "quicker to better";
+    for(auto const& m:models) EXPECT_EQ(64u,m.sha256.size()) << m.file;
+    EXPECT_EQ(&models[1],transcribe::FindModel("/somewhere/ggml-large-v3-turbo-q5_0.bin"));
+    EXPECT_EQ(nullptr,transcribe::FindModel("/somewhere/ggml-tiny.bin"));
+    auto const& small=models[0];
+    EXPECT_EQ("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin",transcribe::ModelUrl(small,""));
+    EXPECT_EQ("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin",transcribe::ModelUrl(small,"huggingface"));
+    EXPECT_EQ("https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin",transcribe::ModelUrl(small,"hf-mirror"));
+    EXPECT_EQ("https://example.com/models/ggml-small-q5_1.bin",transcribe::ModelUrl(small,"https://example.com/models/ "));
+    EXPECT_EQ("190 MB",transcribe::SizeText(190085487));
+    EXPECT_EQ("574 MB",transcribe::SizeText(574041195));
+    EXPECT_EQ("1.1 GB",transcribe::SizeText(1081140203));
+    EXPECT_EQ("885 KB",transcribe::SizeText(885098));
+}
+
+#ifdef WITH_CURL
+namespace {
+bool CurlReadsFiles(){
+    for(auto p=curl_version_info(CURLVERSION_NOW)->protocols;p&&*p;++p) if(std::string(*p)=="file") return true;
+    return false;
+}
+std::string FileUrl(std::filesystem::path const& p){
+    auto s=p.generic_string();
+    return s.front()=='/'?"file://"+s:"file:///"+s;
+}
+std::string Slurp(std::filesystem::path const& p){
+    std::ifstream in(p,std::ios::binary);
+    return {std::istreambuf_iterator<char>(in),std::istreambuf_iterator<char>()};
+}
+}
+
+TEST(transcribe_models, a_download_goes_on_from_what_an_earlier_try_left_and_is_kept_only_if_it_is_the_model) {
+    if(!CurlReadsFiles()) GTEST_SKIP() << "this curl does not read files";
+    namespace sfs=std::filesystem;
+    sfs::path dir=sfs::temp_directory_path()/("aegisub-download-test-"+std::to_string(::getpid()));
+    sfs::remove_all(dir);sfs::create_directories(dir/"server");sfs::create_directories(dir/"models");
+    std::string data;
+    for(int i=0;i<300000;++i) data+=static_cast<char>((i*2654435761u)>>24);
+    {std::ofstream(dir/"server"/"ggml-test.bin",std::ios::binary)<<data;}
+    agi::Sha256 h;h.Update(data);
+    std::string const sha=h.HexDigest();
+    transcribe::Model const model{"ggml-test.bin",static_cast<int64_t>(data.size()),sha};
+    std::string const source=FileUrl(dir/"server");
+    EXPECT_EQ(source+"/ggml-test.bin",transcribe::ModelUrl(model,source));
+
+    // A third of it there from a try cut off
+    auto part=dir/"models"/"ggml-test.bin.part";
+    {std::ofstream(part,std::ios::binary)<<data.substr(0,100000);}
+    transcribe::Download(transcribe::ModelUrl(model,source),agi::fs::path(part),model.bytes,nullptr);
+    EXPECT_EQ(data,Slurp(part)) << "the rest put after what was there";
+
+    // More there than the whole: begun again
+    {std::ofstream(part,std::ios::binary)<<data<<"junk";}
+    transcribe::Download(transcribe::ModelUrl(model,source),agi::fs::path(part),model.bytes,nullptr);
+    EXPECT_EQ(data,Slurp(part));
+
+    // Not the model: thrown away, and nothing put in its place
+    std::string const zeros(64,'0');
+    transcribe::Model const other{"ggml-test.bin",model.bytes,zeros};
+    auto dest=dir/"models"/"ggml-test.bin";
+    EXPECT_THROW(transcribe::TakeDownload(agi::fs::path(part),agi::fs::path(dest),other,nullptr),agi::EnvironmentError);
+    EXPECT_FALSE(sfs::exists(part));
+    EXPECT_FALSE(sfs::exists(dest));
+
+    // The whole way: downloaded, checked and put in place, and then there
+    auto got=transcribe::GetModel(model,agi::fs::path(dir/"models"),source,nullptr);
+    EXPECT_EQ(dest,sfs::path(got));
+    EXPECT_EQ(data,Slurp(dest));
+    EXPECT_FALSE(sfs::exists(part));
+    EXPECT_TRUE(transcribe::Downloaded(model,agi::fs::path(dir/"models")));
+
+    // The server has less than the whole: told, what came kept to go on from
+    transcribe::Model const longer{"ggml-test.bin",model.bytes+10,sha};
+    EXPECT_THROW(transcribe::Download(transcribe::ModelUrl(longer,source),agi::fs::path(part),longer.bytes,nullptr),agi::EnvironmentError);
+    EXPECT_THROW(transcribe::Download(FileUrl(dir/"server"/"missing.bin"),agi::fs::path(dir/"models"/"missing.part"),10,nullptr),agi::EnvironmentError);
+    sfs::remove_all(dir);
+}
+
+// A server that sends the whole file when asked for the rest, as Python's
+// http.server does: only with AEGISUB_RANGELESS_SERVER the address of one
+// serving a folder that holds ggml-test.bin, 300 000 bytes
+TEST(transcribe_models, a_server_that_will_not_send_only_the_rest_is_downloaded_from_from_the_start) {
+    char const* server=std::getenv("AEGISUB_RANGELESS_SERVER");
+    if(!server||!*server) GTEST_SKIP() << "AEGISUB_RANGELESS_SERVER is not set";
+    namespace sfs=std::filesystem;
+    sfs::path dir=sfs::temp_directory_path()/("aegisub-rangeless-test-"+std::to_string(::getpid()));
+    sfs::remove_all(dir);sfs::create_directories(dir);
+    auto part=dir/"ggml-test.bin.part";
+    {std::ofstream(part,std::ios::binary)<<std::string(1000,'x');}
+    transcribe::Download(std::string(server)+"/ggml-test.bin",agi::fs::path(part),300000,nullptr);
+    std::string const got=Slurp(part);
+    EXPECT_EQ(300000u,got.size());
+    EXPECT_NE(std::string(1000,'x'),got.substr(0,1000)) << "what was there replaced, not added to";
+    sfs::remove_all(dir);
+}
+
+// From Hugging Face itself: only with AEGISUB_NETWORK_TESTS set. The VAD
+// model, small, is fetched there as the Whisper models are.
+TEST(transcribe_models, a_download_from_hugging_face_is_whole) {
+    if(!std::getenv("AEGISUB_NETWORK_TESTS")) GTEST_SKIP() << "AEGISUB_NETWORK_TESTS is not set";
+    namespace sfs=std::filesystem;
+    sfs::path dir=sfs::temp_directory_path()/("aegisub-hf-test-"+std::to_string(::getpid()));
+    sfs::remove_all(dir);sfs::create_directories(dir);
+    transcribe::Model const vad{"ggml-silero-v6.2.0.bin",885098,"2aa269b785eeb53a82983a20501ddf7c1d9c48e33ab63a41391ac6c9f7fb6987"};
+    auto got=transcribe::GetModel(vad,agi::fs::path(dir),"https://huggingface.co/ggml-org/whisper-vad/resolve/main",nullptr);
+    EXPECT_TRUE(transcribe::Downloaded(vad,agi::fs::path(dir)));
+    EXPECT_EQ(std::string(vad.sha256),transcribe::Sha256File(got,nullptr));
+    sfs::remove_all(dir);
+}
+#endif
 
 TEST(utils, leftovers_are_removed_when_named_so_and_old_and_nothing_else) {
     namespace sfs=std::filesystem;

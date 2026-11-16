@@ -6,6 +6,7 @@
 #include <libaegisub/exception.h>
 #include <libaegisub/fs.h>
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -113,6 +114,14 @@ DEFINE_EXCEPTION(KeyRefused, agi::Exception);
 /// @throws KeyRefused, agi::EnvironmentError with what went wrong, and
 /// agi::UserCancelException when cancelled on @p ps
 std::string Upload(Request const& request, ElevenLabs const& settings, agi::ProgressSink *ps);
+
+/// Download @p url into @p part, going on from what is there already, as
+/// left by a download cancelled or cut off; begun again if the server will
+/// not send only the rest. Only an HTTP answer of success is written.
+/// @param size What the whole is, to check by; 0 if not known
+/// @throws agi::EnvironmentError with what went wrong, and
+/// agi::UserCancelException when cancelled on @p ps, what came kept
+void Download(std::string const& url, agi::fs::path const& part, int64_t size, agi::ProgressSink *ps);
 
 /// A command line of the user's made ready to run: @p templ with {media},
 /// {out} and {language} put in and split into its words, quotes (" or ')

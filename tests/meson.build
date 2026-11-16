@@ -43,6 +43,7 @@ tests_src = [
     'tests/option.cpp',
     'tests/path.cpp',
     'tests/signals.cpp',
+    'tests/sha256.cpp',
     'tests/split.cpp',
     'tests/syntax_highlight.cpp',
     'tests/thesaurus.cpp',

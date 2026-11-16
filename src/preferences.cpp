@@ -39,6 +39,7 @@
 #include "secret.h"
 #include "speech_transcribe.h"
 #include "transcribe_local.h"
+#include "dialogs.h"
 #include "theme.h"
 #include "video_provider_manager.h"
 
@@ -55,6 +56,7 @@
 #include <cstdlib>
 #include <unordered_set>
 
+#include <wx/textctrl.h>
 #include <wx/checkbox.h>
 #include <wx/combobox.h>
 #include <wx/dc.h>
@@ -330,8 +332,23 @@ void Audio(PreferencesBook *book, Preferences *parent) {
 		{.help = _("Run with {media} the audio or video file, {out} an empty folder to write a JSON file with each word's times to, and {language} the language above; a part in [brackets] is left out when its value is empty")});
 
 	if (transcribe::CanRunLocal()) {
-		p->OptionAdd(transcribe, _("Whisper model file"), "Tool/Transcribe/Local/Model",
+		auto model = p->OptionAdd(transcribe, _("Whisper model file"), "Tool/Transcribe/Local/Model",
 			{.help = _("A ggml model, such as ggml-large-v3-turbo-q5_0.bin or, on a slower computer, ggml-small-q5_1.bin; asked for when first needed if empty")});
+		{
+			// Downloading one, or finding one: the path put in the field as
+			// if typed, so it is taken with the dialog's other changes
+			auto choose = new FlatButton(transcribe.box, _("Download or Choose..."));
+			choose->Bind(wxEVT_BUTTON, [=](wxCommandEvent&) {
+				auto chosen = ChooseWhisperModel(p);
+				if (!chosen) return;
+				for (auto child : model->GetChildren())
+					if (auto text = dynamic_cast<wxTextCtrl *>(child)) text->SetValue(to_wx(chosen->string()));
+			});
+			auto row = new wxBoxSizer(wxHORIZONTAL);
+			row->Add(choose);
+			p->Row(transcribe, _("Whisper models"), row,
+				_("Downloads a model offered, checked to be as published, into the models folder; or takes a file you have"));
+		}
 		p->OptionAdd(transcribe, _("Use the graphics card for Whisper"), "Tool/Transcribe/Local/Use GPU",
 			{.help = _("Much faster where it can; the processor is used when it cannot")});
 		p->OptionAdd(transcribe, _("Whisper threads"), "Tool/Transcribe/Local/Threads", {.min = 0, .max = 64,

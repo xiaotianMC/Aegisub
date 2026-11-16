@@ -20,6 +20,7 @@
 #include <libaegisub/fs.h>
 
 #include <functional>
+#include <optional>
 #include <string>
 #include <wx/string.h>
 
@@ -67,6 +68,10 @@ bool ShowPasteOverDialog(wxWindow *parent);
 /// @return true if the comparison tab opened
 bool OpenCompareTab(agi::Context *c, agi::fs::path const& baseline);
 bool ShowPlainTextImportDialog();
+/// Choose the Whisper model to hear with: one offered, downloaded if it is
+/// not yet, or a file of the user's. Keeps where models are downloaded from
+/// and to. @return Its path; nothing if cancelled
+std::optional<agi::fs::path> ChooseWhisperModel(wxWindow *parent);
 void ShowAboutDialog(wxWindow *parent);
 void ShowAttachmentsDialog(agi::Context *c);
 void ShowAutomationDialog(agi::Context *c);
