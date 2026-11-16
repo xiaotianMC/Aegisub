@@ -231,7 +231,9 @@ jobs:
       - name: Build
         run: |
           ${{ matrix.config.devenv }}
-          meson compile -C build
+          # Going on past a file that fails, so that one run shows every
+          # error, not only the first few
+          meson compile -C build --ninja-args=-k0
 
       - name: Verify Intel cross-build architecture
         if: matrix.config.cross_args
