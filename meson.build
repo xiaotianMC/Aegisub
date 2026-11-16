@@ -456,7 +456,6 @@ if not whisper_opt.disabled()
             'GGML_NATIVE': false,
             'GGML_CCACHE': false,
             'GGML_OPENMP': false,
-            'GGML_METAL': false,
             'GGML_BUILD_TESTS': false,
             'GGML_BUILD_EXAMPLES': false,
             'WHISPER_BUILD_TESTS': false,
@@ -469,6 +468,28 @@ if not whisper_opt.disabled()
         if host_machine.system() == 'darwin'
             whisper_cmake.add_cmake_defines({'CMAKE_OSX_DEPLOYMENT_TARGET': macos_deployment_target})
         endif
+        # The graphics card: Metal on macOS, its shaders in the binary;
+        # Vulkan on Linux where its headers and shader compiler are. Not on
+        # Windows yet: linked in, it would keep Aegisub from starting where
+        # there is no Vulkan loader, until ggml's backends are loaded as DLLs.
+        whisper_gpu = get_option('whisper_gpu')
+        whisper_metal = false
+        whisper_vulkan = false
+        if not whisper_gpu.disabled()
+            if host_machine.system() == 'darwin'
+                whisper_metal = true
+            elif host_machine.system() != 'windows'
+                whisper_vulkan = dependency('vulkan', required: false).found() and find_program('glslc', required: false).found()
+                if whisper_gpu.enabled() and not whisper_vulkan
+                    error('whisper_gpu is enabled, but the Vulkan headers or glslc are missing')
+                endif
+            endif
+        endif
+        whisper_cmake.add_cmake_defines({
+            'GGML_METAL': whisper_metal,
+            'GGML_METAL_EMBED_LIBRARY': whisper_metal,
+            'GGML_VULKAN': whisper_vulkan,
+        })
         whisper_cmake.set_override_option('warning_level', '0')
         whisper_cmake.set_override_option('werror', 'false')
         whisper_proj = cmake.subproject('whisper.cpp', options: whisper_cmake, required: whisper_opt)

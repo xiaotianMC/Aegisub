@@ -22,11 +22,23 @@ namespace transcribe {
 std::vector<Model> const& Models() {
 	// As published at huggingface.co/ggerganov/whisper.cpp
 	static const std::vector<Model> models = {
-		{"ggml-small-q5_1.bin", 190085487, "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb"},
-		{"ggml-large-v3-turbo-q5_0.bin", 574041195, "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2"},
-		{"ggml-large-v3-q5_0.bin", 1081140203, "d75795ecff3f83b5faa89d1900604ad8c780abd5739fae406de19f23ecd98ad1"},
+		{"ggml-small-q5_1.bin", "ggerganov/whisper.cpp", 190085487, "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb"},
+		{"ggml-large-v3-turbo-q5_0.bin", "ggerganov/whisper.cpp", 574041195, "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2"},
+		{"ggml-large-v3-q5_0.bin", "ggerganov/whisper.cpp", 1081140203, "d75795ecff3f83b5faa89d1900604ad8c780abd5739fae406de19f23ecd98ad1"},
 	};
 	return models;
+}
+
+Model const& VadModel() {
+	// As published at huggingface.co/ggml-org/whisper-vad
+	static const Model vad{"ggml-silero-v6.2.0.bin", "ggml-org/whisper-vad", 885098, "2aa269b785eeb53a82983a20501ddf7c1d9c48e33ab63a41391ac6c9f7fb6987"};
+	return vad;
+}
+
+agi::fs::path FindVad(agi::fs::path const& folder, agi::fs::path const& model) {
+	for (auto const& where : {folder, agi::fs::path(model.parent_path())})
+		if (!where.empty() && Downloaded(VadModel(), where)) return where / std::string(VadModel().file);
+	return {};
 }
 
 Model const* FindModel(agi::fs::path const& path) {
@@ -45,8 +57,9 @@ std::string SizeText(int64_t bytes) {
 
 std::string ModelUrl(Model const& model, std::string const& source) {
 	std::string base;
-	if (source.empty() || source == "huggingface") base = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
-	else if (source == "hf-mirror") base = "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main";
+	std::string const repository(model.repository);
+	if (source.empty() || source == "huggingface") base = "https://huggingface.co/" + repository + "/resolve/main";
+	else if (source == "hf-mirror") base = "https://hf-mirror.com/" + repository + "/resolve/main";
 	else base = source;
 	while (!base.empty() && (base.back() == '/' || base.back() == ' ')) base.pop_back();
 	return base + "/" + std::string(model.file);

@@ -14,6 +14,7 @@ option('uchardet', type: 'feature', description: 'uchardet character encoding de
 option('libportal', type: 'feature', description: 'XDG Desktop Portal support through libportal')
 option('csri', type: 'feature', description: 'CSRI support')
 option('whisper', type: 'feature', description: 'Speech recognition built in, by whisper.cpp')
+option('whisper_gpu', type: 'feature', description: 'whisper.cpp on the graphics card: Metal on macOS, Vulkan on Linux')
 
 option('system_luajit', type: 'boolean', value: false, description: 'Force using system luajit')
 option('fallback_nasm', type: 'boolean', value: false, description: 'Force using fallback nasm')

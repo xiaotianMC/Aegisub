@@ -24,6 +24,7 @@
 #include "../speech_lines.h"
 #include "../speech_transcribe.h"
 #include "../transcribe_local.h"
+#include "../transcribe_models.h"
 #include "../subtitle_project_access.h"
 #include "../subtitle_row_list_edit.h"
 #include "../subtitle_value_edit.h"
@@ -302,7 +303,22 @@ struct autotiming_transcribe final : public Command {
 					settings.model = *model;
 					OPT_SET("Tool/Transcribe/Local/Model")->SetString(model->string());
 				}
+				settings.vad_model = transcribe::FindVad(transcribe::ModelFolder(), settings.model);
 				settings.use_gpu = OPT_GET("Tool/Transcribe/Local/Use GPU")->GetBool();
+				// A large model on the processor alone over a long recording:
+				// said before it is begun, not found out after
+				std::error_code size_ec;
+				bool const large = std::filesystem::file_size(std::filesystem::path(settings.model), size_ec) > 300000000 && !size_ec;
+				bool const no_gpu = !settings.use_gpu || transcribe::Gpu().empty();
+				if (large && no_gpu && duration_ms > 10 * 60 * 1000 && OPT_GET("Tool/Transcribe/Local/Warn Slow")->GetBool()) {
+					wxRichMessageDialog ask(c->parent,
+						agi::wxformat(_("Hear %s of audio with %s on the processor alone?"), transcribe::Duration(duration_ms), settings.model.filename().string()),
+						_("Transcribe the Audio"), wxYES_NO | wxICON_QUESTION);
+					ask.SetExtendedMessage(_("There is no graphics card Whisper can use, and a large model on the processor can take as long as the audio or longer. The small model is several times quicker; choose it in Preferences, Audio, Transcription."));
+					ask.ShowCheckBox(_("Don't ask again"));
+					if (ask.ShowModal() != wxID_YES) return;
+					if (ask.IsCheckBoxChecked()) OPT_SET("Tool/Transcribe/Local/Warn Slow")->SetBool(false);
+				}
 				settings.threads = static_cast<int>(OPT_GET("Tool/Transcribe/Local/Threads")->GetInt());
 				DialogProgress progress(c->parent, _("Transcribe the Audio"), _("Preparing the audio..."));
 				progress.Run([&](agi::ProgressSink *ps) {

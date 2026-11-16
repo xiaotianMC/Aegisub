@@ -16,6 +16,8 @@ namespace agi { class ProgressSink; }
 namespace transcribe {
 struct Model {
 	std::string_view file;
+	/// Where on Hugging Face it is published
+	std::string_view repository;
 	/// The whole file, and its SHA-256 as published, to know it came whole
 	int64_t bytes;
 	std::string_view sha256;
@@ -25,14 +27,20 @@ struct Model {
 std::vector<Model> const& Models();
 /// The one with the file name of @p path, if offered
 Model const* FindModel(agi::fs::path const& path);
+/// Silero's voice activity detection, for whisper.cpp to hear only where
+/// there is speech and so not make up words in silence and music; fetched
+/// with the Whisper model, small as it is
+Model const& VadModel();
+/// The VAD model, if it is in @p folder or with @p model
+agi::fs::path FindVad(agi::fs::path const& folder, agi::fs::path const& model);
 
 /// @p bytes as "190 MB" or "1.1 GB", in thousands as the sizes are published
 std::string SizeText(int64_t bytes);
 
 /// Where to download @p model from: @p source "huggingface" or empty for
-/// Hugging Face, "hf-mirror" for hf-mirror.com, reachable from mainland
-/// China, else the address of a folder holding the files, the file name
-/// put after it
+/// its repository on Hugging Face, "hf-mirror" for the same on
+/// hf-mirror.com, reachable from mainland China, else the address of a
+/// folder holding the files, the file name put after it
 std::string ModelUrl(Model const& model, std::string const& source);
 
 /// Where models are downloaded to: Tool/Transcribe/Local/Model Folder, or

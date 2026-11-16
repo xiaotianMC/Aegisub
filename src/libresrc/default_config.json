@@ -687,7 +687,8 @@
 				"Model Folder" : "",
 				"Source" : "huggingface",
 				"Threads" : 0,
-				"Use GPU" : true
+				"Use GPU" : true,
+				"Warn Slow" : true
 			},
 			"Secondary Languages" : ""
 		},

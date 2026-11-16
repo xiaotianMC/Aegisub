@@ -349,8 +349,10 @@ void Audio(PreferencesBook *book, Preferences *parent) {
 			p->Row(transcribe, _("Whisper models"), row,
 				_("Downloads a model offered, checked to be as published, into the models folder; or takes a file you have"));
 		}
+		auto const gpu = transcribe::Gpu();
 		p->OptionAdd(transcribe, _("Use the graphics card for Whisper"), "Tool/Transcribe/Local/Use GPU",
-			{.help = _("Much faster where it can; the processor is used when it cannot")});
+			{.help = gpu.empty() ? _("Much faster where it can; none it can use was found, so the processor is used")
+			                     : agi::wxformat(_("Much faster where it can; found: %s"), gpu)});
 		p->OptionAdd(transcribe, _("Whisper threads"), "Tool/Transcribe/Local/Threads", {.min = 0, .max = 64,
 			.help = _("0 for as many as the processor has, up to 8")});
 	}

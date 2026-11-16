@@ -4581,6 +4581,72 @@ TEST(transcribe_local, whisper_hears_a_sample_through_the_editors_audio_path) {
     }
 }
 
+// Whisper with VAD, on the sample between 20 s of faint noise each side:
+// only with AEGISUB_WHISPER_MODEL and AEGISUB_WHISPER_VAD naming the models
+TEST(transcribe_local, with_vad_the_noise_about_speech_is_not_heard_and_the_times_stay_the_audios) {
+    if(!transcribe::CanRunLocal()) GTEST_SKIP() << "built without whisper.cpp";
+    char const* model=std::getenv("AEGISUB_WHISPER_MODEL");
+    char const* vad=std::getenv("AEGISUB_WHISPER_VAD");
+    if(!model||!*model||!vad||!*vad) GTEST_SKIP() << "AEGISUB_WHISPER_MODEL and AEGISUB_WHISPER_VAD are not both set";
+    agi::fs::path wav=agi::fs::path(AEGISUB_SOURCE_ROOT)/"subprojects"/"whisper.cpp-1.9.5"/"samples"/"jfk.wav";
+    if(!agi::fs::FileExists(wav)) GTEST_SKIP() << "no " << wav.string();
+    auto audio=agi::CreateConvertAudioProvider(agi::CreatePCMAudioProvider(wav,nullptr));
+    auto speech=agi::ResampleToFloat(*audio,16000);
+    std::vector<float> samples;
+    uint32_t seed=1;
+    auto noise=[&]{ seed=seed*1664525u+1013904223u; return (static_cast<float>(seed>>8)/16777216.f-0.5f)*0.006f; };
+    for(int i=0;i<20*16000;++i) samples.push_back(noise());
+    for(float v:speech) samples.push_back(v+noise());
+    for(int i=0;i<20*16000;++i) samples.push_back(noise());
+
+    transcribe::Request request;request.language="en";
+    transcribe::Local settings;settings.model=model;settings.use_gpu=false;settings.vad_model=vad;
+    // What the progress dialog would be told
+    struct Recorder final : agi::ProgressSink {
+        std::vector<std::string> messages;int64_t most=0;
+        void SetIndeterminate() override {}
+        void SetTitle(std::string const&) override {}
+        void SetMessage(std::string const& m) override { messages.push_back(m); }
+        void SetProgress(int64_t cur,int64_t) override { most=std::max(most,cur); }
+        void Log(std::string const&) override {}
+        bool IsCancelled() override { return false; }
+    } recorder;
+    auto t=transcribe::RunLocal(request,settings,samples,&recorder);
+    for(auto const& m:recorder.messages) std::printf("told: %s\n",m.c_str());
+    EXPECT_EQ(100,recorder.most) << "the progress goes to the end";
+    std::string text,times;int first=-1,last=-1;
+    for(auto const& seg:t.segments){
+        text+=seg.text+" ";
+        for(auto const& w:seg.words){
+            if(first<0) first=w.start;
+            last=std::max(last,w.end);
+            times+=agi::format("%s %d-%d  ",w.text,w.start,w.end);
+        }
+    }
+    std::printf("with VAD: %s\n%s\n",text.c_str(),times.c_str());
+    for(auto& ch:text) ch=static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    EXPECT_NE(std::string::npos,text.find("ask not what your country")) << text;
+    EXPECT_GE(first,19800) << "nothing heard in the noise before, and the times the audio's own";
+    EXPECT_LE(first,21000);
+    EXPECT_LE(last,31500) << "nothing heard in the noise after";
+
+    settings.vad_model.clear();
+    auto plain=transcribe::RunLocal(request,settings,samples,nullptr);
+    std::string plain_text;
+    for(auto const& seg:plain.segments) plain_text+=agi::format("[%d-%d] %s ",seg.start,seg.end,seg.text);
+    std::printf("without VAD: %s\n",plain_text.c_str());
+}
+
+TEST(transcribe_local, the_time_left_is_told_from_the_pace_so_far_once_enough_is_done) {
+    EXPECT_EQ("",transcribe::TimeLeft(10,2)) << "too little done to tell";
+    EXPECT_EQ("",transcribe::TimeLeft(1,50)) << "too soon to tell";
+    EXPECT_EQ("",transcribe::TimeLeft(100,100)) << "done";
+    EXPECT_EQ("less than a minute left",transcribe::TimeLeft(20,50));
+    EXPECT_EQ("about 1 minute left",transcribe::TimeLeft(59.7,50)) << "a minute is a minute, not less";
+    EXPECT_EQ("about 2 minutes left",transcribe::TimeLeft(35.1,30)) << "1.4 minutes rounded up";
+    EXPECT_EQ("about 9 minutes left",transcribe::TimeLeft(60,10));
+}
+
 TEST(transcribe_models, the_models_offered_their_addresses_and_sizes) {
     auto const& models=transcribe::Models();
     ASSERT_EQ(3u,models.size());
@@ -4598,6 +4664,7 @@ TEST(transcribe_models, the_models_offered_their_addresses_and_sizes) {
     EXPECT_EQ("574 MB",transcribe::SizeText(574041195));
     EXPECT_EQ("1.1 GB",transcribe::SizeText(1081140203));
     EXPECT_EQ("885 KB",transcribe::SizeText(885098));
+    EXPECT_EQ("https://hf-mirror.com/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin",transcribe::ModelUrl(transcribe::VadModel(),"hf-mirror"));
 }
 
 #ifdef WITH_CURL
@@ -4626,7 +4693,7 @@ TEST(transcribe_models, a_download_goes_on_from_what_an_earlier_try_left_and_is_
     {std::ofstream(dir/"server"/"ggml-test.bin",std::ios::binary)<<data;}
     agi::Sha256 h;h.Update(data);
     std::string const sha=h.HexDigest();
-    transcribe::Model const model{"ggml-test.bin",static_cast<int64_t>(data.size()),sha};
+    transcribe::Model const model{"ggml-test.bin","test/test",static_cast<int64_t>(data.size()),sha};
     std::string const source=FileUrl(dir/"server");
     EXPECT_EQ(source+"/ggml-test.bin",transcribe::ModelUrl(model,source));
 
@@ -4643,7 +4710,7 @@ TEST(transcribe_models, a_download_goes_on_from_what_an_earlier_try_left_and_is_
 
     // Not the model: thrown away, and nothing put in its place
     std::string const zeros(64,'0');
-    transcribe::Model const other{"ggml-test.bin",model.bytes,zeros};
+    transcribe::Model const other{"ggml-test.bin","test/test",model.bytes,zeros};
     auto dest=dir/"models"/"ggml-test.bin";
     EXPECT_THROW(transcribe::TakeDownload(agi::fs::path(part),agi::fs::path(dest),other,nullptr),agi::EnvironmentError);
     EXPECT_FALSE(sfs::exists(part));
@@ -4657,7 +4724,7 @@ TEST(transcribe_models, a_download_goes_on_from_what_an_earlier_try_left_and_is_
     EXPECT_TRUE(transcribe::Downloaded(model,agi::fs::path(dir/"models")));
 
     // The server has less than the whole: told, what came kept to go on from
-    transcribe::Model const longer{"ggml-test.bin",model.bytes+10,sha};
+    transcribe::Model const longer{"ggml-test.bin","test/test",model.bytes+10,sha};
     EXPECT_THROW(transcribe::Download(transcribe::ModelUrl(longer,source),agi::fs::path(part),longer.bytes,nullptr),agi::EnvironmentError);
     EXPECT_THROW(transcribe::Download(FileUrl(dir/"server"/"missing.bin"),agi::fs::path(dir/"models"/"missing.part"),10,nullptr),agi::EnvironmentError);
     sfs::remove_all(dir);
@@ -4688,8 +4755,8 @@ TEST(transcribe_models, a_download_from_hugging_face_is_whole) {
     namespace sfs=std::filesystem;
     sfs::path dir=sfs::temp_directory_path()/("aegisub-hf-test-"+std::to_string(::getpid()));
     sfs::remove_all(dir);sfs::create_directories(dir);
-    transcribe::Model const vad{"ggml-silero-v6.2.0.bin",885098,"2aa269b785eeb53a82983a20501ddf7c1d9c48e33ab63a41391ac6c9f7fb6987"};
-    auto got=transcribe::GetModel(vad,agi::fs::path(dir),"https://huggingface.co/ggml-org/whisper-vad/resolve/main",nullptr);
+    auto const& vad=transcribe::VadModel();
+    auto got=transcribe::GetModel(vad,agi::fs::path(dir),"huggingface",nullptr);
     EXPECT_TRUE(transcribe::Downloaded(vad,agi::fs::path(dir)));
     EXPECT_EQ(std::string(vad.sha256),transcribe::Sha256File(got,nullptr));
     sfs::remove_all(dir);

@@ -12,6 +12,7 @@
 #include "transcribe_models.h"
 
 #include <libaegisub/exception.h>
+#include <libaegisub/log.h>
 #include <libaegisub/path.h>
 
 #include <filesystem>
@@ -149,7 +150,13 @@ std::optional<agi::fs::path> ChooseWhisperModel(wxWindow *parent) {
 		auto const& m = models[chosen];
 		try {
 			DialogProgress progress(&d, _("Whisper Model"), agi::wxformat(_("Downloading %s..."), std::string(m.file)));
-			progress.Run([&](agi::ProgressSink *ps) { result = transcribe::GetModel(m, folder, source, ps); });
+			progress.Run([&](agi::ProgressSink *ps) {
+				result = transcribe::GetModel(m, folder, source, ps);
+				// Silence and music heard as such, not made into words: small,
+				// and not needed, so not getting it is no failure
+				try { transcribe::GetModel(transcribe::VadModel(), folder, source, ps); }
+				catch (agi::EnvironmentError const& e) { LOG_W("transcribe/models") << "no VAD model: " << e.GetMessage(); }
+			});
 		}
 		catch (agi::UserCancelException const&) {
 			// What came is kept, to go on from next time

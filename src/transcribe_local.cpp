@@ -11,6 +11,8 @@
 #include <libaegisub/log.h>
 
 #include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <cctype>
 #include <string_view>
 #include <thread>
@@ -18,6 +20,7 @@
 #include <wx/intl.h>
 
 #ifdef WITH_WHISPER
+#include <ggml-backend.h>
 #include <whisper.h>
 #endif
 
@@ -206,8 +209,30 @@ speech::Transcript FromWhisper(std::vector<WhisperSegment> const& segments, std:
 	return out;
 }
 
+std::string TimeLeft(double elapsed_seconds, int done) {
+	// Too little done for its pace to say much
+	if (done < 3 || done >= 100 || elapsed_seconds < 2) return "";
+	double const left = elapsed_seconds * (100 - done) / done;
+	// Rounded up: it comes in tenths, and is better done before it said
+	if (left < 30) return from_wx(_("less than a minute left"));
+	int const minutes = static_cast<int>(std::ceil(left / 60));
+	return from_wx(wxString::Format(wxPLURAL("about %d minute left", "about %d minutes left", minutes), minutes));
+}
+
 #ifdef WITH_WHISPER
 bool CanRunLocal() { return true; }
+
+std::string Gpu() {
+	for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+		auto dev = ggml_backend_dev_get(i);
+		auto const type = ggml_backend_dev_type(dev);
+		if (type == GGML_BACKEND_DEVICE_TYPE_GPU || type == GGML_BACKEND_DEVICE_TYPE_IGPU) {
+			char const *description = ggml_backend_dev_description(dev);
+			return description && *description ? description : ggml_backend_dev_name(dev);
+		}
+	}
+	return "";
+}
 
 namespace {
 std::string Utf8(agi::fs::path const& p) {
@@ -292,13 +317,25 @@ speech::Transcript RunLocal(Request const& request, Local const& settings, std::
 		wp.vad = true;
 		wp.vad_model_path = vad.c_str();
 	}
+	// How far it has got, and from its pace so far what is left
+	struct Pace {
+		agi::ProgressSink *ps;
+		std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+		std::string said;
+	} pace{ps};
 	if (ps) {
 		ps->SetMessage(from_wx(_("Hearing the audio through...")));
 		ps->SetProgress(0, 100);
 		wp.progress_callback = [](whisper_context *, whisper_state *, int progress, void *user) {
-			static_cast<agi::ProgressSink *>(user)->SetProgress(progress, 100);
+			auto pace = static_cast<Pace *>(user);
+			pace->ps->SetProgress(progress, 100);
+			double const elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - pace->start).count();
+			auto left = TimeLeft(elapsed, progress);
+			if (left.empty() || left == pace->said) return;
+			pace->said = left;
+			pace->ps->SetMessage(agi::format(from_wx(_("Hearing the audio through: %s")), left));
 		};
-		wp.progress_callback_user_data = ps;
+		wp.progress_callback_user_data = &pace;
 		// Asked from ggml's threads: DialogProgress's answer is an atomic
 		wp.abort_callback = [](void *user) { return static_cast<agi::ProgressSink *>(user)->IsCancelled(); };
 		wp.abort_callback_user_data = ps;
@@ -337,6 +374,7 @@ speech::Transcript RunLocal(Request const& request, Local const& settings, std::
 }
 #else
 bool CanRunLocal() { return false; }
+std::string Gpu() { return ""; }
 speech::Transcript RunLocal(Request const&, Local const&, std::vector<float> const&, agi::ProgressSink *) {
 	throw agi::EnvironmentError(from_wx(_("This build of Aegisub has no Whisper built in.")));
 }

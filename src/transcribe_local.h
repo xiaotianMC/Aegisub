@@ -60,6 +60,15 @@ struct Local {
 /// Whether this build has whisper.cpp
 bool CanRunLocal();
 
+/// The graphics card whisper.cpp can use, by name; empty when there is
+/// none, and the processor alone hears
+std::string Gpu();
+
+/// What is left of a run, said for the user: "about 3 minutes left"; empty
+/// until enough is done to tell
+/// @param done What of it is done, out of 100
+std::string TimeLeft(double elapsed_seconds, int done);
+
 /// Hear @p samples, 16 kHz mono from -1 to 1, as @p request says, how far
 /// it has got shown on @p ps
 /// @throws agi::EnvironmentError with what went wrong, and
