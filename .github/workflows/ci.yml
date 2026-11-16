@@ -396,7 +396,8 @@ jobs:
         run: |
           set -e
 
-          meson dist --include-subprojects -C build
+          # It builds the tarball and runs its tests, which open windows
+          xvfb-run -a meson dist --include-subprojects -C build
 
           # Make sure the subprojects we need are included
           mkdir distcheck
