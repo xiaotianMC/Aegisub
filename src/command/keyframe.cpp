@@ -131,7 +131,9 @@ std::string SceneCacheKey(agi::fs::path const& video) {
 	try {
 		if (agi::fs::FileExists(video))
 			key += "|" + std::to_string(agi::fs::Size(video)) + "|" +
-				std::to_string(agi::fs::ModifiedTime(video).time_since_epoch().count());
+				// A long long, as libc++'s file clock counts in __int128,
+				// which to_string has no overload for
+				std::to_string(static_cast<long long>(agi::fs::ModifiedTime(video).time_since_epoch().count()));
 	}
 	catch (agi::fs::FileSystemError const&) { }
 	return key;

@@ -705,11 +705,16 @@ if get_option('tests')
         # The feature flags as Aegisub has them: given as arguments where it
         # has no precompiled header, else read from acconf.h by it, which
         # these tests do not use
+        # ordinary_edit.cpp has more sections than MSVC's object files hold
+        # without /bigobj
         cpp_args: (get_option('b_pch') ? conf_defines : []) + aegisub_defines
-            + ['-DAEGISUB_SOURCE_ROOT="@0@"'.format(meson.project_source_root())],
+            + ['-DAEGISUB_SOURCE_ROOT="@0@"'.format(meson.project_source_root())]
+            + (cxx.get_argument_syntax() == 'msvc' ? ['/bigobj'] : []),
         win_subsystem: 'console')
+    # Some 380 tests, a minute and more of them: more than meson's 30 s
     test('ordinary editing integration', find_program('tests/run_isolated.py'),
-        args: [ordinary_runner, '--output-root', meson.current_build_dir() / 'ordinary-data'])
+        args: [ordinary_runner, '--output-root', meson.current_build_dir() / 'ordinary-data'],
+        timeout: 600)
     # C1-C1c-10: API scan plus real compile-failure cases for the live-model owner.
     # Borrows a production compile command from compile_commands.json (Ninja backend).
     test('live model owner access', find_program('tests/owner_access_check.py'),
