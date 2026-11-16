@@ -129,6 +129,7 @@ aegisub_src = files(
     'speech_lines.cpp',
     'secret.cpp',
     'speech_transcribe.cpp',
+    'transcribe_local.cpp',
     'keyframe_snap.cpp',
     'magia_timeline.cpp',
     'dialog_magia_timeline.cpp',

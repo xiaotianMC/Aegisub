@@ -441,6 +441,49 @@ else
     def_audio = ''
 endif
 
+# Speech recognition built in: the system's whisper.cpp, else the one in
+# subprojects built by CMake for the CPU, for any of the last decade's x86
+# processors rather than the one building it
+whisper_opt = get_option('whisper')
+if not whisper_opt.disabled()
+    whisper_dep = dependency('whisper', required: false, allow_fallback: false)
+    if not whisper_dep.found() and find_program('cmake', required: false).found()
+        whisper_cmake = cmake.subproject_options()
+        whisper_cmake.add_cmake_defines({
+            'CMAKE_BUILD_TYPE': 'Release',
+            'CMAKE_POSITION_INDEPENDENT_CODE': true,
+            'BUILD_SHARED_LIBS': false,
+            'GGML_NATIVE': false,
+            'GGML_CCACHE': false,
+            'GGML_OPENMP': false,
+            'GGML_METAL': false,
+            'GGML_BUILD_TESTS': false,
+            'GGML_BUILD_EXAMPLES': false,
+            'WHISPER_BUILD_TESTS': false,
+            'WHISPER_BUILD_EXAMPLES': false,
+            'WHISPER_BUILD_SERVER': false,
+            'WHISPER_ALL_WARNINGS': false,
+            'WHISPER_CURL': false,
+            'WHISPER_SDL2': false,
+        })
+        if host_machine.system() == 'darwin'
+            whisper_cmake.add_cmake_defines({'CMAKE_OSX_DEPLOYMENT_TARGET': macos_deployment_target})
+        endif
+        whisper_cmake.set_override_option('warning_level', '0')
+        whisper_cmake.set_override_option('werror', 'false')
+        whisper_proj = cmake.subproject('whisper.cpp', options: whisper_cmake, required: whisper_opt)
+        if whisper_proj.found()
+            whisper_dep = whisper_proj.dependency('whisper')
+        endif
+    endif
+    if whisper_dep.found()
+        deps += whisper_dep
+        conf.set('WITH_WHISPER', 1)
+    elif whisper_opt.enabled()
+        error('whisper is enabled, but neither the system\'s whisper.cpp nor CMake to build the one in subprojects was found')
+    endif
+endif
+
 conf_meson = configuration_data()
 conf_meson.set('DEFAULT_PLAYER_AUDIO', def_audio)
 

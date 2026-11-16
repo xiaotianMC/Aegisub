@@ -27,6 +27,7 @@
 #include "command/command.h"
 #include "include/aegisub/hotkey.h"
 #include <libaegisub/audio/provider.h>
+#include <libaegisub/audio/resample.h>
 #include <libaegisub/hotkey.h>
 #include <tuple>
 #include <typeinfo>
@@ -100,6 +101,7 @@
 #include "keyframe_snap.h"
 #include "speech_lines.h"
 #include "speech_transcribe.h"
+#include "transcribe_local.h"
 #include "secret.h"
 #include "scene_detect.h"
 #include "magia_timeline.h"
@@ -4431,6 +4433,146 @@ TEST(transcribe, a_runs_folder_is_known_by_its_name_and_no_other_is_taken_for_on
     EXPECT_FALSE(transcribe::IsRunFolder("aegisub-transcribe-1234-5x"));
     EXPECT_FALSE(transcribe::IsRunFolder("aegisub-magiatimeline"));
     std::filesystem::remove_all(std::filesystem::path(dir));
+}
+
+namespace {
+transcribe::Token Tok(std::string text,int start,int end,double p=0.9,bool special=false){
+    transcribe::Token t;t.text=std::move(text);t.start=start;t.end=end;t.p=p;t.special=special;return t;
+}
+}
+
+TEST(transcribe_local, a_character_split_between_tokens_is_joined_and_each_unspaced_piece_is_a_word) {
+    // 東 is E6 9D B1, 京 E4 BA AC: whisper.cpp may give 東's bytes in two tokens
+    transcribe::WhisperSegment seg;seg.start=1000;seg.end=2000;
+    seg.tokens={Tok("[_BEG_]",1000,1000,1,true),Tok("\xE6\x9D",1000,1100,0.8),Tok("\xB1\xE4\xBA\xAC",1100,1400,0.6),
+                Tok("\xE3\x81\xA7\xE3\x81\x99",1450,1700,0.95),Tok("<|endoftext|>",2000,2000,1,true)};
+    auto t=transcribe::FromWhisper({seg},"ja");
+    EXPECT_EQ("ja",t.language);
+    ASSERT_EQ(1u,t.segments.size());
+    EXPECT_EQ("\xE6\x9D\xB1\xE4\xBA\xAC\xE3\x81\xA7\xE3\x81\x99",t.segments[0].text) << "no special tokens in the text";
+    auto const& w=t.segments[0].words;
+    ASSERT_EQ(2u,w.size());
+    EXPECT_EQ("\xE6\x9D\xB1\xE4\xBA\xAC",w[0].text);
+    EXPECT_EQ(1000,w[0].start) << "where its first token starts";
+    EXPECT_EQ(1400,w[0].end);
+    EXPECT_DOUBLE_EQ(0.6,w[0].score) << "the least sure of its tokens";
+    EXPECT_EQ("\xE3\x81\xA7\xE3\x81\x99",w[1].text);
+    EXPECT_EQ(1450,w[1].start);
+}
+
+TEST(transcribe_local, spaced_words_are_their_pieces_up_to_the_next_space_their_punctuation_kept) {
+    transcribe::WhisperSegment seg;seg.start=0;seg.end=3000;
+    seg.tokens={Tok(" Hello",0,400),Tok(",",400,450),Tok(" wor",600,800),Tok("ld",800,1000),Tok(".",1000,1050)};
+    auto t=transcribe::FromWhisper({seg},"en");
+    auto const& w=t.segments.at(0).words;
+    ASSERT_EQ(2u,w.size());
+    EXPECT_EQ("Hello,",w[0].text);EXPECT_EQ(0,w[0].start);EXPECT_EQ(400,w[0].end) << "not the comma's";
+    EXPECT_EQ("world.",w[1].text);EXPECT_EQ(600,w[1].start);EXPECT_EQ(1000,w[1].end);
+    EXPECT_EQ("Hello, world.",t.segments[0].text);
+}
+
+TEST(transcribe_local, english_among_japanese_is_a_word_of_its_own) {
+    transcribe::WhisperSegment seg;seg.start=0;seg.end=2000;
+    seg.tokens={Tok("\xE6\x9D\xB1\xE4\xBA\xAC",0,300),Tok(" Tower",300,700),Tok("\xE3\x81\xB8",700,900)};
+    auto const heard_w=transcribe::FromWhisper({seg},"ja");
+    auto const& w=heard_w.segments.at(0).words;
+    ASSERT_EQ(3u,w.size());
+    EXPECT_EQ("Tower",w[1].text);
+    EXPECT_EQ("\xE3\x81\xB8",w[2].text) << "kana after a Latin word starts its own";
+}
+
+TEST(transcribe_local, a_word_ends_no_later_than_the_next_starts_and_stays_within_its_segment) {
+    transcribe::WhisperSegment seg;seg.start=1000;seg.end=2000;
+    // Times overlapping, before the segment, past it and of no length
+    seg.tokens={Tok(" one",900,1600),Tok(" two",1500,1500),Tok(" three",1900,2500)};
+    auto const heard_w=transcribe::FromWhisper({seg},"en");
+    auto const& w=heard_w.segments.at(0).words;
+    ASSERT_EQ(3u,w.size());
+    EXPECT_EQ(1000,w[0].start) << "not before its segment";
+    EXPECT_EQ(1500,w[0].end) << "cut where the next starts";
+    EXPECT_EQ(1500,w[1].start);
+    EXPECT_EQ(1500,w[1].end);
+    EXPECT_EQ(2000,w[2].end) << "not past its segment";
+    for(auto const& x:w) EXPECT_LE(x.start,x.end) << x.text;
+}
+
+TEST(transcribe_local, punctuation_goes_on_the_word_before_without_carrying_its_end_over_the_pause) {
+    // As whisper.cpp heard JFK: the comma's token comes after the pause
+    transcribe::WhisperSegment seg;seg.start=0;seg.end=2000;
+    seg.tokens={Tok(" so",330,530),Tok(",",680,740),Tok(" my",740,950)};
+    auto const heard_w=transcribe::FromWhisper({seg},"en");
+    auto const& w=heard_w.segments.at(0).words;
+    ASSERT_EQ(2u,w.size());
+    EXPECT_EQ("so,",w[0].text);EXPECT_EQ(530,w[0].end) << "the pause after it kept";
+    transcribe::WhisperSegment ja;ja.start=0;ja.end=2000;
+    // 東京、です。
+    ja.tokens={Tok("\xE6\x9D\xB1\xE4\xBA\xAC",0,400),Tok("\xE3\x80\x81",500,600),Tok("\xE3\x81\xA7\xE3\x81\x99",700,900),Tok("\xE3\x80\x82",950,1000)};
+    auto const heard_j=transcribe::FromWhisper({ja},"ja");
+    auto const& j=heard_j.segments.at(0).words;
+    ASSERT_EQ(2u,j.size()) << "the ideographic comma and full stop are not words";
+    EXPECT_EQ("\xE6\x9D\xB1\xE4\xBA\xAC\xE3\x80\x81",j[0].text);EXPECT_EQ(400,j[0].end);
+    EXPECT_EQ("\xE3\x81\xA7\xE3\x81\x99\xE3\x80\x82",j[1].text);EXPECT_EQ(900,j[1].end);
+}
+
+TEST(transcribe_local, a_segment_of_nothing_but_special_tokens_is_left_out_and_an_unfinished_character_kept) {
+    transcribe::WhisperSegment empty;empty.start=0;empty.end=500;
+    empty.tokens={Tok("[_BEG_]",0,0,1,true),Tok("<|endoftext|>",500,500,1,true)};
+    transcribe::WhisperSegment cut;cut.start=500;cut.end=900;
+    cut.tokens={Tok("\xE3\x81\x82",500,600),Tok("\xE3\x81",600,700)};
+    auto t=transcribe::FromWhisper({empty,cut},"ja");
+    ASSERT_EQ(1u,t.segments.size());
+    EXPECT_EQ(500,t.segments[0].start);
+    ASSERT_EQ(2u,t.segments[0].words.size());
+    EXPECT_EQ("\xE3\x81",t.segments[0].words[1].text) << "kept as whisper.cpp would print it";
+}
+
+// Whisper run for real, on whisper.cpp's own sample, through the same
+// conversion and resampling as the editor's audio: only with a model named
+// by AEGISUB_WHISPER_MODEL, ggml-tiny.bin being enough
+TEST(transcribe_local, whisper_hears_a_sample_through_the_editors_audio_path) {
+    if(!transcribe::CanRunLocal()) GTEST_SKIP() << "built without whisper.cpp";
+    char const* model=std::getenv("AEGISUB_WHISPER_MODEL");
+    if(!model||!*model) GTEST_SKIP() << "AEGISUB_WHISPER_MODEL is not set";
+    agi::fs::path wav=agi::fs::path(AEGISUB_SOURCE_ROOT)/"subprojects"/"whisper.cpp-1.9.5"/"samples"/"jfk.wav";
+    if(!agi::fs::FileExists(wav)) GTEST_SKIP() << "no " << wav.string();
+    auto audio=agi::CreateConvertAudioProvider(agi::CreatePCMAudioProvider(wav,nullptr));
+    ASSERT_EQ(32000,audio->GetSampleRate()) << "16 kHz is doubled for the editor, so this resamples";
+    auto samples=agi::ResampleToFloat(*audio,16000);
+    EXPECT_NEAR(11.0,samples.size()/16000.0,0.1);
+    transcribe::Request request;request.language="en";
+    transcribe::Local settings;settings.model=model;settings.use_gpu=false;
+    auto t=transcribe::RunLocal(request,settings,samples,nullptr);
+    EXPECT_EQ("en",t.language);
+    std::string text,times;size_t words=0,lasting=0;int last=-1;
+    for(auto const& seg:t.segments){
+        text+=seg.text+" ";
+        for(auto const& w:seg.words){
+            ++words;
+            if(w.end>w.start) ++lasting;
+            times+=agi::format("%s %d-%d  ",w.text,w.start,w.end);
+            EXPECT_GE(w.start,0) << w.text;EXPECT_GE(w.end,w.start) << w.text;
+            EXPECT_GE(w.start,last) << w.text << " starts before the word before it";
+            EXPECT_LE(w.end,11100) << w.text;
+            last=w.start;
+        }
+    }
+    for(auto& ch:text) ch=static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    EXPECT_NE(std::string::npos,text.find("country")) << text;
+    EXPECT_NE(std::string::npos,text.find("ask")) << text;
+    EXPECT_GE(words,15u) << text;
+    EXPECT_GE(lasting*10,words*9) << "words of no length: " << times;
+    std::printf("whisper heard: %s(%zu words)\n%s\n",text.c_str(),words,times.c_str());
+    // Made into lines as any recogniser's words are
+    auto lines=speech::MakeLines(t,speech::Rules(),{});
+    ASSERT_FALSE(lines.empty());
+    int prev=-1;
+    for(auto const& l:lines){
+        EXPECT_LT(l.start,l.end) << l.text;
+        EXPECT_GE(l.start,prev) << l.text;
+        EXPECT_FALSE(l.text.empty());
+        prev=l.start;
+        std::printf("  line %d-%d %s\n",l.start,l.end,l.text.c_str());
+    }
 }
 
 TEST(utils, leftovers_are_removed_when_named_so_and_old_and_nothing_else) {

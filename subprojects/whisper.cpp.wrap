@@ -1,0 +1,9 @@
+[wrap-file]
+directory = whisper.cpp-1.9.5
+source_url = https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v1.9.5.tar.gz
+source_filename = whisper.cpp-1.9.5.tar.gz
+source_hash = ff1a9053feb509ff9d7729703355541ae9690073a6b1c40eb692c962e0dc1720
+method = cmake
+
+[provide]
+dependency_names = whisper

@@ -682,6 +682,11 @@
 			"Keyterms" : "",
 			"Keyterms From Actors" : true,
 			"Language" : "",
+			"Local" : {
+				"Model" : "",
+				"Threads" : 0,
+				"Use GPU" : true
+			},
 			"Secondary Languages" : ""
 		},
 		"Translation Assistant" : {

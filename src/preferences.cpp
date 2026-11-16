@@ -38,6 +38,7 @@
 #include "preferences_base.h"
 #include "secret.h"
 #include "speech_transcribe.h"
+#include "transcribe_local.h"
 #include "theme.h"
 #include "video_provider_manager.h"
 
@@ -262,10 +263,14 @@ void Audio(PreferencesBook *book, Preferences *parent) {
 		.help = _("Such words are written in the Effect field as ?word, for the translator to check")});
 
 	auto transcribe = p->PageSizer(_("Transcription"));
-	const wxString backend_arr[] = { _("ElevenLabs Scribe, over the net"), _("A program of your own, run here") };
-	wxArrayString choice_backend(2, backend_arr);
+	// Whisper built in last, so the settings saved by a build with it mean
+	// the same in one without
+	const wxString backend_arr[] = { _("ElevenLabs Scribe, over the net"), _("A program of your own, run here"), _("Whisper, built in, on this computer") };
+	wxArrayString choice_backend(transcribe::CanRunLocal() ? 3 : 2, backend_arr);
 	p->OptionChoice(transcribe, _("Heard by"), choice_backend, "Tool/Transcribe/Backend", false,
-		_("Transcribe the Audio sends the audio to ElevenLabs, which charges by its length, or runs the command below and reads the JSON it writes"));
+		transcribe::CanRunLocal()
+			? _("Transcribe the Audio sends the audio to ElevenLabs, which charges by its length; runs the command below and reads the JSON it writes; or hears it here with Whisper, free, given a model file")
+			: _("Transcribe the Audio sends the audio to ElevenLabs, which charges by its length, or runs the command below and reads the JSON it writes"));
 	p->OptionAdd(transcribe, _("Language"), "Tool/Transcribe/Language",
 		{.help = _("The code of what is spoken: ja, zh, en...; empty to have it detected")});
 	p->OptionAdd(transcribe, _("Other languages among it"), "Tool/Transcribe/Secondary Languages",
@@ -323,6 +328,15 @@ void Audio(PreferencesBook *book, Preferences *parent) {
 		{.help = _("Say how long the audio is and that it leaves this computer, and ask, each time before sending it to ElevenLabs")});
 	p->OptionAdd(transcribe, _("Command"), "Tool/Transcribe/Command",
 		{.help = _("Run with {media} the audio or video file, {out} an empty folder to write a JSON file with each word's times to, and {language} the language above; a part in [brackets] is left out when its value is empty")});
+
+	if (transcribe::CanRunLocal()) {
+		p->OptionAdd(transcribe, _("Whisper model file"), "Tool/Transcribe/Local/Model",
+			{.help = _("A ggml model, such as ggml-large-v3-turbo-q5_0.bin or, on a slower computer, ggml-small-q5_1.bin; asked for when first needed if empty")});
+		p->OptionAdd(transcribe, _("Use the graphics card for Whisper"), "Tool/Transcribe/Local/Use GPU",
+			{.help = _("Much faster where it can; the processor is used when it cannot")});
+		p->OptionAdd(transcribe, _("Whisper threads"), "Tool/Transcribe/Local/Threads", {.min = 0, .max = 64,
+			.help = _("0 for as many as the processor has, up to 8")});
+	}
 
 	auto snapping = p->PageSizer(_("Snapping"));
 	p->OptionAdd(snapping, _("Snap markers by default"), "Audio/Snap/Enable");

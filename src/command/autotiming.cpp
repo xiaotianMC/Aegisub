@@ -22,6 +22,7 @@
 #include "../selection_controller.h"
 #include "../speech_lines.h"
 #include "../speech_transcribe.h"
+#include "../transcribe_local.h"
 #include "../subtitle_project_access.h"
 #include "../subtitle_row_list_edit.h"
 #include "../subtitle_value_edit.h"
@@ -29,6 +30,7 @@
 #include "../video_controller.h"
 
 #include <libaegisub/audio/provider.h>
+#include <libaegisub/audio/resample.h>
 #include <libaegisub/exception.h>
 #include <libaegisub/io.h>
 #include <libaegisub/path.h>
@@ -39,9 +41,11 @@
 #include <cstdlib>
 #include <filesystem>
 #include <iterator>
+#include <optional>
 #include <set>
 #include <sstream>
 
+#include <wx/filedlg.h>
 #include <wx/msgdlg.h>
 #include <wx/richmsgdlg.h>
 #include <wx/textdlg.h>
@@ -277,11 +281,38 @@ struct autotiming_transcribe final : public Command {
 		else
 			request.keyterms = transcribe::Keyterms(AssFile(), std::move(extra));
 
-		bool const by_elevenlabs = OPT_GET("Tool/Transcribe/Backend")->GetInt() == 0;
+		auto const backend = OPT_GET("Tool/Transcribe/Backend")->GetInt();
 		agi::fs::path folder;
 		std::string json;
+		// What whisper.cpp heard, with no JSON between
+		std::optional<speech::Transcript> heard;
 		try {
-			if (by_elevenlabs) {
+			if (backend == 2) {
+				if (!transcribe::CanRunLocal()) {
+					Fail(c, _("This build of Aegisub has no Whisper built in. Choose another way to hear the audio in Preferences, Audio, Transcription."));
+					return;
+				}
+				transcribe::Local settings;
+				auto const chosen = OPT_GET("Tool/Transcribe/Local/Model")->GetString();
+				if (!chosen.empty()) settings.model = config::path->Decode(chosen);
+				if (settings.model.empty() || !agi::fs::FileExists(settings.model)) {
+					wxString file = wxFileSelector(_("Choose a Whisper model file, such as ggml-large-v3-turbo-q5_0.bin"),
+						settings.model.empty() ? wxString() : to_wx(settings.model.parent_path().string()), "", "bin",
+						_("Whisper models (*.bin)") + "|*.bin|" + _("All Files") + " (*.*)|*.*",
+						wxFD_OPEN | wxFD_FILE_MUST_EXIST, c->parent);
+					if (file.empty()) return;
+					settings.model = agi::fs::path(from_wx(file));
+					OPT_SET("Tool/Transcribe/Local/Model")->SetString(from_wx(file));
+				}
+				settings.use_gpu = OPT_GET("Tool/Transcribe/Local/Use GPU")->GetBool();
+				settings.threads = static_cast<int>(OPT_GET("Tool/Transcribe/Local/Threads")->GetInt());
+				DialogProgress progress(c->parent, _("Transcribe the Audio"), _("Preparing the audio..."));
+				progress.Run([&](agi::ProgressSink *ps) {
+					auto const samples = agi::ResampleToFloat(*audio, 16000, ps);
+					heard = transcribe::RunLocal(request, settings, samples, ps);
+				});
+			}
+			else if (backend == 0) {
 				if (!transcribe::CanUpload()) {
 					Fail(c, _("This build of Aegisub has no libcurl, so nothing can be sent to ElevenLabs. Set a program of your own to run in Preferences, Audio, Transcription."));
 					return;
@@ -359,13 +390,17 @@ struct autotiming_transcribe final : public Command {
 		Clean(folder);
 
 		speech::Transcript transcript;
-		try {
-			std::istringstream in(json);
-			transcript = speech::ReadJson(in);
-		}
-		catch (agi::Exception const& e) {
-			Fail(c, to_wx(e.GetMessage()));
-			return;
+		if (heard)
+			transcript = std::move(*heard);
+		else {
+			try {
+				std::istringstream in(json);
+				transcript = speech::ReadJson(in);
+			}
+			catch (agi::Exception const& e) {
+				Fail(c, to_wx(e.GetMessage()));
+				return;
+			}
 		}
 		size_t const lines = speech::Import(c, transcript);
 		if (c->frame)
