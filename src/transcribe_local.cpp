@@ -12,10 +12,17 @@
 
 #include <algorithm>
 #include <chrono>
+#include <utility>
 #include <cmath>
 #include <cctype>
 #include <string_view>
 #include <thread>
+
+#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
+#include <intrin.h>
+#elif defined(__x86_64__) || defined(__i386__)
+#include <cpuid.h>
+#endif
 
 #include <wx/intl.h>
 
@@ -219,10 +226,84 @@ std::string TimeLeft(double elapsed_seconds, int done) {
 	return from_wx(wxString::Format(wxPLURAL("about %d minute left", "about %d minutes left", minutes), minutes));
 }
 
+std::string Missing(ProcessorFeatures const& have) {
+	// As ggml-cpu is compiled, in its order (GGML_NATIVE off: Haswell's set)
+	std::pair<bool, char const *> const needed[] = {
+		{have.sse42, "SSE4.2"}, {have.avx, "AVX"}, {have.avx2, "AVX2"},
+		{have.fma, "FMA"}, {have.f16c, "F16C"}, {have.bmi2, "BMI2"},
+	};
+	std::string missing;
+	for (auto const& [has, name] : needed) {
+		if (has) continue;
+		if (!missing.empty()) missing += ", ";
+		missing += name;
+	}
+	return missing;
+}
+
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+namespace {
+void Cpuid(unsigned leaf, unsigned subleaf, unsigned (&r)[4]) {
+#ifdef _MSC_VER
+	int v[4];
+	__cpuidex(v, static_cast<int>(leaf), static_cast<int>(subleaf));
+	for (int i = 0; i < 4; ++i) r[i] = static_cast<unsigned>(v[i]);
+#else
+	__cpuid_count(leaf, subleaf, r[0], r[1], r[2], r[3]);
+#endif
+}
+
+/// The register state the system saves; only to be asked when CPUID says
+/// OSXSAVE, xgetbv being an illegal instruction otherwise
+unsigned long long Xcr0() {
+#ifdef _MSC_VER
+	return _xgetbv(0);
+#else
+	unsigned lo, hi;
+	__asm__ volatile("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0));
+	return (static_cast<unsigned long long>(hi) << 32) | lo;
+#endif
+}
+}
+
+std::string ProcessorLacks() {
+	static std::string const lacks = [] {
+		unsigned r[4];
+		Cpuid(0, 0, r);
+		unsigned const max_leaf = r[0];
+		Cpuid(1, 0, r);
+		unsigned const ecx = r[2];
+		ProcessorFeatures have;
+		have.sse42 = ecx >> 20 & 1;
+		have.fma = ecx >> 12 & 1;
+		have.f16c = ecx >> 29 & 1;
+		// AVX's registers are no use unless the system saves them: XMM and YMM
+		bool const osxsave = ecx >> 27 & 1;
+		bool const os_avx = osxsave && (Xcr0() & 6) == 6;
+		have.avx = (ecx >> 28 & 1) && os_avx;
+		if (max_leaf >= 7) {
+			Cpuid(7, 0, r);
+			have.avx2 = (r[1] >> 5 & 1) && os_avx;
+			have.bmi2 = r[1] >> 8 & 1;
+		}
+		// FMA and F16C work on AVX's registers too
+		have.fma = have.fma && os_avx;
+		have.f16c = have.f16c && os_avx;
+		return Missing(have);
+	}();
+	return lacks;
+}
+#else
+std::string ProcessorLacks() { return ""; }
+#endif
+
 #ifdef WITH_WHISPER
 bool CanRunLocal() { return true; }
 
 std::string Gpu() {
+	// Asking ggml for its devices starts its processor backend, which a
+	// processor without what it was built for cannot run
+	if (!ProcessorLacks().empty()) return "";
 	for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
 		auto dev = ggml_backend_dev_get(i);
 		auto const type = ggml_backend_dev_type(dev);
@@ -272,6 +353,8 @@ std::string Prompt(Request const& request) {
 }
 
 speech::Transcript RunLocal(Request const& request, Local const& settings, std::vector<float> const& samples, agi::ProgressSink *ps) {
+	if (auto const lacks = ProcessorLacks(); !lacks.empty())
+		throw agi::EnvironmentError(agi::format(from_wx(_("Whisper built in needs a processor with %s, which this one does not have.")), lacks));
 	if (samples.empty()) throw agi::EnvironmentError(from_wx(_("There is no audio to hear.")));
 	if (!agi::fs::FileExists(settings.model))
 		throw agi::EnvironmentError(agi::format(from_wx(_("There is no model file %s.")), settings.model.string()));

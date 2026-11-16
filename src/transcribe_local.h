@@ -60,6 +60,19 @@ struct Local {
 /// Whether this build has whisper.cpp
 bool CanRunLocal();
 
+/// The x86 instructions whisper.cpp is built to use, as this processor has
+/// them or not
+struct ProcessorFeatures {
+	bool sse42 = false, avx = false, avx2 = false, fma = false, f16c = false, bmi2 = false;
+};
+/// Those of @p have whisper.cpp needs that are missing, named and separated
+/// by commas: "AVX2, FMA"; empty when there are none
+std::string Missing(ProcessorFeatures const& have);
+/// What this processor lacks of what whisper.cpp needs, as Missing() says;
+/// always empty off x86. Without them it would not fail but crash Aegisub,
+/// so nothing of ggml is run until this is known to be empty.
+std::string ProcessorLacks();
+
 /// The graphics card whisper.cpp can use, by name; empty when there is
 /// none, and the processor alone hears
 std::string Gpu();

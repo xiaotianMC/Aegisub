@@ -4636,6 +4636,22 @@ TEST(transcribe_local, with_vad_the_noise_about_speech_is_not_heard_and_the_time
     std::printf("without VAD: %s\n",plain_text.c_str());
 }
 
+TEST(transcribe_local, a_processor_without_what_whisper_is_built_for_is_told_what_it_lacks) {
+    transcribe::ProcessorFeatures all;
+    all.sse42=all.avx=all.avx2=all.fma=all.f16c=all.bmi2=true;
+    EXPECT_EQ("",transcribe::Missing(all));
+    EXPECT_EQ("SSE4.2, AVX, AVX2, FMA, F16C, BMI2",transcribe::Missing({}));
+    // Ivy Bridge, as in the Macs of 2012: AVX and F16C but not Haswell's
+    transcribe::ProcessorFeatures ivy;
+    ivy.sse42=ivy.avx=ivy.f16c=true;
+    EXPECT_EQ("AVX2, FMA, BMI2",transcribe::Missing(ivy));
+#if (defined(__x86_64__) || defined(_M_X64)) && !defined(__APPLE__)
+    // Where the tests are run (not Rosetta, whose x86 is its own): a
+    // processor with all of it, not one taken for lacking it
+    EXPECT_EQ("",transcribe::ProcessorLacks());
+#endif
+}
+
 TEST(transcribe_local, the_time_left_is_told_from_the_pace_so_far_once_enough_is_done) {
     EXPECT_EQ("",transcribe::TimeLeft(10,2)) << "too little done to tell";
     EXPECT_EQ("",transcribe::TimeLeft(1,50)) << "too soon to tell";

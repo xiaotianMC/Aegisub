@@ -293,6 +293,11 @@ struct autotiming_transcribe final : public Command {
 					Fail(c, _("This build of Aegisub has no Whisper built in. Choose another way to hear the audio in Preferences, Audio, Transcription."));
 					return;
 				}
+				// Before a model is downloaded for it
+				if (auto const lacks = transcribe::ProcessorLacks(); !lacks.empty()) {
+					Fail(c, agi::wxformat(_("Whisper built in needs a processor with %s, which this one does not have. Choose another way to hear the audio in Preferences, Audio, Transcription."), lacks));
+					return;
+				}
 				transcribe::Local settings;
 				auto const chosen = OPT_GET("Tool/Transcribe/Local/Model")->GetString();
 				if (!chosen.empty()) settings.model = config::path->Decode(chosen);
