@@ -4,8 +4,13 @@ source_url = https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v1.9.5.ta
 source_filename = whisper.cpp-1.9.5.tar.gz
 source_hash = ff1a9053feb509ff9d7729703355541ae9690073a6b1c40eb692c962e0dc1720
 method = cmake
-# Meson runs CMake's commands without a shell: sed given its file, not a redirect
-diff_files = whisper.cpp-metal-embed-no-redirect.patch
+# Meson runs CMake's commands without a shell, and with Ninja, one
+# configuration: sed given its file, not a redirect; Release for $<CONFIG>.
+# And the Vulkan loader opened at run time, not linked, so that Aegisub starts
+# where there is none and Whisper uses the processor there; and the shader
+# generator built as a target of its own, not an ExternalProject whose stamps
+# Meson cannot find, which had the shaders made again on every build
+diff_files = whisper.cpp-metal-embed-no-redirect.patch, whisper.cpp-vulkan-single-config.patch, whisper.cpp-vulkan-runtime-loader.patch, whisper.cpp-vulkan-shaders-gen-native.patch
 
 [provide]
 dependency_names = whisper

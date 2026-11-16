@@ -449,6 +449,8 @@ if not whisper_opt.disabled()
     whisper_dep = dependency('whisper', required: false, allow_fallback: false)
     if not whisper_dep.found() and find_program('cmake', required: false).found()
         whisper_cmake = cmake.subproject_options()
+        # Linked into Aegisub: nothing of it to install beside it
+        whisper_cmake.set_install(false)
         whisper_cmake.add_cmake_defines({
             'CMAKE_BUILD_TYPE': 'Release',
             'CMAKE_POSITION_INDEPENDENT_CODE': true,
@@ -469,19 +471,24 @@ if not whisper_opt.disabled()
             whisper_cmake.add_cmake_defines({'CMAKE_OSX_DEPLOYMENT_TARGET': macos_deployment_target})
         endif
         # The graphics card: Metal on macOS, its shaders in the binary;
-        # Vulkan on Linux where its headers and shader compiler are. Not on
-        # Windows yet: linked in, it would keep Aegisub from starting where
-        # there is no Vulkan loader, until ggml's backends are loaded as DLLs.
+        # Vulkan on Windows and Linux where its headers, shader compiler and
+        # SPIRV-Headers are (on Windows, the Vulkan SDK, with CMAKE_PREFIX_PATH
+        # naming it), its shaders in the binary too and its loader opened at
+        # run time, so that Aegisub starts where there is none
         whisper_gpu = get_option('whisper_gpu')
         whisper_metal = false
         whisper_vulkan = false
         if not whisper_gpu.disabled()
             if host_machine.system() == 'darwin'
                 whisper_metal = true
-            elif host_machine.system() != 'windows'
-                whisper_vulkan = dependency('vulkan', required: false).found() and find_program('glslc', required: false).found()
+            else
+                # All ggml's Vulkan build needs, checked here: if its CMake
+                # failed, Whisper would be left out altogether
+                whisper_vulkan = dependency('vulkan', required: false).found() \
+                    and find_program('glslc', required: false).found() \
+                    and dependency('SPIRV-Headers', method: 'cmake', required: false).found()
                 if whisper_gpu.enabled() and not whisper_vulkan
-                    error('whisper_gpu is enabled, but the Vulkan headers or glslc are missing')
+                    error('whisper_gpu is enabled, but the Vulkan headers, glslc or SPIRV-Headers are missing')
                 endif
             endif
         endif

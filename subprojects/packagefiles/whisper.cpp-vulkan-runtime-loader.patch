@@ -1,0 +1,131 @@
+--- a/ggml/src/ggml-vulkan/CMakeLists.txt	2026-11-16 11:04:33.825192192 -0500
++++ b/ggml/src/ggml-vulkan/CMakeLists.txt	2026-11-16 11:04:45.753112981 -0500
+@@ -119,7 +119,8 @@
+         "GGML_VULKAN_FLOAT_E4M3_GLSLC_SUPPORT"
+     )
+ 
+-    target_link_libraries(ggml-vulkan PRIVATE Vulkan::Vulkan)
++    # Only the headers: the loader is opened at run time (ggml_vk_instance_init)
++    target_link_libraries(ggml-vulkan PRIVATE Vulkan::Headers ${CMAKE_DL_LIBS})
+     target_include_directories(ggml-vulkan PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+ 
+     # Workaround to the "can't dereference invalidated vector iterator" bug in clang-cl debug build
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp	2026-11-16 11:04:33.791034141 -0500
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp	2026-11-16 11:23:13.586073516 -0500
+@@ -4472,7 +4472,7 @@
+             device_extensions.push_back("VK_EXT_device_fault");
+         }
+ 
+-        vkGetPhysicalDeviceFeatures2(device->physical_device, &device_features2);
++        ggml_vk_default_dispatcher().vkGetPhysicalDeviceFeatures2(device->physical_device, &device_features2);
+ 
+         device->device_fault = device->device_fault && fault_features.deviceFault;
+ 
+@@ -4660,7 +4660,7 @@
+             std::vector<VkCooperativeMatrixPropertiesKHR> cm_props;
+ 
+             PFN_vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR pfn_vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR =
+-                (PFN_vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR)vkGetInstanceProcAddr(vk_instance.instance, "vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR");
++                (PFN_vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR)ggml_vk_default_dispatcher().vkGetInstanceProcAddr(vk_instance.instance, "vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR");
+ 
+             uint32_t cm_props_num;
+ 
+@@ -4770,7 +4770,7 @@
+ 
+         if (device->device_fault) {
+             device->pfn_vkGetDeviceFaultInfoEXT = (PFN_vkGetDeviceFaultInfoEXT)
+-                vkGetDeviceProcAddr(device->device, "vkGetDeviceFaultInfoEXT");
++                ggml_vk_default_dispatcher().vkGetDeviceProcAddr(device->device, "vkGetDeviceFaultInfoEXT");
+         }
+ 
+         // Queues
+@@ -5106,7 +5106,7 @@
+     }
+ #endif
+ 
+-    vkGetPhysicalDeviceFeatures2(physical_device, &device_features2);
++    ggml_vk_default_dispatcher().vkGetPhysicalDeviceFeatures2(physical_device, &device_features2);
+ 
+     fp16 = fp16 && vk12_features.shaderFloat16;
+ 
+@@ -5176,6 +5176,16 @@
+ 
+ static DispatchLoaderDynamic ggml_vk_default_dispatcher_instance;
+ 
++// The Vulkan loader, opened when Vulkan is first wanted rather than linked:
++// a program with it linked does not start where there is no loader, as on
++// Windows without a graphics driver that has one. Its absence throws, and
++// ggml_backend_vk_reg() then leaves Vulkan out.
++#if VK_HEADER_VERSION >= 301
++static std::unique_ptr<vk::detail::DynamicLoader> ggml_vk_loader;
++#else
++static std::unique_ptr<vk::DynamicLoader> ggml_vk_loader;
++#endif
++
+ DispatchLoaderDynamic & ggml_vk_default_dispatcher() {
+     return ggml_vk_default_dispatcher_instance;
+ }
+@@ -5187,7 +5197,14 @@
+     VK_LOG_DEBUG("ggml_vk_instance_init()");
+ 
+     // See https://github.com/KhronosGroup/Vulkan-Hpp?tab=readme-ov-file#extensions--per-device-function-pointers-
+-    ggml_vk_default_dispatcher_instance.init(vkGetInstanceProcAddr);
++    if (!ggml_vk_loader) {
++        ggml_vk_loader = std::make_unique<std::remove_reference_t<decltype(*ggml_vk_loader)>>();
++    }
++    auto get_instance_proc_addr = ggml_vk_loader->getProcAddress<PFN_vkGetInstanceProcAddr>("vkGetInstanceProcAddr");
++    if (!get_instance_proc_addr) {
++        throw std::runtime_error("ggml_vulkan: the Vulkan loader has no vkGetInstanceProcAddr");
++    }
++    ggml_vk_default_dispatcher_instance.init(get_instance_proc_addr);
+ 
+     uint32_t api_version = vk::enumerateInstanceVersion();
+ 
+@@ -5244,12 +5261,12 @@
+ 
+     if (debug_utils_ext) {
+         vk_instance.debug_utils_support              = true;
+-        vk_instance.pfn_vkSetDebugUtilsObjectNameEXT = (PFN_vkSetDebugUtilsObjectNameEXT) vkGetInstanceProcAddr(vk_instance.instance, "vkSetDebugUtilsObjectNameEXT");
+-        vk_instance.pfn_vkQueueBeginDebugUtilsLabelEXT = (PFN_vkQueueBeginDebugUtilsLabelEXT) vkGetInstanceProcAddr(vk_instance.instance, "vkQueueBeginDebugUtilsLabelEXT");
+-        vk_instance.pfn_vkQueueEndDebugUtilsLabelEXT = (PFN_vkQueueEndDebugUtilsLabelEXT) vkGetInstanceProcAddr(vk_instance.instance, "vkQueueEndDebugUtilsLabelEXT");
+-        vk_instance.pfn_vkCmdBeginDebugUtilsLabelEXT = (PFN_vkCmdBeginDebugUtilsLabelEXT) vkGetInstanceProcAddr(vk_instance.instance, "vkCmdBeginDebugUtilsLabelEXT");
+-        vk_instance.pfn_vkCmdEndDebugUtilsLabelEXT =   (PFN_vkCmdEndDebugUtilsLabelEXT) vkGetInstanceProcAddr(vk_instance.instance, "vkCmdEndDebugUtilsLabelEXT");
+-        vk_instance.pfn_vkCmdInsertDebugUtilsLabelEXT = (PFN_vkCmdInsertDebugUtilsLabelEXT) vkGetInstanceProcAddr(vk_instance.instance, "vkCmdInsertDebugUtilsLabelEXT");
++        vk_instance.pfn_vkSetDebugUtilsObjectNameEXT = (PFN_vkSetDebugUtilsObjectNameEXT) ggml_vk_default_dispatcher().vkGetInstanceProcAddr(vk_instance.instance, "vkSetDebugUtilsObjectNameEXT");
++        vk_instance.pfn_vkQueueBeginDebugUtilsLabelEXT = (PFN_vkQueueBeginDebugUtilsLabelEXT) ggml_vk_default_dispatcher().vkGetInstanceProcAddr(vk_instance.instance, "vkQueueBeginDebugUtilsLabelEXT");
++        vk_instance.pfn_vkQueueEndDebugUtilsLabelEXT = (PFN_vkQueueEndDebugUtilsLabelEXT) ggml_vk_default_dispatcher().vkGetInstanceProcAddr(vk_instance.instance, "vkQueueEndDebugUtilsLabelEXT");
++        vk_instance.pfn_vkCmdBeginDebugUtilsLabelEXT = (PFN_vkCmdBeginDebugUtilsLabelEXT) ggml_vk_default_dispatcher().vkGetInstanceProcAddr(vk_instance.instance, "vkCmdBeginDebugUtilsLabelEXT");
++        vk_instance.pfn_vkCmdEndDebugUtilsLabelEXT =   (PFN_vkCmdEndDebugUtilsLabelEXT) ggml_vk_default_dispatcher().vkGetInstanceProcAddr(vk_instance.instance, "vkCmdEndDebugUtilsLabelEXT");
++        vk_instance.pfn_vkCmdInsertDebugUtilsLabelEXT = (PFN_vkCmdInsertDebugUtilsLabelEXT) ggml_vk_default_dispatcher().vkGetInstanceProcAddr(vk_instance.instance, "vkCmdInsertDebugUtilsLabelEXT");
+     }
+ 
+     vk_perf_logger_enabled = getenv("GGML_VK_PERF_LOGGER") != nullptr;
+@@ -16243,7 +16260,7 @@
+     vk11_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
+     device_features2.pNext = &vk11_features;
+ 
+-    vkGetPhysicalDeviceFeatures2(vkdev, &device_features2);
++    ggml_vk_default_dispatcher().vkGetPhysicalDeviceFeatures2(vkdev, &device_features2);
+ 
+     return vk11_features.storageBuffer16BitAccess;
+ }
+--- a/ggml/src/ggml-vulkan/ggml-vulkan-buffers.cpp	2026-11-16 11:23:13.541801790 -0500
++++ b/ggml/src/ggml-vulkan/ggml-vulkan-buffers.cpp	2026-11-16 11:23:13.587673061 -0500
+@@ -399,7 +399,7 @@
+     VkBufferCopy buf_copy{ 0, offset, copy_size };
+ 
+     ggml_vk_sync_buffers(ctx, subctx);
+-    vkCmdCopyBuffer(subctx->s->buffer->buf, (VkBuffer)staging->buffer, (VkBuffer)dst->buffer, 1, &buf_copy);
++    ggml_vk_default_dispatcher().vkCmdCopyBuffer(subctx->s->buffer->buf, (VkBuffer)staging->buffer, (VkBuffer)dst->buffer, 1, &buf_copy);
+ 
+     for (uint64_t i3 = 0; i3 < ne3; i3++) {
+         for (uint64_t i2 = 0; i2 < ne2; i2++) {
+@@ -682,7 +682,7 @@
+ 
+     VkBufferCopy bc{ src_offset, dst_offset, size };
+ 
+-    vkCmdCopyBuffer(ctx->s->buffer->buf, (VkBuffer)src->buffer, (VkBuffer)dst->buffer, 1, &bc);
++    ggml_vk_default_dispatcher().vkCmdCopyBuffer(ctx->s->buffer->buf, (VkBuffer)src->buffer, (VkBuffer)dst->buffer, 1, &bc);
+ }
+ 
+ void ggml_vk_buffer_copy(vk_buffer& dst, size_t dst_offset, vk_buffer& src, size_t src_offset, size_t size) {
