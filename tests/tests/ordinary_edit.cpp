@@ -4655,11 +4655,11 @@ TEST(transcribe_models, the_models_offered_their_addresses_and_sizes) {
     for(auto const& m:models) EXPECT_EQ(64u,m.sha256.size()) << m.file;
     EXPECT_EQ(&models[1],transcribe::FindModel("/somewhere/ggml-large-v3-turbo-q5_0.bin"));
     EXPECT_EQ(nullptr,transcribe::FindModel("/somewhere/ggml-tiny.bin"));
-    auto const& small=models[0];
-    EXPECT_EQ("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin",transcribe::ModelUrl(small,""));
-    EXPECT_EQ("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin",transcribe::ModelUrl(small,"huggingface"));
-    EXPECT_EQ("https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin",transcribe::ModelUrl(small,"hf-mirror"));
-    EXPECT_EQ("https://example.com/models/ggml-small-q5_1.bin",transcribe::ModelUrl(small,"https://example.com/models/ "));
+    auto const& small_model=models[0];
+    EXPECT_EQ("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin",transcribe::ModelUrl(small_model,""));
+    EXPECT_EQ("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin",transcribe::ModelUrl(small_model,"huggingface"));
+    EXPECT_EQ("https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin",transcribe::ModelUrl(small_model,"hf-mirror"));
+    EXPECT_EQ("https://example.com/models/ggml-small-q5_1.bin",transcribe::ModelUrl(small_model,"https://example.com/models/ "));
     EXPECT_EQ("190 MB",transcribe::SizeText(190085487));
     EXPECT_EQ("574 MB",transcribe::SizeText(574041195));
     EXPECT_EQ("1.1 GB",transcribe::SizeText(1081140203));
