@@ -86,6 +86,10 @@ bool ForwardMouseWheelEvent(wxWindow *source, wxMouseEvent &evt);
 bool WheelAltDown(wxMouseEvent const& evt);
 bool WheelCmdDown(wxMouseEvent const& evt);
 bool WheelShiftDown(wxMouseEvent const& evt);
+/// Hold @p modifiers (wxMOD_ALT, wxMOD_CMD, wxMOD_SHIFT; 0 lets go) for the
+/// three above, as if held on the keyboard; for tests, which on Windows could
+/// otherwise only press a key for the whole desktop
+void HoldWheelModifiersForTests(int modifiers);
 
 /// Alt was held for a wheel action: releasing it should not select the menu
 /// bar. The main window asks with TakeAltUsedForWheel() when Windows is about

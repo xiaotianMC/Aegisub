@@ -142,9 +142,13 @@ bool ForwardMouseWheelEvent([[maybe_unused]] wxWindow *source, [[maybe_unused]] 
 namespace {
 bool alt_used_for_wheel = false;
 std::chrono::steady_clock::time_point alt_wheel_time;
+int wheel_modifiers_held = 0;
 }
 
+void HoldWheelModifiersForTests(int modifiers) { wheel_modifiers_held = modifiers; }
+
 bool WheelAltDown(wxMouseEvent const& evt) {
+	if (wheel_modifiers_held & wxMOD_ALT) return true;
 #ifdef __WXMSW__
 	return wxGetKeyState(WXK_ALT);
 #else
@@ -153,6 +157,7 @@ bool WheelAltDown(wxMouseEvent const& evt) {
 }
 
 bool WheelCmdDown(wxMouseEvent const& evt) {
+	if (wheel_modifiers_held & wxMOD_CMD) return true;
 #ifdef __WXMSW__
 	return wxGetKeyState(WXK_CONTROL);
 #else
@@ -161,6 +166,7 @@ bool WheelCmdDown(wxMouseEvent const& evt) {
 }
 
 bool WheelShiftDown(wxMouseEvent const& evt) {
+	if (wheel_modifiers_held & wxMOD_SHIFT) return true;
 #ifdef __WXMSW__
 	return wxGetKeyState(WXK_SHIFT);
 #else

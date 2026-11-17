@@ -8621,6 +8621,14 @@ TEST_F(audio_edit, main_window_blocks_sit_on_a_backdrop_without_borders) {
     editors(edit_box);EXPECT_EQ(1,stc);
 }
 
+namespace {
+/// Modifiers held for the wheel while it lives, as on the keyboard, which is
+/// what Windows reads for the wheel rather than the event (WheelAltDown)
+struct HeldForWheel {
+    explicit HeldForWheel(int modifiers) { HoldWheelModifiersForTests(modifiers); }
+    ~HeldForWheel() { HoldWheelModifiersForTests(0); }
+};
+}
 TEST_F(audio_edit, scrollbar_thumb_edges_zoom_and_alt_wheel_zooms) {
     window->SetSize(1100,400);window->Show(); // the scrollbar captures the mouse while dragging
     auto box=c->audioBox=new AudioBox(window,c.get());
@@ -8690,6 +8698,7 @@ TEST_F(audio_edit, scrollbar_thumb_edges_zoom_and_alt_wheel_zooms) {
         display->SetZoomLevel(0);
         wxMouseEvent wheel(wxEVT_MOUSEWHEEL);wheel.SetAltDown(true);wheel.m_wheelRotation=120;wheel.m_wheelDelta=120;
         wheel.SetPosition({width/2,80});wheel.SetEventObject(display);
+        HeldForWheel alt(wxMOD_ALT);
         display->GetEventHandler()->ProcessEvent(wheel);
         EXPECT_EQ(1,display->GetZoomLevel()) << "wheel defaults to zoom: " << default_zoom;
         EXPECT_EQ(1,OPT_GET("Audio/Zoom/Horizontal")->GetInt());
@@ -8718,7 +8727,9 @@ TEST_F(audio_edit, alt_wheel_zoom_does_not_leave_alt_to_the_menu_bar) {
     display->SetZoomLevel(0);display->ScrollPixelToLeft(2000);
     auto wheel=[&](bool alt){
         wxMouseEvent event(wxEVT_MOUSEWHEEL);event.SetAltDown(alt);event.m_wheelRotation=-120;event.m_wheelDelta=120;
-        event.SetPosition({400,80});event.SetEventObject(display);display->GetEventHandler()->ProcessEvent(event);
+        event.SetPosition({400,80});event.SetEventObject(display);
+        HeldForWheel held(alt?wxMOD_ALT:0);
+        display->GetEventHandler()->ProcessEvent(event);
     };
     wheel(true);
     EXPECT_EQ(-1,display->GetZoomLevel());
