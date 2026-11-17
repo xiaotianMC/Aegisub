@@ -65,6 +65,7 @@
 #include "compat.h"
 #include "utils.h"
 #include "audio_controller.h"
+#include "include/aegisub/audio_player.h"
 #include "audio_timing.h"
 #include "audio_display.h"
 #include "audio_box.h"
@@ -178,6 +179,19 @@ public:
     AcceptMessages() { Register(); }
     int Enter(wxDialog* dialog) override { return dynamic_cast<wxMessageDialog*>(dialog) ? wxID_OK : wxID_NONE; }
 };
+/// Why no audio player opens here, or empty if one does. Where none does, as
+/// on a machine with no audio device (CI's Windows runner), AudioController
+/// closes the audio it was given, and tests of loaded audio have none
+std::string NoAudioPlayer(wxWindow* parent) {
+    auto provider=agi::CreateDummyAudioProvider("dummy-audio:silence?sr=44100&bd=16&ch=1&ln=441000",nullptr);
+    try{AudioPlayerFactory::GetAudioPlayer(provider.get(),parent);return {};}
+    catch(agi::Exception const& e){return e.GetMessage().empty()?"no reason given":e.GetMessage();}
+    catch(std::exception const& e){return e.what();}
+}
+#define SKIP_IF_THE_AUDIO_WAS_CLOSED_FOR_WANT_OF_A_PLAYER() \
+    if(!c->project->AudioProvider()) \
+        if(auto why=NoAudioPlayer(c->parent);!why.empty()) \
+            GTEST_SKIP() << "the audio was closed, as no audio player opens here: " << why
 class RunModal : public wxModalDialogHook {
     wxString title;
     std::function<void(wxDialog*)> action;
@@ -2299,8 +2313,17 @@ TEST_F(ordinary_edit, edit_box_style_box_is_typed_in_and_completes_a_style) {
     ASSERT_NE(nullptr,style);
     auto editor=style->GetEditor(); ASSERT_NE(nullptr,editor);
     auto line_style=[&](int n) { return std::next(LiveRead(*c).Events.begin(),n)->Style.get(); };
-    // Typing replaces what is chosen in the field, as a key does
-    auto type=[&](wxString const& text) { editor->WriteText(text); wxTheApp->ProcessPendingEvents(); };
+    // Typing replaces what is chosen in the field, as a key does: the field
+    // changed, then told of once. Not WriteText, after which wxMSW tells of it
+    // again where a handler changed the field meanwhile, as no key has it do
+    auto type=[&](wxString const& text) {
+        long from,to; editor->GetSelection(&from,&to);
+        wxString value=editor->GetValue(); value.replace(from,to-from,text);
+        editor->ChangeValue(value); editor->SetInsertionPoint(from+static_cast<long>(text.length()));
+        wxCommandEvent changed(wxEVT_TEXT,editor->GetId()); changed.SetEventObject(editor); changed.SetString(value);
+        editor->GetEventHandler()->ProcessEvent(changed);
+        wxTheApp->ProcessPendingEvents();
+    };
     auto chosen=[&] { long from,to; editor->GetSelection(&from,&to); return editor->GetValue().Mid(from,to-from); };
     EXPECT_EQ("Default",editor->GetValue()) << "the field shows the line's style";
 
@@ -2785,7 +2808,9 @@ TEST_F(ordinary_edit, script_panel_takes_the_style_panels_place_and_writes_the_s
     sizer->Add(new wxPanel(root),1,wxEXPAND);sizer->Add(edge,0,wxEXPAND);sizer->Add(panel,0,wxEXPAND);sizer->Add(script,0,wxEXPAND);
     root->SetSizer(sizer);
     frame->SetSize(frame->FromDIP(1400),700);frame->Show();
-    root->SetSize(frame->GetClientSize());edge->Update();root->Layout();
+    // Wide whatever the screen: a frame is kept within it, and CI's Windows
+    // runner's is 1024 wide, where the style panel folds
+    root->SetSize(root->FromDIP(1400),700);edge->Update();root->Layout();
     panel->ShowPage(StylePanel::Page::Timing);
     EXPECT_FALSE(script->IsShown());
     EXPECT_TRUE(panel->IsShown());
@@ -3133,7 +3158,7 @@ TEST_F(audio_edit, studio_waveform_shades_only_selected_ranges_and_draws_a_db_sc
     EXPECT_LT(zoomed.front().db, 0);
     EXPECT_TRUE(AudioWaveformRenderer::DbGrid(20, 1.f, 16).empty());
 
-    c->project->LoadAudio("dummy-audio:noise?sr=44100&bd=16&ch=1&ln=441000");
+    c->project->LoadAudio("dummy-audio:noise?sr=44100&bd=16&ch=1&ln=441000");SKIP_IF_THE_AUDIO_WAS_CLOSED_FOR_WANT_OF_A_PLAYER();
     // Spread of lightness over the waveform's colours (not the black
     // background or the dark scale lines): one shade, or peaks and averages.
     // Lines are antialiased on some platforms, so blends of a shade appear too.
@@ -3341,7 +3366,7 @@ TEST_F(audio_edit, karaoke_drag_and_controller_switch_cancel_pending_cache) {
     EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
 }
 TEST_F(audio_edit, real_wx_audio_drag_release_and_destroyed_controller_borrow) {
-    auto display=Display();
+    auto display=Display();SKIP_IF_THE_AUDIO_WAS_CLOSED_FOR_WANT_OF_A_PLAYER();
     Mouse(display,wxEVT_LEFT_DOWN,1001,true);EXPECT_TRUE(display->HasCapture());
     Mouse(display,wxEVT_MOTION,1200,true);
     EXPECT_EQ(1001,LiveRead(*c).Events.front().Start.GetMilliseconds());
@@ -6057,7 +6082,7 @@ TEST_F(model_installation, repeated_load_keeps_selection_before_active_and_rejec
 TEST_F(model_installation, real_grid_audio_and_long_lived_dialogs_rebind_and_edit_the_installed_document) {
     Input("old dialog input");auto path=Candidate("ui-observers");
     c->subsGrid=new BaseGrid(window,c.get());c->audioBox=new AudioBox(window,c.get());
-    c->project->LoadAudio("dummy-audio:silence?sr=44100&bd=16&ch=1&ln=441000");
+    c->project->LoadAudio("dummy-audio:silence?sr=44100&bd=16&ch=1&ln=441000");SKIP_IF_THE_AUDIO_WAS_CLOSED_FOR_WANT_OF_A_PLAYER();
     {
         DialogTranslation translation(c.get());
         c->subsController->Load(path,"utf-8");
@@ -6406,7 +6431,7 @@ TEST_F(ordinary_edit, undo_with_throwing_commit_observer_keeps_model_history_and
 // the provider, then fail in SetMetadata before announcing it, leaving the
 // audio controller on a freed provider. They are now refused before any effect.
 TEST_F(document_lifecycle, media_changes_are_refused_without_side_effects_while_recovery_is_blocked) {
-    c->project->LoadAudio("dummy-audio:silence?sr=44100&bd=16&ch=1&ln=441000");
+    c->project->LoadAudio("dummy-audio:silence?sr=44100&bd=16&ch=1&ln=441000");SKIP_IF_THE_AUDIO_WAS_CLOSED_FOR_WANT_OF_A_PLAYER();
     auto first=c->project->AudioProvider();ASSERT_TRUE(first);int announced=0;
     agi::signal::Connection l=c->project->AddAudioProviderListener([&](agi::AudioProvider*){++announced;});
     auto path=Candidate("media-recovery");c->subsController->Load(path,"utf-8");
@@ -6499,7 +6524,7 @@ TEST_F(visual_edit, subtitle_overlay_is_rendered_on_the_worker_after_queued_upda
 // media changes are refused; Export still works. All without side effects.
 TEST_F(document_lifecycle, comparison_session_freezes_save_target_metadata_and_media) {
     auto saved=Local("compare-saved.ass");c->subsController->Save(saved,"utf-8");
-    c->project->LoadAudio("dummy-audio:silence?sr=44100&bd=16&ch=1&ln=441000");
+    c->project->LoadAudio("dummy-audio:silence?sr=44100&bd=16&ch=1&ln=441000");SKIP_IF_THE_AUDIO_WAS_CLOSED_FOR_WANT_OF_A_PLAYER();
     auto provider=c->project->AudioProvider();ASSERT_TRUE(provider);
     Input("compared edit");ASSERT_TRUE(c->subsController->IsModified());
     auto autosave_root=std::filesystem::current_path()/"compare-autosave";
@@ -7762,7 +7787,18 @@ TEST(libresrc, dialog_icons_are_the_monochrome_ones_unless_classic_icons_are_cho
     wxBitmap got; got.CopyFromIcon(drawn);
     auto a=expected.ConvertToImage(), b=got.ConvertToImage();
     ASSERT_EQ(a.GetSize(),b.GetSize());
-    EXPECT_EQ(0,memcmp(a.GetData(),b.GetData(),a.GetWidth()*a.GetHeight()*3)) << "the toolbar's icon";
+    // Compared as they show: each colour times its opacity, as MSW's icons
+    // keep them, whose round trip moves the colour where little or none shows
+    int differing=0,worst=0;
+    for(int y=0;y<a.GetHeight();++y) for(int x=0;x<a.GetWidth();++x) {
+        int const aa=a.HasAlpha()?a.GetAlpha(x,y):255, ba=b.HasAlpha()?b.GetAlpha(x,y):255;
+        int d=std::abs(aa-ba);
+        for(auto channel:{&wxImage::GetRed,&wxImage::GetGreen,&wxImage::GetBlue})
+            d=std::max(d,std::abs((a.*channel)(x,y)*aa/255-(b.*channel)(x,y)*ba/255));
+        if(d>2)++differing;
+        worst=std::max(worst,d);
+    }
+    EXPECT_EQ(0,differing) << "the toolbar's icon; differing by up to " << worst;
     libresrc_set_classic(true);
     EXPECT_FALSE(GETICONS(options_button).GetIcon(wxSize(20,20),wxIconBundle::FALLBACK_NONE).IsOk()) << "the coloured bitmaps";
 }
@@ -8581,7 +8617,7 @@ TEST_F(audio_edit, scrollbar_thumb_edges_zoom_and_alt_wheel_zooms) {
     AudioDisplay* display=nullptr;
     std::function<void(wxWindow*)> find=[&](wxWindow*w){for(auto ch:w->GetChildren()){if(auto d=dynamic_cast<AudioDisplay*>(ch))display=d;find(ch);}};
     find(box);ASSERT_NE(nullptr,display);
-    c->project->LoadAudio("dummy-audio:silence?sr=44100&bd=16&ch=1&ln=441000");
+    c->project->LoadAudio("dummy-audio:silence?sr=44100&bd=16&ch=1&ln=441000");SKIP_IF_THE_AUDIO_WAS_CLOSED_FOR_WANT_OF_A_PLAYER();
     display->SetZoomLevel(-50); // a wide thumb
     const int width=display->GetClientSize().x, bar_y=display->GetClientSize().y-5;
     const double duration=display->GetDuration();
@@ -8662,7 +8698,7 @@ TEST_F(audio_edit, alt_wheel_zoom_does_not_leave_alt_to_the_menu_bar) {
     AudioDisplay* display=nullptr;
     std::function<void(wxWindow*)> find=[&](wxWindow*w){for(auto ch:w->GetChildren()){if(auto d=dynamic_cast<AudioDisplay*>(ch))display=d;find(ch);}};
     find(box);ASSERT_NE(nullptr,display);
-    c->project->LoadAudio("dummy-audio:silence?sr=44100&bd=16&ch=1&ln=441000");
+    c->project->LoadAudio("dummy-audio:silence?sr=44100&bd=16&ch=1&ln=441000");SKIP_IF_THE_AUDIO_WAS_CLOSED_FOR_WANT_OF_A_PLAYER();
     OPT_SET("Audio/Wheel Default to Zoom")->SetBool(false);
     display->SetZoomLevel(0);display->ScrollPixelToLeft(2000);
     auto wheel=[&](bool alt){
@@ -10003,13 +10039,19 @@ TEST(magia_timeline, found_by_its_folder_its_script_or_its_program) {
 
     auto source=MagiaFolder("magia-source");
     WriteText(source/"MagiaTimeline.py","print()\n");
+    // Where Python and the venv's are on each system
+#ifdef _WIN32
+    char const* const system_python="python";char const* const venv_python="venv/Scripts/python.exe";
+#else
+    char const* const system_python="python3";char const* const venv_python="venv/bin/python3";
+#endif
     auto bare=magia_timeline::FindLaunch(source);
     ASSERT_TRUE(bare);
-    EXPECT_EQ("python3",bare->program.string()) << "no venv: the Python on the path";
-    WriteText(source/"venv/bin/python3","",true);
+    EXPECT_EQ(system_python,bare->program.string()) << "no venv: the Python on the path";
+    WriteText(source/venv_python,"",true);
     auto launch=magia_timeline::FindLaunch(source);
     ASSERT_TRUE(launch);
-    EXPECT_EQ((source/"venv/bin/python3").string(),launch->program.string());
+    EXPECT_EQ((source/venv_python).string(),launch->program.string());
     EXPECT_EQ(source.string(),launch->folder.string()) << "run in its folder, where its config's paths start";
     EXPECT_EQ((std::vector<std::string>{"-u",(source/"MagiaTimeline.py").string(),"--config","/c.yml"}),magia_timeline::Arguments(*launch,"/c.yml"));
     auto by_script=magia_timeline::FindLaunch(source/"MagiaTimeline.py");
