@@ -30,6 +30,7 @@
 #include <libaegisub/audio/resample.h>
 #include <libaegisub/hotkey.h>
 #include <libaegisub/sha256.h>
+#include <libaegisub/util.h>
 #ifdef WITH_CURL
 #include <curl/curl.h>
 #endif
@@ -4328,9 +4329,9 @@ TEST(transcribe, the_key_comes_from_the_environment_then_the_keychain_then_this_
     EXPECT_EQ("env",found.key);EXPECT_EQ(KeyPlace::Environment,found.place);
     found=transcribe::FindKey({"","chain","held"});
     EXPECT_EQ("chain",found.key) << "set but empty is not set";EXPECT_EQ(KeyPlace::Keychain,found.place);
-    found=transcribe::FindKey({nullptr,std::nullopt," held\n"});
+    found=transcribe::FindKey({std::nullopt,std::nullopt," held\n"});
     EXPECT_EQ("held",found.key);EXPECT_EQ(KeyPlace::Session,found.place);
-    found=transcribe::FindKey({nullptr,std::string(""),std::nullopt});
+    found=transcribe::FindKey({std::nullopt,std::string(""),std::nullopt});
     EXPECT_EQ("",found.key);EXPECT_EQ(KeyPlace::None,found.place);
     EXPECT_EQ("abc",transcribe::TrimKey(" abc\n"));
     std::ifstream defaults(std::string(AEGISUB_SOURCE_ROOT)+"/src/libresrc/default_config.json");
@@ -4565,8 +4566,8 @@ TEST(transcribe_local, a_segment_of_nothing_but_special_tokens_is_left_out_and_a
 // by AEGISUB_WHISPER_MODEL, ggml-tiny.bin being enough
 TEST(transcribe_local, whisper_hears_a_sample_through_the_editors_audio_path) {
     if(!transcribe::CanRunLocal()) GTEST_SKIP() << "built without whisper.cpp";
-    char const* model=std::getenv("AEGISUB_WHISPER_MODEL");
-    if(!model||!*model) GTEST_SKIP() << "AEGISUB_WHISPER_MODEL is not set";
+    auto model=agi::util::GetEnv("AEGISUB_WHISPER_MODEL");
+    if(!model||model->empty()) GTEST_SKIP() << "AEGISUB_WHISPER_MODEL is not set";
     agi::fs::path wav=agi::fs::path(AEGISUB_SOURCE_ROOT)/"subprojects"/"whisper.cpp-1.9.5"/"samples"/"jfk.wav";
     if(!agi::fs::FileExists(wav)) GTEST_SKIP() << "no " << wav.string();
     auto audio=agi::CreateConvertAudioProvider(agi::CreatePCMAudioProvider(wav,nullptr));
@@ -4574,7 +4575,7 @@ TEST(transcribe_local, whisper_hears_a_sample_through_the_editors_audio_path) {
     auto samples=agi::ResampleToFloat(*audio,16000);
     EXPECT_NEAR(11.0,samples.size()/16000.0,0.1);
     transcribe::Request request;request.language="en";
-    transcribe::Local settings;settings.model=model;settings.use_gpu=false;
+    transcribe::Local settings;settings.model=*model;settings.use_gpu=false;
     auto t=transcribe::RunLocal(request,settings,samples,nullptr);
     EXPECT_EQ("en",t.language);
     std::string text,times;size_t words=0,lasting=0;int last=-1;
@@ -4613,9 +4614,9 @@ TEST(transcribe_local, whisper_hears_a_sample_through_the_editors_audio_path) {
 // only with AEGISUB_WHISPER_MODEL and AEGISUB_WHISPER_VAD naming the models
 TEST(transcribe_local, with_vad_the_noise_about_speech_is_not_heard_and_the_times_stay_the_audios) {
     if(!transcribe::CanRunLocal()) GTEST_SKIP() << "built without whisper.cpp";
-    char const* model=std::getenv("AEGISUB_WHISPER_MODEL");
-    char const* vad=std::getenv("AEGISUB_WHISPER_VAD");
-    if(!model||!*model||!vad||!*vad) GTEST_SKIP() << "AEGISUB_WHISPER_MODEL and AEGISUB_WHISPER_VAD are not both set";
+    auto model=agi::util::GetEnv("AEGISUB_WHISPER_MODEL");
+    auto vad=agi::util::GetEnv("AEGISUB_WHISPER_VAD");
+    if(!model||model->empty()||!vad||vad->empty()) GTEST_SKIP() << "AEGISUB_WHISPER_MODEL and AEGISUB_WHISPER_VAD are not both set";
     agi::fs::path wav=agi::fs::path(AEGISUB_SOURCE_ROOT)/"subprojects"/"whisper.cpp-1.9.5"/"samples"/"jfk.wav";
     if(!agi::fs::FileExists(wav)) GTEST_SKIP() << "no " << wav.string();
     auto audio=agi::CreateConvertAudioProvider(agi::CreatePCMAudioProvider(wav,nullptr));
@@ -4628,7 +4629,7 @@ TEST(transcribe_local, with_vad_the_noise_about_speech_is_not_heard_and_the_time
     for(int i=0;i<20*16000;++i) samples.push_back(noise());
 
     transcribe::Request request;request.language="en";
-    transcribe::Local settings;settings.model=model;settings.use_gpu=false;settings.vad_model=vad;
+    transcribe::Local settings;settings.model=*model;settings.use_gpu=false;settings.vad_model=*vad;
     // What the progress dialog would be told
     struct Recorder final : agi::ProgressSink {
         std::vector<std::string> messages;int64_t most=0;
@@ -4778,14 +4779,14 @@ TEST(transcribe_models, a_download_goes_on_from_what_an_earlier_try_left_and_is_
 // http.server does: only with AEGISUB_RANGELESS_SERVER the address of one
 // serving a folder that holds ggml-test.bin, 300 000 bytes
 TEST(transcribe_models, a_server_that_will_not_send_only_the_rest_is_downloaded_from_from_the_start) {
-    char const* server=std::getenv("AEGISUB_RANGELESS_SERVER");
-    if(!server||!*server) GTEST_SKIP() << "AEGISUB_RANGELESS_SERVER is not set";
+    auto server=agi::util::GetEnv("AEGISUB_RANGELESS_SERVER");
+    if(!server||server->empty()) GTEST_SKIP() << "AEGISUB_RANGELESS_SERVER is not set";
     namespace sfs=std::filesystem;
     sfs::path dir=sfs::temp_directory_path()/("aegisub-rangeless-test-"+std::to_string(::getpid()));
     sfs::remove_all(dir);sfs::create_directories(dir);
     auto part=dir/"ggml-test.bin.part";
     {std::ofstream(part,std::ios::binary)<<std::string(1000,'x');}
-    transcribe::Download(std::string(server)+"/ggml-test.bin",agi::fs::path(part),300000,nullptr);
+    transcribe::Download(*server+"/ggml-test.bin",agi::fs::path(part),300000,nullptr);
     std::string const got=Slurp(part);
     EXPECT_EQ(300000u,got.size());
     EXPECT_NE(std::string(1000,'x'),got.substr(0,1000)) << "what was there replaced, not added to";
@@ -4795,7 +4796,7 @@ TEST(transcribe_models, a_server_that_will_not_send_only_the_rest_is_downloaded_
 // From Hugging Face itself: only with AEGISUB_NETWORK_TESTS set. The VAD
 // model, small, is fetched there as the Whisper models are.
 TEST(transcribe_models, a_download_from_hugging_face_is_whole) {
-    if(!std::getenv("AEGISUB_NETWORK_TESTS")) GTEST_SKIP() << "AEGISUB_NETWORK_TESTS is not set";
+    if(!agi::util::GetEnv("AEGISUB_NETWORK_TESTS")) GTEST_SKIP() << "AEGISUB_NETWORK_TESTS is not set";
     namespace sfs=std::filesystem;
     sfs::path dir=sfs::temp_directory_path()/("aegisub-hf-test-"+std::to_string(::getpid()));
     sfs::remove_all(dir);sfs::create_directories(dir);

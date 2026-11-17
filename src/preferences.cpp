@@ -52,6 +52,7 @@
 #endif
 
 #include <libaegisub/hotkey.h>
+#include <libaegisub/util.h>
 
 #include <cstdlib>
 #include <unordered_set>
@@ -293,10 +294,10 @@ void Audio(PreferencesBook *book, Preferences *parent) {
 		auto forget = new FlatButton(transcribe.box, _("Forget"));
 		auto const service = transcribe::key_service;
 		auto refresh = [=] {
-			auto env = std::getenv("ELEVENLABS_API_KEY");
+			auto env = agi::util::GetEnv("ELEVENLABS_API_KEY");
 			bool const held = secret::Held(service).has_value();
 			wxString where;
-			if (env && *env) where = _("From the ELEVENLABS_API_KEY environment variable");
+			if (env && !env->empty()) where = _("From the ELEVENLABS_API_KEY environment variable");
 			else if (held) where = _("Kept until Aegisub is closed: this machine has no keychain");
 			else if (secret::Available()) where = _("Kept in the system's keychain, once set");
 			else where = _("Asked for each time: this machine has no keychain");

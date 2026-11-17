@@ -49,8 +49,8 @@ inline constexpr const char *key_service = "Aegisub: ElevenLabs API key";
 
 /// Where the key to send may be, in the order looked
 struct KeySources {
-	/// The ELEVENLABS_API_KEY environment variable; null when not set
-	const char *environment = nullptr;
+	/// The ELEVENLABS_API_KEY environment variable; nullopt when not set
+	std::optional<std::string> environment;
 	/// What the system's keychain holds
 	std::optional<std::string> keychain;
 	/// What is held for this run, on a machine without a keychain

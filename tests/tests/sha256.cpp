@@ -1,11 +1,12 @@
 // Copyright (c) 2026, Aegisub contributors
 // SPDX-License-Identifier: ISC
 
+#include <libaegisub/fs.h>
 #include <libaegisub/sha256.h>
+#include <libaegisub/util.h>
 
 #include <main.h>
 
-#include <cstdlib>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -51,9 +52,9 @@ TEST(lagi_sha256, fed_in_pieces_of_any_size_it_is_the_same) {
 // A real model, as published: only with one named by AEGISUB_WHISPER_MODEL,
 // which must be ggml-tiny.bin
 TEST(lagi_sha256, the_published_hash_of_a_whisper_model) {
-	char const *model = std::getenv("AEGISUB_WHISPER_MODEL");
-	if (!model || !*model) GTEST_SKIP() << "AEGISUB_WHISPER_MODEL is not set";
-	std::ifstream in(model, std::ios::binary);
+	auto model = agi::util::GetEnv("AEGISUB_WHISPER_MODEL");
+	if (!model || model->empty()) GTEST_SKIP() << "AEGISUB_WHISPER_MODEL is not set";
+	std::ifstream in(agi::fs::path(*model), std::ios::binary);
 	ASSERT_TRUE(in);
 	agi::Sha256 h;
 	std::vector<char> buf(1 << 20);

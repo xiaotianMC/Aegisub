@@ -15,6 +15,7 @@
 #include <libaegisub/cajun/visitor.h>
 #include <libaegisub/exception.h>
 #include <libaegisub/io.h>
+#include <libaegisub/util.h>
 
 #include <algorithm>
 #include <atomic>
@@ -100,7 +101,7 @@ std::string Detail(std::string const& body) {
 }
 
 FoundKey FindKey(KeySources const& sources) {
-	if (sources.environment && !Trim(sources.environment).empty()) return {Trim(sources.environment), KeyPlace::Environment};
+	if (sources.environment && !Trim(*sources.environment).empty()) return {Trim(*sources.environment), KeyPlace::Environment};
 	if (sources.keychain && !Trim(*sources.keychain).empty()) return {Trim(*sources.keychain), KeyPlace::Keychain};
 	if (sources.session && !Trim(*sources.session).empty()) return {Trim(*sources.session), KeyPlace::Session};
 	return {};
@@ -229,7 +230,7 @@ namespace {
 struct SystemProxy { std::string proxy, bypass; };
 SystemProxy WindowsProxy(const wchar_t *url) {
 	for (auto name : {"https_proxy", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"})
-		if (auto v = getenv(name); v && *v) return {};
+		if (auto v = agi::util::GetEnv(name); v && !v->empty()) return {};
 
 	WINHTTP_CURRENT_USER_IE_PROXY_CONFIG ie{};
 	if (!WinHttpGetIEProxyConfigForCurrentUser(&ie)) return {};
@@ -636,13 +637,13 @@ namespace {
 bool Runnable(std::string const& program) {
 	if (program.find('/') != std::string::npos || program.find('\\') != std::string::npos)
 		return agi::fs::FileExists(program);
-	wxString path;
-	if (!wxGetEnv("PATH", &path)) return true;
+	auto path = agi::util::GetEnv("PATH");
+	if (!path) return true;
 	std::vector<std::string> names{program};
 #ifdef _WIN32
 	for (auto ext : {".exe", ".bat", ".cmd", ".com"}) names.push_back(program + ext);
 #endif
-	for (auto const& dir : Split(from_wx(path), std::string(1, wxPATH_SEP[0]))) {
+	for (auto const& dir : Split(*path, std::string(1, wxPATH_SEP[0]))) {
 		for (auto const& name : names)
 			if (agi::fs::FileExists(agi::fs::path(dir) / name)) return true;
 	}

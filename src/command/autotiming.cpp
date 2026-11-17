@@ -36,6 +36,7 @@
 #include <libaegisub/exception.h>
 #include <libaegisub/io.h>
 #include <libaegisub/path.h>
+#include <libaegisub/util.h>
 #include <libaegisub/vfr.h>
 
 #include <chrono>
@@ -338,7 +339,7 @@ struct autotiming_transcribe final : public Command {
 				}
 				transcribe::ElevenLabs settings;
 				settings.model = OPT_GET("Tool/Transcribe/ElevenLabs/Model")->GetString();
-				auto found = transcribe::FindKey({std::getenv("ELEVENLABS_API_KEY"), secret::Load(transcribe::key_service),
+				auto found = transcribe::FindKey({agi::util::GetEnv("ELEVENLABS_API_KEY"), secret::Load(transcribe::key_service),
 					secret::Held(transcribe::key_service)});
 				if (found.key.empty()) {
 					bool const keychain = secret::Available();
