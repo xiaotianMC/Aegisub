@@ -35,6 +35,7 @@
 #include "ass_dialogue.h"
 #include "ass_file.h"
 #include "subtitle_project_access.h"
+#include "toolbar_keys.h"
 #include "compat.h"
 #include "format.h"
 #include "include/aegisub/context.h"
@@ -154,10 +155,14 @@ VideoBox::VideoBox(wxWindow *parent, bool isDetached, agi::Context *context)
 	auto zoomBox = new VideoZoomControl(videoArea);
 
 	auto visualToolBar = toolbar::GetToolbar(toolsArea, "visual_tools", context, "Video", true);
-	auto visualSubToolBar = new wxToolBar(toolsArea, -1, wxDefaultPosition, wxDefaultSize, wxTB_VERTICAL | wxTB_BOTTOM | wxTB_NODIVIDER | wxTB_FLAT);
+	// The keyboard goes along it as along the others (docs/keyboard-regions.md)
+	auto visualSubToolBar = new KeyToolBar(toolsArea, wxTB_VERTICAL | wxTB_BOTTOM | wxTB_NODIVIDER | wxTB_FLAT);
 
 	auto videoDisplay = new VideoDisplay(visualSubToolBar, isDetached, zoomBox, videoArea, context);
+	// Tab goes as the eye does: the picture, the slider, the row below it
+	// from the left, then the visual tools beside them
 	videoDisplay->MoveBeforeInTabOrder(videoSlider);
+	VideoPosition->MoveAfterInTabOrder(videoSlider);
 	// Picking a visual tool is for working on the video: the keyboard goes
 	// there, for its keys (docs/keyboard-regions.md)
 	regions::FocusAfterClicks(visualToolBar, videoDisplay);

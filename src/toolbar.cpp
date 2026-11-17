@@ -24,6 +24,7 @@
 #include "libresrc/libresrc.h"
 #include "options.h"
 #include "theme.h"
+#include "toolbar_keys.h"
 #include "include/aegisub/context.h"
 #include "video_display.h"
 #include "visual_tool_rectangle.h"
@@ -53,7 +54,7 @@ namespace {
 		return root;
 	}
 
-	class Toolbar final : public wxToolBar {
+	class Toolbar final : public KeyToolBar {
 		/// Window ID of first toolbar control
 		static const int TOOL_ID_BASE = 5000;
 
@@ -227,6 +228,7 @@ namespace {
 			if (HasCapture()) ReleaseMouse();
 			shape_tool_id = wxID_NONE;
 			Unbind(wxEVT_IDLE, &Toolbar::OnIdle, this);
+			ClearMenuOpeners();
 			ClearTools();
 			commands.clear();
 			on_bar.clear();
@@ -250,6 +252,12 @@ namespace {
 			if (std::string_view(command->name()) == "video/tool/rectangle") {
 				shape_tool_id = id;
 				UpdateShapeButton();
+				// The shapes the long press offers, from the keyboard (Alt+Down, F4)
+				SetMenuOpener(id, [this, id] {
+					wxRect rect = ToolRect(id);
+					shape_menu_position = wxPoint(GetClientSize().x, rect.IsEmpty() ? 0 : rect.y);
+					ShowShapeMenu();
+				});
 			}
 			commands.push_back(command);
 			on_bar.push_back(true);
@@ -338,7 +346,7 @@ namespace {
 
 	public:
 		Toolbar(wxWindow *parent, std::string name, agi::Context *c, std::string ht_context, bool vertical)
-		: wxToolBar(parent, -1, wxDefaultPosition, wxDefaultSize, wxTB_NODIVIDER | wxTB_FLAT | (vertical ? wxTB_VERTICAL : wxTB_HORIZONTAL))
+		: KeyToolBar(parent, wxTB_NODIVIDER | wxTB_FLAT | (vertical ? wxTB_VERTICAL : wxTB_HORIZONTAL))
 		, name(std::move(name))
 		, context(c)
 		, ht_context(std::move(ht_context))
@@ -354,7 +362,7 @@ namespace {
 		}
 
 		Toolbar(wxFrame *parent, std::string name, agi::Context *c, std::string ht_context)
-		: wxToolBar(parent, -1, wxDefaultPosition, wxDefaultSize, wxTB_FLAT | wxTB_HORIZONTAL)
+		: KeyToolBar(parent, wxTB_FLAT | wxTB_HORIZONTAL, false)
 		, name(std::move(name))
 		, context(c)
 		, ht_context(std::move(ht_context))

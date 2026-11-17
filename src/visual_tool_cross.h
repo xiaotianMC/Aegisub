@@ -36,8 +36,12 @@ class VisualToolCross final : public VisualTool<VisualDraggableFeature> {
 
 	void OnDoubleClick() override;
 	void Draw() override;
+	/// Move the selected lines, their \\move and \\org with them, by @p d
+	void Shift(Vector2D d);
 	std::string Text(Vector2D v);
 public:
 	VisualToolCross(VideoDisplay *parent, agi::Context *context);
 	~VisualToolCross();
+	/// Moves the selected lines, as a double click does
+	bool Nudge(Vector2D delta) override;
 };

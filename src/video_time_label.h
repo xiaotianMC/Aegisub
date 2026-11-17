@@ -63,9 +63,11 @@ public:
 	/// Right-click menu entries copying parts of the text
 	void SetCopyItems(std::vector<CopyItem> items);
 
-	/// Never takes the keyboard itself: a click must leave it with the text box
+	/// A click never gives it the keyboard: it must leave it with the text
+	/// box. Tab does, when it edits (docs/keyboard-regions.md): Enter, F2 or
+	/// a digit typed opens the box, and the keyboard comes back after it
 	bool AcceptsFocus() const override { return false; }
-	bool AcceptsFocusFromKeyboard() const override { return false; }
+	bool AcceptsFocusFromKeyboard() const override { return on_commit && editable && IsEnabled(); }
 
 private:
 	wxString main, secondary, badge_text = "K";
@@ -83,6 +85,8 @@ private:
 	bool filtering = false;
 	wxTextCtrl *edit = nullptr;
 	wxWindow *focus_after = nullptr;
+	/// Editing opened by keys on the label: the keyboard comes back to it
+	bool keyboard_editing = false;
 	bool divider = true;
 	bool editable = true;
 	std::vector<CopyItem> copy_items;
@@ -106,4 +110,6 @@ private:
 	void OnPaint(wxPaintEvent &);
 	void OnMouse(wxMouseEvent &event);
 	void OnContextMenu(wxContextMenuEvent &);
+	void OnKey(wxKeyEvent &event);
+	void OnChar(wxKeyEvent &event);
 };

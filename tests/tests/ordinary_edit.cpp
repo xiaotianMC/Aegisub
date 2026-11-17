@@ -57,6 +57,7 @@
 #include <wx/sashwin.h>
 #include <wx/checkbox.h>
 #include "include/aegisub/toolbar.h"
+#include "toolbar_keys.h"
 #include "libresrc/libresrc.h"
 #include "visual_tool_rectangle.h"
 #include <wx/bmpbuttn.h>
@@ -11019,4 +11020,486 @@ TEST_F(ordinary_edit, video_and_audio_have_arrow_keys_and_space_of_their_own) {
     cmd::call("video/line/prev",c.get());
     EXPECT_EQ(first,c->selectionController->ActiveID());
     EXPECT_EQ(c->videoController->FrameAtTime(1000,agi::vfr::START),c->videoController->GetFrameN());
+}
+
+TEST_F(ordinary_edit, regions_have_keys_for_zoom_volume_the_line_the_time_unit_and_nudging) {
+    auto runs=[&](const char *context,int code,int modifiers){ return std::string(hotkey::inst->Scan(context,hotkey::keypress_to_str(code,modifiers),false)); };
+    EXPECT_EQ("audio/zoom/in",runs("Audio",'=',wxMOD_CMD));
+    EXPECT_EQ("audio/zoom/in",runs("Audio",'+',wxMOD_CMD)) << "where + is a key of its own";
+    EXPECT_EQ("audio/zoom/out",runs("Audio",'-',wxMOD_CMD));
+    EXPECT_EQ("audio/zoom/reset",runs("Audio",'0',wxMOD_CMD));
+    EXPECT_EQ("audio/zoom/vertical/in",runs("Audio",WXK_UP,wxMOD_CMD));
+    EXPECT_EQ("audio/zoom/vertical/out",runs("Audio",WXK_DOWN,wxMOD_CMD));
+    EXPECT_EQ("audio/volume/up",runs("Audio",WXK_UP,wxMOD_SHIFT));
+    EXPECT_EQ("audio/volume/down",runs("Audio",WXK_DOWN,wxMOD_SHIFT));
+    EXPECT_EQ("video/zoom/in",runs("Video",'=',wxMOD_CMD));
+    EXPECT_EQ("video/zoom/out",runs("Video",'-',wxMOD_CMD));
+    EXPECT_EQ("video/zoom/100",runs("Video",'0',wxMOD_CMD));
+    EXPECT_EQ("video/play/line",runs("Video",'R',0)) << "as R plays the line in the audio";
+    EXPECT_EQ("video/tool/nudge/left",runs("Video",WXK_LEFT,wxMOD_CMD|wxMOD_SHIFT));
+    EXPECT_EQ("video/tool/nudge/right",runs("Video",WXK_RIGHT,wxMOD_CMD|wxMOD_SHIFT));
+    EXPECT_EQ("video/tool/nudge/up",runs("Video",WXK_UP,wxMOD_CMD|wxMOD_SHIFT));
+    EXPECT_EQ("video/tool/nudge/down",runs("Video",WXK_DOWN,wxMOD_CMD|wxMOD_SHIFT));
+    EXPECT_EQ("video/tool/nudge/left/large",runs("Video",WXK_LEFT,wxMOD_ALT|wxMOD_SHIFT));
+    EXPECT_EQ("video/tool/nudge/down/large",runs("Video",WXK_DOWN,wxMOD_ALT|wxMOD_SHIFT));
+    EXPECT_EQ("edit/time_unit/time",runs("Subtitle Edit Box",'I',wxMOD_ALT));
+    EXPECT_EQ("edit/time_unit/frame",runs("Subtitle Edit Box",'R',wxMOD_ALT));
+    // The keys they had stay theirs
+    EXPECT_EQ("video/frame/next",runs("Video",WXK_RIGHT,0));
+    EXPECT_EQ("video/frame/next/boundary",runs("Video",WXK_RIGHT,wxMOD_CMD));
+    EXPECT_EQ("time/start/decrease",runs("Audio",WXK_LEFT,wxMOD_SHIFT));
+    EXPECT_EQ("grid/line/next",runs("Audio",WXK_DOWN,0));
+
+    // Commands of their own, in the palette and in Preferences' Hotkeys
+    for (auto name:{"audio/zoom/in","audio/zoom/out","audio/zoom/reset","audio/zoom/vertical/in","audio/zoom/vertical/out",
+                    "audio/volume/up","audio/volume/down","edit/time_unit/time","edit/time_unit/frame",
+                    "video/tool/nudge/left","video/tool/nudge/right","video/tool/nudge/up","video/tool/nudge/down",
+                    "video/tool/nudge/left/large","video/tool/nudge/right/large","video/tool/nudge/up/large","video/tool/nudge/down/large"}) {
+        cmd::Command *command=nullptr;
+        ASSERT_NO_THROW(command=cmd::get(name)) << name;
+        EXPECT_FALSE(command->StrDisplay(c.get()).empty()) << name;
+        EXPECT_FALSE(command->Validate(c.get())) << name << ": nothing to work on here";
+    }
+
+    // The edit box's switch, as its commands work it; the grid shows times
+    // as it does
+    c->subsGrid=new BaseGrid(window,c.get());
+    BOOST_SCOPE_EXIT_ALL(&) { c->subsGrid=nullptr; };
+    EXPECT_FALSE(box->FramesAllowed());
+    {std::ofstream timecodes("timecodes.txt"); timecodes << "# timecode format v1\nAssume 25\n";}
+    c->project->LoadTimecodes("timecodes.txt");
+    BOOST_SCOPE_EXIT_ALL(&) { c->project->CloseTimecodes(); };
+    ASSERT_TRUE(box->FramesAllowed());
+    EXPECT_FALSE(box->TimesByFrame());
+    box->ShowTimesByFrame(true);
+    EXPECT_TRUE(box->TimesByFrame());
+    box->ShowTimesByFrame(false);
+    EXPECT_FALSE(box->TimesByFrame());
+}
+
+TEST_F(ordinary_edit, drawn_controls_of_the_edit_box_take_tab_and_keys) {
+    TimeUnitToggle *unit=nullptr;
+    for (auto child:descendants(box)) if (auto t=dynamic_cast<TimeUnitToggle*>(child)) unit=t;
+    ASSERT_NE(nullptr,unit);
+    c->subsGrid=new BaseGrid(window,c.get());
+    BOOST_SCOPE_EXIT_ALL(&) { c->subsGrid=nullptr; };
+    EXPECT_FALSE(unit->AcceptsFocus()) << "a click leaves the keyboard with the text";
+    EXPECT_TRUE(unit->AcceptsFocusFromKeyboard()) << "Tab stops there";
+    {std::ofstream timecodes("timecodes.txt"); timecodes << "# timecode format v1\nAssume 25\n";}
+    c->project->LoadTimecodes("timecodes.txt");
+    BOOST_SCOPE_EXIT_ALL(&) { c->project->CloseTimecodes(); };
+    ASSERT_TRUE(unit->FramesAllowed());
+    EXPECT_TRUE(unit->Key(WXK_SPACE,wxMOD_NONE));
+    EXPECT_TRUE(unit->ByFrame());
+    EXPECT_TRUE(box->TimesByFrame()) << "as a click does";
+    EXPECT_TRUE(unit->Key(WXK_RETURN,wxMOD_NONE));
+    EXPECT_FALSE(unit->ByFrame());
+    EXPECT_TRUE(unit->Key(WXK_RIGHT,wxMOD_NONE));
+    EXPECT_TRUE(unit->ByFrame());
+    EXPECT_TRUE(unit->Key(WXK_RIGHT,wxMOD_NONE));
+    EXPECT_TRUE(unit->ByFrame()) << "Right chooses frames, it doesn't switch";
+    EXPECT_TRUE(unit->Key(WXK_LEFT,wxMOD_NONE));
+    EXPECT_FALSE(unit->ByFrame());
+    EXPECT_FALSE(unit->Key(WXK_SPACE,wxMOD_CMD)) << "the edit box's keys";
+    EXPECT_FALSE(unit->Key('A',wxMOD_NONE));
+}
+
+TEST_F(audio_edit, audio_zoom_and_levels_step_by_command_and_by_keys) {
+    window->SetSize(1100,400);
+    auto box=c->audioBox=new AudioBox(window,c.get());
+    BOOST_SCOPE_EXIT_ALL(&) { OPT_SET("Audio/Link")->SetBool(false); OPT_SET("Audio/Zoom/Horizontal")->SetInt(0); };
+    box->SetSize(0,0,1000,300);box->Layout();wxYield();
+    EXPECT_FALSE(cmd::get("audio/zoom/in")->Validate(c.get())) << "no audio";
+    c->project->LoadAudio("dummy-audio:silence?sr=44100&bd=16&ch=1&ln=441000");SKIP_IF_THE_AUDIO_WAS_CLOSED_FOR_WANT_OF_A_PLAYER();
+    for (auto name:{"audio/zoom/in","audio/zoom/out","audio/zoom/reset","audio/zoom/vertical/in","audio/zoom/vertical/out","audio/volume/up","audio/volume/down"})
+        EXPECT_TRUE(cmd::get(name)->Validate(c.get())) << name;
+    AudioDisplay* display=nullptr;
+    std::function<void(wxWindow*)> find=[&](wxWindow*w){for(auto ch:w->GetChildren()){if(auto d=dynamic_cast<AudioDisplay*>(ch))display=d;find(ch);}};
+    find(box);ASSERT_NE(nullptr,display);
+    OPT_SET("Audio/Link")->SetBool(false);
+    box->ResetLevels();
+
+    // Horizontally, a level at a time, holding the line's middle where it
+    // is: zoomed in and scrolled, so that there is room to either side
+    display->SetZoomLevel(20);
+    int middle=(1001+2002)/2;
+    display->ScrollPixelToLeft(display->AbsoluteXFromTime(middle)-200);
+    int x=display->RelativeXFromTime(middle);
+    ASSERT_GT(x,0);ASSERT_LT(x,display->GetClientSize().x);
+    ASSERT_GT(display->GetScrollLeft(),0);
+    cmd::call("audio/zoom/in",c.get());
+    EXPECT_EQ(21,display->GetZoomLevel());
+    EXPECT_EQ(21,OPT_GET("Audio/Zoom/Horizontal")->GetInt()) << "kept, as the wheel's is";
+    EXPECT_NEAR(x,display->RelativeXFromTime(middle),2) << "the line stays where it was";
+    cmd::call("audio/zoom/out",c.get());cmd::call("audio/zoom/out",c.get());
+    EXPECT_EQ(19,display->GetZoomLevel());
+    EXPECT_NEAR(x,display->RelativeXFromTime(middle),2);
+    cmd::call("audio/zoom/reset",c.get());
+    EXPECT_EQ(0,display->GetZoomLevel());
+    EXPECT_EQ(0,OPT_GET("Audio/Zoom/Horizontal")->GetInt());
+
+    // Vertically and the volume, five positions a press
+    AudioLevels *levels=box->Levels();
+    using Part=AudioLevels::Part;
+    const int neutral=AudioLevels::neutral_position;
+    cmd::call("audio/zoom/vertical/in",c.get());
+    EXPECT_EQ(neutral+5,levels->GetZoom());
+    EXPECT_EQ(neutral+5,OPT_GET("Audio/Zoom/Vertical")->GetInt());
+    EXPECT_EQ(neutral,levels->GetVolume()) << "not linked: the volume stays";
+    cmd::call("audio/volume/down",c.get());
+    EXPECT_EQ(neutral-5,levels->GetVolume());
+    EXPECT_EQ(neutral-5,OPT_GET("Audio/Volume")->GetInt());
+    EXPECT_EQ(neutral+5,levels->GetZoom());
+    cmd::call("audio/zoom/vertical/out",c.get());cmd::call("audio/volume/up",c.get());
+    EXPECT_EQ(neutral,levels->GetZoom());EXPECT_EQ(neutral,levels->GetVolume());
+
+    // The tracks from the keyboard: Up and Down a position, Page Up and
+    // Page Down ten, Left and Right from part to part
+    EXPECT_FALSE(levels->AcceptsFocus()) << "a click leaves the keyboard with the audio";
+    EXPECT_TRUE(levels->AcceptsFocusFromKeyboard());
+    EXPECT_EQ(Part::Zoom,levels->KeyPart());
+    EXPECT_TRUE(levels->Key(WXK_UP,wxMOD_NONE));
+    EXPECT_EQ(neutral+1,levels->GetZoom());
+    EXPECT_EQ(neutral+1,OPT_GET("Audio/Zoom/Vertical")->GetInt()) << "as a drag sets it";
+    EXPECT_TRUE(levels->Key(WXK_PAGEDOWN,wxMOD_NONE));
+    EXPECT_EQ(neutral-9,levels->GetZoom());
+    EXPECT_FALSE(levels->Key(WXK_UP,wxMOD_CMD)) << "the audio's: a taller waveform";
+    EXPECT_FALSE(levels->Key(WXK_SPACE,wxMOD_NONE)) << "on a track, Space plays";
+    EXPECT_TRUE(levels->Key(WXK_LEFT,wxMOD_NONE));
+    EXPECT_EQ(Part::Zoom,levels->KeyPart()) << "not round";
+    EXPECT_TRUE(levels->Key(WXK_RIGHT,wxMOD_NONE));
+    EXPECT_EQ(Part::Volume,levels->KeyPart());
+    EXPECT_TRUE(levels->Key(WXK_PAGEUP,wxMOD_NONE));
+    EXPECT_EQ(neutral+10,levels->GetVolume());
+    EXPECT_EQ(neutral+10,OPT_GET("Audio/Volume")->GetInt());
+    EXPECT_TRUE(levels->Key(WXK_RIGHT,wxMOD_NONE));
+    EXPECT_EQ(Part::Link,levels->KeyPart());
+    EXPECT_FALSE(levels->Key(WXK_UP,wxMOD_NONE)) << "on a button Up is the audio's: the line before";
+    EXPECT_TRUE(levels->Key(WXK_SPACE,wxMOD_NONE));
+    EXPECT_TRUE(OPT_GET("Audio/Link")->GetBool()) << "Space presses the link";
+    EXPECT_EQ(levels->GetZoom(),levels->GetVolume());
+    EXPECT_EQ(Part::Link,levels->KeyPart());
+    EXPECT_TRUE(levels->Key(WXK_LEFT,wxMOD_NONE));
+    EXPECT_EQ(Part::Zoom,levels->KeyPart()) << "linked: one track";
+    int linked=levels->GetZoom();
+    cmd::call("audio/volume/up",c.get());
+    EXPECT_EQ(linked+5,levels->GetZoom()) << "linked: the one track sets both";
+    EXPECT_EQ(linked+5,levels->GetVolume());
+    levels->Key(WXK_RIGHT,wxMOD_NONE);levels->Key(WXK_RIGHT,wxMOD_NONE);levels->Key(WXK_RIGHT,wxMOD_NONE);
+    EXPECT_EQ(Part::Reset,levels->KeyPart());
+    EXPECT_TRUE(levels->Key(WXK_RETURN,wxMOD_NONE));
+    EXPECT_EQ(neutral,levels->GetZoom());EXPECT_EQ(neutral,levels->GetVolume());
+    EXPECT_TRUE(OPT_GET("Audio/Link")->GetBool()) << "reset leaves the link";
+    // Unlinked while the keyboard is on the volume: it goes to the zoom
+    OPT_SET("Audio/Link")->SetBool(false);
+    levels->Key(WXK_LEFT,wxMOD_NONE);levels->Key(WXK_LEFT,wxMOD_NONE);
+    EXPECT_EQ(Part::Volume,levels->KeyPart());
+    OPT_SET("Audio/Link")->SetBool(true);
+    EXPECT_NE(Part::Volume,levels->KeyPart());
+}
+
+TEST_F(visual_edit, nudges_move_the_points_by_script_pixels_and_quick_ones_are_one_undo_step) {
+    Install<VisualToolDrag>();auto text=Text();
+    ASSERT_TRUE(cmd::get("video/tool/nudge/right")->Validate(c.get()));
+    cmd::call("video/tool/nudge/right",c.get());
+    EXPECT_NE(std::string::npos,Text().find("\\pos(101,100)")) << Text();
+    cmd::call("video/tool/nudge/down/large",c.get());
+    EXPECT_NE(std::string::npos,Text().find("\\pos(101,110)")) << Text();
+    cmd::call("video/tool/nudge/up",c.get());
+    EXPECT_NE(std::string::npos,Text().find("\\pos(101,109)")) << Text();
+    EXPECT_NE(std::string::npos,Text().find("\\bord3"));EXPECT_NE(std::string::npos,Text().find("中 文 {\\b1} tail"));
+    EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison()) << "nothing left open";
+    auto nudged=Text();
+    c->subsController->Undo();
+    EXPECT_EQ(text,Text()) << "presses close together are one step";
+    c->subsController->Redo();
+    EXPECT_EQ(nudged,Text());
+
+    // Something else between: a step of its own
+    Drag(101,109,120,130);
+    auto dragged=Text();
+    EXPECT_NE(std::string::npos,dragged.find("\\pos(120,130)")) << dragged;
+    cmd::call("video/tool/nudge/left",c.get());
+    EXPECT_NE(std::string::npos,Text().find("\\pos(119,130)")) << Text();
+    c->subsController->Undo();
+    EXPECT_EQ(dragged,Text());
+    c->subsController->Undo();
+    EXPECT_EQ(nudged,Text());
+
+    // Not in the middle of a drag
+    Mouse(wxEVT_LEFT_DOWN,101,109,true);
+    EXPECT_FALSE(display->NudgeTool(Vector2D(1,0)));
+    Mouse(wxEVT_LEFT_UP,101,109);
+    EXPECT_NE(std::string::npos,Text().find("\\pos(101,109)")) << Text();
+
+    // The cross moves the selected lines' positions
+    Install<VisualToolCross>();
+    auto before=Text();
+    EXPECT_TRUE(display->NudgeTool(Vector2D(0,-10)));
+    EXPECT_NE(std::string::npos,Text().find("\\pos(101,99)")) << Text();
+    c->subsController->Undo();
+    EXPECT_EQ(before,Text()) << "another tool's nudge: a step of its own";
+}
+
+TEST_F(ordinary_edit, toolbars_take_the_keyboard_along_their_buttons) {
+    auto frame=new wxFrame(nullptr,-1,"toolbar keys");
+    BOOST_SCOPE_EXIT_ALL(&){ regions::Clear(); delete frame; };
+    auto backdrop=new wxPanel(frame);
+    auto block=new wxPanel(backdrop);
+    auto bar=new KeyToolBar(block,wxTB_HORIZONTAL|wxTB_FLAT);
+    wxBitmap icon(16,16);
+    bar->AddTool(1,"plain",icon);
+    bar->AddCheckTool(2,"check",icon);
+    bar->AddSeparator();
+    bar->AddRadioTool(3,"a",icon);
+    bar->AddRadioTool(4,"b",icon);
+    bar->AddTool(5,"greyed",icon);
+    bar->EnableTool(5,false);
+    bar->Realize();
+    auto plain=new wxToolBar(block,-1);
+    plain->AddTool(9,"t",icon);
+    plain->Realize();
+    auto off=new KeyToolBar(block,wxTB_HORIZONTAL,false);
+    off->AddTool(10,"t",icon);
+    off->Realize();
+    auto vertical=new KeyToolBar(block,wxTB_VERTICAL);
+    vertical->AddTool(11,"up",icon);
+    vertical->AddTool(12,"down",icon);
+    vertical->Realize();
+    auto field=new wxTextCtrl(block,-1,"x");
+    {auto s=new wxBoxSizer(wxVERTICAL);
+     for(wxWindow *w:{static_cast<wxWindow*>(bar),static_cast<wxWindow*>(plain),static_cast<wxWindow*>(off),static_cast<wxWindow*>(vertical),static_cast<wxWindow*>(field)})s->Add(w);
+     block->SetSizer(s);}
+    {auto s=new wxBoxSizer(wxVERTICAL);s->Add(block,1,wxEXPAND|wxALL,10);backdrop->SetSizer(s);}
+    std::vector<int> region_keys;
+    regions::Setup(backdrop,{{block,nullptr,nullptr,[&](wxKeyEvent &e){ region_keys.push_back(e.GetKeyCode()); return true; }}});
+    std::vector<std::pair<int,bool>> pressed;std::vector<bool> by_keys;
+    bar->Bind(wxEVT_TOOL,[&](wxCommandEvent &e){ pressed.push_back({e.GetId(),e.IsChecked()}); by_keys.push_back(bar->PressingByKeys()); });
+    frame->SetSize(500,400);frame->Show();backdrop->SetSize(frame->GetClientSize());backdrop->Layout();
+    for(int i=0;i<10;++i) wxYield();
+
+    EXPECT_EQ((std::vector<int>{1,2,3,4}),bar->KeyTools()) << "not the separator or the greyed one";
+    EXPECT_FALSE(bar->AcceptsFocus()) << "a click leaves the keyboard where it was";
+    EXPECT_TRUE(bar->AcceptsFocusFromKeyboard());
+    EXPECT_FALSE(off->AcceptsFocusFromKeyboard()) << "the main window's, in no region";
+    EXPECT_EQ((std::vector<wxWindow*>{bar,vertical,field}),regions::Stops(0)) << "a bar of keys is one stop; a plain one is none";
+
+    // Along a vertical bar the arrows are Up and Down
+    EXPECT_EQ(11,vertical->KeyTool()) << "none chosen: the first";
+    EXPECT_TRUE(vertical->Key(WXK_DOWN,wxMOD_NONE));
+    EXPECT_EQ(12,vertical->KeyTool());
+    EXPECT_TRUE(vertical->Key(WXK_DOWN,wxMOD_NONE));
+    EXPECT_EQ(12,vertical->KeyTool()) << "not round";
+    EXPECT_FALSE(vertical->Key(WXK_RIGHT,wxMOD_NONE)) << "across it: the region's";
+
+    bar->SetFocus();
+    for(int i=0;i<5;++i) wxYield();
+    if(!wxWindow::FindFocus())
+        GTEST_SKIP() << "the toolkit tells of no focus here, as wxOSX does where the window is not the key window";
+    ASSERT_EQ(bar,wxWindow::FindFocus());
+    EXPECT_EQ(3,bar->KeyTool()) << "on the chosen one of a group";
+#if defined(__WXMSW__) || defined(__WXGTK__)
+    {wxRect ring=bar->RingRect(), tool=bar->ToolRect(3);
+     EXPECT_FALSE(ring.IsEmpty());
+     EXPECT_TRUE(tool.Contains(ring)) << "round the button the keyboard is on";}
+#endif
+    auto key=[&](int code,int modifiers=wxMOD_NONE){
+        wxKeyEvent e(wxEVT_CHAR_HOOK);e.m_keyCode=code;
+        e.SetShiftDown(modifiers&wxMOD_SHIFT);e.SetAltDown(modifiers&wxMOD_ALT);e.SetControlDown(modifiers&wxMOD_CONTROL);
+        e.SetEventObject(bar);bar->GetEventHandler()->ProcessEvent(e);
+    };
+    key(WXK_RIGHT);EXPECT_EQ(4,bar->KeyTool());
+    key(WXK_RIGHT);EXPECT_EQ(4,bar->KeyTool()) << "not round, not onto the greyed one";
+    key(WXK_HOME);EXPECT_EQ(1,bar->KeyTool());
+    key(WXK_LEFT);EXPECT_EQ(1,bar->KeyTool());
+    key(WXK_END);EXPECT_EQ(4,bar->KeyTool());
+    EXPECT_TRUE(region_keys.empty());
+
+    // Space and Enter press it as a click does
+    key(WXK_SPACE);
+    ASSERT_EQ(1u,pressed.size());
+    EXPECT_EQ(4,pressed[0].first);
+    EXPECT_TRUE(bar->GetToolState(4));EXPECT_FALSE(bar->GetToolState(3)) << "chosen in its group";
+    EXPECT_TRUE(by_keys[0]);EXPECT_FALSE(bar->PressingByKeys());
+    key(WXK_HOME);key(WXK_RIGHT);
+    key(WXK_RETURN);
+    ASSERT_EQ(2u,pressed.size());
+    EXPECT_EQ(std::make_pair(2,true),pressed[1]);EXPECT_TRUE(bar->GetToolState(2));
+    key(WXK_SPACE);
+    EXPECT_EQ(std::make_pair(2,false),pressed.back());EXPECT_FALSE(bar->GetToolState(2)) << "a check button flips";
+    for(int i=0;i<5;++i) wxYield();
+    EXPECT_EQ(bar,wxWindow::FindFocus()) << "a key press leaves the keyboard on the bar";
+
+    // A menu: Alt+Down or F4
+    int opened=0;
+    bar->SetMenuOpener(2,[&]{ ++opened; });
+    key(WXK_F4);EXPECT_EQ(1,opened);
+    key(WXK_DOWN,wxMOD_ALT);EXPECT_EQ(2,opened);
+    bar->ClearMenuOpeners();
+
+    // What it has no use for is the region's
+    key(WXK_DOWN);
+    key(WXK_RIGHT,wxMOD_SHIFT);
+    key(WXK_F4);
+    EXPECT_EQ((std::vector<int>{WXK_DOWN,WXK_RIGHT,WXK_F4}),region_keys);
+    EXPECT_EQ(2,bar->KeyTool());
+
+    // Tab goes on in the region, and the ring goes
+    key(WXK_TAB);
+    for(int i=0;i<5;++i) wxYield();
+    EXPECT_EQ(vertical,wxWindow::FindFocus());
+    EXPECT_TRUE(bar->RingRect().IsEmpty());
+    // Back: the button it was on
+    {wxKeyEvent back(wxEVT_CHAR_HOOK);back.m_keyCode=WXK_TAB;back.SetShiftDown(true);back.SetEventObject(vertical);
+     vertical->GetEventHandler()->ProcessEvent(back);}
+    for(int i=0;i<5;++i) wxYield();
+    EXPECT_EQ(bar,wxWindow::FindFocus());
+    EXPECT_EQ(2,bar->KeyTool());
+}
+
+TEST_F(ordinary_edit, video_block_tabs_through_the_readout_zoom_and_toolbars_and_keys_work_them) {
+    OPT_SET("Video/Subtitle Sync")->SetBool(false);
+    auto frame=new wxFrame(nullptr,-1,"video keys");
+    auto backdrop=new wxPanel(frame);
+    auto video_box=new VideoBox(backdrop,false,c.get());
+    BOOST_SCOPE_EXIT_ALL(&){ regions::Clear(); delete frame; c->videoDisplay=nullptr; c->project->CloseVideo(); };
+    {auto s=new wxBoxSizer(wxVERTICAL);s->Add(video_box,1,wxEXPAND|wxALL,10);backdrop->SetSizer(s);}
+    regions::Setup(backdrop,{{video_box,nullptr,nullptr,[&](wxKeyEvent &e){ return hotkey::check("Video",c.get(),e); }}});
+    c->project->LoadVideo("?dummy:25:250:640:480:64:64:64:");
+    ASSERT_NE(nullptr,c->project->VideoProvider());
+    PumpFirstFrame(c.get(),frame);
+    frame->SetSize(1100,800);frame->Show();backdrop->SetSize(frame->GetClientSize());backdrop->Layout();
+    for(int i=0;i<10;++i) wxYield();
+
+    VideoSlider *slider=nullptr;std::vector<VideoTimeLabel*> labels;VideoZoomControl *zoom=nullptr;VideoDisplay *display=nullptr;
+    wxToolBar *play_bar=nullptr,*options_bar=nullptr,*tools_bar=nullptr;
+    for(auto ch:descendants(video_box)){
+        if(auto s=dynamic_cast<VideoSlider*>(ch))slider=s;
+        if(auto l=dynamic_cast<VideoTimeLabel*>(ch))labels.push_back(l);
+        if(auto z=dynamic_cast<VideoZoomControl*>(ch))zoom=z;
+        if(auto d=dynamic_cast<VideoDisplay*>(ch))display=d;
+        if(auto b=dynamic_cast<wxToolBar*>(ch)){
+            if(b->HasFlag(wxTB_VERTICAL)){ if(b->GetToolsCount()>2) tools_bar=b; }
+            else (b->GetToolsCount()==2?play_bar:options_bar)=b;
+        }
+    }
+    ASSERT_NE(nullptr,slider);ASSERT_EQ(2u,labels.size());ASSERT_NE(nullptr,zoom);ASSERT_NE(nullptr,display);
+    ASSERT_NE(nullptr,play_bar);ASSERT_NE(nullptr,options_bar);ASSERT_NE(nullptr,tools_bar);
+    auto position=labels[0],relative=labels[1];
+
+    // Tab as the eye goes: the picture, the slider, the row below from the
+    // left, the visual tools beside them; not the relative readout, which
+    // has nothing to type
+    auto stops=regions::Stops(0);
+    auto index=[&](wxWindow *w){ return std::find(stops.begin(),stops.end(),w)-stops.begin(); };
+    for(wxWindow *w:{static_cast<wxWindow*>(display),static_cast<wxWindow*>(slider),static_cast<wxWindow*>(position),
+                     static_cast<wxWindow*>(play_bar),static_cast<wxWindow*>(options_bar),static_cast<wxWindow*>(zoom),static_cast<wxWindow*>(tools_bar)})
+        ASSERT_LT(index(w),static_cast<long>(stops.size())) << w->GetClassInfo()->GetClassName();
+    EXPECT_LT(index(display),index(slider));
+    EXPECT_LT(index(slider),index(position));
+    EXPECT_LT(index(position),index(play_bar));
+    EXPECT_LT(index(play_bar),index(options_bar));
+    EXPECT_LT(index(options_bar),index(zoom));
+    EXPECT_LT(index(zoom),index(tools_bar));
+    EXPECT_EQ(static_cast<long>(stops.size()),index(relative));
+
+    // The zoom: Left and Right, − and +, by the 12.5% steps
+    display->SetWindowZoom(1);
+    EXPECT_TRUE(zoom->Key(WXK_RIGHT,wxMOD_NONE));
+    EXPECT_EQ("112.5%",zoom->ZoomText());
+    EXPECT_TRUE(zoom->Key('-',wxMOD_NONE));EXPECT_TRUE(zoom->Key(WXK_LEFT,wxMOD_NONE));
+    EXPECT_EQ("87.5%",zoom->ZoomText());
+    EXPECT_TRUE(zoom->Key('+',wxMOD_SHIFT)) << "+ is Shift and = on many keyboards";
+    EXPECT_EQ("100%",zoom->ZoomText());
+    EXPECT_FALSE(zoom->Key(WXK_RIGHT,wxMOD_SHIFT)) << "the video's: the next keyframe";
+    EXPECT_FALSE(zoom->Key(WXK_UP,wxMOD_NONE)) << "the video's: the line before";
+    EXPECT_FALSE(zoom->Key('-',wxMOD_CMD));
+    EXPECT_FALSE(zoom->AcceptsFocus());EXPECT_TRUE(zoom->AcceptsFocusFromKeyboard());
+    // The video's own zoom keys, wherever the keyboard is in it
+    cmd::call("video/zoom/in",c.get());
+    EXPECT_EQ("112.5%",zoom->ZoomText());
+    cmd::call("video/zoom/100",c.get());
+    EXPECT_EQ("100%",zoom->ZoomText());
+
+    // The readout: Enter opens the box, and the keyboard comes back to it
+    EXPECT_FALSE(position->AcceptsFocus()) << "a click must leave the keyboard with the box";
+    EXPECT_TRUE(position->AcceptsFocusFromKeyboard());
+    position->SetFocus();
+    for(int i=0;i<5;++i) wxYield();
+    if(wxWindow::FindFocus()!=position)
+        GTEST_SKIP() << "the toolkit tells of no focus here, as wxOSX does where the window is not the key window";
+    auto key=[&](wxWindow *w,int code,int modifiers=wxMOD_NONE){
+        wxKeyEvent e(wxEVT_CHAR_HOOK);e.m_keyCode=code;
+        e.SetShiftDown(modifiers&wxMOD_SHIFT);e.SetAltDown(modifiers&wxMOD_ALT);e.SetControlDown(modifiers&wxMOD_CONTROL);
+        e.SetEventObject(w);w->GetEventHandler()->ProcessEvent(e);
+    };
+    key(position,WXK_RETURN);
+    ASSERT_TRUE(position->IsEditing());
+    EXPECT_EQ(0,position->EditingPart());
+    position->CancelEditing();
+    for(int i=0;i<5;++i) wxYield();
+    EXPECT_EQ(position,wxWindow::FindFocus()) << "back to the readout, not on to the slider";
+    // A digit typed: the box opens with it
+    {wxKeyEvent ch(wxEVT_CHAR);ch.m_keyCode='4';ch.m_uniChar='4';ch.SetEventObject(position);
+     position->GetEventHandler()->ProcessEvent(ch);}
+    ASSERT_TRUE(position->IsEditing());
+    EXPECT_EQ("4",position->EditBox()->GetValue());
+    position->EditBox()->ChangeValue("40");position->CommitEditing();
+    EXPECT_EQ(40,c->videoController->GetFrameN());
+    for(int i=0;i<5;++i) wxYield();
+    EXPECT_EQ(position,wxWindow::FindFocus());
+    // Keys it has no use for are the video's
+    key(position,WXK_RIGHT);
+    EXPECT_EQ(41,c->videoController->GetFrameN());
+
+    // The play bar: Tab on, the arrows along it
+    key(position,WXK_TAB);
+    for(int i=0;i<5;++i) wxYield();
+    ASSERT_EQ(play_bar,wxWindow::FindFocus());
+    auto keyed=static_cast<KeyToolBar*>(play_bar);
+    EXPECT_EQ(play_bar->GetToolByPos(0)->GetId(),keyed->KeyTool());
+    key(play_bar,WXK_RIGHT);
+    EXPECT_EQ(play_bar->GetToolByPos(1)->GetId(),keyed->KeyTool());
+    EXPECT_EQ(41,c->videoController->GetFrameN()) << "the arrow went along the bar, not to the next frame";
+}
+
+TEST_F(ordinary_edit, flat_check_boxes_and_buttons_keep_space_and_enter_from_hotkeys_above_them) {
+    // As the edit box is: a window above that runs a hotkey for every key it
+    // is given (Space plays the video, Enter goes to the next line)
+    auto frame=new wxFrame(nullptr,-1,"keys above");
+    BOOST_SCOPE_EXIT_ALL(&){ delete frame; };
+    auto above=new wxPanel(frame);
+    std::vector<int> taken;
+    above->Bind(wxEVT_CHAR_HOOK,[&](wxKeyEvent &e){ taken.push_back(e.GetKeyCode()); });
+    auto check=new FlatCheck(above,"&Comment");
+    auto button=new FlatButton(above,"Go");
+    int toggled=0,pressed=0;
+    check->Bind(wxEVT_CHECKBOX,[&](wxCommandEvent&){ ++toggled; });
+    button->Bind(wxEVT_BUTTON,[&](wxCommandEvent&){ ++pressed; });
+    {auto s=new wxBoxSizer(wxVERTICAL);s->Add(check);s->Add(button);above->SetSizer(s);}
+    frame->SetSize(300,200);frame->Show();above->SetSize(frame->GetClientSize());above->Layout();
+    for(int i=0;i<10;++i) wxYield();
+    auto key=[&](wxWindow *w,int code){
+        wxKeyEvent e(wxEVT_CHAR_HOOK);e.m_keyCode=code;e.SetEventObject(w);w->GetEventHandler()->ProcessEvent(e);
+    };
+    check->SetFocus();
+    for(int i=0;i<5;++i) wxYield();
+    if(wxWindow::FindFocus()!=check)
+        GTEST_SKIP() << "the toolkit tells of no focus here, as wxOSX does where the window is not the key window";
+    key(check,WXK_SPACE);
+    EXPECT_EQ(1,toggled);EXPECT_TRUE(check->GetValue());
+    EXPECT_TRUE(taken.empty()) << "Space ticked the box, it didn't play the video";
+    key(check,WXK_RETURN);
+    EXPECT_EQ((std::vector<int>{WXK_RETURN}),taken) << "Enter is not the box's";
+    button->SetFocus();
+    for(int i=0;i<5;++i) wxYield();
+    ASSERT_EQ(button,wxWindow::FindFocus());
+    key(button,WXK_RETURN);key(button,WXK_SPACE);key(button,WXK_NUMPAD_ENTER);
+    EXPECT_EQ(3,pressed);
+    EXPECT_EQ(1u,taken.size());
+    key(button,'X');
+    EXPECT_EQ(2u,taken.size()) << "the keys it has no use for go on up";
+    // Without the keyboard, Space is not the box's
+    key(check,WXK_SPACE);
+    EXPECT_EQ(1,toggled);
 }

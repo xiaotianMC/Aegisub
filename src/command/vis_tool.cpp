@@ -226,6 +226,70 @@ namespace {
 		STR_DISP("Freehand smooth")
 		STR_HELP("Draw a smoothed freehand shape")
 	};
+
+	/// The arrows with Ctrl+Shift (a pixel) or Alt+Shift (ten) move what
+	/// the visual tool has selected (docs/keyboard-regions.md)
+	template<int DX, int DY>
+	struct visual_nudge_command : public Command {
+		CMD_TYPE(COMMAND_VALIDATE)
+
+		bool Validate(const agi::Context *c) override {
+			return c->project->VideoProvider() && c->videoDisplay;
+		}
+
+		void operator()(agi::Context *c) override {
+			if (Validate(c)) c->videoDisplay->NudgeTool(Vector2D(DX, DY));
+		}
+	};
+
+	struct visual_nudge_left final : public visual_nudge_command<-1, 0> {
+		CMD_NAME("video/tool/nudge/left")
+		STR_MENU("Nudge left")
+		STR_DISP("Nudge left")
+		STR_HELP("Move what the visual tool has selected a pixel of the script to the left: the selected lines in Standard, the selected points in the others")
+	};
+	struct visual_nudge_right final : public visual_nudge_command<1, 0> {
+		CMD_NAME("video/tool/nudge/right")
+		STR_MENU("Nudge right")
+		STR_DISP("Nudge right")
+		STR_HELP("Move what the visual tool has selected a pixel of the script to the right: the selected lines in Standard, the selected points in the others")
+	};
+	struct visual_nudge_up final : public visual_nudge_command<0, -1> {
+		CMD_NAME("video/tool/nudge/up")
+		STR_MENU("Nudge up")
+		STR_DISP("Nudge up")
+		STR_HELP("Move what the visual tool has selected a pixel of the script up: the selected lines in Standard, the selected points in the others")
+	};
+	struct visual_nudge_down final : public visual_nudge_command<0, 1> {
+		CMD_NAME("video/tool/nudge/down")
+		STR_MENU("Nudge down")
+		STR_DISP("Nudge down")
+		STR_HELP("Move what the visual tool has selected a pixel of the script down: the selected lines in Standard, the selected points in the others")
+	};
+	struct visual_nudge_left_large final : public visual_nudge_command<-10, 0> {
+		CMD_NAME("video/tool/nudge/left/large")
+		STR_MENU("Nudge left by 10")
+		STR_DISP("Nudge left by 10")
+		STR_HELP("Move what the visual tool has selected ten pixels of the script to the left")
+	};
+	struct visual_nudge_right_large final : public visual_nudge_command<10, 0> {
+		CMD_NAME("video/tool/nudge/right/large")
+		STR_MENU("Nudge right by 10")
+		STR_DISP("Nudge right by 10")
+		STR_HELP("Move what the visual tool has selected ten pixels of the script to the right")
+	};
+	struct visual_nudge_up_large final : public visual_nudge_command<0, -10> {
+		CMD_NAME("video/tool/nudge/up/large")
+		STR_MENU("Nudge up by 10")
+		STR_DISP("Nudge up by 10")
+		STR_HELP("Move what the visual tool has selected ten pixels of the script up")
+	};
+	struct visual_nudge_down_large final : public visual_nudge_command<0, 10> {
+		CMD_NAME("video/tool/nudge/down/large")
+		STR_MENU("Nudge down by 10")
+		STR_DISP("Nudge down by 10")
+		STR_HELP("Move what the visual tool has selected ten pixels of the script down")
+	};
 }
 
 namespace cmd {
@@ -250,5 +314,14 @@ namespace cmd {
 		reg(std::make_unique<visual_mode_vclip_remove>());
 		reg(std::make_unique<visual_mode_vclip_freehand>());
 		reg(std::make_unique<visual_mode_vclip_freehand_smooth>());
+
+		reg(std::make_unique<visual_nudge_left>());
+		reg(std::make_unique<visual_nudge_right>());
+		reg(std::make_unique<visual_nudge_up>());
+		reg(std::make_unique<visual_nudge_down>());
+		reg(std::make_unique<visual_nudge_left_large>());
+		reg(std::make_unique<visual_nudge_right_large>());
+		reg(std::make_unique<visual_nudge_up_large>());
+		reg(std::make_unique<visual_nudge_down_large>());
 	}
 }

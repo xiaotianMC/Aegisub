@@ -422,9 +422,11 @@ void FrameMain::SetUpKeyboardRegions(wxWindow *backdrop) {
 	list.push_back({context->subsGrid, {}, [this] { context->subsGrid->SetFocus(); return true; }});
 	list.push_back({editBox, {}, [this] { return flat::GoHome(editBox); }});
 	list.push_back({audioBox, [this] { return audioBox->IsShownOnScreen() && context->project->AudioProvider(); },
-		[this] { audioBox->GetDisplay()->SetFocus(); return true; }});
+		[this] { audioBox->GetDisplay()->SetFocus(); return true; },
+		[this](wxKeyEvent &e) { return hotkey::check("Audio", context.get(), e); }});
 	list.push_back({videoBox, [this] { return videoBox->IsShownOnScreen() && context->project->VideoProvider() && context->videoDisplay; },
-		[this] { context->videoDisplay->SetFocus(); return true; }});
+		[this] { context->videoDisplay->SetFocus(); return true; },
+		[this](wxKeyEvent &e) { return hotkey::check("Video", context.get(), e); }});
 	// The side panel, opened on the way when it is folded or hidden: the
 	// style panel or the script panel in its place
 	list.push_back({stylePanel, [this] { return !panelEdge->ScriptShown(); },

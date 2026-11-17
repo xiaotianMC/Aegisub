@@ -42,8 +42,23 @@ VisualToolCross::~VisualToolCross() {
 }
 
 void VisualToolCross::OnDoubleClick() {
-	Vector2D d = ToScriptCoords(mouse_pos) - GetLinePosition(active_line);
+	Shift(ToScriptCoords(mouse_pos) - GetLinePosition(active_line));
+	Commit(_("positioning"));
+}
 
+bool VisualToolCross::Nudge(Vector2D delta) {
+	if (!active_line || HasEdit() || !BeginEdit()) return false;
+	try {
+		Shift(delta);
+		Commit(_("positioning"));
+		EndNudge();
+	}
+	catch (...) { Cancel(); throw; }
+	parent->Render();
+	return true;
+}
+
+void VisualToolCross::Shift(Vector2D d) {
 	for (auto line : SelectedLines()) {
 		Vector2D p1, p2;
 		int t1, t2;
@@ -59,8 +74,6 @@ void VisualToolCross::OnDoubleClick() {
 		if (Vector2D org = GetLineOrigin(line))
 			SetOverride(line, "\\org", "(" + Text(org + d) + ")");
 	}
-
-	Commit(_("positioning"));
 }
 
 void VisualToolCross::Draw() {

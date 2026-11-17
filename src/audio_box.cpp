@@ -197,6 +197,32 @@ void AudioBox::ResetLevels() {
 	SetVolume(AudioLevels::neutral_position);
 }
 
+void AudioBox::ZoomHorizontally(int steps) {
+	int level = mid(-50, audioDisplay->GetZoomLevel() + steps, 30);
+	if (auto timing = controller->GetTimingController()) {
+		TimeRange line = timing->GetActiveLineRange();
+		audioDisplay->SetZoomLevelAround(level, (line.begin() + line.end()) / 2);
+	}
+	else
+		audioDisplay->SetZoomLevel(level);
+	OPT_SET("Audio/Zoom/Horizontal")->SetInt(level);
+}
+
+void AudioBox::ResetHorizontalZoom() {
+	ZoomHorizontally(-audioDisplay->GetZoomLevel());
+}
+
+void AudioBox::StepVerticalZoom(int delta) {
+	SetVerticalZoom(levels->GetZoom() + delta);
+}
+
+void AudioBox::StepVolume(int delta) {
+	if (levels->IsLinked())
+		SetVerticalZoom(levels->GetZoom() + delta);
+	else
+		SetVolume(levels->GetVolume() + delta);
+}
+
 void AudioBox::OnVerticalLink(agi::OptionValue const& opt) {
 	levels->SetLinked(opt.GetBool());
 	if (opt.GetBool())

@@ -47,6 +47,28 @@
 		"grid/line/next" : [
 			"Down"
 		],
+		"audio/zoom/in" : [
+			"Ctrl-=",
+			"Ctrl-+"
+		],
+		"audio/zoom/out" : [
+			"Ctrl--"
+		],
+		"audio/zoom/reset" : [
+			"Ctrl-0"
+		],
+		"audio/zoom/vertical/in" : [
+			"Ctrl-Up"
+		],
+		"audio/zoom/vertical/out" : [
+			"Ctrl-Down"
+		],
+		"audio/volume/up" : [
+			"Shift-Up"
+		],
+		"audio/volume/down" : [
+			"Shift-Down"
+		],
 		"app/toggle/global_hotkeys" : [
 			"Ctrl-KP_Multiply"
 		],
@@ -248,6 +270,12 @@
 		"edit/complete" : [
 			"Ctrl-J"
 		],
+		"edit/time_unit/time" : [
+			"Alt-I"
+		],
+		"edit/time_unit/frame" : [
+			"Alt-R"
+		],
 		"edit/color/outline" : [
 			"Alt-3"
 		],
@@ -332,6 +360,43 @@
 		]
 	},
 	"Video" : {
+		"video/zoom/in" : [
+			"Ctrl-=",
+			"Ctrl-+"
+		],
+		"video/zoom/out" : [
+			"Ctrl--"
+		],
+		"video/zoom/100" : [
+			"Ctrl-0"
+		],
+		"video/play/line" : [
+			"R"
+		],
+		"video/tool/nudge/left" : [
+			"Ctrl-Shift-Left"
+		],
+		"video/tool/nudge/right" : [
+			"Ctrl-Shift-Right"
+		],
+		"video/tool/nudge/up" : [
+			"Ctrl-Shift-Up"
+		],
+		"video/tool/nudge/down" : [
+			"Ctrl-Shift-Down"
+		],
+		"video/tool/nudge/left/large" : [
+			"Alt-Shift-Left"
+		],
+		"video/tool/nudge/right/large" : [
+			"Alt-Shift-Right"
+		],
+		"video/tool/nudge/up/large" : [
+			"Alt-Shift-Up"
+		],
+		"video/tool/nudge/down/large" : [
+			"Alt-Shift-Down"
+		],
 		"video/line/prev" : [
 			"Up"
 		],

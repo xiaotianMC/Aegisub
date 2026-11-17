@@ -8,6 +8,7 @@
 #include <libaegisub/signal.h>
 
 #include <functional>
+#include <vector>
 
 #include <wx/window.h>
 
@@ -47,6 +48,17 @@ public:
 	static wxString ZoomText(int position);
 	static wxString VolumeText(int position);
 
+	/// The part the keyboard is on (docs/keyboard-regions.md): Left and
+	/// Right go from part to part, Up and Down (Page Up and Page Down ten at
+	/// a time) move a track, Space and Enter press a button
+	Part KeyPart() const { return key_part; }
+	/// A key pressed with the keyboard on it. @return Whether it was one of them
+	bool Key(int key, int modifiers);
+
+	/// Tab stops here, a click doesn't take the keyboard
+	bool AcceptsFocus() const override { return false; }
+	bool AcceptsFocusFromKeyboard() const override { return IsEnabled(); }
+
 private:
 	Callbacks callbacks;
 	agi::signal::Connection theme_changed;
@@ -55,6 +67,7 @@ private:
 	bool linked = false;
 
 	Part hover = Part::None;
+	Part key_part = Part::Zoom;
 	Part dragging = Part::None;
 	int drag_last_y = 0;
 	/// Unrounded position while dragging, so slow (Shift) drags add up
@@ -70,5 +83,8 @@ private:
 	void OnPaint(wxPaintEvent &);
 	void OnMouse(wxMouseEvent &event);
 	void OnWheel(wxMouseEvent &event);
+	void OnKey(wxKeyEvent &event);
+	/// The parts shown, in the order the keys go through them
+	std::vector<Part> KeyParts() const;
 	void UpdateToolTip();
 };

@@ -36,7 +36,12 @@ public:
 	/// As a click on a part does: 0 time, 1 frames
 	void Choose(int part);
 
-	/// Clicks leave the keyboard where it was
+	/// A key pressed with the keyboard on it (docs/keyboard-regions.md):
+	/// Space or Enter switches, Left chooses time, Right frames.
+	/// @return Whether it was one of them
+	bool Key(int key, int modifiers);
+
+	/// Clicks leave the keyboard where it was; Tab stops here
 	bool AcceptsFocus() const override { return false; }
-	bool AcceptsFocusFromKeyboard() const override { return false; }
+	bool AcceptsFocusFromKeyboard() const override { return IsEnabled(); }
 };

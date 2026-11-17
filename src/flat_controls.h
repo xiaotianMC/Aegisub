@@ -15,6 +15,7 @@
 #include <wx/stattext.h>
 #include <wx/window.h>
 
+class wxGraphicsContext;
 class wxMouseEvent;
 class wxSizer;
 class wxStaticText;
@@ -45,6 +46,8 @@ void DrawCheck(wxDC &dc, wxWindow const *window, wxRect const& box, int state, P
 /// filled ring, so that no part of it falls half outside the window, as a
 /// pen's line along the edge does at some scales
 void DrawOutline(wxDC &dc, wxRect const& rect, double radius, int thick, wxColour const& colour);
+/// The same on a graphics context
+void DrawOutline(wxGraphicsContext &gc, wxRect const& rect, double radius, int thick, wxColour const& colour);
 
 /// Where the keyboard goes when a field is left: the subtitle text
 void SetHome(wxWindow *home);

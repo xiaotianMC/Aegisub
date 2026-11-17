@@ -268,6 +268,9 @@ public:
 	/// The zoom levels generally go from +30 to -30. It is possible to zoom in
 	/// more than +30.
 	void SetZoomLevel(int new_zoom_level);
+	/// As SetZoomLevel, holding @p anchor_time (ms) where it is on the
+	/// screen when it is in view; otherwise as SetZoomLevel does
+	void SetZoomLevelAround(int new_zoom_level, int anchor_time);
 
 	/// @brief Zoom so that exactly @p begin..@p end (ms) fills the display
 	///

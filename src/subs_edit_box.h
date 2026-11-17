@@ -248,4 +248,10 @@ public:
 	/// Ask for the active line's Banner or Scroll effect, as the Effect
 	/// field's list offers, and set it for the selected lines
 	void EditScrollEffect();
+	/// The switch between times and frame numbers beside the times, for
+	/// its commands (docs/keyboard-regions.md)
+	bool TimesByFrame() const;
+	bool FramesAllowed() const;
+	/// As choosing a half of the switch does
+	void ShowTimesByFrame(bool by_frame);
 };

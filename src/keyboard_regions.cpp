@@ -6,6 +6,7 @@
 #include "flat_controls.h"
 #include "style_panel.h"
 #include "theme.h"
+#include "toolbar_keys.h"
 
 #include <algorithm>
 
@@ -94,7 +95,9 @@ class Filter final : public wxEventFilter {
 			if (by_keys) CallAfterRedraw();
 		}
 		else if (type == wxEVT_TOOL) {
-			if (auto bar = dynamic_cast<wxToolBar*>(event.GetEventObject()))
+			// A key pressed it: the keyboard stays on the bar
+			auto keyed = dynamic_cast<KeyToolBar*>(event.GetEventObject());
+			if (auto bar = dynamic_cast<wxToolBar*>(event.GetEventObject()); bar && !(keyed && keyed->PressingByKeys()))
 				AfterClick(bar);
 		}
 		else if (type == wxEVT_NAVIGATION_KEY) {
@@ -141,10 +144,11 @@ void Install() {
 	wxEvtHandler::AddFilter(new Filter);
 }
 
-/// Mouse-only parts, never stopped at: a toolbar's buttons have no keys,
-/// and scroll bars are worked with the window's own keys
+/// Mouse-only parts, never stopped at: a toolbar whose buttons have no keys
+/// (one the keyboard goes along is a stop), and scroll bars, worked with
+/// the window's own keys
 bool Skipped(wxWindow *window) {
-	return dynamic_cast<wxToolBar*>(window) || dynamic_cast<wxScrollBar*>(window);
+	return (dynamic_cast<wxToolBar*>(window) && !window->AcceptsFocusFromKeyboard()) || dynamic_cast<wxScrollBar*>(window);
 }
 
 /// A window holding others, gone into rather than stopped at
@@ -301,6 +305,13 @@ bool HandleKey(wxWindow *window, wxKeyEvent &event) {
 	if (key == WXK_ESCAPE && !event.HasAnyModifiers())
 		return flat::GoHome(window);
 	return false;
+}
+
+bool OtherKeys(wxWindow *window, wxKeyEvent &event) {
+	if (HandleKey(window, event)) return true;
+	int region = RegionOf(window);
+	if (region < 0 || !list[region].keys) return false;
+	return list[region].keys(event);
 }
 
 }

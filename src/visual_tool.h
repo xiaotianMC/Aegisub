@@ -21,6 +21,7 @@
 #include "vector2d.h"
 #include "options.h"
 #include "subtitle_project_access.h"
+#include <chrono>
 #include <map>
 
 #include <libaegisub/owning_intrusive_list.h>
@@ -58,6 +59,11 @@ private:
 	std::set<int> dirty;
 	std::vector<int> targets;
 	std::map<int, AssDialogueBase> originals;
+	/// The commit the last edit made, and the one the keys' last nudge made,
+	/// which the next nudge soon after adds to
+	int last_commit = -1;
+	int nudge_commit = -1;
+	std::chrono::steady_clock::time_point last_nudge;
 	void ValidateOriginals() const;
 	wxString edit_message;
 	bool changing_selection = false;
@@ -142,7 +148,11 @@ protected:
 	bool BeginEdit(int include_id = 0);
 	bool EditCurrent() const;
 	bool HasEdit() const { return interaction.has_value(); }
-	void EndEdit(bool apply);
+	/// @param amend_id A commit to add this edit to, as AssFile::Commit takes
+	void EndEdit(bool apply, int amend_id = -1);
+	/// End the edit a nudge made (docs/keyboard-regions.md): the nudges a
+	/// key's repeats make, under a second apart, are one step to undo
+	void EndNudge();
 	void SelectLine(int id);
 	void SelectFeature(int id, bool clear);
 	void DeselectFeature(int id);
@@ -188,6 +198,10 @@ public:
 	// Called by VideoDisplay to set the video's position and size in the canvas in GL coordinates
 	virtual void SetDisplayArea(int x, int y, int w, int h);
 	virtual void SetToolbar(wxToolBar *) { }
+	/// Move what the tool has selected by @p delta pixels of the script, as
+	/// dragging it would, one step to undo (docs/keyboard-regions.md).
+	/// @return Whether there was anything to move
+	virtual bool Nudge([[maybe_unused]] Vector2D delta) { return false; }
 	virtual void SetSubTool([[maybe_unused]] int subtool) { }
 	virtual int GetSubTool() { return 0; }
 	virtual ~VisualToolBase();
@@ -243,6 +257,9 @@ public:
 	/// @brief Handler for all mouse events
 	/// @param event Shockingly enough, the mouse event
 	void OnMouseEvent(wxMouseEvent &event) override;
+	/// The selected features, or the only one when there is one (the
+	/// rotations' origin), moved as a drag moves them
+	bool Nudge(Vector2D delta) override;
 
 	/// @brief Constructor
 	/// @param parent The VideoDisplay to use for coordinate conversion

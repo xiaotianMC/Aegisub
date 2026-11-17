@@ -90,6 +90,17 @@ public:
 	void SetVolume(int pos);
 	/// Both back to neutral (the reset button)
 	void ResetLevels();
+	/// The keys' steps (docs/keyboard-regions.md): @p steps zoom levels in
+	/// (negative: out), as notches of the wheel, holding the active line
+	/// where it is when it is in view
+	void ZoomHorizontally(int steps);
+	/// The default horizontal zoom
+	void ResetHorizontalZoom();
+	/// Vertical zoom up or down by @p delta positions; volume with it when linked
+	void StepVerticalZoom(int delta);
+	/// Volume up or down by @p delta positions; when linked, the one track
+	/// sets both, as dragging it does
+	void StepVolume(int delta);
 	AudioLevels *Levels() const { return levels; }
 
 	AudioBox(wxWindow *parent, agi::Context *context);

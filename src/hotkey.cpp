@@ -100,6 +100,33 @@ namespace {
 		{nullptr}
 	};
 
+	const char *added_hotkeys_more_keys[][3] = {
+		{"audio/zoom/in", "Audio", "Ctrl-="},
+		{"audio/zoom/in", "Audio", "Ctrl-+"},
+		{"audio/zoom/out", "Audio", "Ctrl--"},
+		{"audio/zoom/reset", "Audio", "Ctrl-0"},
+		{"audio/zoom/vertical/in", "Audio", "Ctrl-Up"},
+		{"audio/zoom/vertical/out", "Audio", "Ctrl-Down"},
+		{"audio/volume/up", "Audio", "Shift-Up"},
+		{"audio/volume/down", "Audio", "Shift-Down"},
+		{"video/zoom/in", "Video", "Ctrl-="},
+		{"video/zoom/in", "Video", "Ctrl-+"},
+		{"video/zoom/out", "Video", "Ctrl--"},
+		{"video/zoom/100", "Video", "Ctrl-0"},
+		{"video/play/line", "Video", "R"},
+		{"video/tool/nudge/left", "Video", "Ctrl-Shift-Left"},
+		{"video/tool/nudge/right", "Video", "Ctrl-Shift-Right"},
+		{"video/tool/nudge/up", "Video", "Ctrl-Shift-Up"},
+		{"video/tool/nudge/down", "Video", "Ctrl-Shift-Down"},
+		{"video/tool/nudge/left/large", "Video", "Alt-Shift-Left"},
+		{"video/tool/nudge/right/large", "Video", "Alt-Shift-Right"},
+		{"video/tool/nudge/up/large", "Video", "Alt-Shift-Up"},
+		{"video/tool/nudge/down/large", "Video", "Alt-Shift-Down"},
+		{"edit/time_unit/time", "Subtitle Edit Box", "Alt-I"},
+		{"edit/time_unit/frame", "Subtitle Edit Box", "Alt-R"},
+		{nullptr}
+	};
+
 	void migrate_hotkeys(const char *added[][3]) {
 		auto hk_map = hotkey::inst->GetHotkeyMap();
 		bool changed = false;
@@ -239,6 +266,14 @@ void init() {
 	if (boost::find(migrations, "keys in regions") == end(migrations)) {
 		migrate_hotkeys(added_hotkeys_keys_in_regions);
 		migrations.emplace_back("keys in regions");
+	}
+
+	// Zoom and volume in the audio, zoom, the line's playback and nudging
+	// the visual tools' points in the video, and the time unit in the edit
+	// box (docs/keyboard-regions.md); a key taken in its context stays
+	if (boost::find(migrations, "more keys in regions") == end(migrations)) {
+		migrate_hotkeys(added_hotkeys_more_keys);
+		migrations.emplace_back("more keys in regions");
 	}
 
 	// The styling assistant is gone: the style box takes typed letters

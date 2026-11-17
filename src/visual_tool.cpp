@@ -190,7 +190,7 @@ void VisualToolBase::ValidateOriginals() const {
 	if (found != originals.size()) throw std::out_of_range("Visual target removed");
 }
 
-void VisualToolBase::EndEdit(bool apply) {
+void VisualToolBase::EndEdit(bool apply, int amend_id) {
 	// End registration even if rendering or a normal Commit observer throws.
 	BOOST_SCOPE_EXIT_ALL(this) { interaction.reset(); dirty.clear(); targets.clear(); originals.clear(); edit_message.clear(); };
 	auto provider = c->project->VideoProvider();
@@ -216,9 +216,20 @@ void VisualToolBase::EndEdit(bool apply) {
 		file_changed_connection.Block();
 		BOOST_SCOPE_EXIT_ALL(this) { file_changed_connection.Unblock(); };
 		interaction->UpdateRows(updates);
-		interaction->Commit(edit_message.empty() ? _("visual typesetting") : edit_message, type);
+		last_commit = interaction->Commit(edit_message.empty() ? _("visual typesetting") : edit_message, type, amend_id);
 	}
 	previewing = false;
+}
+
+void VisualToolBase::EndNudge() {
+	auto now = std::chrono::steady_clock::now();
+	// Onto the last nudge's step when nothing of this tool's came between;
+	// the history adds to it only when it is still the last step
+	bool join = nudge_commit >= 0 && last_commit == nudge_commit && now - last_nudge < std::chrono::seconds(1);
+	EndEdit(true, join ? nudge_commit : -1);
+	nudge_commit = last_commit;
+	last_nudge = now;
+	RefreshRows();
 }
 
 void VisualToolBase::Cancel() {
@@ -468,6 +479,34 @@ void VisualTool<FeatureType>::MouseEvent(wxMouseEvent &event) {
 	if (!holding && !dragging && HasEdit()) { EndEdit(true); RefreshRows(); }
 	parent->Render();
 
+}
+
+template<class FeatureType>
+bool VisualTool<FeatureType>::Nudge(Vector2D delta) {
+	if (dragging || holding || HasEdit()) return false;
+	std::vector<FeatureType *> moving(sel_features.begin(), sel_features.end());
+	if (moving.empty() && features.size() == 1) moving.push_back(&features.front());
+	if (moving.empty()) return false;
+	// A feature of no line's (a corner, a point of the clip, the origin)
+	// is the active line's
+	for (auto feature : moving)
+		if (!feature->line_id && !active_line) return false;
+	if (!BeginEdit(moving.front()->line_id)) return false;
+	try {
+		// The features are where they are on the screen
+		Vector2D step = FromScriptCoords(delta) - FromScriptCoords(Vector2D(0, 0));
+		for (auto feature : moving) {
+			feature->StartDrag();
+			feature->UpdateDrag(step, false);
+		}
+		for (auto feature : moving)
+			UpdateDrag(feature);
+		Commit();
+		EndNudge();
+	}
+	catch (...) { Cancel(); throw; }
+	parent->Render();
+	return true;
 }
 
 template<class FeatureType>

@@ -3,6 +3,7 @@
 
 #include "time_unit_toggle.h"
 
+#include "keyboard_regions.h"
 #include "theme.h"
 
 #include <algorithm>
@@ -19,7 +20,7 @@ wxString PartLabel(int part) {
 }
 
 TimeUnitToggle::TimeUnitToggle(wxWindow *parent)
-: wxWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE | wxFULL_REPAINT_ON_RESIZE)
+: wxWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE | wxFULL_REPAINT_ON_RESIZE | wxWANTS_CHARS)
 {
 	SetBackgroundStyle(wxBG_STYLE_PAINT);
 	int widest = std::max(GetTextExtent(PartLabel(0)).x, GetTextExtent(PartLabel(1)).x);
@@ -28,7 +29,30 @@ TimeUnitToggle::TimeUnitToggle(wxWindow *parent)
 	Bind(wxEVT_PAINT, &TimeUnitToggle::OnPaint, this);
 	for (auto type : {wxEVT_LEFT_DOWN, wxEVT_LEFT_DCLICK, wxEVT_MOTION, wxEVT_ENTER_WINDOW, wxEVT_LEAVE_WINDOW})
 		Bind(type, &TimeUnitToggle::OnMouse, this);
+	Bind(wxEVT_CHAR_HOOK, [this](wxKeyEvent &event) {
+		if (IsEnabled() && Key(event.GetKeyCode(), event.GetModifiers())) return;
+		if (regions::OtherKeys(this, event)) return;
+		event.Skip();
+	});
+	Bind(wxEVT_SET_FOCUS, [this](wxFocusEvent &e) { Refresh(false); e.Skip(); });
+	Bind(wxEVT_KILL_FOCUS, [this](wxFocusEvent &e) { Refresh(false); e.Skip(); });
 	theme_changed = theme::AddChangeListener([this] { Refresh(false); });
+}
+
+bool TimeUnitToggle::Key(int key, int modifiers) {
+	if (modifiers != wxMOD_NONE) return false;
+	switch (key) {
+		case WXK_SPACE: case WXK_RETURN: case WXK_NUMPAD_ENTER:
+			Choose(by_frame ? 0 : 1);
+			return true;
+		case WXK_LEFT: case WXK_NUMPAD_LEFT:
+			Choose(0);
+			return true;
+		case WXK_RIGHT: case WXK_NUMPAD_RIGHT:
+			Choose(1);
+			return true;
+	}
+	return false;
 }
 
 void TimeUnitToggle::SetByFrame(bool on) {
@@ -75,10 +99,11 @@ void TimeUnitToggle::OnPaint(wxPaintEvent &) {
 	dc.SetBrush(wxBrush(surface));
 	dc.DrawRectangle(wxPoint(0, 0), size);
 
-	// One rounded field; the chosen part a raised, tinted pill inside it
+	// One rounded field; the chosen part a raised, tinted pill inside it.
+	// The accent round it while the keyboard is on it, as the fields have
 	int radius = FromDIP(5);
 	dc.SetBrush(wxBrush(field));
-	dc.SetPen(wxPen(line, std::max(1, FromDIP(1))));
+	dc.SetPen(wxPen(HasFocus() ? accent : line, std::max(1, FromDIP(1))));
 	dc.DrawRoundedRectangle(wxRect(wxPoint(0, 0), size), radius);
 
 	dc.SetFont(GetFont());

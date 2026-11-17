@@ -554,6 +554,92 @@ struct audio_reset_levels final : public Command {
 	}
 };
 
+/// Keys for what the wheel, the scroll bar's ends and the level tracks do
+/// (docs/keyboard-regions.md)
+struct validate_audio_box : public Command {
+	CMD_TYPE(COMMAND_VALIDATE)
+	bool Validate(const agi::Context *c) override {
+		return c->audioBox && c->project->AudioProvider();
+	}
+};
+
+struct audio_zoom_in final : public validate_audio_box {
+	CMD_NAME("audio/zoom/in")
+	STR_MENU("Zoom audio in")
+	STR_DISP("Zoom audio in")
+	STR_HELP("Zoom the waveform in, a step as a notch of the wheel does, keeping the current line where it is")
+
+	void operator()(agi::Context *c) override {
+		c->audioBox->ZoomHorizontally(1);
+	}
+};
+
+struct audio_zoom_out final : public validate_audio_box {
+	CMD_NAME("audio/zoom/out")
+	STR_MENU("Zoom audio out")
+	STR_DISP("Zoom audio out")
+	STR_HELP("Zoom the waveform out, a step as a notch of the wheel does, keeping the current line where it is")
+
+	void operator()(agi::Context *c) override {
+		c->audioBox->ZoomHorizontally(-1);
+	}
+};
+
+struct audio_zoom_reset final : public validate_audio_box {
+	CMD_NAME("audio/zoom/reset")
+	STR_MENU("Reset audio zoom")
+	STR_DISP("Reset audio zoom")
+	STR_HELP("Zoom the waveform back to its default scale")
+
+	void operator()(agi::Context *c) override {
+		c->audioBox->ResetHorizontalZoom();
+	}
+};
+
+struct audio_zoom_vertical_in final : public validate_audio_box {
+	CMD_NAME("audio/zoom/vertical/in")
+	STR_MENU("Taller waveform")
+	STR_DISP("Taller waveform")
+	STR_HELP("Zoom the waveform in vertically; with the vertical zoom and volume linked, the audio gets louder with it")
+
+	void operator()(agi::Context *c) override {
+		c->audioBox->StepVerticalZoom(5);
+	}
+};
+
+struct audio_zoom_vertical_out final : public validate_audio_box {
+	CMD_NAME("audio/zoom/vertical/out")
+	STR_MENU("Shorter waveform")
+	STR_DISP("Shorter waveform")
+	STR_HELP("Zoom the waveform out vertically; with the vertical zoom and volume linked, the audio gets quieter with it")
+
+	void operator()(agi::Context *c) override {
+		c->audioBox->StepVerticalZoom(-5);
+	}
+};
+
+struct audio_volume_up final : public validate_audio_box {
+	CMD_NAME("audio/volume/up")
+	STR_MENU("Audio volume up")
+	STR_DISP("Audio volume up")
+	STR_HELP("Play the audio louder; with the vertical zoom and volume linked, the waveform grows with it")
+
+	void operator()(agi::Context *c) override {
+		c->audioBox->StepVolume(5);
+	}
+};
+
+struct audio_volume_down final : public validate_audio_box {
+	CMD_NAME("audio/volume/down")
+	STR_MENU("Audio volume down")
+	STR_DISP("Audio volume down")
+	STR_HELP("Play the audio quieter; with the vertical zoom and volume linked, the waveform shrinks with it")
+
+	void operator()(agi::Context *c) override {
+		c->audioBox->StepVolume(-5);
+	}
+};
+
 struct audio_karaoke final : public Command {
 	CMD_NAME("audio/karaoke")
 	CMD_ICON(kara_mode)
@@ -608,5 +694,12 @@ namespace cmd {
 		reg(std::make_unique<audio_reset_levels>());
 		reg(std::make_unique<audio_view_spectrum>());
 		reg(std::make_unique<audio_view_waveform>());
+		reg(std::make_unique<audio_volume_down>());
+		reg(std::make_unique<audio_volume_up>());
+		reg(std::make_unique<audio_zoom_in>());
+		reg(std::make_unique<audio_zoom_out>());
+		reg(std::make_unique<audio_zoom_reset>());
+		reg(std::make_unique<audio_zoom_vertical_in>());
+		reg(std::make_unique<audio_zoom_vertical_out>());
 	}
 }

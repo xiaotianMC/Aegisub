@@ -5,6 +5,7 @@
 
 #include "format.h"
 #include "flat_controls.h"
+#include "keyboard_regions.h"
 #include "theme.h"
 
 #include <algorithm>
@@ -23,7 +24,7 @@ constexpr double max_zoom = 10;
 }
 
 VideoZoomControl::VideoZoomControl(wxWindow *parent)
-: wxWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE | wxFULL_REPAINT_ON_RESIZE)
+: wxWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE | wxFULL_REPAINT_ON_RESIZE | wxWANTS_CHARS)
 {
 	SetBackgroundStyle(wxBG_STYLE_PAINT);
 	int value_width = GetTextExtent("187.5%").x + FromDIP(24);
@@ -35,8 +36,45 @@ VideoZoomControl::VideoZoomControl(wxWindow *parent)
 	Bind(wxEVT_MOUSEWHEEL, [this](wxMouseEvent &e) {
 		if (int steps = flat::WheelSteps(e, wheel_remainder)) Wheel(steps);
 	});
+	Bind(wxEVT_CHAR_HOOK, &VideoZoomControl::OnKey, this);
+	Bind(wxEVT_SET_FOCUS, [this](wxFocusEvent &e) { Refresh(false); e.Skip(); });
+	Bind(wxEVT_KILL_FOCUS, [this](wxFocusEvent &e) { Refresh(false); e.Skip(); });
 	theme_changed = theme::AddChangeListener([this] { Refresh(false); });
 	UpdateToolTip();
+}
+
+bool VideoZoomControl::Key(int key, int modifiers) {
+	// Shift is how + is typed on many keyboards
+	if (modifiers & ~wxMOD_SHIFT) return false;
+	bool plain = modifiers == wxMOD_NONE;
+	switch (key) {
+		case WXK_LEFT: case WXK_NUMPAD_LEFT:
+			if (!plain) return false;
+			[[fallthrough]];
+		case '-': case WXK_SUBTRACT: case WXK_NUMPAD_SUBTRACT:
+			Press(Part::Out);
+			return true;
+		case WXK_RIGHT: case WXK_NUMPAD_RIGHT:
+			if (!plain) return false;
+			[[fallthrough]];
+		case '+': case '=': case WXK_ADD: case WXK_NUMPAD_ADD:
+			Press(Part::In);
+			return true;
+		case WXK_RETURN: case WXK_NUMPAD_ENTER: case WXK_SPACE: case WXK_F4:
+			if (!plain) return false;
+			ShowPresets();
+			return true;
+	}
+	return false;
+}
+
+void VideoZoomControl::OnKey(wxKeyEvent &event) {
+	int key = event.GetKeyCode();
+	// Alt+Down opens the presets, as a drop-down list's does
+	if (key == WXK_DOWN && event.GetModifiers() == wxMOD_ALT) { ShowPresets(); return; }
+	if (IsEnabled() && Key(key, event.GetModifiers())) return;
+	if (regions::OtherKeys(this, event)) return;
+	event.Skip();
 }
 
 std::vector<int> VideoZoomControl::Presets() {
@@ -175,7 +213,8 @@ void VideoZoomControl::OnPaint(wxPaintEvent &) {
 	int radius = FromDIP(5);
 	wxRect outer(wxPoint(0, 0), size);
 	dc.SetBrush(wxBrush(field));
-	dc.SetPen(wxPen(line, std::max(1, FromDIP(1))));
+	// The accent round it while the keyboard is on it, as the fields have
+	dc.SetPen(wxPen(HasFocus() ? theme::UiColours().accent : line, std::max(1, FromDIP(1))));
 	dc.DrawRoundedRectangle(outer, radius);
 	dc.SetPen(*wxTRANSPARENT_PEN);
 	if (hover != Part::None && IsEnabled()) {

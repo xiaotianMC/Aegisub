@@ -44,6 +44,7 @@
 #include "../dialog_search_replace.h"
 #include "../dialogs.h"
 #include "../format.h"
+#include "../frame_main.h"
 #include "../include/aegisub/context.h"
 #include "../initial_line_state.h"
 #include "../libresrc/libresrc.h"
@@ -51,6 +52,7 @@
 #include "../project.h"
 #include "../selection_controller.h"
 #include "../subs_controller.h"
+#include "../subs_edit_box.h"
 #include "../subtitle_binding.h"
 #include "../subs_edit_ctrl.h"
 #include "../text_selection_controller.h"
@@ -89,6 +91,44 @@ struct edit_complete final : public Command {
 	void operator()(agi::Context *) override {
 		if (auto editor = dynamic_cast<SubsTextEditCtrl*>(wxWindow::FindFocus()))
 			editor->ShowCompletion();
+	}
+};
+
+/// The two halves of the switch beside the edit box's times, which had
+/// the mnemonics Alt+I and Alt+R as radio buttons (docs/keyboard-regions.md)
+struct edit_time_unit_time final : public Command {
+	CMD_NAME("edit/time_unit/time")
+	STR_MENU("Show times")
+	STR_DISP("Show times")
+	STR_HELP("Show and type the times of lines in the edit box and the grid as h:mm:ss.cs")
+	CMD_TYPE(COMMAND_VALIDATE | COMMAND_RADIO)
+
+	bool Validate(const agi::Context *c) override {
+		return c->frame && c->frame->GetEditBox();
+	}
+	bool IsActive(const agi::Context *c) override {
+		return Validate(c) && !c->frame->GetEditBox()->TimesByFrame();
+	}
+	void operator()(agi::Context *c) override {
+		if (Validate(c)) c->frame->GetEditBox()->ShowTimesByFrame(false);
+	}
+};
+
+struct edit_time_unit_frame final : public Command {
+	CMD_NAME("edit/time_unit/frame")
+	STR_MENU("Show frame numbers")
+	STR_DISP("Show frame numbers")
+	STR_HELP("Show and type the times of lines in the edit box and the grid as frame numbers (needs a video or timecodes)")
+	CMD_TYPE(COMMAND_VALIDATE | COMMAND_RADIO)
+
+	bool Validate(const agi::Context *c) override {
+		return c->frame && c->frame->GetEditBox() && c->frame->GetEditBox()->FramesAllowed();
+	}
+	bool IsActive(const agi::Context *c) override {
+		return c->frame && c->frame->GetEditBox() && c->frame->GetEditBox()->TimesByFrame();
+	}
+	void operator()(agi::Context *c) override {
+		if (Validate(c)) c->frame->GetEditBox()->ShowTimesByFrame(true);
 	}
 };
 
@@ -1520,6 +1560,8 @@ namespace cmd {
     }
 	void init_edit() {
 		reg(std::make_unique<edit_complete>());
+		reg(std::make_unique<edit_time_unit_time>());
+		reg(std::make_unique<edit_time_unit_frame>());
 		reg(std::make_unique<edit_color_primary>());
 		reg(std::make_unique<edit_color_secondary>());
 		reg(std::make_unique<edit_color_outline>());

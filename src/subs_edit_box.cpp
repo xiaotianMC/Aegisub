@@ -605,9 +605,13 @@ void SubsEditBox::ArrangeRows() {
 	if (below)
 		edit_ctrl->MoveBeforeInTabOrder(comment_box);
 	else
-		edit_ctrl->MoveAfterInTabOrder(duration->GetParent());
+		edit_ctrl->MoveAfterInTabOrder(time_unit);
 	Layout();
 }
+
+bool SubsEditBox::TimesByFrame() const { return time_unit->ByFrame(); }
+bool SubsEditBox::FramesAllowed() const { return time_unit->FramesAllowed() && time_unit->IsEnabled(); }
+void SubsEditBox::ShowTimesByFrame(bool by_frame) { time_unit->Choose(by_frame ? 1 : 0); }
 
 void SubsEditBox::OnTimeUnitChange(bool byFrame) {
 	start_time->SetByFrame(byFrame);

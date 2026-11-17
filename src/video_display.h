@@ -255,6 +255,9 @@ public:
 	bool ToolIsType(std::type_info const& type) const;
 
 	int GetSubTool() const { return tool->GetSubTool(); };
+	/// Move what the visual tool has selected by @p delta pixels of the
+	/// script (docs/keyboard-regions.md). @return Whether anything moved
+	bool NudgeTool(Vector2D delta);
 
 	/// Discard all OpenGL state
 	void Unload();

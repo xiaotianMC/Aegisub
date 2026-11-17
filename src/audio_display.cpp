@@ -824,6 +824,17 @@ void AudioDisplay::SetZoomLevel(int new_zoom_level)
 	ApplyMsPerPixel(new_ms_per_pixel, track_cursor_pos >= 0 ? track_cursor_pos - scroll_left : client_width / 2.0);
 }
 
+void AudioDisplay::SetZoomLevelAround(int new_zoom_level, int anchor_time)
+{
+	int x = RelativeXFromTime(anchor_time);
+	if (x < 0 || x > GetClientSize().GetWidth())
+		return SetZoomLevel(new_zoom_level);
+	zoom_level = new_zoom_level;
+	const double new_ms_per_pixel = ZoomLevelMsPerPixel(zoom_level);
+	if (ms_per_pixel == new_ms_per_pixel) return;
+	ApplyMsPerPixel(new_ms_per_pixel, anchor_time / ms_per_pixel - scroll_left);
+}
+
 void AudioDisplay::ApplyMsPerPixel(double new_ms_per_pixel, double anchor)
 {
 	int client_width = GetClientSize().GetWidth();

@@ -697,6 +697,10 @@ void VideoDisplay::ResetContentZoom() {
 	PositionVideo();
 }
 
+bool VideoDisplay::NudgeTool(Vector2D delta) {
+	return tool && !pan_mode && tool->Nudge(delta);
+}
+
 void VideoDisplay::SetTool(std::unique_ptr<VisualToolBase> new_tool) {
 	// Picking another tool is a request to leave the preview pan mode.
 	if (pan_mode) SetPanMode(false);

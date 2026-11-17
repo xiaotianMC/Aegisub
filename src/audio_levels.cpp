@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: ISC
 #include "audio_levels.h"
 
+#include "flat_controls.h"
 #include "format.h"
+#include "keyboard_regions.h"
 #include "theme.h"
 
 #include <libaegisub/format.h>
@@ -52,7 +54,7 @@ const char *reset_icon = "<path d='M3.2 8a4.8 4.8 0 1 0 1.5-3.5'/><path d='M3 2.
 }
 
 AudioLevels::AudioLevels(wxWindow *parent, Callbacks callbacks)
-: wxWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE | wxFULL_REPAINT_ON_RESIZE)
+: wxWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE | wxFULL_REPAINT_ON_RESIZE | wxWANTS_CHARS)
 , callbacks(std::move(callbacks))
 {
 	SetBackgroundStyle(wxBG_STYLE_PAINT);
@@ -62,7 +64,56 @@ AudioLevels::AudioLevels(wxWindow *parent, Callbacks callbacks)
 		Bind(type, &AudioLevels::OnMouse, this);
 	Bind(wxEVT_MOUSEWHEEL, &AudioLevels::OnWheel, this);
 	Bind(wxEVT_MOUSE_CAPTURE_LOST, [this](wxMouseCaptureLostEvent &) { dragging = Part::None; Refresh(false); });
+	Bind(wxEVT_CHAR_HOOK, &AudioLevels::OnKey, this);
+	Bind(wxEVT_SET_FOCUS, [this](wxFocusEvent &e) { Refresh(false); e.Skip(); });
+	Bind(wxEVT_KILL_FOCUS, [this](wxFocusEvent &e) { Refresh(false); e.Skip(); });
 	theme_changed = theme::AddChangeListener([this] { Refresh(false); });
+}
+
+std::vector<AudioLevels::Part> AudioLevels::KeyParts() const {
+	if (linked) return {Part::Zoom, Part::Link, Part::Reset};
+	return {Part::Zoom, Part::Volume, Part::Link, Part::Reset};
+}
+
+bool AudioLevels::Key(int key, int modifiers) {
+	if (modifiers != wxMOD_NONE) return false;
+	auto parts = KeyParts();
+	auto at = std::find(parts.begin(), parts.end(), key_part);
+	if (at == parts.end()) at = parts.begin();
+	bool track = *at == Part::Zoom || *at == Part::Volume;
+	int step = 0;
+	switch (key) {
+		case WXK_LEFT: case WXK_NUMPAD_LEFT:
+			if (at != parts.begin()) key_part = *(at - 1);
+			Refresh(false);
+			return true;
+		case WXK_RIGHT: case WXK_NUMPAD_RIGHT:
+			if (at + 1 != parts.end()) key_part = *(at + 1);
+			Refresh(false);
+			return true;
+		case WXK_UP: case WXK_NUMPAD_UP: step = 1; break;
+		case WXK_DOWN: case WXK_NUMPAD_DOWN: step = -1; break;
+		case WXK_PAGEUP: case WXK_NUMPAD_PAGEUP: step = 10; break;
+		case WXK_PAGEDOWN: case WXK_NUMPAD_PAGEDOWN: step = -10; break;
+		case WXK_SPACE: case WXK_RETURN: case WXK_NUMPAD_ENTER:
+			// On a track they are the audio's own (play, commit)
+			if (*at == Part::Link) { if (callbacks.link) callbacks.link(); return true; }
+			if (*at == Part::Reset) { if (callbacks.reset) callbacks.reset(); return true; }
+			return false;
+		default:
+			return false;
+	}
+	// Up and Down on a button are the audio's own too (the lines)
+	if (!track) return false;
+	key_part = *at;
+	Move(*at, (*at == Part::Zoom ? zoom : volume) + step);
+	return true;
+}
+
+void AudioLevels::OnKey(wxKeyEvent &event) {
+	if (IsEnabled() && Key(event.GetKeyCode(), event.GetModifiers())) return;
+	if (regions::OtherKeys(this, event)) return;
+	event.Skip();
 }
 
 void AudioLevels::SetZoom(int position) {
@@ -84,6 +135,7 @@ void AudioLevels::SetVolume(int position) {
 void AudioLevels::SetLinked(bool new_linked) {
 	if (linked == new_linked) return;
 	linked = new_linked;
+	if (linked && key_part == Part::Volume) key_part = Part::Zoom;
 	UpdateToolTip();
 	Refresh(false);
 }
@@ -290,14 +342,21 @@ void AudioLevels::OnPaint(wxPaintEvent &) {
 		wxPoint neutral = HandleAt(track, neutral_position);
 		dc.SetBrush(wxBrush(neutral_mark));
 		dc.DrawRectangle(rect.x - FromDIP(3), neutral.y, rect.width + FromDIP(6), std::max(1, FromDIP(1)));
-		// The handle, highlighted under the mouse and while dragged
-		bool active = hover == track || dragging == track;
+		// The handle, highlighted under the mouse, while dragged and with
+		// the keyboard on it
+		bool keyed = HasFocus() && key_part == track;
+		bool active = hover == track || dragging == track || keyed;
 		dc.SetBrush(wxBrush(active ? accent : handle_colour));
 		if (!active && !theme::IsDark()) dc.SetPen(wxPen(neutral_mark, std::max(1, FromDIP(1))));
 		dc.DrawCircle(handle, FromDIP(active ? 6 : 5));
 		dc.SetPen(*wxTRANSPARENT_PEN);
 
 		wxRect column = TrackColumn(track);
+		if (keyed) {
+			wxRect ring(column.x + FromDIP(2), column.y, column.width - 2 * FromDIP(2), column.height + LabelHeight() + FromDIP(2));
+			flat::DrawOutline(dc, ring, FromDIP(5), std::max(1, FromDIP(1)), accent);
+			dc.SetPen(*wxTRANSPARENT_PEN);
+		}
 		wxSize extent = dc.GetTextExtent(text);
 		wxDCClipper clip(dc, wxRect(column.x, column.GetBottom(), column.width, LabelHeight() + FromDIP(2)));
 		dc.DrawText(text, column.x + (column.width - extent.x) / 2, column.GetBottom() + FromDIP(1));
@@ -310,6 +369,10 @@ void AudioLevels::OnPaint(wxPaintEvent &) {
 		if (on || hover == button) {
 			dc.SetBrush(wxBrush(on ? button_active : track_colour));
 			dc.DrawRectangle(rect.Deflate(FromDIP(2), FromDIP(1)));
+		}
+		if (HasFocus() && key_part == button) {
+			flat::DrawOutline(dc, rect.Deflate(FromDIP(1), 0), FromDIP(4), std::max(1, FromDIP(1)), accent);
+			dc.SetPen(*wxTRANSPARENT_PEN);
 		}
 		wxBitmap bitmap = Icon(icon, on ? accent : text_colour, 16).GetBitmapFor(this);
 		wxSize logical = bitmap.GetLogicalSize();

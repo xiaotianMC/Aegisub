@@ -3,6 +3,8 @@
 
 #include "video_time_label.h"
 
+#include "flat_controls.h"
+#include "keyboard_regions.h"
 #include "theme.h"
 #include "utils.h"
 
@@ -36,7 +38,7 @@ struct MeasureDC {
 }
 
 VideoTimeLabel::VideoTimeLabel(wxWindow *parent, wxString sample, bool badge, bool dim)
-: wxWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE | wxFULL_REPAINT_ON_RESIZE)
+: wxWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE | wxFULL_REPAINT_ON_RESIZE | wxWANTS_CHARS)
 , badge(badge)
 , dim(dim)
 {
@@ -46,6 +48,10 @@ VideoTimeLabel::VideoTimeLabel(wxWindow *parent, wxString sample, bool badge, bo
 	for (auto type : {wxEVT_LEFT_DOWN, wxEVT_ENTER_WINDOW, wxEVT_LEAVE_WINDOW, wxEVT_MOTION})
 		Bind(type, &VideoTimeLabel::OnMouse, this);
 	Bind(wxEVT_CONTEXT_MENU, &VideoTimeLabel::OnContextMenu, this);
+	Bind(wxEVT_CHAR_HOOK, &VideoTimeLabel::OnKey, this);
+	Bind(wxEVT_CHAR, &VideoTimeLabel::OnChar, this);
+	Bind(wxEVT_SET_FOCUS, [this](wxFocusEvent &e) { Refresh(false); e.Skip(); });
+	Bind(wxEVT_KILL_FOCUS, [this](wxFocusEvent &e) { Refresh(false); e.Skip(); });
 	theme_changed = theme::AddChangeListener([this] { Refresh(false); });
 }
 
@@ -124,6 +130,7 @@ void VideoTimeLabel::StartEditing(int part) {
 	if (!edit || !editable || IsEditing()) return;
 	if (part == 1 && (!on_commit_secondary || secondary.empty())) return;
 	editing_part = part;
+	keyboard_editing = HasFocus();
 	wxString const& value = part == 1 ? secondary : main;
 	// Over the part clicked, wider when the box's own padding needs it
 	wxRect rect = PartRect(part);
@@ -184,9 +191,41 @@ void VideoTimeLabel::CancelEditing() {
 	bool had_focus = edit->HasFocus();
 	StopFiltering();
 	edit->Hide();
-	// Leave the keyboard with the video, not nowhere
-	if (had_focus && focus_after) focus_after->SetFocus();
+	// Back to the label when keys opened the box; otherwise with the video,
+	// not nowhere
+	if (had_focus && keyboard_editing && AcceptsFocusFromKeyboard()) SetFocus();
+	else if (had_focus && focus_after) focus_after->SetFocus();
+	keyboard_editing = false;
 	Refresh(false);
+}
+
+void VideoTimeLabel::OnKey(wxKeyEvent &event) {
+	// The box's keys come here on their way up: they are its own
+	if (IsEditing() || !HasFocus()) {
+		event.Skip();
+		return;
+	}
+	int key = event.GetKeyCode();
+	if (!event.HasAnyModifiers() && (key == WXK_RETURN || key == WXK_NUMPAD_ENTER || key == WXK_F2)) {
+		StartEditing(0);
+		return;
+	}
+	if (regions::OtherKeys(this, event)) return;
+	event.Skip();
+}
+
+void VideoTimeLabel::OnChar(wxKeyEvent &event) {
+	// A time or a frame number typed straight in: the box opens with it
+	wxChar ch = event.GetUnicodeKey();
+	bool time_char = (ch >= '0' && ch <= '9') || ch == ':' || ch == '.' || ch == ',';
+	if (!time_char || event.ControlDown() || event.AltDown() || IsEditing() || !HasFocus() || !editable) {
+		event.Skip();
+		return;
+	}
+	StartEditing(0);
+	if (!IsEditing()) return;
+	edit->ChangeValue(wxString(ch));
+	edit->SetInsertionPointEnd();
 }
 
 void VideoTimeLabel::SetCopyItems(std::vector<CopyItem> items) {
@@ -306,6 +345,12 @@ void VideoTimeLabel::OnPaint(wxPaintEvent &) {
 		wxRect part = PartRect(hover_part);
 		dc.DrawRoundedRectangle(part.x, FromDIP(2), part.width, size.y - 2 * FromDIP(2), FromDIP(4));
 	}
+	// The keyboard on the label: a ring round what Enter edits
+	if (HasFocus() && !IsEditing()) {
+		wxRect ring = PartRect(0);
+		if (on_commit_secondary && !secondary.empty()) ring.width = size.x - ring.x;
+		flat::DrawOutline(dc, ring.Deflate(0, FromDIP(1)), FromDIP(4), std::max(1, FromDIP(1)), accent);
+	}
 	dc.SetTextForeground(dim ? faint : text);
 	x = DrawTabular(dc, main, x, y, digit);
 	if (!secondary.empty()) {
@@ -353,12 +398,14 @@ void VideoTimeLabel::OnMouse(wxMouseEvent &event) {
 	event.Skip();
 }
 
-void VideoTimeLabel::OnContextMenu(wxContextMenuEvent &) {
+void VideoTimeLabel::OnContextMenu(wxContextMenuEvent &event) {
 	if (copy_items.empty()) return;
 	wxMenu menu;
 	for (size_t i = 0; i < copy_items.size(); ++i)
 		menu.Append(wxID_HIGHEST + 1 + i, copy_items[i].first);
-	int chosen = GetPopupMenuSelectionFromUser(menu);
+	// From the keyboard (the menu key, Shift+F10): below the label
+	wxPoint at = event.GetPosition() == wxDefaultPosition ? wxPoint(0, GetClientSize().y) : wxDefaultPosition;
+	int chosen = GetPopupMenuSelectionFromUser(menu, at);
 	if (chosen <= wxID_HIGHEST) return;
 	size_t index = chosen - wxID_HIGHEST - 1;
 	if (index >= copy_items.size()) return;

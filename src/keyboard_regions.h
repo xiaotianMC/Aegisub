@@ -29,6 +29,9 @@ struct Region {
 	/// Give it the keyboard, opening it if it has to be. @return Whether
 	/// it took it. By default the first control Tab stops at
 	std::function<bool()> enter;
+	/// The region's own hotkeys (the video's, the audio's), for keys its
+	/// drawn controls and toolbars have no use for. @return Whether one ran
+	std::function<bool(wxKeyEvent&)> keys;
 };
 
 /// The main window's regions, in the order F6 goes through them, and the
@@ -45,7 +48,8 @@ int RegionOf(wxWindow const *window);
 bool Next(bool forward);
 
 /// The controls Tab stops at in a region, in order: those shown, enabled
-/// and taking the keyboard (toolbars don't: their buttons have no keys)
+/// and taking the keyboard (a toolbar only when the keyboard goes along
+/// its buttons, a KeyToolBar)
 std::vector<wxWindow*> Stops(int region);
 /// Where Tab (or Shift+Tab) goes from @p from in its region, round from the
 /// last stop to the first; null when it is in no region or the region has
@@ -71,6 +75,11 @@ void DrawOutline(wxWindow *window, wxDC &dc);
 /// to the subtitle text. Called with the keys the window has no use for.
 /// @return Whether it was one of them
 bool HandleKey(wxWindow *window, wxKeyEvent &event);
+/// Keys a drawn control or a toolbar in a region has no use for: Tab and Esc
+/// as HandleKey has them, then the region's own hotkeys, so that the keys
+/// of the video or the audio work wherever the keyboard is in it
+/// (docs/keyboard-regions.md). @return Whether one of them took it
+bool OtherKeys(wxWindow *window, wxKeyEvent &event);
 
 /// After a click on a button of @p bar, the keyboard goes to @p target
 /// (the visual tools' bars: to the video). Other toolbars' clicks leave it

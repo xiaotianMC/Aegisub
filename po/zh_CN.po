@@ -11776,3 +11776,139 @@ msgid ""
 msgstr ""
 "%s 没有在给它的文件夹里写出 JSON 文件：\n"
 "%s"
+
+#: src/command/audio.cpp
+msgid "Zoom audio in"
+msgstr "音频放大"
+
+#: src/command/audio.cpp
+msgid "Zoom the waveform in, a step as a notch of the wheel does, keeping the current line where it is"
+msgstr "把波形水平放大一档，和滚轮的一格一样，当前行留在原来的位置"
+
+#: src/command/audio.cpp
+msgid "Zoom audio out"
+msgstr "音频缩小"
+
+#: src/command/audio.cpp
+msgid "Zoom the waveform out, a step as a notch of the wheel does, keeping the current line where it is"
+msgstr "把波形水平缩小一档，和滚轮的一格一样，当前行留在原来的位置"
+
+#: src/command/audio.cpp
+msgid "Reset audio zoom"
+msgstr "重置音频缩放"
+
+#: src/command/audio.cpp
+msgid "Zoom the waveform back to its default scale"
+msgstr "把波形的水平缩放恢复为默认值"
+
+#: src/command/audio.cpp
+msgid "Taller waveform"
+msgstr "波形加高"
+
+#: src/command/audio.cpp
+msgid "Zoom the waveform in vertically; with the vertical zoom and volume linked, the audio gets louder with it"
+msgstr "增大波形的垂直缩放；垂直缩放和音量联动时，音量随之变大"
+
+#: src/command/audio.cpp
+msgid "Shorter waveform"
+msgstr "波形压低"
+
+#: src/command/audio.cpp
+msgid "Zoom the waveform out vertically; with the vertical zoom and volume linked, the audio gets quieter with it"
+msgstr "减小波形的垂直缩放；垂直缩放和音量联动时，音量随之变小"
+
+#: src/command/audio.cpp
+msgid "Audio volume up"
+msgstr "音频音量加大"
+
+#: src/command/audio.cpp
+msgid "Play the audio louder; with the vertical zoom and volume linked, the waveform grows with it"
+msgstr "加大音频播放的音量；垂直缩放和音量联动时，波形随之加高"
+
+#: src/command/audio.cpp
+msgid "Audio volume down"
+msgstr "音频音量减小"
+
+#: src/command/audio.cpp
+msgid "Play the audio quieter; with the vertical zoom and volume linked, the waveform shrinks with it"
+msgstr "减小音频播放的音量；垂直缩放和音量联动时，波形随之压低"
+
+#: src/command/edit.cpp
+msgid "Show times"
+msgstr "显示时间"
+
+#: src/command/edit.cpp
+msgid "Show and type the times of lines in the edit box and the grid as h:mm:ss.cs"
+msgstr "在编辑框和字幕表格里以 h:mm:ss.cs 显示和输入行的时间"
+
+#: src/command/edit.cpp
+msgid "Show frame numbers"
+msgstr "显示帧号"
+
+#: src/command/edit.cpp
+msgid "Show and type the times of lines in the edit box and the grid as frame numbers (needs a video or timecodes)"
+msgstr "在编辑框和字幕表格里以帧号显示和输入行的时间（需要视频或时间码）"
+
+#: src/command/vis_tool.cpp
+msgid "Nudge left"
+msgstr "左移一像素"
+
+#: src/command/vis_tool.cpp
+msgid "Move what the visual tool has selected a pixel of the script to the left: the selected lines in Standard, the selected points in the others"
+msgstr "把可视化工具选中的东西向左挪 1 个脚本像素：标准工具下是选中的行，其他工具下是选中的点"
+
+#: src/command/vis_tool.cpp
+msgid "Nudge right"
+msgstr "右移一像素"
+
+#: src/command/vis_tool.cpp
+msgid "Move what the visual tool has selected a pixel of the script to the right: the selected lines in Standard, the selected points in the others"
+msgstr "把可视化工具选中的东西向右挪 1 个脚本像素：标准工具下是选中的行，其他工具下是选中的点"
+
+#: src/command/vis_tool.cpp
+msgid "Nudge up"
+msgstr "上移一像素"
+
+#: src/command/vis_tool.cpp
+msgid "Move what the visual tool has selected a pixel of the script up: the selected lines in Standard, the selected points in the others"
+msgstr "把可视化工具选中的东西向上挪 1 个脚本像素：标准工具下是选中的行，其他工具下是选中的点"
+
+#: src/command/vis_tool.cpp
+msgid "Nudge down"
+msgstr "下移一像素"
+
+#: src/command/vis_tool.cpp
+msgid "Move what the visual tool has selected a pixel of the script down: the selected lines in Standard, the selected points in the others"
+msgstr "把可视化工具选中的东西向下挪 1 个脚本像素：标准工具下是选中的行，其他工具下是选中的点"
+
+#: src/command/vis_tool.cpp
+msgid "Nudge left by 10"
+msgstr "左移 10 像素"
+
+#: src/command/vis_tool.cpp
+msgid "Move what the visual tool has selected ten pixels of the script to the left"
+msgstr "把可视化工具选中的东西向左挪 10 个脚本像素"
+
+#: src/command/vis_tool.cpp
+msgid "Nudge right by 10"
+msgstr "右移 10 像素"
+
+#: src/command/vis_tool.cpp
+msgid "Move what the visual tool has selected ten pixels of the script to the right"
+msgstr "把可视化工具选中的东西向右挪 10 个脚本像素"
+
+#: src/command/vis_tool.cpp
+msgid "Nudge up by 10"
+msgstr "上移 10 像素"
+
+#: src/command/vis_tool.cpp
+msgid "Move what the visual tool has selected ten pixels of the script up"
+msgstr "把可视化工具选中的东西向上挪 10 个脚本像素"
+
+#: src/command/vis_tool.cpp
+msgid "Nudge down by 10"
+msgstr "下移 10 像素"
+
+#: src/command/vis_tool.cpp
+msgid "Move what the visual tool has selected ten pixels of the script down"
+msgstr "把可视化工具选中的东西向下挪 10 个脚本像素"

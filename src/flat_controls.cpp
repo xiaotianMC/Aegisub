@@ -42,6 +42,19 @@ Palette Colours(wxWindow const *window) {
 	return p;
 }
 
+void DrawOutline(wxGraphicsContext &gc, wxRect const& rect, double radius, int thick, wxColour const& colour) {
+	if (rect.width <= 0 || rect.height <= 0) return;
+	auto path = gc.CreatePath();
+	path.AddRoundedRectangle(rect.x, rect.y, rect.width, rect.height, radius);
+	int inner_w = rect.width - 2 * thick, inner_h = rect.height - 2 * thick;
+	if (inner_w > 0 && inner_h > 0)
+		path.AddRoundedRectangle(rect.x + thick, rect.y + thick, inner_w, inner_h, std::max(0., radius - thick));
+	// No pen: a pen's width would shift the fill by half a pixel
+	gc.SetPen(wxNullGraphicsPen);
+	gc.SetBrush(wxBrush(colour));
+	gc.FillPath(path, wxODDEVEN_RULE);
+}
+
 void DrawOutline(wxDC &dc, wxRect const& rect, double radius, int thick, wxColour const& colour) {
 	if (rect.width <= 0 || rect.height <= 0) return;
 	// A raster DC steps its curves: a context of its own over it smooths them
@@ -52,15 +65,7 @@ void DrawOutline(wxDC &dc, wxRect const& rect, double radius, int thick, wxColou
 		gc = own.get();
 	}
 	if (gc) {
-		auto path = gc->CreatePath();
-		path.AddRoundedRectangle(rect.x, rect.y, rect.width, rect.height, radius);
-		int inner_w = rect.width - 2 * thick, inner_h = rect.height - 2 * thick;
-		if (inner_w > 0 && inner_h > 0)
-			path.AddRoundedRectangle(rect.x + thick, rect.y + thick, inner_w, inner_h, std::max(0., radius - thick));
-		// No pen: a pen's width would shift the fill by half a pixel
-		gc->SetPen(wxNullGraphicsPen);
-		gc->SetBrush(wxBrush(colour));
-		gc->FillPath(path, wxODDEVEN_RULE);
+		DrawOutline(*gc, rect, radius, thick, colour);
 		if (!own) {
 			gc->SetPen(dc.GetPen());
 			gc->SetBrush(dc.GetBrush());
@@ -500,6 +505,18 @@ FlatChoice::FlatChoice(wxWindow *parent, wxString const& tip, bool editable)
 	SetCursor(wxCursor(wxCURSOR_HAND));
 	Bind(wxEVT_PAINT, &FlatChoice::OnPaint, this);
 	Bind(wxEVT_KEY_DOWN, &FlatChoice::OnKey, this);
+	// The keys that open the list, before a window above takes them for a
+	// hotkey (in the edit box Space plays the video, Enter goes to the next
+	// line, Alt+Down moves the line); a space typed in a name stays a character
+	Bind(wxEVT_CHAR_HOOK, [this](wxKeyEvent &event) {
+		int key = event.GetKeyCode();
+		bool plain = !event.HasAnyModifiers();
+		bool opens = (plain && (key == WXK_RETURN || key == WXK_NUMPAD_ENTER || key == WXK_F4))
+			|| (plain && key == WXK_SPACE && !Typing())
+			|| ((key == WXK_DOWN || key == WXK_NUMPAD_DOWN) && event.GetModifiers() == wxMOD_ALT);
+		if (HasFocus() && opens) OnKey(event);
+		else event.Skip();
+	});
 	Bind(wxEVT_CHAR, &FlatChoice::OnChar, this);
 	Bind(wxEVT_MOUSEWHEEL, &FlatChoice::OnWheel, this);
 	Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent &) {
@@ -987,6 +1004,14 @@ FlatCheck::FlatCheck(wxWindow *parent, wxString const& label)
 		if (event.GetKeyCode() == WXK_SPACE && !event.HasAnyModifiers()) Toggle();
 		else event.Skip();
 	});
+	// Before a window above takes Space for a hotkey: the edit box's
+	// plays the video (docs/main-window.md)
+	Bind(wxEVT_CHAR_HOOK, [this](wxKeyEvent &event) {
+		if (HasFocus() && event.GetKeyCode() == WXK_SPACE && !event.HasAnyModifiers()) {
+			if (IsEnabled()) Toggle();
+		}
+		else event.Skip();
+	});
 	Bind(wxEVT_SET_FOCUS, [this](wxFocusEvent &event) { Refresh(false); event.Skip(); });
 	Bind(wxEVT_KILL_FOCUS, [this](wxFocusEvent &event) { Refresh(false); event.Skip(); });
 	theme_changed = theme::AddChangeListener([this] { Refresh(false); });
@@ -1076,6 +1101,15 @@ FlatButton::FlatButton(wxWindow *parent, wxString const& label, int id, bool acc
 	Bind(wxEVT_KEY_DOWN, [this](wxKeyEvent &event) {
 		int key = event.GetKeyCode();
 		if ((key == WXK_SPACE || key == WXK_RETURN || key == WXK_NUMPAD_ENTER) && !event.HasAnyModifiers()) Press();
+		else event.Skip();
+	});
+	// Before a window above takes them for a hotkey: in the edit box Space
+	// plays the video and Enter goes to the next line
+	Bind(wxEVT_CHAR_HOOK, [this](wxKeyEvent &event) {
+		int key = event.GetKeyCode();
+		if (HasFocus() && (key == WXK_SPACE || key == WXK_RETURN || key == WXK_NUMPAD_ENTER) && !event.HasAnyModifiers()) {
+			if (IsEnabled()) Press();
+		}
 		else event.Skip();
 	});
 	Bind(wxEVT_SET_FOCUS, [this](wxFocusEvent &event) { Refresh(false); event.Skip(); });

@@ -38,6 +38,14 @@ public:
 	void Press(Part part);
 	/// Act as turning the wheel @p steps notches does: up zooms in, a step each
 	void Wheel(int steps);
+	/// A key pressed with the keyboard on it (docs/keyboard-regions.md):
+	/// Left or − out, Right or + in, Enter, Space or F4 the presets.
+	/// @return Whether it was one of them
+	bool Key(int key, int modifiers);
+
+	/// Tab stops here, a click doesn't take the keyboard
+	bool AcceptsFocus() const override { return false; }
+	bool AcceptsFocusFromKeyboard() const override { return IsEnabled(); }
 
 private:
 	double zoom = 1;
@@ -55,4 +63,5 @@ private:
 
 	void OnPaint(wxPaintEvent &);
 	void OnMouse(wxMouseEvent &event);
+	void OnKey(wxKeyEvent &event);
 };
