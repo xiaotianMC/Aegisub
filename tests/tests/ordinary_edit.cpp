@@ -1458,6 +1458,37 @@ TEST_F(ordinary_edit, preferences_rows_are_drawn_controls_that_set_their_options
     EXPECT_TRUE(enable->GetValue() == pending("App/Auto/Save")->GetBool());
 }
 
+TEST_F(ordinary_edit, preferences_whisper_settings_only_while_whisper_hears_the_audio) {
+    if (!transcribe::CanRunLocal()) GTEST_SKIP() << "built without Whisper";
+    auto backend = OPT_GET("Tool/Transcribe/Backend")->GetInt();
+    Preferences prefs(window);
+    auto book = prefs.Book();
+    OptionPage *page = nullptr;
+    for (size_t i = 0; i < book->GetPageCount(); ++i)
+        if (auto p = dynamic_cast<OptionPage*>(book->GetPage(i)); p && p->ControlOf("Tool/Transcribe/Backend")) page = p;
+    ASSERT_TRUE(page);
+    auto list = dynamic_cast<FlatChoice*>(page->ControlOf("Tool/Transcribe/Backend"));
+    ASSERT_TRUE(list);
+    std::vector<wxWindow*> whisper{page->ControlOf("Tool/Transcribe/Local/Model"),
+        page->ControlOf("Tool/Transcribe/Local/Use GPU"), page->ControlOf("Tool/Transcribe/Local/Threads")};
+    for (auto w : whisper) ASSERT_TRUE(w);
+    auto diarize = page->ControlOf("Tool/Transcribe/Diarize");
+    ASSERT_TRUE(diarize);
+    // As the list is changed, before OK: Whisper's settings greyed but while
+    // it is chosen, and telling speakers apart, which it does not, while it is
+    for (int choice : {0, 2, 1, 2}) {
+        list->Choose(choice);
+        bool const local = choice == 2;
+        for (auto w : whisper) EXPECT_EQ(local, w->IsThisEnabled()) << choice;
+        EXPECT_EQ(!local, diarize->IsThisEnabled()) << choice;
+    }
+    // The ↺ back to the default, ElevenLabs, as well
+    page->Reset("Tool/Transcribe/Backend");
+    for (auto w : whisper) EXPECT_FALSE(w->IsThisEnabled());
+    EXPECT_TRUE(diarize->IsThisEnabled());
+    EXPECT_EQ(backend, OPT_GET("Tool/Transcribe/Backend")->GetInt()) << "only once OK is pressed";
+}
+
 TEST_F(ordinary_edit, preferences_pages_are_listed_by_use_with_their_matches) {
     Preferences prefs(window);
     auto book = prefs.Book();

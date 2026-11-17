@@ -278,7 +278,7 @@ void Audio(PreferencesBook *book, Preferences *parent) {
 		{.help = _("The code of what is spoken: ja, zh, en...; empty to have it detected")});
 	p->OptionAdd(transcribe, _("Other languages among it"), "Tool/Transcribe/Secondary Languages",
 		{.help = _("Codes, separated by commas, of languages mixed into the speech, such as English words in Japanese (ElevenLabs)")});
-	p->OptionAdd(transcribe, _("Tell the speakers apart"), "Tool/Transcribe/Diarize",
+	auto diarize = p->OptionAdd(transcribe, _("Tell the speakers apart"), "Tool/Transcribe/Diarize",
 		{.help = _("Each line's speaker goes in its Actor field (ElevenLabs)")});
 	p->OptionAdd(transcribe, _("Give the names in the Actor fields as terms to recognise"), "Tool/Transcribe/Keyterms From Actors",
 		{.help = _("Names the recogniser is told of are heard right more often (ElevenLabs)")});
@@ -335,10 +335,11 @@ void Audio(PreferencesBook *book, Preferences *parent) {
 	if (transcribe::CanRunLocal()) {
 		auto model = p->OptionAdd(transcribe, _("Whisper model file"), "Tool/Transcribe/Local/Model",
 			{.help = _("A ggml model, such as ggml-large-v3-turbo-q5_0.bin or, on a slower computer, ggml-small-q5_1.bin; asked for when first needed if empty")});
+		FlatButton *choose;
 		{
 			// Downloading one, or finding one: the path put in the field as
 			// if typed, so it is taken with the dialog's other changes
-			auto choose = new FlatButton(transcribe.box, _("Download or Choose..."));
+			choose = new FlatButton(transcribe.box, _("Download or Choose..."));
 			choose->Bind(wxEVT_BUTTON, [=](wxCommandEvent&) {
 				auto chosen = ChooseWhisperModel(p);
 				if (!chosen) return;
@@ -351,11 +352,17 @@ void Audio(PreferencesBook *book, Preferences *parent) {
 				_("Downloads a model offered, checked to be as published, into the models folder; or takes a file you have"));
 		}
 		auto const gpu = transcribe::Gpu();
-		p->OptionAdd(transcribe, _("Use the graphics card for Whisper"), "Tool/Transcribe/Local/Use GPU",
+		auto use_gpu = p->OptionAdd(transcribe, _("Use the graphics card for Whisper"), "Tool/Transcribe/Local/Use GPU",
 			{.help = gpu.empty() ? _("Much faster where it can; none it can use was found, so the processor is used")
 			                     : agi::wxformat(_("Much faster where it can; found: %s"), gpu)});
-		p->OptionAdd(transcribe, _("Whisper threads"), "Tool/Transcribe/Local/Threads", {.min = 0, .max = 64,
+		auto threads = p->OptionAdd(transcribe, _("Whisper threads"), "Tool/Transcribe/Local/Threads", {.min = 0, .max = 64,
 			.help = _("0 for as many as the processor has, up to 8")});
+		// Whisper's settings only while it is chosen to hear the audio, as the
+		// choice is in the dialog; and no speakers told apart by it, as it
+		// does not tell them
+		auto whisper = [](agi::OptionValue const& v) { return v.GetInt() == 2; };
+		p->EnableWhen("Tool/Transcribe/Backend", whisper, {model, choose, use_gpu, threads});
+		p->EnableWhen("Tool/Transcribe/Backend", [=](agi::OptionValue const& v) { return !whisper(v); }, {diarize});
 	}
 
 	auto snapping = p->PageSizer(_("Snapping"));
@@ -906,9 +913,12 @@ void Interface_Hotkeys::OnUpdateFilter(wxCommandEvent&) {
 void Preferences::SetOption(std::unique_ptr<agi::OptionValue> new_value) {
 	pending_changes[new_value->GetName()] = std::move(new_value);
 	applyButton->Enable(true);
-	// The marks of changed settings follow
+	// The marks of changed settings follow, and what a setting enables
 	for (size_t page = 0; book && page < book->GetPageCount(); ++page)
-		if (auto options = dynamic_cast<OptionPage*>(book->GetPage(page))) options->RefreshMarks();
+		if (auto options = dynamic_cast<OptionPage*>(book->GetPage(page))) {
+			options->RefreshMarks();
+			options->RefreshEnabled();
+		}
 }
 
 void Preferences::AddPendingChange(Thunk const& callback) {

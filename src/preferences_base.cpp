@@ -33,6 +33,7 @@
 #include <cmath>
 #include <numbers>
 #include <memory>
+#include <type_traits>
 
 #include <wx/checkbox.h>
 #include <wx/dcclient.h>
@@ -483,7 +484,12 @@ OptionPage::Mark *OptionPage::Add(PageSection section, wxString const& label, T 
 	Mark *mark = nullptr;
 	if (!option.empty()) mark = AddMark(section, option);
 	else section.sizer->AddSpacer(0);
-	Label(section, new wxStaticText(section.box, -1, label), help);
+	auto name = Label(section, new wxStaticText(section.box, -1, label), help);
+	if constexpr (std::is_base_of_v<wxWindow, T>)
+		labels[control] = name;
+	else
+		for (auto item : control->GetChildren())
+			if (auto window = item->GetWindow()) labels[window] = name;
 	// In a column as wide on every page
 	auto column = new wxBoxSizer(wxHORIZONTAL);
 	column->SetMinSize(wxSize(FromDIP(control_width), -1));
@@ -520,7 +526,7 @@ wxWindow *OptionPage::OptionAdd(PageSection section, const wxString &name, const
 			// The label is the check box's own: clicking it ticks
 			auto mark = AddMark(section, option);
 			auto cb = new FlatCheck(section.box, name);
-			Label(section, cb, kwargs.help);
+			labels[cb] = Label(section, cb, kwargs.help);
 			section.sizer->AddSpacer(0);
 			cb->SetValue(opt->GetBool());
 			cb->Bind(wxEVT_CHECKBOX, BoolUpdater(opt_name, parent));
@@ -746,6 +752,25 @@ void OptionPage::DisableIfChecked(wxWindow *cbx, wxWindow *ctrl) {
 	if (!dynamic_cast<FlatCheck*>(cbx) && !dynamic_cast<wxCheckBox*>(cbx)) return;
 	ctrl->Enable(!Checked(cbx));
 	cbx->Bind(wxEVT_CHECKBOX, [=](wxCommandEvent& evt) { ctrl->Enable(!evt.GetInt()); evt.Skip(); });
+}
+
+void OptionPage::EnableWhen(std::string const& option, std::function<bool(agi::OptionValue const&)> test, std::vector<wxWindow*> controls) {
+	dependents.push_back({option, std::move(test), std::move(controls)});
+	RefreshEnabled();
+}
+
+void OptionPage::RefreshEnabled() {
+	for (auto const& d : dependents) {
+		auto pending = parent->Pending(d.option);
+		bool const on = d.test(pending ? *pending : *OPT_GET(d.option));
+		for (auto control : d.controls) {
+			if (control->IsThisEnabled() != on) control->Enable(on);
+			auto row = labels.find(control);
+			if (row == labels.end()) continue;
+			for (auto item : row->second->GetChildren())
+				if (auto window = item->GetWindow(); window && window->IsThisEnabled() != on) window->Enable(on);
+		}
+	}
 }
 
 bool OptionPage::IsModified(std::string const& option) const {

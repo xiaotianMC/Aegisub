@@ -22,6 +22,7 @@
 #include <libaegisub/signal.h>
 
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -110,6 +111,15 @@ private:
 		std::function<void(agi::OptionValue const&)> show;
 	};
 	std::vector<Row> rows;
+	/// The name and explanation of the row each control is in
+	std::map<wxWindow*, wxSizer*> labels;
+	/// Controls enabled only while a setting is as a test wants it
+	struct Dependent {
+		std::string option;
+		std::function<bool(agi::OptionValue const&)> test;
+		std::vector<wxWindow*> controls;
+	};
+	std::vector<Dependent> dependents;
 	/// The row's mark, before its name
 	Mark *AddMark(PageSection section, std::string const& option);
 	void AddRow(std::string const& option, Mark *mark, wxWindow *control, std::function<void(agi::OptionValue const&)> show);
@@ -143,6 +153,11 @@ public:
 	void EnableIfChecked(wxWindow *cbx, wxWindow *ctrl);
 	/// Enable ctrl only when cbx is not checked
 	void DisableIfChecked(wxWindow *cbx, wxWindow *ctrl);
+	/// Enable @p controls, and the names and explanations of their rows, only
+	/// while @p option, as the dialog has it before OK, passes @p test
+	void EnableWhen(std::string const& option, std::function<bool(agi::OptionValue const&)> test, std::vector<wxWindow*> controls);
+	/// Enable or disable what EnableWhen ties to a setting, after a change
+	void RefreshEnabled();
 
 	/// Whether @p option will have a value other than its default: changed
 	/// before, or in the dialog
