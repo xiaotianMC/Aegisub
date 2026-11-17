@@ -1,8 +1,9 @@
 name: Meson CI
 
 on:
+  # Not on pushes to master: work merged there has been run by hand on its
+  # branch (workflow_dispatch) first, so merging does not build it again
   push:
-    branches: [ master ]
     tags: [ 'v*' ]
   pull_request:
     branches: [ master ]
