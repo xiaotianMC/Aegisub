@@ -2942,6 +2942,42 @@ TEST_F(ordinary_edit, script_panel_takes_the_style_panels_place_and_writes_the_s
     again->Destroy();
 }
 
+TEST_F(ordinary_edit, script_panel_writes_nothing_while_a_file_is_opened) {
+    // A file opened: the panel puts its script in the box while the file is
+    // sealed, until it is in. wxMSW tells of the box's colour then changed
+    // as of its text, which the panel would have stored, refused and an error
+    // where nothing was typed: told of here, after the panel has the script
+    auto path=agi::fs::path((std::filesystem::current_path()/"script-panel-opened.ass").wstring());
+    c->subtitleAccess->SetMetadata(SubtitleProjectAccess::MetadataField::ScriptText,"opened");
+    c->subsController->Save(path,"utf-8");
+    c->subsController->Close();
+    auto frame=new wxFrame(nullptr,-1,"script");
+    BOOST_SCOPE_EXIT_ALL(&){ delete frame; };
+    ScriptPanel *script=nullptr;
+    int told=0;
+    // Before the panel's, so called after it, as listeners are, newest first
+    agi::signal::Connection colour=LiveRead(*c).AddCommitListener([&](int type,AssDialogue const*,SubtitleModelRebindTicket ticket){
+        if(type==AssFile::COMMIT_NEW&&script){
+            ++told;
+            EXPECT_TRUE(LiveRead(*c).IsInstalling());
+            EXPECT_EQ(wxString("opened"),script->TextBox()->GetValue()) << "the panel's listener first";
+            wxCommandEvent changed(wxEVT_TEXT,script->TextBox()->GetId());
+            changed.SetEventObject(script->TextBox());changed.SetString(script->TextBox()->GetValue());
+            script->TextBox()->GetEventHandler()->ProcessEvent(changed);
+        }
+        if(ticket.Current())ticket.Acknowledge(ticket.Revision());
+    });
+    script=new ScriptPanel(frame,c.get());
+    EXPECT_EQ(wxString(),script->TextBox()->GetValue());
+    // On Windows the box's own colour, the hint's taken off, as well
+    EXPECT_NO_THROW(c->subsController->Load(path,"utf-8"));
+    EXPECT_EQ(1,told);
+    EXPECT_EQ("opened",LiveRead(*c).Properties.script_text);
+    EXPECT_EQ(wxString("opened"),script->TextBox()->GetValue());
+    EXPECT_FALSE(c->subsController->IsModified());
+    EXPECT_EQ(wxString(),script->Shown()["note"]);
+}
+
 TEST_F(ordinary_edit, style_edit_writes_one_property_for_lines_or_selected_text) {
     using namespace style_edit;
     auto fs=TagNames(Property::Size), b=TagNames(Property::Weight), i=TagNames(Property::Italic);

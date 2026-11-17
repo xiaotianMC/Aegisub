@@ -122,6 +122,8 @@ private:
 	void Recolour();
 	/// The text's colour, or the hint's while the hint is shown
 	void ColourText();
+	/// @p value in the box, told of to no one, as the file's or as typed
+	void PutText(wxString const& value);
 	void OnPaint();
 	/// The track the thumb runs on, in the panel
 	wxRect BarTrack() const;

@@ -388,6 +388,8 @@ void ScriptPanel::Recolour() {
 	text->SetBackgroundColour(theme::Mix(surface, ink, theme::IsDark() ? 0.08 : 0.05));
 	clip->SetBackgroundColour(text->GetBackgroundColour());
 #ifdef __WXMSW__
+	// A change of format, which the box tells of as of its text (see ColourText)
+	wxEventBlocker quiet(text, wxEVT_TEXT);
 	// In dark mode the box gives its characters the system's window colour
 	// as a background of their own, black over the field: none, so the
 	// field's shows through
@@ -418,7 +420,21 @@ void ScriptPanel::ColourText() {
 	if (!text->HasFocus() && text->GetValue().empty())
 		colour = theme::Mix(text->GetBackgroundColour(), ink, theme::IsDark() ? 0.55 : 0.4);
 #endif
-	if (text->GetForegroundColour() != colour) text->SetForegroundColour(colour);
+	if (text->GetForegroundColour() == colour) return;
+	// wxMSW's rich edit tells of its text's colour changed as of its text
+	// changed, as wx's own SetFont knows: not typed, nothing to store, and
+	// not to be stored when it is a file being opened that has the box shown
+	// in its script, the file sealed until it is in. Nor to reach the hint's
+	// handler, which would take the hint shown for the box's text
+	wxEventBlocker quiet(text, wxEVT_TEXT);
+	text->SetForegroundColour(colour);
+}
+
+void ScriptPanel::PutText(wxString const& value) {
+	// Quiet as ChangeValue is, and the hint's colour put back after it, which
+	// wxMSW tells of as of the text (see ColourText), with it
+	wxEventBlocker quiet(text, wxEVT_TEXT);
+	text->ChangeValue(value);
 }
 
 void ScriptPanel::OnPaint() {
@@ -546,13 +562,19 @@ void ScriptPanel::UpdateNow() {
 	if (text->GetValue() != stored) {
 		// Another file's script: what the split took back belongs to the old one
 		before_split.reset();
-		text->ChangeValue(stored);
+		PutText(stored);
 	}
 	UpdateParts();
 }
 
 void ScriptPanel::Store() {
 	std::string value = from_wx(text->GetValue());
+	// The file's already: nothing to write, and nothing that could not be,
+	// where a change from it is refused while a file is being opened
+	if (value == c->subtitleAccess->Read().Properties.script_text) {
+		UpdateParts();
+		return;
+	}
 	try {
 		c->subtitleAccess->SetMetadata(SubtitleProjectAccess::MetadataField::ScriptText, std::move(value));
 		note.clear();
@@ -561,7 +583,7 @@ void ScriptPanel::Store() {
 		// Compared: the file's script stays as it is, and so does the box
 		before_split.reset();
 		note = _("The subtitles are being compared: the script can be changed once the comparison ends");
-		text->ChangeValue(to_wx(c->subtitleAccess->Read().Properties.script_text));
+		PutText(to_wx(c->subtitleAccess->Read().Properties.script_text));
 	}
 	UpdateParts();
 }
@@ -570,7 +592,7 @@ void ScriptPanel::Split() {
 	if (before_split) {
 		// Pressed again: back to the text as it was
 		wxString old = *before_split;
-		text->ChangeValue(old);
+		PutText(old);
 		before_split.reset();
 		Store();
 		return;
@@ -578,7 +600,7 @@ void ScriptPanel::Split() {
 	wxString old = text->GetValue();
 	wxString split = script_text::SplitSentences(old);
 	if (split == old) return;
-	text->ChangeValue(split);
+	PutText(split);
 	Store();
 	// Kept only once the file has it
 	if (note.empty()) before_split = old;
@@ -608,7 +630,7 @@ void ScriptPanel::Type(wxString const& value) {
 	// wxMSW tells of it again when the handler has changed the box, as it does
 	// when the change is refused, so that the second time, the box as the file
 	// has it, the note saying why was taken away
-	text->ChangeValue(value);
+	PutText(value);
 	wxCommandEvent changed(wxEVT_TEXT, text->GetId());
 	changed.SetEventObject(text);
 	changed.SetString(value);
