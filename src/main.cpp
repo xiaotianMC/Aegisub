@@ -54,7 +54,6 @@
 #include "project.h"
 #include "speech_transcribe.h"
 #include "subs_controller.h"
-#include "startup_window.h"
 #include "audio_colorscheme.h"
 #include "audio_provider_factory.h"
 #include "subtitles_provider_libass.h"
@@ -305,6 +304,10 @@ bool AegisubApp::OnInit() {
 		StartupLog("Install PNG handler");
 		wxImage::AddHandler(new wxPNGHandler);
 
+		// Open main frame
+		StartupLog("Create main window");
+		NewProjectContext();
+
 		// Version checker
 		StartupLog("Possibly perform automatic updates check");
 		if (OPT_GET("App/First Start")->GetBool()) {
@@ -328,11 +331,8 @@ bool AegisubApp::OnInit() {
 		// Get parameter subs
 		StartupLog("Parse command line");
 		auto const& args = argv.GetArguments();
-		if (args.size() > 1) {
-			NewProjectContext();
+		if (args.size() > 1)
 			OpenFiles(wxArrayStringsAdapter(args.size() - 1, &args[1]));
-		}
-		else if (frames.empty()) ShowStartup();
 	}
 	catch (agi::Exception const& e) {
 		wxMessageBox(to_wx(e.GetMessage()), _("Fatal error while initializing"));
@@ -397,45 +397,6 @@ int AegisubApp::OnExit() {
 	return wxApp::OnExit();
 }
 
-void AegisubApp::ShowStartup() {
-	if (startup_window) {
-		startup_window->Iconize(false);
-		startup_window->Show();
-		startup_window->Raise();
-		return;
-	}
-	auto window = CreateStartupWindow();
-	startup_window = window;
-	window->Bind(wxEVT_DESTROY, [this, window](wxWindowDestroyEvent& event) {
-		if (event.GetWindow() == window && startup_window == window) startup_window = nullptr;
-		event.Skip();
-	});
-	SetTopWindow(window);
-	window->Show();
-}
-
-void AegisubApp::DismissStartup() {
-	if (!startup_window) return;
-	auto window = startup_window;
-	startup_window = nullptr;
-	window->Destroy();
-}
-
-void AegisubApp::ShowProjectDashboard() {
-	ShowStartup();
-	ShowStartupDashboard(startup_window);
-}
-
-void AegisubApp::OpenEditor() {
-	if (frames.empty()) { NewProjectContext(); return; }
-	auto frame = frames.back();
-	frame->Iconize(false);
-	frame->Show();
-	frame->Raise();
-	SetTopWindow(frame);
-	DismissStartup();
-}
-
 agi::Context& AegisubApp::NewProjectContext() {
 	auto frame = new FrameMain;
 	frame->Bind(wxEVT_DESTROY, [=, this](wxWindowDestroyEvent& evt) {
@@ -445,18 +406,15 @@ agi::Context& AegisubApp::NewProjectContext() {
 		}
 
 		frames.erase(remove(begin(frames), end(frames), frame), end(frames));
-		if (frames.empty() && !startup_window) {
+		if (frames.empty()) {
 			ExitMainLoop();
 		}
 	});
 	frames.push_back(frame);
-	SetTopWindow(frame);
-	DismissStartup();
 	return *frame->context;
 }
 
 void AegisubApp::CloseAll() {
-	if (startup_window) startup_window->Close();
 	for (auto frame : frames) {
 		if (!frame->Close())
 			break;
