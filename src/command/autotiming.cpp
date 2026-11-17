@@ -180,6 +180,8 @@ size_t speech::Import(agi::Context *c, speech::Transcript const& transcript) {
 	if (made.empty()) return 0;
 
 	bool const pair = OPT_GET("Tool/Speech Import/Bilingual")->GetBool();
+	// The translator's marks only when asked for: else the field left empty
+	bool const marked = OPT_GET("Tool/Speech Import/Marks")->GetBool();
 	bool const replace = NothingWritten(c);
 	auto const& live = c->subtitleAccess->Read();
 	std::string style = live.Events.empty() ? std::string("Default") : live.Events.front().Style.get();
@@ -198,10 +200,12 @@ size_t speech::Import(agi::Context *c, speech::Transcript const& transcript) {
 		line->Actor = m.speaker;
 		line->Style = style;
 		line->Comment = m.note;
-		bilingual::Marks marks;
-		marks.group = m.group;
-		marks.unsure = m.unsure;
-		line->Effect = bilingual::FormatMarks(marks);
+		if (marked) {
+			bilingual::Marks marks;
+			marks.group = m.group;
+			marks.unsure = m.unsure;
+			line->Effect = bilingual::FormatMarks(marks);
+		}
 		lines.push_back(std::move(line));
 	}
 	// The frames: a start on a cut's first frame, an end on the frame

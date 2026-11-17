@@ -608,6 +608,7 @@
 		},
 		"Speech Import" : {
 			"Bilingual" : false,
+			"Marks" : false,
 			"Max Duration" : 7000,
 			"Min Duration" : 1000,
 			"Unsure Below" : 0.3

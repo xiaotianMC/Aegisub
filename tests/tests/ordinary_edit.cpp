@@ -1489,6 +1489,24 @@ TEST_F(ordinary_edit, preferences_whisper_settings_only_while_whisper_hears_the_
     EXPECT_EQ(backend, OPT_GET("Tool/Transcribe/Backend")->GetInt()) << "only once OK is pressed";
 }
 
+TEST_F(ordinary_edit, preferences_unsure_threshold_only_with_the_effect_marks) {
+    Preferences prefs(window);
+    auto book = prefs.Book();
+    OptionPage *page = nullptr;
+    for (size_t i = 0; i < book->GetPageCount(); ++i)
+        if (auto p = dynamic_cast<OptionPage*>(book->GetPage(i)); p && p->ControlOf("Tool/Speech Import/Marks")) page = p;
+    ASSERT_TRUE(page);
+    auto marks = dynamic_cast<FlatCheck*>(page->ControlOf("Tool/Speech Import/Marks"));
+    auto unsure = page->ControlOf("Tool/Speech Import/Unsure Below");
+    ASSERT_TRUE(marks); ASSERT_TRUE(unsure);
+    EXPECT_FALSE(marks->GetValue()) << "off unless asked for";
+    EXPECT_FALSE(unsure->IsThisEnabled());
+    marks->Toggle();
+    EXPECT_TRUE(unsure->IsThisEnabled());
+    page->Reset("Tool/Speech Import/Marks");
+    EXPECT_FALSE(unsure->IsThisEnabled());
+}
+
 TEST_F(ordinary_edit, preferences_pages_are_listed_by_use_with_their_matches) {
     Preferences prefs(window);
     auto book = prefs.Book();
@@ -5064,8 +5082,10 @@ TEST_F(ordinary_edit, speech_recognition_imported_a_sentence_a_line_in_one_step)
     t.segments.push_back(SS({SW("こんにちは。",1000,2000,0.9,"SPEAKER_00")},"SPEAKER_00"));
     t.segments.push_back(SS({SW("マミ",3000,3500,0.2,"SPEAKER_01"),SW("です。",3500,4500,0.9,"SPEAKER_01")},"SPEAKER_01"));
     auto description=c->subsController->GetUndoDescription();
-    BOOST_SCOPE_EXIT_ALL(&){ OPT_SET("Tool/Speech Import/Bilingual")->SetBool(false); };
+    BOOST_SCOPE_EXIT_ALL(&){ OPT_SET("Tool/Speech Import/Bilingual")->SetBool(false); OPT_SET("Tool/Speech Import/Marks")->SetBool(false); };
     OPT_SET("Tool/Speech Import/Bilingual")->SetBool(true);
+    EXPECT_FALSE(OPT_GET("Tool/Speech Import/Marks")->GetBool()) << "no marks unless asked for";
+    OPT_SET("Tool/Speech Import/Marks")->SetBool(true);
     size_t styles=LiveRead(*c).Styles.size();
     EXPECT_EQ(2u,speech::Import(c.get(),t));
     std::vector<std::tuple<std::string,std::string,std::string,std::string>> lines;
@@ -5080,12 +5100,15 @@ TEST_F(ordinary_edit, speech_recognition_imported_a_sentence_a_line_in_one_step)
     EXPECT_EQ(1u,LiveRead(*c).Events.size());
     EXPECT_EQ(styles,LiveRead(*c).Styles.size()) << "one step, styles and all";
     EXPECT_EQ(description,c->subsController->GetUndoDescription());
-    // Something written: kept, the lines put in among it by time
+    // Something written: kept, the lines put in among it by time; without
+    // the marks, the Effect field left empty
     OPT_SET("Tool/Speech Import/Bilingual")->SetBool(false);
+    OPT_SET("Tool/Speech Import/Marks")->SetBool(false);
     {auto write=c->subtitleAccess->TryWrite();auto& row=LiveWriteForTest(*c).Events.front();row.Start=2500;row.End=2800;row.Text="written";LiveWriteForTest(*c).Commit("text",AssFile::COMMIT_DIAG_FULL);}
     EXPECT_EQ(2u,speech::Import(c.get(),t));
     std::vector<std::string> texts;for(auto const& row:LiveRead(*c).Events)texts.push_back(row.Text.get());
     EXPECT_EQ((std::vector<std::string>{"こんにちは。","written","マミです。"}),texts);
+    EXPECT_EQ("",LiveRead(*c).Events.back().Effect.get()) << "?マミ only with the marks on";
 }
 
 TEST(bilingual_marks, read_and_written_in_the_effect_field_beside_what_else_it_holds) {

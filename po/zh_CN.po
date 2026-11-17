@@ -11113,8 +11113,8 @@ msgid "Split sentences longer than (ms)"
 msgstr "超过此长度的句子拆开 (毫秒)"
 
 #: ../src/preferences.cpp
-msgid "A sentence heard as longer is split where a clause ends or the speaker pauses; the lines share a #group mark in the Effect field"
-msgstr "更长的句子在从句结束或停顿处拆开，拆出的几行在 Effect 栏写同一个 #组号"
+msgid "A sentence heard as longer is split where a clause ends or the speaker pauses"
+msgstr "更长的句子在从句结束或停顿处拆开"
 
 #: ../src/preferences.cpp
 msgid "Show each line at least (ms)"
@@ -11123,6 +11123,14 @@ msgstr "每行至少显示 (毫秒)"
 #: ../src/preferences.cpp
 msgid "A short line is shown longer, up to the next line or scene change, to give time to read its translation"
 msgstr "太短的行向后延长，不超过下一行或画面切换，让译文读得完"
+
+#: ../src/preferences.cpp
+msgid "Leave marks for the translator in the Effect field"
+msgstr "在 Effect 栏给译者留标记"
+
+#: ../src/preferences.cpp
+msgid "#group on the lines a long sentence was split into, to be translated together, and ?word on words heard with little confidence; off, the Effect field is left empty"
+msgstr "长句拆出的几行写同一个 #组号，提醒连起来翻；把握低的词写成 ?词。不勾选时 Effect 栏留空"
 
 #: ../src/preferences.cpp
 msgid "Mark words heard with less confidence than"
