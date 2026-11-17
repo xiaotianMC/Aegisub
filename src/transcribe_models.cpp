@@ -12,6 +12,7 @@
 #include <libaegisub/exception.h>
 #include <libaegisub/path.h>
 #include <libaegisub/sha256.h>
+#include <libaegisub/util.h>
 
 #include <filesystem>
 #include <fstream>
@@ -68,7 +69,23 @@ std::string ModelUrl(Model const& model, std::string const& source) {
 agi::fs::path ModelFolder() {
 	auto const chosen = OPT_GET("Tool/Transcribe/Local/Model Folder")->GetString();
 	if (!chosen.empty()) return config::path->Decode(chosen);
-	return config::path->Decode("?local/models");
+#if !defined(_WIN32) && !defined(__APPLE__)
+	// Where Aegisub keeps the XDG layout, as it does without ~/.aegisub,
+	// ?cache is $XDG_CACHE_HOME, which the user or a cleaner may empty at any
+	// time: no place for gigabytes the user chose to download and would have
+	// to download again. They are data, in $XDG_DATA_HOME, as the
+	// specification has it. ?user and ?cache are one folder in ~/.aegisub and
+	// in a portable install, which keep the models there.
+	if (config::path->Decode("?cache") != config::path->Decode("?user")) {
+		agi::fs::path data;
+		if (auto env = agi::util::GetEnv("XDG_DATA_HOME"); env && agi::fs::path(*env).is_absolute())
+			data = *env;
+		else if (auto home = agi::util::GetEnv("HOME"); home && !home->empty())
+			data = agi::fs::path(*home) / ".local" / "share";
+		if (!data.empty()) return data / "aegisub" / "models";
+	}
+#endif
+	return config::path->Decode("?cache/models");
 }
 
 bool Downloaded(Model const& model, agi::fs::path const& folder) {

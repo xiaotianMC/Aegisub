@@ -44,8 +44,10 @@ std::string SizeText(int64_t bytes);
 std::string ModelUrl(Model const& model, std::string const& source);
 
 /// Where models are downloaded to: Tool/Transcribe/Local/Model Folder, or
-/// when that is empty the models folder of Aegisub's local data, which in
-/// a portable install is beside Aegisub itself
+/// when that is empty the models folder of ?cache, which in a portable
+/// install is beside Aegisub itself; on Linux and the like where Aegisub
+/// keeps the XDG layout, $XDG_DATA_HOME/aegisub/models instead, as
+/// $XDG_CACHE_HOME may be emptied at any time
 agi::fs::path ModelFolder();
 
 /// Whether @p model is in @p folder, whole
