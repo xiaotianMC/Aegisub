@@ -263,6 +263,7 @@ void SubtitleProjectAccess::SetMetadata(MetadataField field, std::string value) 
         case MetadataField::VideoFile: target = &properties.video_file; break;
         case MetadataField::TimecodesFile: target = &properties.timecodes_file; break;
         case MetadataField::KeyframesFile: target = &properties.keyframes_file; break;
+        case MetadataField::ScriptText: target = &properties.script_text; break;
     }
     if (!target) throw std::invalid_argument("Unknown project metadata field");
     if (*target == value) return;

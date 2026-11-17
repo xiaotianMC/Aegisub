@@ -5,15 +5,20 @@
 
 #include "ass_dialogue.h"
 #include "ass_file.h"
+#include "compat.h"
 #include "dialog_progress.h"
 
 #include <libaegisub/background_runner.h>
+#include <libaegisub/format.h>
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <string_view>
 #include <thread>
 
 #include <wx/intl.h>
@@ -61,17 +66,6 @@ agi::fs::path SystemPython() {
 Launch Script(agi::fs::path const& script) {
 	auto folder = script.parent_path();
 	return {VenvPython(folder).value_or(SystemPython()), {"-u", script.string()}, folder};
-}
-
-/// A top-level key's line: "key:" at the start of the line
-bool IsKey(std::string const& line, std::string const& key) {
-	return line.size() > key.size() && line.compare(0, key.size(), key) == 0 && line[key.size()] == ':';
-}
-
-/// A line that belongs to the key above it: indented, a list item, a
-/// comment or blank
-bool Continues(std::string const& line) {
-	return line.empty() || line[0] == ' ' || line[0] == '\t' || line[0] == '-' || line[0] == '#' || line[0] == '\r';
 }
 
 /// A string as YAML reads it back unchanged, in ASCII alone: in double
@@ -127,46 +121,346 @@ std::vector<std::string> Arguments(Launch const& launch, agi::fs::path const& co
 	return args;
 }
 
-std::optional<std::string> WriteConfig(std::string const& config, std::string const& video,
-                                       std::string const& destination, std::string const& strategy) {
-	std::string out;
-	bool source = false, dest = false;
+namespace {
+/// A line of a config.yml taken apart: its indent, and the key and the
+/// value after it if it is "key: value"
+struct Line {
+	std::string text;
+	size_t indent = 0;
+	std::string key, value;
+	bool blank = false, comment = false, item = false;
+};
+
+std::string Trim(std::string s) {
+	size_t b = s.find_first_not_of(" \t\r");
+	if (b == std::string::npos) return "";
+	size_t e = s.find_last_not_of(" \t\r");
+	return s.substr(b, e - b + 1);
+}
+
+/// @p value without a comment after it, which starts at a # after a space
+/// outside quotes
+std::string WithoutComment(std::string const& value) {
+	char quote = 0;
+	for (size_t i = 0; i < value.size(); ++i) {
+		char c = value[i];
+		if (quote) {
+			if (c == quote) quote = 0;
+		}
+		else if (c == '"' || c == '\'') quote = c;
+		else if (c == '#' && (i == 0 || value[i - 1] == ' ' || value[i - 1] == '\t'))
+			return Trim(value.substr(0, i));
+	}
+	return Trim(value);
+}
+
+Line Split(std::string text) {
+	if (!text.empty() && text.back() == '\r') text.pop_back();
+	Line line;
+	line.text = text;
+	line.indent = text.find_first_not_of(' ');
+	if (line.indent == std::string::npos) {
+		line.blank = true;
+		line.indent = 0;
+		return line;
+	}
+	char const first = text[line.indent];
+	if (first == '#') { line.comment = true; return line; }
+	if (first == '-') { line.item = true; line.value = WithoutComment(text.substr(line.indent + 1)); return line; }
+	size_t colon = text.find(':', line.indent);
+	if (colon == std::string::npos) return line;
+	auto key = text.substr(line.indent, colon - line.indent);
+	if (key.empty() || key.find_first_of(" \t\"'") != std::string::npos) return line;
+	line.key = key;
+	line.value = WithoutComment(text.substr(colon + 1));
+	return line;
+}
+
+std::vector<Line> Lines(std::string const& config) {
+	std::vector<Line> lines;
 	size_t pos = 0;
-	bool skipping = false;
 	while (pos < config.size()) {
 		size_t end = config.find('\n', pos);
 		if (end == std::string::npos) end = config.size();
-		std::string line = config.substr(pos, end - pos);
+		lines.push_back(Split(config.substr(pos, end - pos)));
 		pos = end + 1;
-		if (skipping) {
-			if (Continues(line)) continue;
-			skipping = false;
+	}
+	return lines;
+}
+
+/// Where keys are: at the top, under a top-level key (two spaces in) and
+/// under one of those (four spaces in), as its config.yml is laid out
+struct Paths {
+	std::string top, middle;
+	/// The path of @p line's key, empty for one at another depth
+	std::string Of(Line const& line) {
+		if (line.indent == 0) { top = line.key; middle.clear(); return top; }
+		if (line.indent == 2 && !top.empty()) { middle = line.key; return top + "/" + middle; }
+		if (line.indent == 4 && !middle.empty()) return top + "/" + middle + "/" + line.key;
+		return "";
+	}
+};
+
+std::string Number(double v) {
+	char buf[32];
+	snprintf(buf, sizeof buf, "%.4f", v);
+	std::string s = buf;
+	while (s.size() > 1 && s.back() == '0' && s[s.size() - 2] != '.') s.pop_back();
+	return s;
+}
+}
+
+std::string Installed::Get(std::string const& path) const {
+	auto it = values.find(path);
+	return it == values.end() ? std::string() : it->second;
+}
+
+Installed Inspect(std::string const& config) {
+	Installed found;
+	auto const lines = Lines(config);
+	Paths paths;
+	for (size_t i = 0; i < lines.size(); ++i) {
+		auto const& line = lines[i];
+		if (line.key.empty()) continue;
+		auto path = paths.Of(line);
+		if (path.empty()) continue;
+		if (line.indent == 4) {
+			// A key two levels down: its top-level key is a strategy, the
+			// one between a preset of it
+			auto& presets = found.presets[paths.top];
+			if (presets.empty()) found.strategies.push_back(paths.top);
+			if (std::find(presets.begin(), presets.end(), paths.middle) == presets.end())
+				presets.push_back(paths.middle);
 		}
-		if (IsKey(line, "source")) {
-			out += "source:\n- " + Quote(video) + "\n";
-			source = skipping = true;
+		if (!line.value.empty()) {
+			found.values[path] = line.value;
+			continue;
 		}
-		else if (IsKey(line, "destination")) {
-			out += "destination:\n- " + Quote(destination) + "\n";
-			dest = skipping = true;
+		// A list written an item a line
+		std::vector<std::string> items;
+		size_t j = i + 1;
+		for (; j < lines.size(); ++j) {
+			auto const& next = lines[j];
+			if (next.blank || next.comment) continue;
+			if (!next.item || next.indent < line.indent) break;
+			items.push_back(next.value);
 		}
-		else if (IsKey(line, "strategy") && !strategy.empty())
-			out += "strategy: " + strategy + "\n";
-		else
-			out += line + "\n";
+		if (!items.empty()) {
+			found.values[path] = FormatList(items);
+			continue;
+		}
+		// Nothing after it at all (YAML's null), rather than keys under it
+		bool holds = false;
+		for (j = i + 1; j < lines.size(); ++j) {
+			if (lines[j].blank || lines[j].comment) continue;
+			holds = lines[j].indent > line.indent;
+			break;
+		}
+		if (!holds) found.values[path] = "";
+	}
+	return found;
+}
+
+std::optional<std::string> WriteConfig(std::string const& config, std::string const& video,
+                                       std::string const& destination, Values const& overrides) {
+	std::string out;
+	bool source = false, dest = false;
+	Paths paths;
+	enum { none, list, value } skipping = none;
+	size_t skip_indent = 0;
+	for (auto const& line : Lines(config)) {
+		if (skipping == list) {
+			// source and destination: the old list, its commented-out items
+			// and the blank lines after it
+			if (line.blank || line.comment || line.item || line.indent > 0) continue;
+			skipping = none;
+		}
+		else if (skipping == value) {
+			// What belongs to a replaced value: deeper lines and its items
+			if (!line.blank && (line.indent > skip_indent || (line.item && line.indent == skip_indent))) continue;
+			skipping = none;
+		}
+		if (line.key.empty()) {
+			out += line.text + "\n";
+			continue;
+		}
+		auto const path = paths.Of(line);
+		if (path == "source" || path == "destination") {
+			out += path + ":\n- " + Quote(path == "source" ? video : destination) + "\n";
+			(path == "source" ? source : dest) = true;
+			skipping = list;
+			continue;
+		}
+		auto it = path.empty() ? overrides.end() : overrides.find(path);
+		if (it == overrides.end()) {
+			out += line.text + "\n";
+			continue;
+		}
+		out += std::string(line.indent, ' ') + line.key + ": " + it->second + "\n";
+		skipping = value;
+		skip_indent = line.indent;
 	}
 	if (!source || !dest) return std::nullopt;
 	return out;
+}
+
+std::optional<std::string> WriteConfig(std::string const& config, std::string const& video,
+                                       std::string const& destination, std::string const& strategy) {
+	Values overrides;
+	if (!strategy.empty()) overrides["strategy"] = strategy;
+	return WriteConfig(config, video, destination, overrides);
+}
+
+std::optional<Rect> ParseRect(std::string const& value) {
+	auto items = ParseList(value);
+	if (items.size() != 4) return std::nullopt;
+	double v[4];
+	for (int i = 0; i < 4; ++i) {
+		try {
+			size_t used = 0;
+			v[i] = std::stod(items[i], &used);
+			if (used != items[i].size()) return std::nullopt;
+		}
+		catch (...) { return std::nullopt; }
+	}
+	return Rect{v[0], v[1], v[2], v[3]};
+}
+
+std::string FormatRect(Rect const& r) {
+	return "[" + Number(r.left) + ", " + Number(r.right) + ", " + Number(r.top) + ", " + Number(r.bottom) + "]";
+}
+
+std::vector<std::string> ParseList(std::string const& value) {
+	std::vector<std::string> items;
+	auto v = Trim(value);
+	if (v.size() < 2 || v.front() != '[' || v.back() != ']') return items;
+	v = v.substr(1, v.size() - 2);
+	size_t pos = 0;
+	while (pos <= v.size()) {
+		size_t end = v.find(',', pos);
+		if (end == std::string::npos) end = v.size();
+		auto item = Trim(v.substr(pos, end - pos));
+		if (!item.empty()) items.push_back(item);
+		pos = end + 1;
+	}
+	return items;
+}
+
+std::string FormatList(std::vector<std::string> const& items) {
+	std::string out = "[";
+	for (size_t i = 0; i < items.size(); ++i) {
+		if (i) out += ", ";
+		out += items[i];
+	}
+	return out + "]";
+}
+
+std::string Unquote(std::string const& value) {
+	auto v = Trim(value);
+	if (v.size() >= 2 && (v.front() == '"' || v.front() == '\'') && v.back() == v.front())
+		return v.substr(1, v.size() - 2);
+	return v;
+}
+
+std::string QuoteValue(std::string const& text) {
+	return Quote(text);
+}
+
+bool CanSkipFrames(std::string const& strategy) {
+	return strategy == "bcs" || strategy == "dtd" || strategy == "otl" || strategy == "prk";
+}
+
+bool CanReadText(std::string const& strategy) {
+	return strategy == "bcs" || strategy == "dtd" || strategy == "otl";
+}
+
+Values ParseSaved(std::string const& saved) {
+	Values values;
+	size_t pos = 0;
+	while (pos < saved.size()) {
+		size_t end = saved.find('\n', pos);
+		if (end == std::string::npos) end = saved.size();
+		auto line = saved.substr(pos, end - pos);
+		pos = end + 1;
+		size_t eq = line.find('=');
+		if (eq == std::string::npos || eq == 0) continue;
+		values[line.substr(0, eq)] = line.substr(eq + 1);
+	}
+	return values;
+}
+
+std::string FormatSaved(Values const& saved) {
+	std::string out;
+	for (auto const& [path, value] : saved) {
+		if (value.find('\n') != std::string::npos) continue;
+		out += path + "=" + value + "\n";
+	}
+	return out;
+}
+
+Values Effective(Installed const& installed, Values const& saved) {
+	Values values = installed.values;
+	for (auto const& [path, value] : saved)
+		if (installed.Has(path)) values[path] = value;
+	auto const& strategies = installed.strategies;
+	if (std::find(strategies.begin(), strategies.end(), values["strategy"]) == strategies.end())
+		values["strategy"] = installed.Get("strategy");
+	auto it = installed.presets.find(values["strategy"]);
+	if (it != installed.presets.end() && !it->second.empty() &&
+		std::find(it->second.begin(), it->second.end(), values["preset"]) == it->second.end()) {
+		auto const own = installed.Get("preset");
+		values["preset"] = std::find(it->second.begin(), it->second.end(), own) != it->second.end() ? own : it->second.front();
+	}
+	return values;
+}
+
+Values Changes(Installed const& installed, Values const& chosen) {
+	Values changes;
+	for (auto const& [path, value] : chosen) {
+		if (!installed.Has(path)) continue;
+		if (installed.Get(path) != value) changes[path] = value;
+	}
+	return changes;
 }
 
 std::vector<Interval> ReadTimeline(AssFile const& output) {
 	std::vector<Interval> found;
 	for (auto const& line : output.Events) {
 		if (line.Comment) continue;
-		found.push_back({int(line.Start), int(line.End)});
+		Interval interval{int(line.Start), int(line.End), line.Text.get(), ""};
+		// Without OCR its text is its name for the stretch
+		auto const& t = interval.text;
+		if (t.rfind("Subtitle_", 0) == 0 && t.find_first_of(" \\{") == std::string::npos) {
+			auto last = t.rfind('_');
+			if (last > 8 && last + 1 < t.size() && t.find_first_not_of("0123456789", last + 1) == std::string::npos) {
+				interval.name = t;
+				interval.text.clear();
+			}
+		}
+		found.push_back(std::move(interval));
 	}
 	std::stable_sort(found.begin(), found.end(), [](Interval const& a, Interval const& b) { return a.start < b.start; });
 	return found;
+}
+
+void AddReadText(std::vector<Interval> &intervals, std::string const& ocr_file) {
+	std::map<std::string, std::string> read;
+	size_t pos = 0;
+	while (pos < ocr_file.size()) {
+		size_t end = ocr_file.find('\n', pos);
+		if (end == std::string::npos) end = ocr_file.size();
+		auto line = ocr_file.substr(pos, end - pos);
+		pos = end + 1;
+		if (!line.empty() && line.back() == '\r') line.pop_back();
+		size_t comma = line.find(',');
+		if (comma == std::string::npos) continue;
+		read[line.substr(0, comma)] = line.substr(comma + 1);
+	}
+	for (auto& interval : intervals) {
+		if (!interval.text.empty() || interval.name.empty()) continue;
+		auto it = read.find(interval.name);
+		if (it != read.end()) interval.text = it->second;
+	}
 }
 
 bool ReportsError(std::string const& output) {
@@ -182,6 +476,23 @@ std::string Readable(std::string const& output) {
 	return wxString(output.data(), wxConvLibc, output.size()).utf8_string();
 }
 
+std::string WithoutProgress(std::string const& output) {
+	std::string out;
+	size_t pos = 0;
+	while (pos < output.size()) {
+		size_t end = output.find_first_of("\r\n", pos);
+		if (end == std::string::npos) end = output.size();
+		auto line = output.substr(pos, end - pos);
+		pos = end + 1;
+		// A number, a percent sign and the bar's edge
+		size_t i = line.find_first_not_of(' ');
+		size_t digits = i == std::string::npos ? i : line.find_first_not_of("0123456789", i);
+		bool const bar = digits != std::string::npos && digits > i && line.compare(digits, 2, "%|") == 0;
+		if (!bar && !line.empty()) out += line + "\n";
+	}
+	return out;
+}
+
 std::string LastLines(std::string const& output, size_t count) {
 	std::vector<std::string> lines;
 	size_t pos = 0;
@@ -195,6 +506,82 @@ std::string LastLines(std::string const& output, size_t count) {
 	std::string out;
 	for (auto const& l : lines) out += l + "\n";
 	return out;
+}
+
+namespace {
+/// "HH:MM:SS.cc", as MagiaTimeline writes a frame's time, in milliseconds
+std::optional<int> ParseClock(std::string const& s) {
+	int h, m, sec, cs, used = 0;
+	if (std::sscanf(s.c_str(), "%d:%d:%d.%d%n", &h, &m, &sec, &cs, &used) != 4 || used != int(s.size()))
+		return std::nullopt;
+	return ((h * 60 + m) * 60 + sec) * 1000 + cs * 10;
+}
+
+/// The number @p s ends with, after its last @p before
+std::optional<int> TrailingNumber(std::string const& s, char before) {
+	size_t const at = s.rfind(before);
+	if (at == std::string::npos || at + 1 == s.size()) return std::nullopt;
+	if (s.find_first_not_of("0123456789", at + 1) != std::string::npos) return std::nullopt;
+	return std::atoi(s.c_str() + at + 1);
+}
+
+bool StartsWith(std::string const& s, std::string_view prefix) {
+	return s.compare(0, prefix.size(), prefix) == 0;
+}
+}
+
+std::optional<double> ProgressOf(std::string const& output, int duration_ms) {
+	std::optional<int> read; // the stretch it last said it read
+	// From the last line back to the start of the stage it is in
+	size_t end = output.size();
+	while (end > 0) {
+		size_t start = output.find_last_of("\r\n", end - 1);
+		start = start == std::string::npos ? 0 : start + 1;
+		std::string const line = output.substr(start, end - start);
+		end = start == 0 ? 0 : start - 1;
+		if (line.empty()) continue;
+
+		if (StartsWith(line, "frame ")) {
+			auto ms = ParseClock(line.substr(6));
+			if (!ms) continue;
+			if (duration_ms <= 0) return std::nullopt;
+			return std::clamp(double(*ms) / duration_ms, 0.0, 1.0);
+		}
+		if (StartsWith(line, "Subtitle_")) {
+			if (!read) read = TrailingNumber(line, '_');
+			continue;
+		}
+		std::string_view const reading = "IIRTextExtractionPass: processing ";
+		if (StartsWith(line, reading)) {
+			int const count = std::atoi(line.c_str() + reading.size());
+			if (count <= 0) return std::nullopt;
+			// Told after reading it, counting from 0
+			return read ? std::min(1.0, double(*read + 1) / count) : 0.0;
+		}
+		if (StartsWith(line, "====")) {
+			// A stage begun: building the timeline, before its first frame
+			bool const building = line == "==== IIR Building ====" || line == "==== FPIR Building ====";
+			if (building && duration_ms > 0) return 0.0;
+			return std::nullopt;
+		}
+		if (StartsWith(line, "Task ")) return std::nullopt;
+	}
+	return std::nullopt;
+}
+
+Stage StageOf(std::string const& output) {
+	Stage stage = Stage::Starting;
+	size_t pos = 0;
+	while (pos < output.size()) {
+		size_t end = output.find_first_of("\r\n", pos);
+		if (end == std::string::npos) end = output.size();
+		std::string const line = output.substr(pos, end - pos);
+		pos = end + 1;
+		if (StartsWith(line, "Task ")) stage = Stage::Analysing;
+		else if (line == "==== Extra Job: ocr ====") stage = Stage::Reading;
+		else if (line == "==== IIR to ASS ====") stage = Stage::Writing;
+	}
+	return stage;
 }
 
 namespace {
@@ -222,7 +609,7 @@ void Drain(wxInputStream *in, std::string &into) {
 }
 }
 
-Outcome Run(Launch const& launch, agi::fs::path const& config, wxWindow *parent) {
+Outcome Run(Launch const& launch, agi::fs::path const& config, wxWindow *parent, int duration_ms) {
 	Outcome outcome;
 	std::vector<std::wstring> words{launch.program.wstring()};
 	for (auto const& a : Arguments(launch, config))
@@ -255,17 +642,38 @@ Outcome Run(Launch const& launch, agi::fs::path const& config, wxWindow *parent)
 	DialogProgress progress(parent, "MagiaTimeline", _("Starting MagiaTimeline..."));
 	try {
 		progress.Run([&](agi::ProgressSink *ps) {
+			using namespace std::chrono;
+			auto const started = steady_clock::now();
 			ps->SetIndeterminate();
+			bool indeterminate = true;
 			std::string shown;
 			while (true) {
 				bool const ended = process->ended;
 				Drain(process->GetInputStream(), outcome.output);
 				Drain(process->GetErrorStream(), outcome.output);
-				auto last = Readable(LastLines(outcome.output, 1));
-				if (!last.empty()) last.pop_back();
-				if (!last.empty() && last != shown) {
-					ps->SetMessage(last);
-					shown = last;
+				// The stage it is in and how long it has been going, so it is
+				// seen to be going even while it says nothing
+				wxString stage;
+				switch (StageOf(outcome.output)) {
+					case Stage::Starting: stage = _("Starting MagiaTimeline..."); break;
+					case Stage::Analysing: stage = _("Analysing the video..."); break;
+					case Stage::Reading: stage = _("Reading the subtitles' text..."); break;
+					case Stage::Writing: stage = _("Writing the result..."); break;
+				}
+				int const seconds = int(duration_cast<std::chrono::seconds>(steady_clock::now() - started).count());
+				auto message = from_wx(stage) + "  " + agi::format("%d:%02d", seconds / 60, seconds % 60);
+				if (message != shown) {
+					ps->SetMessage(message);
+					shown = message;
+				}
+				// How far, where the stage it is in tells; a sweep where not
+				if (auto share = ProgressOf(outcome.output, duration_ms)) {
+					ps->SetProgress(std::llround(*share * 1000), 1000);
+					indeterminate = false;
+				}
+				else if (!indeterminate) {
+					ps->SetIndeterminate();
+					indeterminate = true;
 				}
 				if (ps->IsCancelled()) {
 					wxProcess::Kill(static_cast<int>(pid), wxSIGKILL, wxKILL_CHILDREN);

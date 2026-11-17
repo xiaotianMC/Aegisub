@@ -23,6 +23,7 @@
 #include <wx/dcbuffer.h>
 #include <wx/dcgraph.h>
 #include <wx/settings.h>
+#include <wx/sizer.h>
 #include <wx/textctrl.h>
 
 namespace style_parts {
@@ -98,10 +99,46 @@ using style_parts::mixed;
 class StylePanel::Part : public wxWindow {
 	agi::signal::Connection theme_changed;
 
+	// A click doesn't take the keyboard from the text being edited, but
+	// once it is in the panel it goes to the part clicked
+	bool TryBefore(wxEvent &event) override {
+		auto type = event.GetEventType();
+		if ((type == wxEVT_LEFT_DOWN || type == wxEVT_LEFT_DCLICK) && Focusable() && IsEnabled() && !HasFocus()
+			&& dynamic_cast<Part*>(FindFocus()))
+			SetFocus();
+		return wxWindow::TryBefore(event);
+	}
+
+	bool HandleKey(wxKeyEvent &e) {
+		int key = e.GetKeyCode();
+		if (key == WXK_TAB && !e.ControlDown() && !e.AltDown()) {
+			MoveFocus(!e.ShiftDown());
+			return true;
+		}
+		if (IsEnabled() && OnKey(e)) return true;
+		return key == WXK_ESCAPE && !e.HasAnyModifiers() && flat::GoHome(this);
+	}
+
+	void OnCharHook(wxKeyEvent &e) {
+		// Not used: the window's hotkeys
+		if (!HandleKey(e)) e.Skip();
+	}
+
 protected:
 	bool hover = false;
 
 	virtual void Draw(wxDC &dc, Palette const& p) = 0;
+	/// A key pressed while the part has the keyboard: whether it used it.
+	/// Tab and Shift+Tab go between the parts, Escape back to the text
+	virtual bool OnKey(wxKeyEvent &) { return false; }
+	/// What the ring showing the keyboard goes round
+	virtual wxRect FocusRect() const { return wxRect(GetClientSize()); }
+	/// Space or Enter, as a click
+	static bool Activates(wxKeyEvent const& e) {
+		int key = e.GetKeyCode();
+		return !e.HasAnyModifiers() && (key == WXK_SPACE || key == WXK_RETURN || key == WXK_NUMPAD_ENTER);
+	}
+	static bool Plain(wxKeyEvent const& e) { return !e.ControlDown() && !e.AltDown() && !e.MetaDown(); }
 
 	void Set(wxString &member, wxString const& value) {
 		if (member == value) return;
@@ -111,7 +148,7 @@ protected:
 
 public:
 	Part(wxWindow *parent, wxSize min_size)
-	: wxWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE | wxFULL_REPAINT_ON_RESIZE)
+	: wxWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE | wxFULL_REPAINT_ON_RESIZE | wxWANTS_CHARS)
 	{
 		SetBackgroundStyle(wxBG_STYLE_PAINT);
 		SetMinSize(FromDIP(min_size));
@@ -124,7 +161,12 @@ public:
 			dc.DrawRectangle(wxPoint(0, 0), GetClientSize());
 			dc.SetFont(GetFont());
 			Draw(dc, p);
+			if (HasFocus())
+				flat::DrawOutline(dc, FocusRect(), FromDIP(5), std::max(2, FromDIP(2)), p.accent);
 		});
+		Bind(wxEVT_SET_FOCUS, [this](wxFocusEvent &e) { Refresh(false); e.Skip(); });
+		Bind(wxEVT_KILL_FOCUS, [this](wxFocusEvent &e) { Refresh(false); e.Skip(); });
+		Bind(wxEVT_CHAR_HOOK, &Part::OnCharHook, this);
 		Bind(wxEVT_ENTER_WINDOW, [this](wxMouseEvent &e) { hover = true; Refresh(false); e.Skip(); });
 		Bind(wxEVT_LEAVE_WINDOW, [this](wxMouseEvent &e) { hover = false; Refresh(false); e.Skip(); });
 		theme_changed = theme::AddChangeListener([this] { Refresh(false); });
@@ -141,15 +183,50 @@ public:
 	/// Whether the wheel changes the part rather than scrolling the panel
 	virtual bool WantsWheel() const { return false; }
 
-	/// Drawn again at once: a part left looking disabled reads as one
+	/// Drawn again at once: a part left looking disabled reads as one. The
+	/// keyboard on it goes on to the next
 	bool Enable(bool enable = true) override {
+		bool had_focus = !enable && HasFocus();
 		bool changed = wxWindow::Enable(enable);
 		if (changed) Refresh(false);
+		if (had_focus) MoveFocus(true);
 		return changed;
 	}
 
+	/// Whether Tab stops at it
+	virtual bool Focusable() const { return false; }
 	bool AcceptsFocus() const override { return false; }
-	bool AcceptsFocusFromKeyboard() const override { return false; }
+	bool AcceptsFocusFromKeyboard() const override { return Focusable() && IsEnabled(); }
+
+	/// Give the keyboard to the next part of the panel that takes it, or
+	/// the one before
+	void MoveFocus(bool forward) {
+		for (wxWindow *w = GetParent(); w; w = w->GetParent())
+			if (auto panel = dynamic_cast<PanelFocus*>(w)) {
+				panel->MoveFocus(this, forward);
+				return;
+			}
+		Navigate(forward ? wxNavigationKeyEvent::IsForward : wxNavigationKeyEvent::IsBackward);
+	}
+
+	/// Act as pressing @p key does with the part having the keyboard, for
+	/// tests. @return Whether it was used
+	bool PressKey(int key, int modifiers = 0, wxChar character = 0) {
+		wxKeyEvent e(wxEVT_CHAR_HOOK);
+		e.m_keyCode = key;
+		e.m_uniChar = character ? character : (key < WXK_START ? static_cast<wxChar>(key) : WXK_NONE);
+		e.SetControlDown(modifiers & wxMOD_CONTROL);
+		e.SetShiftDown(modifiers & wxMOD_SHIFT);
+		e.SetAltDown(modifiers & wxMOD_ALT);
+		e.SetEventObject(this);
+		bool used = HandleKey(e);
+		// A key let go ends a run of steps
+		wxKeyEvent up(wxEVT_KEY_UP);
+		up.m_keyCode = key;
+		up.SetEventObject(this);
+		ProcessWindowEvent(up);
+		return used;
+	}
 };
 
 /// A value in a rounded field: an optional dim label before it, a unit
@@ -175,6 +252,10 @@ private:
 	bool inherited = false; ///< The value is the style's, not the line's
 	wxTextCtrl *edit = nullptr;
 	bool pressed = false, dragging = false;
+	/// Typing was started from the keyboard: the keyboard comes back here
+	bool keyboard_edit = false;
+	/// Arrow keys are stepping the number: one change, ended when let go
+	bool stepping = false;
 	int press_x = 0;
 	double press_value = 0;
 	/// How a number is shown and read back when typed; plain by default
@@ -205,16 +286,25 @@ private:
 			right -= chevron_size + FromDIP(6);
 		}
 		int y = (size.y - dc.GetCharHeight()) / 2;
-		if (!label.empty()) {
-			dc.SetTextForeground(p.dim);
-			dc.DrawText(label, pad, y);
-		}
-		if (IsEditing()) return;
-		int x = TextLeft(dc);
 		wxString shown_unit = value == mixed ? wxString() : unit;
 		// Degree and percent signs sit against their number
 		int unit_gap = shown_unit == wxS("°") || shown_unit == "%" ? 0 : FromDIP(3);
 		int unit_width = shown_unit.empty() ? 0 : dc.GetTextExtent(shown_unit).x + unit_gap;
+		int x = pad;
+		if (!label.empty()) {
+			// Too narrow, the label gives way first: the value is what is
+			// looked for
+			int room = right - pad - FromDIP(6);
+			if (!IsEditing()) room -= dc.GetTextExtent(value).x + unit_width;
+			wxString shown_label = Ellipsize(dc, label, std::max(0, room));
+			if (shown_label == wxS("…") && !IsEditing()) shown_label.clear();
+			if (!shown_label.empty()) {
+				dc.SetTextForeground(p.dim);
+				dc.DrawText(shown_label, pad, y);
+				x += dc.GetTextExtent(shown_label).x + FromDIP(6);
+			}
+		}
+		if (IsEditing()) return;
 		wxString text = Ellipsize(dc, value, std::max(0, right - x - unit_width));
 		// Numbers that can be dragged are in the accent colour; a value
 		// taken from the style lighter, still not the grey of a disabled one
@@ -278,6 +368,67 @@ private:
 		if (was_dragging && on_number) on_number(current, true);
 	}
 
+	void EndStepping() {
+		if (!stepping) return;
+		stepping = false;
+		if (on_number) on_number(current, true);
+	}
+
+	/// Up and Right a step more, Down and Left less; Page Up and Down ten
+	/// steps, Shift a tenth, as when dragging. Held down, it is one change
+	bool Step(int key, bool shift) {
+		int steps = key == WXK_UP || key == WXK_RIGHT || key == WXK_NUMPAD_UP || key == WXK_NUMPAD_RIGHT ? 1
+			: key == WXK_DOWN || key == WXK_LEFT || key == WXK_NUMPAD_DOWN || key == WXK_NUMPAD_LEFT ? -1
+			: key == WXK_PAGEUP || key == WXK_NUMPAD_PAGEUP ? 10
+			: key == WXK_PAGEDOWN || key == WXK_NUMPAD_PAGEDOWN ? -10 : 0;
+		if (!steps) return false;
+		double step = range->step * (shift ? 0.1 : 1);
+		double v = Clamp(std::round((current + steps * step) / step) * step);
+		if (v != current || !known) {
+			SetNumber(v, true);
+			stepping = true;
+			if (on_number) on_number(v, false);
+		}
+		return true;
+	}
+
+	bool OnKey(wxKeyEvent &e) override {
+		if (IsEditing() || !Plain(e)) return false;
+		int key = e.GetKeyCode();
+		if (on_choose) {
+			if (Activates(e) || key == WXK_F4) {
+				CallAfter([this] { if (on_choose) on_choose(); });
+				return true;
+			}
+			if (on_wheel && (key == WXK_UP || key == WXK_DOWN)) {
+				// As the wheel: up is the one before in the list
+				on_wheel(key == WXK_UP ? 1 : -1);
+				return true;
+			}
+			return false;
+		}
+		if (!range) return false;
+		if (Activates(e) || key == WXK_F2) {
+			StartEditing(true);
+			return true;
+		}
+		if (Step(key, e.ShiftDown())) return true;
+		// A number typed starts typing it in
+		wxChar c = e.GetUnicodeKey();
+		if ((c >= '0' && c <= '9') || c == '-' || c == '.' || c == ',' || (key >= WXK_NUMPAD0 && key <= WXK_NUMPAD9)) {
+			if (key >= WXK_NUMPAD0 && key <= WXK_NUMPAD9) c = static_cast<wxChar>('0' + key - WXK_NUMPAD0);
+			StartEditing(true);
+			if (IsEditing()) {
+				edit->ChangeValue(wxString(c));
+				edit->SetInsertionPointEnd();
+			}
+			return true;
+		}
+		return false;
+	}
+
+	bool Focusable() const override { return range || on_choose; }
+
 public:
 	Field(wxWindow *parent, wxString label, wxString unit, bool chevron, wxString const& tip)
 	: Part(parent, wxSize(48, 28)), label(std::move(label)), unit(std::move(unit)), chevron(chevron)
@@ -288,6 +439,8 @@ public:
 		Bind(wxEVT_MOTION, &Field::OnMotion, this);
 		Bind(wxEVT_LEFT_UP, &Field::OnLeftUp, this);
 		Bind(wxEVT_MOUSE_CAPTURE_LOST, &Field::OnCaptureLost, this);
+		Bind(wxEVT_KEY_UP, [this](wxKeyEvent &e) { EndStepping(); e.Skip(); });
+		Bind(wxEVT_KILL_FOCUS, [this](wxFocusEvent &e) { EndStepping(); e.Skip(); });
 		Bind(wxEVT_MOUSEWHEEL, [this](wxMouseEvent &e) {
 			if (!WantsWheel() || flat::Scrolling()) { e.Skip(); return; }
 			if (int steps = flat::WheelSteps(e, wheel_remainder)) on_wheel(steps);
@@ -345,8 +498,12 @@ public:
 		Refresh(false);
 	}
 
-	void StartEditing() {
+	/// Open the box for typing the number in; @p from_keyboard: Enter
+	/// or Escape gives the keyboard back to the field, not the text
+	void StartEditing(bool from_keyboard = false) {
 		if (!range || IsEditing() || !IsEnabled()) return;
+		EndStepping();
+		keyboard_edit = from_keyboard;
 		if (!edit) {
 			edit = new wxTextCtrl(this, -1, "", wxDefaultPosition, wxDefaultSize, wxTE_PROCESS_ENTER | wxBORDER_NONE);
 			// A click anywhere else enters the number and leaves it
@@ -355,6 +512,13 @@ public:
 			edit->Bind(wxEVT_KILL_FOCUS, [this](wxFocusEvent &e) { e.Skip(); CallAfter([this] { if (IsEditing()) CommitEditing(); }); });
 			edit->Bind(wxEVT_CHAR_HOOK, [this](wxKeyEvent &e) {
 				if (e.GetKeyCode() == WXK_ESCAPE) CancelEditing();
+				else if (e.GetKeyCode() == WXK_TAB && !e.ControlDown() && !e.AltDown()) {
+					// Entered, and on to the next part
+					bool forward = !e.ShiftDown();
+					keyboard_edit = true;
+					CommitEditing();
+					if (!IsEditing()) MoveFocus(forward);
+				}
 				else e.Skip();
 			});
 		}
@@ -392,17 +556,24 @@ public:
 			return;
 		}
 		v = Clamp(v);
-		// Back to the text, as Enter in the edit box's fields goes
-		if (edit->HasFocus()) flat::LeaveField();
+		// Back to the text, as Enter in the edit box's fields goes, or to
+		// the field when typing was started from the keyboard
+		LeaveEditBox();
 		edit->Hide();
 		SetNumber(v, true);
 		Refresh(false);
 		if (on_number) on_number(v, true);
 	}
 
+	void LeaveEditBox() {
+		if (!edit->HasFocus()) return;
+		if (keyboard_edit) SetFocus();
+		else flat::LeaveField();
+	}
+
 	void CancelEditing() {
 		if (!IsEditing()) return;
-		if (edit->HasFocus()) flat::LeaveField();
+		LeaveEditBox();
 		edit->Hide();
 		Refresh(false);
 	}
@@ -471,6 +642,14 @@ public:
 	}
 
 	std::function<void()> on_click;
+
+	bool Focusable() const override { return true; }
+	bool OnKey(wxKeyEvent &e) override {
+		if (!Activates(e)) return false;
+		// Later, as a click: it may build the part again
+		if (on_click) CallAfter([this] { if (on_click) on_click(); });
+		return true;
+	}
 
 	void SetState(State new_state) {
 		if (state == new_state) return;
@@ -560,6 +739,15 @@ public:
 
 	std::function<void()> on_check, on_pick;
 
+	bool Focusable() const override { return true; }
+	/// Space ticks it, Enter opens the colour picker
+	bool OnKey(wxKeyEvent &e) override {
+		if (!Activates(e)) return false;
+		auto handler = e.GetKeyCode() == WXK_SPACE ? on_check : on_pick;
+		if (handler) CallAfter([handler] { handler(); });
+		return true;
+	}
+
 	wxRect SwatchRect() const {
 		int cy = GetClientSize().y / 2;
 		return wxRect(FromDIP(14) + FromDIP(8), cy - FromDIP(9), FromDIP(24), FromDIP(18));
@@ -587,7 +775,7 @@ public:
 /// A small button with a drawn symbol: the style row's actions
 class StylePanel::IconButton final : public StylePanel::Part {
 public:
-	enum class Glyph { Up, Down, Plus, More, Collapse, Close, Now, Pick, Swap, Earlier, Later };
+	enum class Glyph { Up, Down, Plus, More, Collapse, Close, Now, Pick, Swap, Earlier, Later, Style };
 
 private:
 	Glyph glyph;
@@ -678,6 +866,19 @@ private:
 				dc.DrawLine(x + dir * half, centre.y, x, centre.y + half);
 				break;
 			}
+			case Glyph::Style: {
+				// A, as a font's sample: the style panel
+				int h = FromDIP(12), w = FromDIP(5);
+				int top = centre.y - h / 2, bottom = top + h;
+				wxPen pen(p.text, thick);
+				pen.SetCap(wxCAP_ROUND);
+				dc.SetPen(pen);
+				dc.DrawLine(centre.x - w, bottom, centre.x, top);
+				dc.DrawLine(centre.x, top, centre.x + w, bottom);
+				int bar = bottom - h * 2 / 5;
+				dc.DrawLine(centre.x - w * 3 / 5, bar, centre.x + w * 3 / 5, bar);
+				break;
+			}
 			case Glyph::Pick: {
 				// ⌖ : a point on the video
 				dc.SetBrush(*wxTRANSPARENT_BRUSH);
@@ -705,6 +906,14 @@ public:
 			Refresh(false);
 			if (on_click) CallAfter([this] { pressed = false; Refresh(false); if (on_click) on_click(); });
 		});
+	}
+
+	bool Focusable() const override { return true; }
+	bool OnKey(wxKeyEvent &e) override {
+		if (!Activates(e)) return false;
+		// Later, as a click: it may build the part again
+		if (on_click) CallAfter([this] { if (on_click) on_click(); });
+		return true;
 	}
 
 	wxString Shown() const override { return IsEnabled() ? "enabled" : "disabled"; }
@@ -745,6 +954,26 @@ public:
 		});
 	}
 
+	/// Other words on it, as wide as they need
+	void SetLabel(wxString const& new_label) override {
+		if (label == new_label) return;
+		label = new_label;
+		wxClientDC dc(this);
+		dc.SetFont(GetFont());
+		SetMinSize(wxSize(dc.GetTextExtent(label).x + FromDIP(16), FromDIP(26)));
+		if (auto sizer = GetContainingSizer()) sizer->Layout();
+		Refresh(false);
+	}
+	wxString GetLabel() const override { return label; }
+
+	bool Focusable() const override { return true; }
+	bool OnKey(wxKeyEvent &e) override {
+		if (!Activates(e)) return false;
+		// Later, as a click: it may build the part again
+		if (on_click) CallAfter([this] { if (on_click) on_click(); });
+		return true;
+	}
+
 	wxString Shown() const override { return label; }
 };
 
@@ -781,13 +1010,19 @@ public:
 class StylePanel::Caption final : public StylePanel::Part {
 	wxString text;
 
+	bool right = false;
+
 	void Draw(wxDC &dc, Palette const& p) override {
 		dc.SetTextForeground(p.dim);
-		dc.DrawText(Ellipsize(dc, text, GetClientSize().x), 0, (GetClientSize().y - dc.GetCharHeight()) / 2);
+		wxString shown = Ellipsize(dc, text, GetClientSize().x);
+		int x = right ? GetClientSize().x - dc.GetTextExtent(shown).x : 0;
+		dc.DrawText(shown, x, (GetClientSize().y - dc.GetCharHeight()) / 2);
 	}
 
 public:
 	explicit Caption(wxWindow *parent) : Part(parent, wxSize(40, 20)) { }
+	/// Against the right edge, as a count after a button is
+	void AlignRight() { right = true; Refresh(false); }
 	void SetText(wxString const& new_text) { Set(text, new_text); }
 	wxString Shown() const override { return text; }
 };
@@ -844,6 +1079,21 @@ public:
 		Refresh(false);
 	}
 	wxString Shown() const override { return labels[selected]; }
+
+	bool Focusable() const override { return true; }
+	/// Left and Right go to the half next to the one chosen, Home and End
+	/// to the ends
+	bool OnKey(wxKeyEvent &e) override {
+		if (!Plain(e) || e.ShiftDown()) return false;
+		int last = static_cast<int>(labels.size()) - 1, key = e.GetKeyCode();
+		int index = key == WXK_LEFT || key == WXK_UP ? selected - 1
+			: key == WXK_RIGHT || key == WXK_DOWN ? selected + 1
+			: key == WXK_HOME ? 0 : key == WXK_END ? last : -2;
+		if (index == -2) return false;
+		index = std::clamp(index, 0, last);
+		if (index != selected && on_choose) CallAfter([this, index] { if (on_choose) on_choose(index); });
+		return true;
+	}
 };
 
 /// A section's title; clicking it folds the section away
@@ -885,4 +1135,13 @@ public:
 	}
 
 	wxString Shown() const override { return expanded ? "expanded" : "collapsed"; }
+
+	bool Focusable() const override { return true; }
+	/// Space or Enter folds and opens it, Left folds, Right opens
+	bool OnKey(wxKeyEvent &e) override {
+		int key = e.GetKeyCode();
+		bool fold = Activates(e) || (Plain(e) && ((key == WXK_LEFT && expanded) || (key == WXK_RIGHT && !expanded)));
+		if (fold && on_click) CallAfter([this] { if (on_click) on_click(); });
+		return fold || (Plain(e) && (key == WXK_LEFT || key == WXK_RIGHT));
+	}
 };

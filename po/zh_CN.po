@@ -6089,9 +6089,6 @@ msgstr "点击激活字幕栏"
 msgid "Highlight visible subtitles"
 msgstr "高亮可见字幕"
 
-#: ../src/preferences.cpp:291
-msgid "Hide overrides symbol"
-msgstr "代替样式覆写标签的字符串"
 
 #: ../src/preferences.cpp:295
 msgid "Skip over whitespace"
@@ -7715,60 +7712,6 @@ msgstr "绑定字幕"
 msgid "unbind subtitles"
 msgstr "解除字幕绑定"
 
-msgid "Maximize / Restore"
-msgstr "最大化 / 还原"
-
-msgid "Your subtitle workspace"
-msgstr "开始你的字幕工作"
-
-msgid "Organize your projects, or jump straight into editing."
-msgstr "按项目组织工作，或直接开始编辑。"
-
-msgid "Project dashboard"
-msgstr "项目看板"
-
-msgid "Subtitle editor"
-msgstr "字幕编辑器"
-
-msgid "A dedicated space for your\nsubtitle projects."
-msgstr "为字幕项目准备的独立空间，\n让每一份工作都有清晰的起点。"
-
-msgid "Open the familiar editor and\nstart working right away."
-msgstr "进入熟悉的字幕编辑环境，\n打开字幕，立即开始工作。"
-
-msgid "Go to dashboard"
-msgstr "进入项目看板"
-
-msgid "Open editor"
-msgstr "直接进入软件"
-
-msgid "You can also open subtitle files directly from Windows."
-msgstr "也可以在 Windows 中直接双击字幕文件打开。"
-
-msgid "Back to start"
-msgstr "返回启动页"
-
-msgid "A place for your subtitle projects."
-msgstr "集中查看你的字幕项目。"
-
-msgid "No projects yet"
-msgstr "还没有项目"
-
-msgid "Your projects will appear here."
-msgstr "你的字幕项目将显示在这里。"
-
-msgid "Open subtitle editor"
-msgstr "打开字幕编辑器"
-
-msgid "Project Management..."
-msgstr "项目管理…"
-
-msgid "Project Management"
-msgstr "项目管理"
-
-msgid "Open the project dashboard"
-msgstr "打开项目看板"
-
 msgid "Enable ASS autocompletion"
 msgstr "启用 ASS 自动补全"
 
@@ -8165,14 +8108,8 @@ msgstr "时间与文本指向不同的行"
 msgid "no reliable match"
 msgstr "无可靠匹配"
 
-msgid "Accepted"
-msgstr "已接受"
-
-msgid "Rejected"
-msgstr "已拒绝"
-
 msgid "Partial"
-msgstr "部分接受"
+msgstr "部分采用"
 
 msgid "Pending"
 msgstr "待处理"
@@ -8216,11 +8153,11 @@ msgstr "点击展开"
 msgid "Not a comment"
 msgstr "非注释"
 
-msgid "Accept"
-msgstr "应用"
+msgid "Use Left"
+msgstr "用左侧"
 
-msgid "Reject"
-msgstr "放弃"
+msgid "Use Right"
+msgstr "用右侧"
 
 msgid "Compare Subtitles"
 msgstr "比较字幕"
@@ -8240,17 +8177,11 @@ msgstr "下一处差异 (F7)"
 msgid "Difference 9999 of 9999"
 msgstr "第 9999 / 9999 处差异"
 
-msgid "&Accept Change"
-msgstr "应用更改(&A)"
+msgid "Use &Right"
+msgstr "用右侧(&R)"
 
-msgid "Keep the right side of the current difference"
-msgstr "保留当前差异的右侧内容"
-
-msgid "&Reject Change"
-msgstr "放弃更改(&R)"
-
-msgid "Restore the left side of the current difference"
-msgstr "恢复当前差异的左侧内容"
+msgid "Use &Left"
+msgstr "用左侧(&L)"
 
 msgid "Differences only"
 msgstr "仅显示差异"
@@ -8264,11 +8195,80 @@ msgstr "折叠连续的相同内容，只保留每处差异附近的上下文"
 msgid "Show every line"
 msgstr "显示所有字幕行"
 
+msgid "Tags:"
+msgstr "标签："
+
+msgid "Full"
+msgstr "完整"
+
+msgid "Simplified"
+msgstr "简化"
+
+msgid "Hidden"
+msgstr "隐藏"
+
+msgid "Show override tags as written"
+msgstr "按原文显示覆盖标签"
+
+msgid "Show each {...} block of override tags as a chip of icons saying what it does; point at one for its tags. The subtitle grid shows them the same way."
+msgstr "把每个 {...} 覆盖标签块显示为说明其作用的图标块，鼠标指向可查看其中的标签。字幕表格使用同一设置。"
+
+msgid "Leave override tags out; a changed block keeps a mark where it was"
+msgstr "不显示覆盖标签；变化过的标签块在原位置留下标记"
+
+msgid "Enter shows the hidden lines"
+msgstr "Enter 展开隐藏的行"
+
+msgid "Enter makes this the current difference, Space selects it"
+msgstr "Enter 设为当前差异，空格勾选"
+
 msgid "Sync scrolling"
 msgstr "同步滚动"
 
 msgid "Scroll both sides together. When off, each side scrolls on its own and selecting a line locates it on the other side."
 msgstr "两侧一起滚动。关闭后两侧各自滚动，选中一行时会在另一侧定位到对应行。"
+
+msgid "Filter"
+msgstr "筛选"
+
+msgid "Show one kind of difference, leave fields out of the comparison, sync scrolling"
+msgstr "只显示一类差异、不比较某些字段、同步滚动"
+
+msgid "Ignoring %s"
+msgstr "忽略%s"
+
+msgid "Take this filter off"
+msgstr "去掉这个筛选条件"
+
+msgid "Base version"
+msgstr "基准版本"
+
+msgid "Current version"
+msgstr "当前版本"
+
+msgid "Take the left side of every difference shown"
+msgstr "所有显示的差异都采用左侧内容"
+
+msgid "Keep the right side of every difference shown"
+msgstr "所有显示的差异都保留右侧内容"
+
+msgid "Cannot write: %s"
+msgstr "无法写入：%s"
+
+msgid " (+%d more)"
+msgstr "（另有 %d 条）"
+
+msgid "Writing changes %d lines, adds %d, removes %d"
+msgstr "写入将修改 %d 行，新增 %d 行，删除 %d 行"
+
+msgid "copies %d styles"
+msgstr "复制 %d 个样式"
+
+msgid "%d styles missing"
+msgstr "缺少 %d 个样式"
+
+msgid "copies extra data"
+msgstr "复制附加数据"
 
 msgid "Swap Sides"
 msgstr "交换左右"
@@ -8291,41 +8291,38 @@ msgstr "重做 (Ctrl+Y)"
 msgid "Select all differences"
 msgstr "全选差异"
 
-msgid "Accept Selected"
-msgstr "应用所选"
+msgid "Use Left for Selected"
+msgstr "所选用左侧"
 
-msgid "Reject Selected"
-msgstr "放弃所选"
+msgid "Use Right for Selected"
+msgstr "所选用右侧"
 
-msgid "Accept All Changes"
-msgstr "应用全部更改"
+msgid "Use Left for All"
+msgstr "全部用左侧"
 
-msgid "Reject All Changes"
-msgstr "放弃全部更改"
+msgid "Use Right for All"
+msgstr "全部用右侧"
 
 msgid "Write the decisions to the open subtitles as one undoable change and end the comparison"
 msgstr "把决定作为一次可撤销的修改写入当前字幕，并结束比较"
 
-msgid "Accept keeps the right side, Reject restores the left side. Browsing and deciding never change the open subtitles: they change only when you click Write to Project, as one undoable step."
-msgstr "应用更改保留右侧内容，放弃更改恢复左侧内容。浏览和决定都不会修改当前字幕：只有点击“写入工程”时才会写入，并作为一次可撤销的修改。"
+msgid "Take the left side. Click again to reset."
+msgstr "采用左侧内容。再次点击重置。"
 
-msgid "Take the left side (Reject). Click again to reset."
-msgstr "采用左侧内容（放弃更改）。再次点击重置。"
+msgid "Keep the right side. Click again to reset."
+msgstr "保留右侧内容。再次点击重置。"
 
-msgid "Keep the right side (Accept). Click again to reset."
-msgstr "保留右侧内容（应用更改）。再次点击重置。"
+msgid "Use Right: keep the right side of this difference. Nothing is written until Write to Project."
+msgstr "用右侧：保留这处差异右侧的内容。点击“写入工程”之前不会修改字幕。"
 
-msgid "Accept: keep the right side of this difference. Nothing is written until Write to Project."
-msgstr "应用：保留这处差异右侧的内容。点击“写入工程”之前不会修改字幕。"
-
-msgid "Reject: restore the left side of this difference. Nothing is written until Write to Project."
-msgstr "放弃：恢复这处差异左侧的内容。点击“写入工程”之前不会修改字幕。"
+msgid "Use Left: take the left side of this difference. Nothing is written until Write to Project."
+msgstr "用左侧：采用这处差异左侧的内容。点击“写入工程”之前不会修改字幕。"
 
 msgid "Reset this difference to pending"
 msgstr "把这处差异重置为待处理"
 
-msgid "Select this difference for Accept Selected / Reject Selected (Space)"
-msgstr "勾选这处差异，用于“应用所选 / 放弃所选”（空格键）"
+msgid "Select this difference to decide it with the other selected ones (Space)"
+msgstr "勾选这处差异，与其他勾选的差异一起决定（空格键）"
 
 msgid "Overview of all differences: click or drag to jump"
 msgstr "全部差异概览：点击或拖动跳转"
@@ -8375,11 +8372,17 @@ msgstr "（共 %d 处）"
 msgid "Show:"
 msgstr "显示："
 
-msgid "Show only this kind of difference; Accept All and Reject All then apply to these"
-msgstr "只显示这一类差异；“应用全部更改 / 放弃全部更改”随之只作用于这一类"
+msgid "Show only this kind of difference; Use Left for All and Use Right for All then apply to these"
+msgstr "只显示这一类差异；“全部用左侧 / 全部用右侧”随之只作用于这一类"
 
 msgid "Show every kind of difference"
 msgstr "显示所有类别的差异"
+
+msgid "Pending only"
+msgstr "仅未处理"
+
+msgid "Show only the differences not yet decided. The one you decide stays until you move on."
+msgstr "只显示还没有决定的差异。正在决定的那一处保留到移到别处为止。"
 
 msgid "Ignore:"
 msgstr "忽略："
@@ -8414,12 +8417,6 @@ msgstr "%s：Ctrl+← 采用左侧，Ctrl+→ 保留右侧，Esc 退出字段选
 msgid "target project"
 msgstr "目标工程"
 
-msgid "Original (base): %s"
-msgstr "基准版本：%s"
-
-msgid "Modified (current): %s"
-msgstr "当前版本：%s"
-
 msgid "No difference selected."
 msgstr "未选中差异。"
 
@@ -8438,8 +8435,8 @@ msgstr "第 %d / %d 处差异"
 msgid "%d differences"
 msgstr "共 %d 处差异"
 
-msgid "%d pending, %d accepted, %d rejected, %d partial"
-msgstr "待处理 %d · 已接受 %d · 已拒绝 %d · 部分接受 %d"
+msgid "%d pending · %d left · %d right · %d partial"
+msgstr "待处理 %d · 左 %d · 右 %d · 部分 %d"
 
 msgid "%d selected"
 msgstr "已勾选 %d 处"
@@ -8456,11 +8453,11 @@ msgstr "完成(&D)"
 msgid "&Write to Project (%d)"
 msgstr "写入工程(&W) (%d)"
 
-msgid "These differences are already accepted."
-msgstr "这些差异都已接受。"
+msgid "These differences already use the right side."
+msgstr "这些差异已经都用右侧。"
 
-msgid "These differences are already rejected."
-msgstr "这些差异都已拒绝。"
+msgid "These differences already use the left side."
+msgstr "这些差异已经都用左侧。"
 
 msgid "all %d differences"
 msgstr "全部 %d 处差异"
@@ -8468,11 +8465,11 @@ msgstr "全部 %d 处差异"
 msgid "the %d selected differences"
 msgstr "所选的 %d 处差异"
 
-msgid "Accept (keep the right side)"
-msgstr "应用更改（保留右侧）"
+msgid "Use the right side"
+msgstr "用右侧"
 
-msgid "Reject (restore the left side)"
-msgstr "放弃更改（恢复左侧）"
+msgid "Use the left side"
+msgstr "用左侧"
 
 msgid "%s: %s?"
 msgstr "%s：%s？"
@@ -8486,11 +8483,11 @@ msgstr "有 %d 处已做出相反的决定，将被覆盖。"
 msgid "This can be undone in this window. The open subtitles change only when you write to the project."
 msgstr "可以在此窗口中撤销。只有写入工程时才会修改当前字幕。"
 
-msgid "Accept Change"
-msgstr "应用更改"
+msgid "Take the left side of the current difference (Ctrl+Left)"
+msgstr "采用当前差异左侧的内容（Ctrl+←）"
 
-msgid "Reject Change"
-msgstr "放弃更改"
+msgid "Keep the right side of the current difference (Ctrl+Right)"
+msgstr "保留当前差异右侧的内容（Ctrl+→）"
 
 msgid "Reset to Pending"
 msgstr "重置为待处理"
@@ -8615,8 +8612,50 @@ msgstr "按名称查找并执行任意命令"
 msgid "Not available now"
 msgstr "当前不可用"
 
-msgid "Type a command name, pinyin or command id"
-msgstr "输入命令名称、拼音或命令 ID"
+msgid "Type a command name, pinyin, menu, shortcut or command id"
+msgstr "输入命令名称、拼音、菜单、快捷键或命令 ID"
+
+msgid "Find in subtitles"
+msgstr "搜字幕"
+
+msgid "Go to line or time"
+msgstr "跳到行或时间"
+
+msgid "Type text to find in the subtitles: words in any order, pinyin or its initials"
+msgstr "输入要在字幕里找的文字：可分词、不限顺序，可用拼音或首字母"
+
+msgid "No matching lines"
+msgstr "没有匹配的字幕行"
+
+#, c-format
+msgid "%zu more lines match: type more to narrow them down"
+msgstr "还有 %zu 行匹配，多输入一些来缩小范围"
+
+#, c-format
+msgid "There is no line %d: the subtitles have %zu"
+msgstr "没有第 %d 行：字幕共 %zu 行"
+
+msgid "Type a line number, or a time such as 1:23.45 or 0:01:23"
+msgstr "输入行号，或 1:23.45、0:01:23 这样的时间"
+
+#, c-format
+msgid "Seek video to %s"
+msgstr "视频跳到 %s"
+
+msgid "No video is open"
+msgstr "没有打开视频"
+
+msgid "Settings"
+msgstr "设置"
+
+msgid "Setting"
+msgstr "设置项"
+
+msgid "Settings page"
+msgstr "设置页"
+
+msgid "Type the name of a setting, its pinyin or initials"
+msgstr "输入设置项的名称、拼音或首字母"
 
 msgid "No matching commands"
 msgstr "没有匹配的命令"
@@ -9455,8 +9494,6 @@ msgstr "操作"
 msgid "Keep the playback cursor in view while playing"
 msgstr "播放时让播放光标始终可见"
 
-msgid "Leave tags out of the text column, rather than showing a symbol for each"
-msgstr "文本列中直接省略标签，不再为每个标签显示一个符号"
 
 msgid "Lines showing on the video's current frame get their own background"
 msgstr "在视频当前帧上显示的字幕行用单独的底色标出"
@@ -9899,6 +9936,16 @@ msgid "Found %d scene change"
 msgid_plural "Found %d scene changes"
 msgstr[0] "找到 %d 处画面切换"
 
+#: ../src/command/keyframe.cpp
+#, c-format
+msgid "Found %d shot and added an empty line for each"
+msgid_plural "Found %d shots and added an empty line for each"
+msgstr[0] "找到 %d 个镜头，已为每个镜头添加一行空字幕"
+
+#: ../src/command/keyframe.cpp
+msgid "timeline from scene changes"
+msgstr "按画面切换生成时间轴"
+
 #: ../src/command/time.cpp
 msgid "Snap to &Nearby Scene Changes"
 msgstr "吸附到附近的画面切换(&N)"
@@ -9941,21 +9988,64 @@ msgid "How readily Detect Scene Changes takes a change of picture for a cut. Hig
 msgstr "“检测画面切换”把画面变化当作切换的灵敏度。越高找到的切换越多，误判也越多。"
 
 #: ../src/preferences.cpp
-msgid "Snap to scene changes within (ms)"
-msgstr "吸附画面切换的最大距离 (毫秒)"
+msgid "Also find dissolves and fades"
+msgstr "同时检测叠化和淡入淡出"
+
+#: ../src/preferences.cpp
+msgid "A change of shot that takes a few frames is placed at its middle"
+msgstr "持续几帧的镜头转换，切换点放在转换的中间"
+
+#: ../src/preferences.cpp
+msgid "Leave out the bottom of the picture (%)"
+msgstr "不比较画面底部 (%)"
+
+#: ../src/preferences.cpp
+msgid "Where subtitles are burnt in, so that their coming and going is not taken for a cut; black bars are left out by themselves"
+msgstr "硬字幕所在的位置，免得字幕出现、消失被当成切换；黑边会自动排除"
+
+#: ../src/preferences.cpp
+msgid "Snap a start earlier to a scene change within (ms)"
+msgstr "开始时间往前吸附画面切换的最大距离 (毫秒)"
+
+#: ../src/preferences.cpp
+msgid "Snap a start later to a scene change within (ms)"
+msgstr "开始时间往后吸附画面切换的最大距离 (毫秒)"
+
+#: ../src/preferences.cpp
+msgid "Snap an end later to a scene change within (ms)"
+msgstr "结束时间往后吸附画面切换的最大距离 (毫秒)"
+
+#: ../src/preferences.cpp
+msgid "Snap an end earlier to a scene change within (ms)"
+msgstr "结束时间往前吸附画面切换的最大距离 (毫秒)"
+
+#: ../src/preferences.cpp
+msgid "How far Snap to Nearby Scene Changes moves a line's start back to land on a scene change"
+msgstr "“吸附到附近的画面切换”最多把开始时间往前移多远，对齐到画面切换"
+
+#: ../src/preferences.cpp
+msgid "How far Snap to Nearby Scene Changes moves a line's start on to land on a scene change: further would hide the line's first word"
+msgstr "“吸附到附近的画面切换”最多把开始时间往后移多远，对齐到画面切换。移得太多会盖掉开口的字"
+
+#: ../src/preferences.cpp
+msgid "How far Snap to Nearby Scene Changes moves a line's end on to land just before a scene change"
+msgstr "“吸附到附近的画面切换”最多把结束时间往后移多远，对齐到画面切换的前一帧"
+
+#: ../src/preferences.cpp
+msgid "How far Snap to Nearby Scene Changes moves a line's end back to land just before a scene change: further would take the line away before it is said"
+msgstr "“吸附到附近的画面切换”最多把结束时间往前移多远，对齐到画面切换的前一帧。移得太多话还没说完字幕就没了"
 
 #: ../src/preferences.cpp
 msgid "How far Snap to Nearby Scene Changes moves a line's start or end, before or after it, to land on a scene change"
 msgstr "“吸附到附近的画面切换”最多把行的开始或结束往前、往后移动多远，去对齐画面切换"
 
 #: ../src/command/time.cpp
-msgid "Move the selected lines' starts and ends onto the keyframes near them, as far as the distance set in Preferences > Timing"
-msgstr "把选中行的开始和结束时间移到附近的关键帧上，最大距离在“首选项 → 时间”里设置"
+msgid "Move the selected lines' starts and ends onto the keyframes near them, as far as the distances set in Preferences > Timing"
+msgstr "把选中行的开始和结束时间移到附近的关键帧上，各方向的最大距离在“首选项 → 时间”里设置"
 
 #: ../src/command/time.cpp
-#, c-format
-msgid "No scene change within %d ms of the selected lines' starts or ends: the distance is set in Preferences > Timing"
-msgstr "选中行的开始和结束 %d 毫秒内都没有画面切换。最大距离可在“首选项 → 时间”里调整"
+msgid "No scene change near enough to the selected lines' starts or ends: the distances are set in Preferences > Timing"
+msgstr "选中行的开始和结束附近都没有够近的画面切换。各方向的最大距离可在“首选项 → 时间”里调整"
 
 #: ../src/command/time.cpp
 #, c-format
@@ -10214,8 +10304,8 @@ msgid "Time Hardsubs with MagiaTimeline"
 msgstr "用 MagiaTimeline 给硬字幕打轴"
 
 #: ../src/command/tool.cpp
-msgid "Run MagiaTimeline on the video to find when the subtitles burnt into it show, and add an empty line for each, to be filled in"
-msgstr "用 MagiaTimeline 找出视频里硬字幕出现的时间段，为每一段添加一行空字幕，留待填写"
+msgid "Run MagiaTimeline on the video to find when the subtitles burnt into it show, and add a line for each, with the text it reads if it is set to"
+msgstr "用 MagiaTimeline 找出视频里硬字幕出现的时间段，每段添加一行；设置了识别文字时填入识别出的文字"
 
 #: ../src/command/tool.cpp
 msgid "Choose the folder MagiaTimeline is installed in"
@@ -10256,13 +10346,211 @@ msgstr[0] "已添加 %d 行由 MagiaTimeline 打轴的字幕"
 msgid "Starting MagiaTimeline..."
 msgstr "正在启动 MagiaTimeline..."
 
+#: ../src/dialog_magia_timeline.cpp
+msgid "General purpose (recommended)"
+msgstr "通用（推荐）"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "General purpose, experimental"
+msgstr "通用（实验性）"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Outlined text"
+msgstr "描边文字"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Magia Record quests"
+msgstr "魔法纪录 剧情关卡"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Magia Record Scene0 film"
+msgstr "魔法纪录 Scene0 电影"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Magia Exedra quests"
+msgstr "Magia Exedra 剧情关卡"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Limbus Company quests"
+msgstr "边狱公司 剧情关卡"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Limbus Company mechanics"
+msgstr "边狱公司 机制介绍"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Pokemon Emerald"
+msgstr "宝可梦 绿宝石"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Parako anime storyboards"
+msgstr "Parako 动画分镜"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "BanG Dream stories"
+msgstr "BanG Dream 剧情"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Only when unchanged frames are skipped"
+msgstr "只能在“跳过不变的帧”时使用"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Not with this strategy"
+msgstr "这个策略不支持"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "The way it finds subtitles"
+msgstr "它找字幕的方法"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Strategy"
+msgstr "策略"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "The set of its settings for the strategy"
+msgstr "这个策略的一套参数"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Preset"
+msgstr "预设"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "&Skip Unchanged Frames"
+msgstr "跳过不变的帧(&S)"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "&Every Frame"
+msgstr "逐帧(&E)"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Look again only where the picture may have changed: much faster"
+msgstr "只在画面可能变化的地方重新查看，快得多"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Look at every frame, or every few, as set below: the only way for most of the strategies made for one game"
+msgstr "每帧（或按下面的设置每几帧）都查看；为某个游戏专门做的策略大多只能这样"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Every"
+msgstr "每"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Look at one frame in this many when looking at every frame"
+msgstr "逐帧查看时，每这么多帧看一帧"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "frames"
+msgstr "帧"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "A larger video is halved until it fits, which is faster; 0 leaves that side be"
+msgstr "视频超过这个大小就减半直到不超过，速度更快；0 表示这一边不限制"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Largest Size"
+msgstr "最大尺寸"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Use the &graphics card (OpenCL)"
+msgstr "使用显卡(&G)（OpenCL）"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "May be faster with a graphics card; turn it off if it is slower or fails"
+msgstr "有显卡时可能更快；变慢或出错就关掉"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "&Read the text (OCR)"
+msgstr "识别文字(&R)（OCR）"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Fill the lines with the text it reads, which needs its OCR installed; without it the lines are empty"
+msgstr "把识别出的文字填进字幕行，需要装好它的 OCR；不勾时字幕行为空"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "As the OCR names it: jpn, chi_sim... for Tesseract; japan, ch... for PaddleOCR"
+msgstr "按 OCR 自己的写法：Tesseract 用 jpn、chi_sim……；PaddleOCR 用 japan、ch……"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "&Run"
+msgstr "运行(&R)"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Open &config.yml"
+msgstr "打开 config.yml(&C)"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Its other settings are there"
+msgstr "其他设置都在这个文件里"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Its &Own Settings"
+msgstr "恢复它的设置(&O)"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Back to what its config.yml says"
+msgstr "回到它 config.yml 里的设置"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Picture (without black bars)"
+msgstr "画面范围（去掉黑边）"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Drag a rectangle round where the subtitles are, or its sides to move them; MagiaTimeline looks only inside it"
+msgstr "在字幕所在的位置拖出一个框，或拖动框的边调整；MagiaTimeline 只看框里的内容"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "The rectangle to drag"
+msgstr "要拖动的框"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "A frame with subtitles shows best where they are: drag the name to go through the video"
+msgstr "选一帧有字幕的画面最容易框准：按住“帧”字左右拖动可以浏览视频"
+
+#: ../src/dialog_magia_timeline.cpp
+msgctxt "region"
+msgid "Subtitles"
+msgstr "字幕区域"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Region"
+msgstr "区域"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Sensitivity"
+msgstr "灵敏度"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Threshold"
+msgstr "阈值"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "How much must be there to count as a subtitle: higher finds fewer"
+msgstr "要有多少特征才算字幕：越大找到的越少"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Colour Tolerance"
+msgstr "颜色容差"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "How far a colour may be from the text's and still count as it"
+msgstr "颜色和字幕文字颜色相差多少以内仍算作文字"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "Shortest"
+msgstr "最短"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "ms"
+msgstr "毫秒"
+
+#: ../src/dialog_magia_timeline.cpp
+msgid "A subtitle shown for less than this is taken for noise and dropped"
+msgstr "显示时间短于这个值的字幕当作噪声丢掉"
+
 #: ../src/preferences.cpp
 msgid "Installed in"
 msgstr "安装位置"
 
-#: ../src/preferences.cpp
-msgid "Strategy (empty: as its config.yml says)"
-msgstr "策略（留空则按它的 config.yml）"
 
 msgctxt "page"
 msgid "Timing"
@@ -10508,3 +10796,983 @@ msgstr "把选中的行整体提前（开始和结束一起），一步撤销"
 
 msgid "Move the selected lines later, start and end, in one step"
 msgstr "把选中的行整体推后（开始和结束一起），一步撤销"
+
+msgid "Check"
+msgstr "检查"
+
+msgctxt "check"
+msgid "All lines"
+msgstr "全部"
+
+msgctxt "check"
+msgid "Selected"
+msgstr "选中"
+
+msgid "Check every line of the file, or only the selected ones"
+msgstr "检查整个文件，或只检查选中的行"
+
+msgid "Lines shorter than this are listed as too short. Too fast is over the subtitle grid's CPS warning threshold (Preferences > Interface > Character Counter)"
+msgstr "短于这个时长的行列为太短。太快指阅读速度超过字幕表格 CPS 列的警告阈值（首选项 > 界面 > 字数统计）"
+
+msgid "Off by"
+msgstr "差帧"
+
+msgid "A start or end this many frames from a scene change or fewer, but not on it, is listed: it was most likely meant to be on it"
+msgstr "开始或结束离画面切换不超过这么多帧、又没正好对上的，会列出来：多半是想对齐却差了一点"
+
+msgid "The problem before the current line"
+msgstr "当前行之前的一处问题"
+
+msgid "The problem after the current line"
+msgstr "当前行之后的一处问题"
+
+msgid "Too short: %s s"
+msgstr "太短：%s 秒"
+
+msgid "Too fast: %d a second"
+msgstr "太快：每秒 %d 字"
+
+msgid "Overlaps #%d by %d ms"
+msgstr "与 #%d 重叠 %d ms"
+
+msgid "#%d ends only %d ms before"
+msgstr "与 #%d 间隔仅 %d ms"
+
+msgid "A line starting this little after the one before of its style ends, but not right at it, is listed: it goes off and on again for a moment. Join closes such gaps (0: not looked for)"
+msgstr "同样式的上一行结束后，相隔不到这个时长（但不是紧接着）就开始的行会列出：字幕会闪一下。用“连接相邻行”可以补上这种间隔（0：不检查）"
+
+msgid "%d too short"
+msgstr "太短 %d"
+
+msgid "%d too fast"
+msgstr "太快 %d"
+
+msgid "%d overlapping"
+msgstr "重叠 %d"
+
+msgid "%d too close"
+msgstr "间隔太短 %d"
+
+msgid "%d off a cut"
+msgstr "没对齐 %d"
+
+msgid "No timing problems found"
+msgstr "没有发现问题"
+
+#: ../src/dialog_progress.cpp
+msgid "%d s"
+msgstr "%d 秒"
+
+#: ../src/dialog_progress.cpp
+msgid "%d min %d s"
+msgstr "%d 分 %d 秒"
+
+#: ../src/dialog_progress.cpp
+msgid "About %s left"
+msgstr "剩余约 %s"
+
+#: ../src/style_panel.cpp ../src/script_panel.cpp
+msgctxt "page"
+msgid "Script"
+msgstr "文案"
+
+
+#: ../src/script_panel.cpp
+msgid "Back to the style panel: style, animation and timing"
+msgstr "回到样式面板：样式、动画和时间"
+
+#: ../src/script_panel.cpp
+msgid "Hide the script panel"
+msgstr "收起文案面板"
+
+#: ../src/style_panel.cpp
+msgid "Drag to change the width of the script panel"
+msgstr "拖动可改变文案面板的宽度"
+
+#: ../src/script_panel.cpp
+msgid "One sentence a line"
+msgstr "拆成一句一行"
+
+#: ../src/script_panel.cpp
+msgid "Break the text after each sentence's end (。！？… and . ! ? before a space), so each sentence is on a line of its own"
+msgstr "在每句结尾（。！？…，以及后面跟空格的 . ! ?）处换行，让每句话单独占一行"
+
+#: ../src/script_panel.cpp
+msgid "Undo the split"
+msgstr "撤销拆分"
+
+#: ../src/script_panel.cpp
+msgid "Type or paste the video's whole script here, to check the subtitles against it. It is saved with the subtitles"
+msgstr "在这里输入或粘贴视频的完整文案，用来核对字幕。文案随字幕文件一起保存"
+
+#: ../src/script_panel.cpp
+msgid "The video's script, saved in the subtitle file"
+msgstr "视频的文案，保存在字幕文件里"
+
+#: ../src/script_panel.cpp
+msgid "The subtitles are being compared: the script can be changed once the comparison ends"
+msgstr "正在对比字幕：对比结束后才能修改文案"
+
+#: ../src/command/app.cpp
+msgid "&Script"
+msgstr "文案(&S)"
+
+#: ../src/command/app.cpp
+msgid "Show the script panel in the style panel's place, to type or paste in the video's script and check the subtitles against it; from there, back to the style panel"
+msgstr "把右侧换成文案面板，输入或粘贴视频文案来核对字幕；文案面板已显示时回到样式面板"
+
+#: ../src/command/app.cpp
+msgid "Script Panel"
+msgstr "文案面板"
+
+#: ../src/timing_page.cpp
+msgctxt "snap"
+msgid "Out"
+msgstr "往外"
+
+#: ../src/timing_page.cpp
+msgctxt "snap"
+msgid "In"
+msgstr "往里"
+
+#: ../src/timing_page.cpp
+msgid "How far a start may move earlier or an end later to a scene change, here and for Snap to Nearby Scene Changes (Preferences > Timing)"
+msgstr "开始时间往前、结束时间往后吸附画面切换的最大距离，这里和“吸附到附近的画面切换”共用（首选项 → 时间）"
+
+#: ../src/timing_page.cpp
+msgid "How far a start may move later or an end earlier to a scene change: a few frames, or the line hides a word (Preferences > Timing)"
+msgstr "开始时间往后、结束时间往前吸附画面切换的最大距离。只宜几帧，否则会盖掉字（首选项 → 时间）"
+
+#: ../src/command/keyframe.cpp
+msgid "&Timeline from Scene Changes"
+msgstr "按画面切换生成时间轴(&T)"
+
+#: ../src/command/keyframe.cpp
+msgid "Timeline from Scene Changes"
+msgstr "按画面切换生成时间轴"
+
+#: ../src/command/keyframe.cpp
+msgid "Add an empty line for each shot between the scene changes that no line is shown in yet"
+msgstr "给还没有字幕的每个镜头添加一行空字幕，时间从镜头开始到下一个画面切换之前"
+
+#: ../src/command/keyframe.cpp
+#, c-format
+msgid "Added an empty line for %d shot"
+msgid_plural "Added an empty line for each of %d shots"
+msgstr[0] "已为 %d 个镜头各添加一行空字幕"
+
+#: ../src/command/keyframe.cpp
+msgid "Every shot already has a line"
+msgstr "每个镜头都已经有字幕"
+
+#: default_menu.json:0
+msgctxt "Menu bar"
+msgid "Auto-Ti&ming"
+msgstr "自动打轴(&M)"
+
+#: ../src/command/autotiming.cpp
+msgid "Make &Bilingual"
+msgstr "生成双语轴(&B)"
+
+#: ../src/command/autotiming.cpp
+msgid "Make Bilingual"
+msgstr "生成双语轴"
+
+#: ../src/command/autotiming.cpp
+msgid "Give each selected line an empty line at the same times for its translation: the line takes the JP style, the translation the CN style"
+msgstr "给每个选中行添加一行同一时间的空行用来写译文：原行改用 JP 样式，译文行用 CN 样式"
+
+#: ../src/command/autotiming.cpp
+msgid "make bilingual"
+msgstr "生成双语轴"
+
+#: ../src/command/autotiming.cpp
+msgid "Clear Auto-Timing &Marks"
+msgstr "清除自动打轴标记(&M)"
+
+#: ../src/command/autotiming.cpp
+msgid "Clear Auto-Timing Marks"
+msgstr "清除自动打轴标记"
+
+#: ../src/command/autotiming.cpp
+msgid "Take the marks auto-timing leaves in the Effect field, #group and ?word, off every line, leaving what else the field holds"
+msgstr "去掉所有行 Effect 栏里自动打轴留下的标记（#组号 和 ?词），栏里的其他内容保留"
+
+#: ../src/command/autotiming.cpp
+msgid "No line has auto-timing marks"
+msgstr "没有行带自动打轴标记"
+
+#: ../src/command/autotiming.cpp
+#, c-format
+msgid "Cleared the marks of %d line"
+msgid_plural "Cleared the marks of %d lines"
+msgstr[0] "已清除 %d 行的标记"
+
+#: ../src/command/autotiming.cpp
+msgid "clear auto-timing marks"
+msgstr "清除自动打轴标记"
+
+#: ../src/command/autotiming.cpp
+msgid "&Import Speech Recognition..."
+msgstr "导入语音识别结果(&I)..."
+
+#: ../src/command/autotiming.cpp
+msgid "Import Speech Recognition"
+msgstr "导入语音识别结果"
+
+#: ../src/command/autotiming.cpp
+msgid "Make lines from what WhisperX or faster-whisper heard, a sentence a line: their JSON with each word's times, timed to the scene changes if they are known"
+msgstr "把 WhisperX 或 faster-whisper 的识别结果（带每个词时间的 JSON）做成字幕，一句一行；已有画面切换时按切换点修整时间"
+
+#: ../src/command/autotiming.cpp
+msgid "Speech recognition JSON"
+msgstr "语音识别 JSON"
+
+#: ../src/command/autotiming.cpp
+#, c-format
+msgid "Imported %d line"
+msgid_plural "Imported %d lines"
+msgstr[0] "已导入 %d 行"
+
+#: ../src/command/autotiming.cpp
+msgid "The file holds nothing heard"
+msgstr "文件里没有识别出的内容"
+
+#: ../src/command/autotiming.cpp
+msgid "import speech recognition"
+msgstr "导入语音识别结果"
+
+#: ../src/preferences.cpp
+msgid "Speech Recognition"
+msgstr "语音识别"
+
+#: ../src/preferences.cpp
+msgid "Pair each line with an empty translation line"
+msgstr "每行配一行空的译文行（双语轴）"
+
+#: ../src/preferences.cpp
+msgid "Import Speech Recognition gives each line the JP style and a CN line at the same times for its translation"
+msgstr "导入语音识别结果时，每行用 JP 样式，并配一行同一时间的 CN 行用来写译文"
+
+#: ../src/preferences.cpp
+msgid "Split sentences longer than (ms)"
+msgstr "超过此长度的句子拆开 (毫秒)"
+
+#: ../src/preferences.cpp
+msgid "A sentence heard as longer is split where a clause ends or the speaker pauses"
+msgstr "更长的句子在从句结束或停顿处拆开"
+
+#: ../src/preferences.cpp
+msgid "Show each line at least (ms)"
+msgstr "每行至少显示 (毫秒)"
+
+#: ../src/preferences.cpp
+msgid "A short line is shown longer, up to the next line or scene change, to give time to read its translation"
+msgstr "太短的行向后延长，不超过下一行或画面切换，让译文读得完"
+
+#: ../src/preferences.cpp
+msgid "Leave marks for the translator in the Effect field"
+msgstr "在 Effect 栏给译者留标记"
+
+#: ../src/preferences.cpp
+msgid "#group on the lines a long sentence was split into, to be translated together, and ?word on words heard with little confidence; off, the Effect field is left empty"
+msgstr "长句拆出的几行写同一个 #组号，提醒连起来翻；把握低的词写成 ?词。不勾选时 Effect 栏留空"
+
+#: ../src/preferences.cpp
+msgid "Mark words heard with less confidence than"
+msgstr "标记置信度低于此值的词"
+
+#: ../src/preferences.cpp
+msgid "Such words are written in the Effect field as ?word, for the translator to check"
+msgstr "这些词以 ?词 的形式写进 Effect 栏，提醒译者核对"
+
+#: ../src/tag_summary.cpp
+msgid "Primary colour"
+msgstr "主要颜色"
+
+#: ../src/tag_summary.cpp
+msgid "Secondary colour"
+msgstr "次要颜色"
+
+#: ../src/tag_summary.cpp
+msgid "Border colour"
+msgstr "边框颜色"
+
+#: ../src/tag_summary.cpp
+msgid "off"
+msgstr "关"
+
+#: ../src/tag_summary.cpp
+msgid "on"
+msgstr "开"
+
+#: ../src/tag_summary.cpp
+msgid "in %s ms, out %s ms"
+msgstr "淡入 %s ms，淡出 %s ms"
+
+#: ../src/tag_summary.cpp
+msgid "Transparency"
+msgstr "透明度"
+
+#: ../src/tag_summary.cpp
+msgid "3D rotation"
+msgstr "3D 旋转"
+
+#: ../src/tag_summary.cpp
+msgid "Shear"
+msgstr "倾斜"
+
+#: ../src/tag_summary.cpp
+msgid "Vector clip"
+msgstr "矢量裁剪"
+
+#: ../src/tag_summary.cpp
+msgid "Origin"
+msgstr "原点"
+
+#: ../src/tag_summary.cpp
+msgid "Letter spacing"
+msgstr "字距"
+
+#: ../src/tag_summary.cpp
+msgid "Drawing"
+msgstr "绘图"
+
+#: ../src/tag_summary.cpp
+msgid "Note"
+msgstr "备注"
+
+#: ../src/tag_summary.cpp
+msgid "Other tag"
+msgstr "其他标签"
+
+#: ../src/tag_summary.cpp
+msgid "%s: %s"
+msgstr "%s：%s"
+
+#: ../src/tag_summary.cpp
+msgid "(%d point)"
+msgid_plural "(%d points)"
+msgstr[0] "（%d 个点）"
+
+#: ../src/command/app.cpp
+msgid "Next Region"
+msgstr "下一个区域"
+
+#: ../src/command/app.cpp
+msgid "Previous Region"
+msgstr "上一个区域"
+
+#: ../src/command/app.cpp
+msgid "Move the keyboard to the next part of the window: the subtitle grid, the line's fields, the audio, the video, the side panel"
+msgstr "把键盘移到窗口的下一个区域：字幕表格、编辑框、音频、视频、侧边栏"
+
+#: ../src/command/app.cpp
+msgid "Move the keyboard to the part of the window before: the side panel, the video, the audio, the line's fields, the subtitle grid"
+msgstr "把键盘移到窗口的上一个区域：侧边栏、视频、音频、编辑框、字幕表格"
+
+#: ../src/command/grid.cpp
+msgid "Add or Remove the Keyboard's Line"
+msgstr "加入或移出光标行"
+
+#: ../src/command/grid.cpp
+msgid "Add the line the keyboard is on in the subtitle grid to the selection, or take it out: Ctrl and the arrows move the keyboard without changing the selection"
+msgstr "把字幕表格里键盘所在的行加进选择或移出：Ctrl 加方向键只移动键盘所在的行，不改选择"
+
+#: ../src/command/grid.cpp
+msgid "Select up to the Keyboard's Line"
+msgstr "选到光标行"
+
+#: ../src/command/grid.cpp
+msgid "Select the lines from the one the selection is extended from up to the one the keyboard is on in the subtitle grid"
+msgstr "在字幕表格里选中从扩选起点到键盘所在行的一段"
+
+#: ../src/command/grid.cpp
+msgid "Add Lines up to the Keyboard's Line"
+msgstr "加选到光标行"
+
+#: ../src/command/grid.cpp
+msgid "Add the lines from the one the selection is extended from up to the one the keyboard is on in the subtitle grid to the selection"
+msgstr "把字幕表格里从扩选起点到键盘所在行的一段加进选择"
+
+#: ../src/command/video.cpp
+msgid "Next Line, Jumping the Video"
+msgstr "下一行并跳转视频"
+
+#: ../src/command/video.cpp
+msgid "Move to the next subtitle line and jump the video to its start"
+msgstr "转到下一行字幕，视频跳到它的开头"
+
+#: ../src/command/video.cpp
+msgid "Previous Line, Jumping the Video"
+msgstr "上一行并跳转视频"
+
+#: ../src/command/video.cpp
+msgid "Move to the previous subtitle line and jump the video to its start"
+msgstr "转到上一行字幕，视频跳到它的开头"
+
+msgid "The subtitle or its dependencies changed. Select the line again to restart."
+msgstr "字幕或其依赖已变化。请重新选择该行以重新开始。"
+
+msgid "The subtitles changed while this style was being edited. Please reopen the style editor."
+msgstr "编辑此样式期间字幕已变化。请重新打开样式编辑器。"
+
+msgid "The style being edited no longer exists."
+msgstr "正在编辑的样式已不存在。"
+
+msgid "Analysing the video..."
+msgstr "正在分析视频..."
+
+msgid "Reading the subtitles' text..."
+msgstr "正在识别字幕文字..."
+
+msgid "Writing the result..."
+msgstr "正在写入结果..."
+
+msgid "ElevenLabs did not accept the API key."
+msgstr "ElevenLabs 不接受此 API 密钥。"
+
+msgid "The ElevenLabs account's plan does not allow this."
+msgstr "该 ElevenLabs 账户的套餐不支持此操作。"
+
+msgid "ElevenLabs found the audio too large."
+msgstr "ElevenLabs 认为音频太大。"
+
+msgid "ElevenLabs refused how the request was made."
+msgstr "ElevenLabs 拒绝了此请求的格式。"
+
+msgid "ElevenLabs is taking too many requests from this account: wait a while."
+msgstr "此账户向 ElevenLabs 发出的请求过多，请稍后再试。"
+
+msgid "ElevenLabs answered %d."
+msgstr "ElevenLabs 返回了 %d。"
+
+msgid "Waiting for ElevenLabs to hear it through..."
+msgstr "正在等待 ElevenLabs 听写完成..."
+
+msgid "Could not reach %s: %s."
+msgstr "无法连接 %s：%s。"
+
+msgid "Could not reach %s through the proxy %s: %s."
+msgstr "无法连接 %s（通过代理 %s）：%s。"
+
+msgid "This build of Aegisub has no libcurl, so nothing can be sent to ElevenLabs."
+msgstr "此版本的 Aegisub 没有 libcurl，无法向 ElevenLabs 发送任何内容。"
+
+msgid "There is no command to run."
+msgstr "没有要运行的命令。"
+
+msgid "There is no program %s to run: is it installed and on the path?"
+msgstr "找不到要运行的程序 %s：它是否已安装并在 PATH 中？"
+
+msgid "Could not start %s."
+msgstr "无法启动 %s。"
+
+msgid "Transcription"
+msgstr "听写"
+
+msgid "ElevenLabs Scribe, over the net"
+msgstr "ElevenLabs Scribe（联网）"
+
+msgid "A program of your own, run here"
+msgstr "自己的程序（在本机运行）"
+
+msgid "Heard by"
+msgstr "听写方式"
+
+msgid "Transcribe the Audio sends the audio to ElevenLabs, which charges by its length, or runs a program of your own and reads the JSON it writes. Only what the one chosen uses is shown below"
+msgstr "“听写音频”会把音频发给 ElevenLabs（按时长计费），或者运行你自己的程序并读取它写出的 JSON。下面只显示所选方式用得到的设置"
+
+msgid "The code of what is spoken: ja, zh, en...; empty to have it detected"
+msgstr "所说语言的代码：ja、zh、en……；留空则自动检测"
+
+msgid "Other languages among it"
+msgstr "夹杂的其他语言"
+
+msgid "Codes, separated by commas, of languages mixed into the speech, such as English words in Japanese (ElevenLabs)"
+msgstr "语音中夹杂的语言代码，用逗号分隔，例如日语里的英语单词（ElevenLabs）"
+
+msgid "Tell the speakers apart"
+msgstr "区分说话人"
+
+msgid "Each line's speaker goes in its Actor field (ElevenLabs)"
+msgstr "每行的说话人写入其“说话人”栏（ElevenLabs）"
+
+msgid "Give the names in the Actor fields as terms to recognise"
+msgstr "把“说话人”栏里的名字作为识别关键词"
+
+msgid "Names the recogniser is told of are heard right more often"
+msgstr "事先告知识别器的名字更容易被听对"
+
+msgid "Other terms to recognise"
+msgstr "其他识别关键词"
+
+msgid "Names and words easily misheard, separated by commas; ElevenLabs takes 100 terms at most in all, Whisper as many as fit in what it is told came before"
+msgstr "容易听错的名字和词语，用逗号分隔；ElevenLabs 总共最多 100 个，Whisper 只取提示词里放得下的那些"
+
+msgid "ElevenLabs model"
+msgstr "ElevenLabs 模型"
+
+msgid "scribe_v3; or scribe_v2, the one before"
+msgstr "scribe_v3；或上一代的 scribe_v2"
+
+msgid "Set..."
+msgstr "设置..."
+
+msgid "Forget"
+msgstr "清除"
+
+msgid "From the ELEVENLABS_API_KEY environment variable"
+msgstr "来自环境变量 ELEVENLABS_API_KEY"
+
+msgid "Kept until Aegisub is closed: this machine has no keychain"
+msgstr "保留到 Aegisub 关闭：此计算机没有钥匙串"
+
+msgid "Kept in the system's keychain, once set"
+msgstr "设置后保存在系统钥匙串中"
+
+msgid "Asked for each time: this machine has no keychain"
+msgstr "每次询问：此计算机没有钥匙串"
+
+msgid "Enter your ElevenLabs API key, from the API keys page of elevenlabs.io."
+msgstr "请输入 ElevenLabs API 密钥，可在 elevenlabs.io 的 API keys 页面获取。"
+
+msgid "It is kept in the system's keychain."
+msgstr "它会保存在系统钥匙串中。"
+
+msgid "This machine has no keychain Aegisub can use, so it is kept only until Aegisub is closed."
+msgstr "此计算机没有 Aegisub 可用的钥匙串，因此只保留到 Aegisub 关闭。"
+
+msgid "ElevenLabs API key"
+msgstr "ElevenLabs API 密钥"
+
+msgid "Asked for when the audio is first sent, if not set here. The ELEVENLABS_API_KEY environment variable, when set, is used over anything kept"
+msgstr "如果这里没有设置，首次发送音频时会询问。设置了环境变量 ELEVENLABS_API_KEY 时，优先使用它"
+
+msgid "Ask before sending audio"
+msgstr "发送音频前询问"
+
+msgid "Say how long the audio is and that it leaves this computer, and ask, each time before sending it to ElevenLabs"
+msgstr "每次发送到 ElevenLabs 之前，说明音频时长及其将离开本机，并征求确认"
+
+msgid "Run with {media} the audio or video file, {out} an empty folder to write a JSON file with each word's times to, and {language} the language above; a part in [brackets] is left out when its value is empty"
+msgstr "运行时 {media} 为音频或视频文件，{out} 为一个空文件夹（程序在其中写出带每个词时间的 JSON 文件），{language} 为上面的语言；[方括号] 中的部分在其值为空时省略"
+
+msgid "The attachment \"%s\" was not extracted because its filename is unsafe."
+msgstr "附件“%s”的文件名不安全，未导出。"
+
+msgid "Attachment not extracted"
+msgstr "附件未导出"
+
+msgid "The file \"%s\" already exists. Do you want to replace it?"
+msgstr "文件“%s”已存在。要替换它吗？"
+
+msgid "Replace existing file?"
+msgstr "替换现有文件？"
+
+msgid "The subtitle project changed or editing is unavailable. Video properties were not applied."
+msgstr "字幕项目已变化或当前无法编辑，视频属性未应用。"
+
+msgid "Video Properties"
+msgstr "视频属性"
+
+msgid "Var&iable"
+msgstr "可变(&I)"
+
+msgid "Recent files"
+msgstr "最近打开的文件"
+
+msgid "Backup of original file"
+msgstr "原文件的备份"
+
+msgid "Subtitle open notification"
+msgstr "字幕打开通知"
+
+msgid "Saving after the change failed: "
+msgstr "更改后保存失败："
+
+msgid "apply comparison"
+msgstr "应用比较"
+
+msgid "Cannot reload Automation script \"%s\" while one of its macros is running."
+msgstr "自动化脚本“%s”的宏正在运行，无法重新载入。"
+
+msgid "Macro \"%s\" is already running."
+msgstr "宏“%s”已在运行。"
+
+msgid "Cannot run macro \"%s\": %s"
+msgstr "无法运行宏“%s”：%s"
+
+msgid "The result of macro \"%s\" was discarded: %s"
+msgstr "宏“%s”的结果已丢弃：%s"
+
+msgid "The list of loaded automation scripts was not stored in the subtitles because they are being compared."
+msgstr "字幕正在比较中，已载入的自动化脚本列表未保存到字幕。"
+
+msgid "The subtitles or their dependencies changed. Start again before applying."
+msgstr "字幕或其依赖已变化。请重新开始后再应用。"
+
+msgid "Files cannot be opened or closed while the editor is still updating. Try again."
+msgstr "编辑器仍在更新，暂时无法打开或关闭文件。请重试。"
+
+msgid "The subtitles are being compared. Finish the comparison before opening or closing files."
+msgstr "字幕正在比较中。请先完成比较，再打开或关闭文件。"
+
+msgid "The subtitles were opened, but some follow-up steps failed:"
+msgstr "字幕已打开，但部分后续步骤失败："
+
+msgid "Error closing subtitles"
+msgstr "关闭字幕时出错"
+
+msgid "The subtitles were closed, but some follow-up steps failed:"
+msgstr "字幕已关闭，但部分后续步骤失败："
+
+msgid "Load linked AviSynth script?"
+msgstr "载入链接的 AviSynth 脚本？"
+
+msgid "Trust author && load"
+msgstr "信任作者并载入"
+
+msgid "Do not load"
+msgstr "不载入"
+
+msgid "Error closing audio"
+msgstr "关闭音频时出错"
+
+msgid "Error closing video"
+msgstr "关闭视频时出错"
+
+msgid "Error closing timecodes"
+msgstr "关闭时间码文件时出错"
+
+msgid "Error closing keyframes"
+msgstr "关闭关键帧时出错"
+
+msgid "This build of Aegisub was made without a keychain."
+msgstr "此版本的 Aegisub 编译时未带钥匙串支持。"
+
+msgid "Make lines from what WhisperX, faster-whisper or ElevenLabs Scribe heard, a sentence a line: their JSON with each word's times, timed to the scene changes if they are known"
+msgstr "把 WhisperX、faster-whisper 或 ElevenLabs Scribe 的识别结果做成字幕，一句一行：读取带每个词时间的 JSON，已知镜头切换时对齐到镜头切换"
+
+msgid "&Transcribe the Audio..."
+msgstr "听写音频(&T)..."
+
+msgid "Transcribe the Audio"
+msgstr "听写音频"
+
+msgid "Have the audio heard through, by ElevenLabs Scribe or a program of your own, and make a line of each sentence, timed to the scene changes if they are known"
+msgstr "用 ElevenLabs Scribe 或自己的程序听写音频，每句做成一行，已知镜头切换时对齐到镜头切换"
+
+msgid "This build of Aegisub has no libcurl, so nothing can be sent to ElevenLabs. Set a program of your own to run in Preferences, Audio, Transcription."
+msgstr "此版本的 Aegisub 没有 libcurl，无法向 ElevenLabs 发送任何内容。请在 首选项 > 音频 > 听写 中设置自己的程序。"
+
+msgid "To give it another way, set the ELEVENLABS_API_KEY environment variable."
+msgstr "也可以通过设置环境变量 ELEVENLABS_API_KEY 来提供。"
+
+msgid "Send %s of audio, %s, to ElevenLabs to hear?"
+msgstr "把 %s 长的音频“%s”发送给 ElevenLabs 听写？"
+
+msgid "The audio leaves this computer for ElevenLabs' servers, which charge your account by its length. Aegisub keeps nothing of the answer but the lines it makes."
+msgstr "音频会离开本机发往 ElevenLabs 的服务器，并按时长从你的账户计费。Aegisub 除了生成的字幕行外，不保留返回结果的任何内容。"
+
+msgid "Don't ask again"
+msgstr "不再询问"
+
+msgid "Sending the audio to ElevenLabs..."
+msgstr "正在把音频发送给 ElevenLabs..."
+
+msgid "There is no command to run: set one in Preferences, Audio, Transcription."
+msgstr "没有要运行的命令：请在 首选项 > 音频 > 听写 中设置。"
+
+msgid "Running %s..."
+msgstr "正在运行 %s..."
+
+msgid "Could not write %s: is the disk full?"
+msgstr "无法写入 %s：磁盘是否已满？"
+
+msgid "%s answered %d to the download."
+msgstr "下载时 %s 返回了 %d。"
+
+msgid "The download from %s stopped short; try again to go on from where it stopped."
+msgstr "从 %s 的下载中途断开了；再试一次会从断开处接着下载。"
+
+msgid "This build of Aegisub has no libcurl, so nothing can be downloaded."
+msgstr "此版本的 Aegisub 没有 libcurl，无法下载任何内容。"
+
+msgid "Whisper, built in, on this computer"
+msgstr "Whisper（内置，在本机运行）"
+
+msgid "Transcribe the Audio sends the audio to ElevenLabs, which charges by its length; hears it here with Whisper, free, given a model file; or runs a program of your own and reads the JSON it writes. Only what the one chosen uses is shown below"
+msgstr "“听写音频”会把音频发给 ElevenLabs（按时长计费）；或者用 Whisper 在本机免费听写（需要模型文件）；或者运行你自己的程序并读取它写出的 JSON。下面只显示所选方式用得到的设置"
+
+msgid "Whisper model file"
+msgstr "Whisper 模型文件"
+
+msgid "A ggml model, such as ggml-large-v3-turbo-q5_0.bin or, on a slower computer, ggml-small-q5_1.bin; asked for when first needed if empty"
+msgstr "ggml 格式的模型，例如 ggml-large-v3-turbo-q5_0.bin，较慢的电脑可用 ggml-small-q5_1.bin；留空则在第一次用到时询问"
+
+msgid "Download or Choose..."
+msgstr "下载或选择..."
+
+msgid "Whisper models"
+msgstr "Whisper 模型"
+
+msgid "Downloads a model offered, checked to be as published, into the models folder; or takes a file you have"
+msgstr "把提供的模型下载到模型文件夹，并校验与发布的一致；也可以使用你已有的模型文件"
+
+msgid "Use the graphics card for Whisper"
+msgstr "Whisper 使用显卡"
+
+msgid "Much faster where it can; none it can use was found, so the processor is used"
+msgstr "能用显卡时快得多；没有找到可用的显卡，将使用处理器"
+
+msgid "Much faster where it can; found: %s"
+msgstr "能用显卡时快得多；已找到：%s"
+
+msgid "Whisper threads"
+msgstr "Whisper 线程数"
+
+msgid "0 for as many as the processor has, up to 8"
+msgstr "0 表示与处理器的线程数相同，最多 8 个"
+
+msgid "less than a minute left"
+msgstr "剩余不到 1 分钟"
+
+msgid "about %d minute left"
+msgid_plural "about %d minutes left"
+msgstr[0] "大约还剩 %d 分钟"
+
+msgid "Whisper built in needs a processor with %s, which this one does not have."
+msgstr "内置的 Whisper 需要支持 %s 的处理器，这台电脑的处理器不支持。"
+
+msgid "There is no audio to hear."
+msgstr "没有可听写的音频。"
+
+msgid "There is no model file %s."
+msgstr "模型文件 %s 不存在。"
+
+msgid "Whisper does not know the language %s: give its two-letter code, such as ja or zh."
+msgstr "Whisper 不认识语言 %s：请填写两个字母的语言代码，例如 ja 或 zh。"
+
+msgid "Loading the speech recognition model..."
+msgstr "正在加载语音识别模型..."
+
+msgid "Could not load %s as a Whisper model: is it a ggml model file, and whole?"
+msgstr "无法把 %s 作为 Whisper 模型加载：请确认它是 ggml 模型文件，并且完整。"
+
+msgid "Hearing the audio through..."
+msgstr "正在听写音频..."
+
+msgid "Hearing the audio through: %s"
+msgstr "正在听写音频：%s"
+
+msgid "Whisper could not hear the audio through (%d): see the log for why."
+msgstr "Whisper 未能听写完音频（%d）：原因请查看日志。"
+
+msgid "This build of Aegisub has no Whisper built in."
+msgstr "此版本的 Aegisub 没有内置 Whisper。"
+
+msgid "Could not read %s."
+msgstr "无法读取 %s。"
+
+msgid "Checking the download..."
+msgstr "正在校验下载的文件..."
+
+msgid "What was downloaded is not %s as published: it has been thrown away. Try again, or another source."
+msgstr "下载到的文件与发布的 %s 不一致，已删除。请重试，或换一个下载源。"
+
+msgid "Could not put the model at %s: %s."
+msgstr "无法把模型放到 %s：%s。"
+
+msgid "There is not room for the model in %s: %s more is needed."
+msgstr "%s 的空间放不下这个模型：还需要 %s。"
+
+msgid "Downloading %s, %s..."
+msgstr "正在下载 %s（%s）..."
+
+msgid "Small: quick, for a computer without a fast graphics card"
+msgstr "Small：速度快，适合没有高性能显卡的电脑"
+
+msgid "Large v3 Turbo: more accurate; slow without a fast graphics card"
+msgstr "Large v3 Turbo：更准确；没有高性能显卡时较慢"
+
+msgid "Large v3: the most accurate, and the slowest"
+msgstr "Large v3：最准确，也最慢"
+
+msgid "Whisper Model"
+msgstr "Whisper 模型"
+
+msgid ""
+"Whisper hears the audio on this computer, free, and sends nothing anywhere.\n"
+"It needs a model, downloaded once."
+msgstr ""
+"Whisper 在本机免费听写音频，不向任何地方发送内容。\n"
+"它需要一个模型，只需下载一次。"
+
+msgid "Model"
+msgstr "模型"
+
+msgid "Download from"
+msgstr "下载源"
+
+msgid "Change..."
+msgstr "更改..."
+
+msgid "Use a Model File I Have..."
+msgstr "使用已有的模型文件..."
+
+msgid "Download"
+msgstr "下载"
+
+msgid "downloaded"
+msgstr "已下载"
+
+msgid "Hugging Face"
+msgstr "Hugging Face"
+
+msgid "hf-mirror.com, reachable from mainland China"
+msgstr "hf-mirror.com（中国大陆可访问）"
+
+msgid "Another address..."
+msgstr "其他地址..."
+
+msgid "Kept in %s (%s free)"
+msgstr "存放在 %s（可用 %s）"
+
+msgid "This model is downloaded already."
+msgstr "这个模型已经下载好了。"
+
+msgid "%s is downloaded, then checked to be the model as published."
+msgstr "将下载 %s，下载后校验是否与发布的模型一致。"
+
+msgid "Use"
+msgstr "使用"
+
+msgid "The address of a folder holding the ggml model files, each file's name put after it:"
+msgstr "存放 ggml 模型文件的文件夹地址（下载时会在后面加上文件名）："
+
+msgid "Where to keep Whisper models"
+msgstr "选择存放 Whisper 模型的位置"
+
+msgid "Choose a Whisper model file, such as ggml-large-v3-turbo-q5_0.bin"
+msgstr "选择 Whisper 模型文件，例如 ggml-large-v3-turbo-q5_0.bin"
+
+msgid "Whisper models (*.bin)"
+msgstr "Whisper 模型 (*.bin)"
+
+msgid "Downloading %s..."
+msgstr "正在下载 %s..."
+
+msgid "This build of Aegisub has no Whisper built in. Choose another way to hear the audio in Preferences, Audio, Transcription."
+msgstr "此版本的 Aegisub 没有内置 Whisper。请在 首选项 > 音频 > 听写 中选择其他听写方式。"
+
+msgid "Whisper built in needs a processor with %s, which this one does not have. Choose another way to hear the audio in Preferences, Audio, Transcription."
+msgstr "内置的 Whisper 需要支持 %s 的处理器，这台电脑的处理器不支持。请在 首选项 > 音频 > 听写 中选择其他听写方式。"
+
+msgid "Hear %s of audio with %s on the processor alone?"
+msgstr "要只用处理器听写 %s 长的音频（模型 %s）吗？"
+
+msgid "There is no graphics card Whisper can use, and a large model on the processor can take as long as the audio or longer. The small model is several times quicker; choose it in Preferences, Audio, Transcription."
+msgstr "没有 Whisper 可用的显卡。大模型只用处理器运行时，耗时可能和音频一样长甚至更长。Small 模型要快好几倍，可在 首选项 > 音频 > 听写 中选择。"
+
+msgid "Preparing the audio..."
+msgstr "正在准备音频..."
+
+msgid "The key is forgotten; it is asked for again next time."
+msgstr "密钥已清除，下次会重新询问。"
+
+msgid "Nothing was heard"
+msgstr "没有听写出任何内容"
+
+msgid "Style Panel &Keyboard"
+msgstr "样式面板键盘(&K)"
+
+msgid "Style Panel Keyboard"
+msgstr "样式面板键盘"
+
+msgid "Move the keyboard to the style panel, showing it if it is hidden; from the panel, back to the subtitle text"
+msgstr "把键盘焦点移到样式面板（隐藏时先显示）；在面板中时则回到字幕文本"
+
+msgid "Hide"
+msgstr "隐藏"
+
+msgid "Hide the application"
+msgstr "隐藏本程序"
+
+msgid "Hide others"
+msgstr "隐藏其他"
+
+msgid "Hide all other applications"
+msgstr "隐藏其他所有程序"
+
+msgid "Show all applications"
+msgstr "显示所有程序"
+
+msgid "Audio and Video Formats"
+msgstr "音频和视频格式"
+
+msgid "Bind selected subtitles into a persistent multi-selection group"
+msgstr "把选中的字幕绑定为持久的多选组"
+
+msgid "Heard %d line"
+msgid_plural "Heard %d lines"
+msgstr[0] "听写出 %d 行"
+
+msgid ""
+"The new subtitles were installed, but some parts of the interface could not switch to them.\n"
+"\n"
+"Editing, saving and opening files are disabled to protect the document. Close Aegisub to recover."
+msgstr ""
+"新字幕已装入，但界面的某些部分未能切换过去。\n"
+"\n"
+"为保护文档，编辑、保存和打开文件已被禁用。请关闭 Aegisub 以恢复。"
+
+msgid ""
+"The subtitle file references AviSynth scripts. AviSynth scripts can execute arbitrary code with your user permissions. Only load them if you trust the subtitle's author. You do not need to load these scripts to view or edit this subtitle file.\n"
+"\n"
+"Scripts:"
+msgstr ""
+"此字幕文件引用了 AviSynth 脚本。AviSynth 脚本能以你的用户权限执行任意代码。只有信任字幕作者时才载入它们。查看或编辑此字幕文件不需要载入这些脚本。\n"
+"\n"
+"脚本："
+
+msgid ""
+"The subtitle file references an AviSynth script. AviSynth scripts can execute arbitrary code with your user permissions. Only load it if you trust the subtitle's author. You do not need to load this script to view or edit this subtitle file.\n"
+"\n"
+"Script:"
+msgstr ""
+"此字幕文件引用了一个 AviSynth 脚本。AviSynth 脚本能以你的用户权限执行任意代码。只有信任字幕作者时才载入它。查看或编辑此字幕文件不需要载入此脚本。\n"
+"\n"
+"脚本："
+
+msgid ""
+"\n"
+"\n"
+"Do you want to load these scripts now?"
+msgstr ""
+"\n"
+"\n"
+"现在载入这些脚本吗？"
+
+msgid ""
+"\n"
+"\n"
+"Do you want to load this script now?"
+msgstr ""
+"\n"
+"\n"
+"现在载入此脚本吗？"
+
+msgid ""
+"%s ended with %d:\n"
+"%s"
+msgstr ""
+"%s 以返回值 %d 结束：\n"
+"%s"
+
+msgid ""
+"%s wrote no JSON file in the folder it was given:\n"
+"%s"
+msgstr ""
+"%s 没有在给它的文件夹里写出 JSON 文件：\n"
+"%s"

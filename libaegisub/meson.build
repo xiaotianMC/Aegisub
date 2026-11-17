@@ -14,6 +14,7 @@ libaegisub_src = [
     'audio/provider_lock.cpp',
     'audio/provider_pcm.cpp',
     'audio/provider_ram.cpp',
+    'audio/resample.cpp',
 
     'common/calltip_provider.cpp',
     'common/subtitle_edit_gate.cpp',
@@ -38,6 +39,7 @@ libaegisub_src = [
     'common/option.cpp',
     'common/option_value.cpp',
     'common/parser.cpp',
+    'common/sha256.cpp',
     'common/path.cpp',
     'common/thesaurus.cpp',
     'common/unicode.cpp',

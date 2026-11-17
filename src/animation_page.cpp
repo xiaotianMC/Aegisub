@@ -312,6 +312,12 @@ public:
 		SetCursor(wxCursor(wxCURSOR_HAND));
 		Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent &) { if (on_pick) CallAfter([this] { if (on_pick) on_pick(); }); });
 	}
+	bool Focusable() const override { return true; }
+	bool OnKey(wxKeyEvent &e) override {
+		if (!Activates(e)) return false;
+		if (on_pick) CallAfter([this] { if (on_pick) on_pick(); });
+		return true;
+	}
 	void SetColour(agi::Color new_colour) {
 		if (new_colour == colour) return;
 		colour = new_colour;

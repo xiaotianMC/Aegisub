@@ -33,7 +33,8 @@ namespace agi { struct Context; }
 
 #define CMD_NAME(a) const char* name() const override { return a; }
 #define STR_MENU(a) wxString StrMenu(const agi::Context *) const override { return _(a); }
-#define STR_DISP(a) wxString StrDisplay(const agi::Context *) const override { return _(a); }
+#define STR_DISP(a) wxString StrDisplay(const agi::Context *) const override { return _(a); } \
+	wxString StrDisplayOriginal() const override { return wxString::FromUTF8(a); }
 #define STR_HELP(a) wxString StrHelp() const override { return _(a); }
 #define CMD_TYPE(a) int Type() const override { using namespace cmd; return a; }
 
@@ -97,6 +98,9 @@ DEFINE_EXCEPTION(CommandNotFound, CommandError);
 		/// Plain string for display purposes; should normally be the same as StrMenu
 		/// but without accelerators
 		virtual wxString StrDisplay(const agi::Context *) const=0;
+		/// StrDisplay before translation, so the English name finds the
+		/// command in any language; empty when the name is not fixed.
+		virtual wxString StrDisplayOriginal() const { return {}; }
 		/// Short help string describing what the command does
 		virtual wxString StrHelp() const=0;
 

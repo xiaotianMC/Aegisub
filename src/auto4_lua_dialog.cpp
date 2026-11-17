@@ -61,7 +61,9 @@
 #include <wx/panel.h>
 #include <wx/spinctrl.h>
 #include <wx/stattext.h>
+#include <wx/stockitem.h>
 #include <wx/valgen.h>
+#include <wx/textctrl.h>
 
 using namespace agi::lua;
 namespace {

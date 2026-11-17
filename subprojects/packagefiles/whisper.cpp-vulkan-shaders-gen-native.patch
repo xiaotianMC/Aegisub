@@ -1,0 +1,91 @@
+--- a/ggml/src/ggml-vulkan/CMakeLists.txt	2026-11-16 11:25:36.483255128 -0500
++++ b/ggml/src/ggml-vulkan/CMakeLists.txt	2026-11-16 11:25:36.505798944 -0500
+@@ -178,36 +178,45 @@
+         set(HOST_CMAKE_TOOLCHAIN_FILE "")
+     endif()
+ 
+-    include(ExternalProject)
+-
+-    if (CMAKE_CROSSCOMPILING)
+-        list(APPEND VULKAN_SHADER_GEN_CMAKE_ARGS -DCMAKE_TOOLCHAIN_FILE=${HOST_CMAKE_TOOLCHAIN_FILE})
+-        message(STATUS "vulkan-shaders-gen toolchain file: ${HOST_CMAKE_TOOLCHAIN_FILE}")
++    if (NOT CMAKE_CROSSCOMPILING)
++        # Built for this machine as a target of this project's own, which the
++        # commands below run by its name: where Meson builds this, an
++        # ExternalProject's stamps are never found and all of it is done
++        # again on every build
++        add_subdirectory(vulkan-shaders)
++        set (_ggml_vk_genshaders_cmd vulkan-shaders-gen)
++    else()
++        include(ExternalProject)
++
++        if (CMAKE_CROSSCOMPILING)
++            list(APPEND VULKAN_SHADER_GEN_CMAKE_ARGS -DCMAKE_TOOLCHAIN_FILE=${HOST_CMAKE_TOOLCHAIN_FILE})
++            message(STATUS "vulkan-shaders-gen toolchain file: ${HOST_CMAKE_TOOLCHAIN_FILE}")
++        endif()
++
++        ExternalProject_Add(
++            vulkan-shaders-gen
++            SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vulkan-shaders
++            CMAKE_ARGS -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/Release
++                       -DCMAKE_INSTALL_BINDIR=.
++                       -DCMAKE_BUILD_TYPE=Release
++                       ${VULKAN_SHADER_GEN_CMAKE_ARGS}
++
++            BUILD_COMMAND ${CMAKE_COMMAND} --build . --config Release
++            BUILD_ALWAYS  TRUE
++
++            # NOTE: When DESTDIR is set using Makefile generators and
++            # "make install" triggers the build step, vulkan-shaders-gen
++            # would be installed into the DESTDIR prefix, so it is unset
++            # to ensure that does not happen.
++
++            INSTALL_COMMAND ${CMAKE_COMMAND} -E env --unset=DESTDIR
++                            ${CMAKE_COMMAND} --install . --config Release
++        )
++
++        set (_ggml_vk_host_suffix $<IF:$<STREQUAL:${CMAKE_HOST_SYSTEM_NAME},Windows>,.exe,>)
++        set (_ggml_vk_genshaders_dir "${CMAKE_BINARY_DIR}/Release")
++        set (_ggml_vk_genshaders_cmd "${_ggml_vk_genshaders_dir}/vulkan-shaders-gen${_ggml_vk_host_suffix}")
+     endif()
+-
+-    ExternalProject_Add(
+-        vulkan-shaders-gen
+-        SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vulkan-shaders
+-        CMAKE_ARGS -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/Release
+-                   -DCMAKE_INSTALL_BINDIR=.
+-                   -DCMAKE_BUILD_TYPE=Release
+-                   ${VULKAN_SHADER_GEN_CMAKE_ARGS}
+-
+-        BUILD_COMMAND ${CMAKE_COMMAND} --build . --config Release
+-        BUILD_ALWAYS  TRUE
+-
+-        # NOTE: When DESTDIR is set using Makefile generators and
+-        # "make install" triggers the build step, vulkan-shaders-gen
+-        # would be installed into the DESTDIR prefix, so it is unset
+-        # to ensure that does not happen.
+-
+-        INSTALL_COMMAND ${CMAKE_COMMAND} -E env --unset=DESTDIR
+-                        ${CMAKE_COMMAND} --install . --config Release
+-    )
+-
+-    set (_ggml_vk_host_suffix $<IF:$<STREQUAL:${CMAKE_HOST_SYSTEM_NAME},Windows>,.exe,>)
+-    set (_ggml_vk_genshaders_dir "${CMAKE_BINARY_DIR}/Release")
+-    set (_ggml_vk_genshaders_cmd "${_ggml_vk_genshaders_dir}/vulkan-shaders-gen${_ggml_vk_host_suffix}")
+     set (_ggml_vk_header     "${CMAKE_CURRENT_BINARY_DIR}/ggml-vulkan-shaders.hpp")
+     set (_ggml_vk_input_dir  "${CMAKE_CURRENT_SOURCE_DIR}/vulkan-shaders")
+     set (_ggml_vk_output_dir "${CMAKE_CURRENT_BINARY_DIR}/vulkan-shaders.spv")
+--- a/ggml/src/ggml-vulkan/vulkan-shaders/CMakeLists.txt	2026-11-16 11:25:36.491943948 -0500
++++ b/ggml/src/ggml-vulkan/vulkan-shaders/CMakeLists.txt	2026-11-16 11:25:36.505960024 -0500
+@@ -38,6 +38,10 @@
+ 
+ set(TARGET vulkan-shaders-gen)
+ add_executable(${TARGET} vulkan-shaders-gen.cpp)
+-install(TARGETS ${TARGET} RUNTIME)
++# Installed only when built on its own, as an ExternalProject: as part of
++# ggml it is a tool of the build, not something to install with it
++if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
++    install(TARGETS ${TARGET} RUNTIME)
++endif()
+ target_compile_features(${TARGET} PRIVATE cxx_std_17)
+ target_link_libraries(vulkan-shaders-gen PUBLIC Threads::Threads)

@@ -26,10 +26,19 @@
 #include "subtitle_binding.h"
 #include "timing_adjust.h"
 #include "video_controller.h"
+#include "format.h"
+#include "libresrc/libresrc.h"
+#include "tag_chips.h"
+#include "tag_summary.h"
 
 #include <libaegisub/character_count.h>
 
 #include <wx/dc.h>
+#include <wx/image.h>
+
+#include <map>
+#include <tuple>
+#include <unordered_map>
 
 void WidthHelper::Age() {
 	for (auto it = begin(widths), e = end(widths); it != e; ) {
@@ -379,18 +388,59 @@ public:
 	}
 };
 
+/// The text column. Simplifying tags (the default) draws each {…} as a chip
+/// of icons saying what its tags do, with a tooltip spelling it out
+/// (docs/subtitle-grid-tags.md); the other modes show the tags in full or
+/// leave them out.
 class GridColumnText final : public GridColumn {
 	const agi::OptionValue *override_mode;
-	wxString replace_char;
 
-	agi::signal::Connection replace_char_connection;
+	/// The pieces of the lines' texts drawn lately, by text
+	mutable std::unordered_map<std::string, std::vector<tag_summary::Piece>> summaries;
+	mutable tag_chips::Painter chips;
+
+	std::vector<tag_summary::Piece> const& Summary(const AssDialogue *d) const {
+		auto const& text = d->Text.get();
+		auto it = summaries.find(text);
+		if (it != summaries.end()) return it->second;
+		// Only those lately drawn: a long script's lines aren't all kept
+		if (summaries.size() > 4000) summaries.clear();
+		return summaries.emplace(text, tag_summary::Summarize(text)).first->second;
+	}
+
+	/// What a piece takes up across the cell: a run's text, a chip
+	struct Placed {
+		int left, right;
+		tag_summary::Piece const *piece;
+		wxString text; ///< For a run
+	};
+
+	std::vector<Placed> Lay(wxDC &dc, int x, const AssDialogue *d) const {
+		tag_chips::Metrics m(dc);
+		std::vector<Placed> placed;
+		size_t chars = 0;
+		for (auto const& piece : Summary(d)) {
+			if (piece.block) {
+				int width = chips.Width(dc, m, piece);
+				placed.push_back({x + m.spacing / 2, x + m.spacing / 2 + width, &piece, {}});
+				x += width + m.spacing;
+				continue;
+			}
+			wxString text = tag_summary::PlainText(piece);
+			// As before: the first 512 characters
+			if (chars + text.size() > 512) text = text.Left(512 - std::min<size_t>(chars, 512)) + "...";
+			chars += text.size();
+			int width = dc.GetTextExtent(text).x;
+			placed.push_back({x, x + width, &piece, text});
+			x += width;
+			if (chars >= 512) break;
+		}
+		return placed;
+	}
 
 public:
 	GridColumnText()
 	: override_mode(OPT_GET("Subtitle/Grid/Hide Overrides"))
-	, replace_char(to_wx(OPT_GET("Subtitle/Grid/Hide Overrides Char")->GetString()))
-	, replace_char_connection(OPT_SUB("Subtitle/Grid/Hide Overrides Char",
-		[&](agi::OptionValue const& v) { replace_char = to_wx(v.GetString()); }))
 	{
 	}
 
@@ -407,6 +457,10 @@ public:
 		// Show overrides
 		if (mode == 0)
 			str = to_wx(d->Text);
+		// Simplified: what the chips say, in words
+		else if (mode == 1) {
+			for (auto const& piece : Summary(d)) str += tag_summary::PlainText(piece);
+		}
 		// Hidden overrides
 		else {
 			auto const& text = d->Text.get();
@@ -414,8 +468,6 @@ public:
 			size_t start = 0, pos;
 			while ((pos = text.find('{', start)) != std::string::npos) {
 				str += to_wx(text.substr(start, pos - start));
-				if (mode == 1)
-					str += replace_char;
 				start = text.find('}', pos);
 				if (start != std::string::npos) ++start;
 			}
@@ -427,6 +479,34 @@ public:
 		if (str.size() > 512)
 			str = str.Left(512) + "...";
 		return str;
+	}
+
+	void Paint(wxDC &dc, int x, int y, const AssDialogue *d, const agi::Context *c) const override {
+		if (override_mode->GetInt() != 1) {
+			GridColumn::Paint(dc, x, y, d, c);
+			return;
+		}
+		tag_chips::Metrics m(dc);
+		wxColour ink = dc.GetTextForeground();
+		wxColour back = dc.GetBrush().IsOk() ? dc.GetBrush().GetColour() : theme::Surface();
+		for (auto const& p : Lay(dc, TextLeft(x, 0), d)) {
+			if (p.piece->block) chips.Draw(dc, *p.piece, p.left, p.right, y, m, back);
+			else if (p.piece->drawing_points >= 0) {
+				// A drawing's commands: how many points, quietly
+				dc.SetTextForeground(theme::Mix(back, ink, 0.6));
+				dc.DrawText(p.text, p.left, y + 2);
+				dc.SetTextForeground(ink);
+			}
+			else dc.DrawText(p.text, p.left, y + 2);
+		}
+	}
+
+	wxString Tooltip(wxDC &dc, int x, const AssDialogue *d, const agi::Context *) const override {
+		if (override_mode->GetInt() != 1) return {};
+		for (auto const& p : Lay(dc, cell_padding, d))
+			if (p.piece->block && x >= p.left - 1 && x < p.right + 1)
+				return tag_summary::Describe(*p.piece);
+		return {};
 	}
 
 	int Width(const agi::Context *, WidthHelper &) const override {

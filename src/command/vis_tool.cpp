@@ -44,7 +44,9 @@ namespace {
 		}
 
 		bool IsActive(const agi::Context *c) override {
-			return c->videoDisplay->ToolIsType(typeid(T));
+			// The preview pan mode takes the tool's place while it is on:
+			// one button down, not two (docs/rectangle-drawing.md)
+			return c->videoDisplay->ToolIsType(typeid(T)) && !c->videoDisplay->IsPanMode();
 		}
 
 		void operator()(agi::Context *c) override {

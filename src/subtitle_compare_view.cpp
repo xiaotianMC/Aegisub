@@ -387,7 +387,8 @@ std::optional<Category> State::CategoryOf(size_t entry, model::Fields ignored) c
 
 bool State::Visible(size_t entry, Filter const& filter) const {
     auto category = CategoryOf(entry, filter.ignored);
-    return category && (!filter.category || *filter.category == *category);
+    if (!category || (filter.category && *filter.category != *category)) return false;
+    return !filter.pending_only || GetDecision(entry) == Decision::Pending || filter.keep == entry;
 }
 
 std::vector<size_t> State::VisibleDiffs(Filter const& filter) const {

@@ -103,6 +103,8 @@ struct Writer {
 		WriteIfNotEmpty("Keyframes File: ", properties.keyframes_file);
         for (auto const& [key, value] : properties.automation_settings)
             WriteIfNotEmpty(("Automation Settings " + key + ": ").c_str(), value);
+		// On one line: its line breaks escaped as #0A
+		WriteIfNotEmpty("Script Text: ", agi::ass::inline_string_encode(properties.script_text));
 
 		WriteIfNotZero("Video AR Mode: ", properties.ar_mode);
 		WriteIfNotZero("Video AR Value: ", properties.ar_value);

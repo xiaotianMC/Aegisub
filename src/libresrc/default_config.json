@@ -12,7 +12,9 @@
 		"Classic Icons" : false,
 		"Classic Toolbar" : false,
 		"Command Palette" : {
-			"Recent" : [{"string": ""}]
+			"Queries" : [{"string": ""}],
+			"Recent" : [{"string": ""}],
+			"Usage" : [{"string": ""}]
 		},
 		"First Start" : true,
 		"Hotkey Migrations" : [{"string": "placeholder since empty arrays aren't supported"}],
@@ -22,6 +24,9 @@
 		"Save Charset" : "UTF-8",
 		"Save UI State" : true,
 		"Show Toolbar" : true,
+		"Script Panel" : {
+			"Show" : false
+		},
 		"Style Panel" : {
 			"Lock Shape Proportions" : false,
 			"Page" : 0,
@@ -371,6 +376,7 @@
 			"Audio" : "",
 			"Automation" : "",
 			"Keyframes" : "",
+			"Speech" : "",
 			"Subtitles" : "",
 			"Timecodes" : "",
 			"Video" : ""
@@ -459,7 +465,6 @@
 			"Font Face" : "",
 			"Font Size" : 9,
 			"Hide Overrides" : 1,
-			"Hide Overrides Char" : "☀",
 			"Highlight Subtitles in Frame" : true
 		},
 		"Highlight" : {
@@ -506,10 +511,22 @@
 	},
 
 	"Timing" : {
+		"Check" : {
+			"Cut Frames" : 3,
+			"Min Duration" : 500,
+			"Min Gap" : 100,
+			"Selection Only" : false
+		},
 		"Default Duration" : 3000,
 		"Link Adjacent Lines" : true,
 		"Adjacent Line Gap" : 0.3,
-		"Scene Snap Distance" : 500
+		"Scene Snap" : {
+			"End Earlier" : 100,
+			"End Later" : 500,
+			"Start Earlier" : 500,
+			"Start Later" : 100
+		},
+		"Scene Snap Distance" : -1
 	},
 
 	"Tool" : {
@@ -589,6 +606,13 @@
 			"Time" : 0,
 			"Type" : 0
 		},
+		"Speech Import" : {
+			"Bilingual" : false,
+			"Marks" : false,
+			"Max Duration" : 7000,
+			"Min Duration" : 1000,
+			"Unsure Below" : 0.3
+		},
 		"Spell Checker" : {
 			"Backend" : "hunspell",
 			"Language" : "en_US",
@@ -614,10 +638,12 @@
 		},
 		"MagiaTimeline" : {
 			"Path" : "",
-			"Strategy" : ""
+			"Settings" : ""
 		},
 		"Scene Detection" : {
-			"Sensitivity" : 1
+			"Gradual" : true,
+			"Sensitivity" : 1,
+			"Subtitle Band" : 20
 		},
 		"Thesaurus" : {
 			"Language" : "en_US"
@@ -645,6 +671,27 @@
 				"Key Start After" : 150,
 				"Key Start Before" : 200
 			}
+		},
+		"Transcribe" : {
+			"Ask" : true,
+			"Backend" : 0,
+			"Command" : "whisperx \"{media}\" --output_dir \"{out}\" --output_format json [--language {language}]",
+			"Diarize" : true,
+			"ElevenLabs" : {
+				"Model" : "scribe_v3"
+			},
+			"Keyterms" : "",
+			"Keyterms From Actors" : true,
+			"Language" : "",
+			"Local" : {
+				"Model" : "",
+				"Model Folder" : "",
+				"Source" : "huggingface",
+				"Threads" : 0,
+				"Use GPU" : true,
+				"Warn Slow" : true
+			},
+			"Secondary Languages" : ""
 		},
 		"Translation Assistant" : {
 			"Last" : {

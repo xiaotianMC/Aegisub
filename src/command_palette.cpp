@@ -4,16 +4,28 @@
 
 #include "command/command.h"
 #include "compat.h"
+#include "dialogs.h"
 #include "include/aegisub/context.h"
 #include "include/aegisub/hotkey.h"
+#include "include/aegisub/menu.h"
+#include "ass_dialogue.h"
+#include "ass_file.h"
+#include "project.h"
+#include "selection_controller.h"
+#include "subtitle_project_access.h"
+#include "video_controller.h"
 #include "options.h"
+#include "preferences.h"
 #include "theme.h"
 #include "workspace_tabs.h"
 
 #include <algorithm>
 #include <climits>
+#include <ctime>
 #include <map>
 #include <memory>
+
+#include <libaegisub/ass/time.h>
 
 #include <unicode/translit.h>
 #include <unicode/unistr.h>
@@ -52,6 +64,34 @@ icu::Transliterator *HanLatin() {
 }
 }
 
+std::optional<Usage> ParseUsage(std::string const& entry) {
+    auto first = entry.find('\t');
+    auto second = first == std::string::npos ? first : entry.find('\t', first + 1);
+    if (first == 0 || second == std::string::npos) return std::nullopt;
+    Usage usage;
+    usage.name = entry.substr(0, first);
+    try {
+        usage.count = std::stoi(entry.substr(first + 1, second - first - 1));
+        usage.last = std::stoll(entry.substr(second + 1));
+    }
+    catch (std::exception const&) {
+        return std::nullopt;
+    }
+    if (usage.count < 1) return std::nullopt;
+    return usage;
+}
+
+std::string FormatUsage(Usage const& usage) {
+    return usage.name + '\t' + std::to_string(usage.count) + '\t' + std::to_string(usage.last);
+}
+
+int UsageBonus(int count, long long age) {
+    if (count < 1) return 0;
+    double recency = age < 3600 ? 1.0 : age < 86400 ? 0.8 : age < 7 * 86400 ? 0.5 : age < 30 * 86400 ? 0.3 : 0.1;
+    double often = std::log2(1.0 + count); // 1 use 1, 3 uses 2, 7 uses 3
+    return static_cast<int>(std::lround(std::min(24.0, (6 + 6 * often) * recency)));
+}
+
 std::wstring Pinyin(wchar_t ch) {
     if (!IsHan(ch)) return {};
     static std::map<wchar_t, std::wstring> cache;
@@ -76,12 +116,38 @@ std::wstring NormaliseQuery(std::wstring_view query) {
     return result;
 }
 
-std::vector<SearchKey> MakeKeys(std::wstring_view name, std::string_view id) {
-    std::vector<SearchKey> keys;
+std::vector<size_t> *Match::Marks(Field field) {
+    switch (field) {
+        case Field::Name: return &positions;
+        case Field::Path: return &path_positions;
+        case Field::Original: return &original_positions;
+        default: return nullptr;
+    }
+}
 
-    // The name. Words start after separators, at capitals after lower case
+std::vector<std::wstring> Tokenise(std::wstring_view query) {
+    std::vector<std::wstring> words;
+    std::wstring word;
+    for (wchar_t ch : query) {
+        if (std::iswspace(ch)) {
+            if (!word.empty()) words.push_back(std::move(word));
+            word.clear();
+        }
+        else word += static_cast<wchar_t>(std::towlower(ch));
+    }
+    if (!word.empty()) words.push_back(std::move(word));
+    return words;
+}
+
+namespace {
+/// Keys for one text: as written, and when it has Chinese characters its
+/// pinyin and pinyin initials, @p pinyin_weight lower.
+void AddTextKeys(std::vector<SearchKey>& keys, std::wstring_view name, Field field, int weight, int pinyin_weight) {
+    // As written. Words start after separators, at capitals after lower case
     // letters, and at every Chinese character.
     SearchKey plain;
+    plain.weight = weight;
+    plain.field = field;
     bool has_han = false;
     for (size_t i = 0; i < name.size(); ++i) {
         wchar_t ch = name[i];
@@ -93,40 +159,77 @@ std::vector<SearchKey> MakeKeys(std::wstring_view name, std::string_view id) {
         has_han = has_han || IsHan(ch);
     }
     keys.push_back(std::move(plain));
+    if (!has_han) return;
 
     // Pinyin, each syllable a word, and pinyin initials: "打开字幕" is found
     // by "dakaizimu" and by "dkzm".
-    if (has_han) {
-        SearchKey full, initials;
-        full.weight = initials.weight = -1;
-        for (size_t i = 0; i < name.size(); ++i) {
-            auto syllable = Pinyin(name[i]);
-            if (syllable.empty()) {
-                bool start = i == 0 || IsSeparator(name[i - 1]) || IsHan(name[i - 1]);
-                wchar_t lower = static_cast<wchar_t>(std::towlower(name[i]));
-                for (auto key : {&full, &initials}) {
-                    key->text += lower;
-                    key->starts.push_back(start && !IsSeparator(name[i]));
-                    key->shown.push_back(i);
-                }
-                continue;
+    SearchKey full, initials;
+    full.weight = initials.weight = pinyin_weight;
+    full.field = initials.field = field;
+    full.pinyin = initials.pinyin = true;
+    for (size_t i = 0; i < name.size(); ++i) {
+        auto syllable = Pinyin(name[i]);
+        if (syllable.empty()) {
+            bool start = i == 0 || IsSeparator(name[i - 1]) || IsHan(name[i - 1]);
+            wchar_t lower = static_cast<wchar_t>(std::towlower(name[i]));
+            for (auto key : {&full, &initials}) {
+                key->text += lower;
+                key->starts.push_back(start && !IsSeparator(name[i]));
+                key->shown.push_back(i);
             }
-            for (size_t j = 0; j < syllable.size(); ++j) {
-                full.text += syllable[j];
-                full.starts.push_back(j == 0);
-                full.shown.push_back(i);
-            }
-            initials.text += syllable[0];
-            initials.starts.push_back(true);
-            initials.shown.push_back(i);
+            continue;
         }
-        keys.push_back(std::move(full));
-        keys.push_back(std::move(initials));
+        for (size_t j = 0; j < syllable.size(); ++j) {
+            full.text += syllable[j];
+            full.starts.push_back(j == 0);
+            full.shown.push_back(i);
+        }
+        initials.text += syllable[0];
+        initials.starts.push_back(true);
+        initials.shown.push_back(i);
     }
+    keys.push_back(std::move(full));
+    keys.push_back(std::move(initials));
+}
+
+bool SameIgnoringCase(std::wstring_view a, std::wstring_view b) {
+    return std::equal(a.begin(), a.end(), b.begin(), b.end(),
+        [](wchar_t x, wchar_t y) { return std::towlower(x) == std::towlower(y); });
+}
+
+void Merge(Match& into, Match from) {
+    into.score += from.score;
+    for (auto field : {Field::Name, Field::Path, Field::Original}) {
+        auto to = into.Marks(field);
+        auto const& more = *from.Marks(field);
+        to->insert(to->end(), more.begin(), more.end());
+        std::sort(to->begin(), to->end());
+        to->erase(std::unique(to->begin(), to->end()), to->end());
+    }
+}
+}
+
+std::vector<SearchKey> MakeTextKeys(std::wstring_view text) {
+    std::vector<SearchKey> keys;
+    AddTextKeys(keys, text, Field::Name, 0, -1);
+    return keys;
+}
+
+std::vector<SearchKey> MakeKeys(std::wstring_view name, std::string_view id, std::wstring_view original, std::wstring_view path) {
+    std::vector<SearchKey> keys;
+    AddTextKeys(keys, name, Field::Name, 0, -1);
+    // The English name, for those who know the commands by it (or from a
+    // guide written in English): a little below the name.
+    if (!original.empty() && !SameIgnoringCase(original, name))
+        AddTextKeys(keys, original, Field::Original, -3, -4);
+    // The menu the command is in: "timing shift" finds Shift Times in Timing.
+    if (!path.empty())
+        AddTextKeys(keys, path, Field::Path, -8, -9);
 
     // The command id, e.g. "subtitle/open/video": found but not drawn.
     SearchKey command;
     command.weight = -6;
+    command.field = Field::Hidden;
     for (size_t i = 0; i < id.size(); ++i) {
         wchar_t ch = static_cast<wchar_t>(std::tolower(static_cast<unsigned char>(id[i])));
         command.text += ch;
@@ -180,11 +283,11 @@ std::optional<Match> FuzzyMatch(std::wstring_view query, SearchKey const& key) {
 
     Match match;
     match.score = best + key.weight;
-    if (!key.shown.empty()) {
+    if (auto marks = match.Marks(key.field); marks && !key.shown.empty()) {
         for (int i = static_cast<int>(m) - 1, j = end; i >= 0 && j >= 0; j = from[i * n + j], --i)
-            match.positions.push_back(key.shown[j]);
-        std::sort(match.positions.begin(), match.positions.end());
-        match.positions.erase(std::unique(match.positions.begin(), match.positions.end()), match.positions.end());
+            marks->push_back(key.shown[j]);
+        std::sort(marks->begin(), marks->end());
+        marks->erase(std::unique(marks->begin(), marks->end()), marks->end());
     }
     return match;
 }
@@ -196,11 +299,174 @@ std::optional<Match> BestMatch(std::wstring_view query, std::vector<SearchKey> c
             best = std::move(match);
     return best;
 }
+
+std::optional<Match> RunMatch(std::wstring_view query, SearchKey const& key) {
+    size_t m = query.size();
+    if (m == 0) return Match{};
+    std::optional<Match> best;
+    for (size_t at = key.text.find(query); at != std::wstring::npos; at = key.text.find(query, at + 1)) {
+        if (key.pinyin && !key.starts[at]) continue;
+        // As FuzzyMatch scores a run: 16 a character, 8 more after the
+        // first, 8 more at a word start (12 at the very start)
+        int score = static_cast<int>(16 + 24 * (m - 1)) + (key.starts[at] ? (at == 0 ? 12 : 8) : 0) + key.weight;
+        if (best && score <= best->score) continue;
+        Match match;
+        match.score = score;
+        if (auto marks = match.Marks(key.field); marks && !key.shown.empty()) {
+            for (size_t i = at; i < at + m; ++i) marks->push_back(key.shown[i]);
+            marks->erase(std::unique(marks->begin(), marks->end()), marks->end());
+        }
+        best = std::move(match);
+    }
+    return best;
 }
 
 namespace {
+std::optional<Match> Best(std::wstring_view query, std::vector<SearchKey> const& keys, bool runs) {
+    if (!runs) return BestMatch(query, keys);
+    std::optional<Match> best;
+    for (auto const& key : keys)
+        if (auto match = RunMatch(query, key); match && (!best || match->score > best->score))
+            best = std::move(match);
+    return best;
+}
+}
+
+GotoQuery ParseGoto(std::wstring_view typed) {
+    GotoQuery result;
+    // What a Chinese input method types: "：" for ':', full-width digits
+    std::wstring ascii(typed);
+    for (auto& ch : ascii) {
+        if (ch >= 0xff01 && ch <= 0xff5e) ch = static_cast<wchar_t>(ch - 0xfee0);
+        else if (ch == L'\u3002') ch = L'.';
+    }
+    std::wstring_view text = ascii;
+    while (!text.empty() && std::iswspace(text.front())) text.remove_prefix(1);
+    while (!text.empty() && std::iswspace(text.back())) text.remove_suffix(1);
+    if (text.empty()) return result;
+    bool digits = false, separators = false;
+    for (wchar_t ch : text) {
+        if (ch >= L'0' && ch <= L'9') digits = true;
+        else if (ch == L':' || ch == L'.' || ch == L',') separators = true;
+        else return result;
+    }
+    if (!digits) return result;
+    if (!separators) {
+        if (text.size() > 9) return result;
+        result.line = std::stoi(std::wstring(text));
+        return result;
+    }
+    result.time = static_cast<int>(agi::Time(std::string(text.begin(), text.end())));
+    return result;
+}
+
+std::optional<Match> MatchQuery(std::wstring_view query, std::vector<SearchKey> const& keys, bool runs) {
+    auto whole = Best(NormaliseQuery(query), keys, runs);
+    auto words = Tokenise(query);
+    if (words.size() < 2) return whole;
+    Match each;
+    for (auto const& word : words) {
+        auto match = Best(word, keys, runs);
+        if (!match) return whole;
+        Merge(each, *match);
+    }
+    if (whole && whole->score >= each.score) return whole;
+    return each;
+}
+
+std::wstring CanonicalHotkey(std::wstring_view text, bool typed) {
+    static constexpr std::wstring_view order[] = {L"ctrl", L"alt", L"shift", L"meta", L"cmd", L"super"};
+    auto modifier = [](std::wstring const& part) -> int {
+        std::wstring_view name = part;
+        if (name == L"control") name = L"ctrl";
+        else if (name == L"option") name = L"alt";
+        else if (name == L"command") name = L"cmd";
+        else if (name == L"win") name = L"super";
+        for (size_t i = 0; i < std::size(order); ++i)
+            if (order[i] == name) return static_cast<int>(i);
+        return -1;
+    };
+
+    std::vector<std::wstring> parts;
+    std::wstring part;
+    bool trailing = false;
+    for (size_t i = 0; i < text.size(); ++i) {
+        wchar_t ch = text[i];
+        bool joiner = ch == L'-' || ch == L'+';
+        // ...unless it is the key itself, last after another one ("Ctrl--").
+        if (joiner && i + 1 == text.size() && i > 0 && (text[i - 1] == L'-' || text[i - 1] == L'+'))
+            joiner = false;
+        if (joiner || std::iswspace(ch)) {
+            if (!part.empty()) parts.push_back(std::move(part));
+            part.clear();
+            trailing = trailing || joiner;
+        }
+        else {
+            part += static_cast<wchar_t>(std::towlower(ch));
+            trailing = false;
+        }
+    }
+    if (!part.empty()) parts.push_back(std::move(part));
+
+    std::vector<bool> mods(std::size(order));
+    std::vector<std::wstring> keys;
+    for (auto const& p : parts) {
+        if (int index = modifier(p); index >= 0) mods[index] = true;
+        else keys.push_back(p);
+    }
+    bool any_mod = std::find(mods.begin(), mods.end(), true) != mods.end();
+    if (keys.size() > 1) return {};
+    if (typed) {
+        if (keys.empty() && !(trailing && any_mod)) return {};
+        if (!keys.empty() && !any_mod) {
+            auto const& key = keys[0];
+            bool function = key.size() >= 2 && key.size() <= 3 && key[0] == L'f'
+                && std::all_of(key.begin() + 1, key.end(), [](wchar_t c) { return c >= L'0' && c <= L'9'; });
+            if (!function) return {};
+        }
+    }
+    std::wstring result;
+    for (size_t i = 0; i < mods.size(); ++i)
+        if (mods[i]) { result += order[i]; result += L'-'; }
+    if (!keys.empty()) result += keys[0];
+    return result;
+}
+}
+
+namespace {
+/// Recently used commands listed first when nothing is typed.
 constexpr size_t max_recent = 12;
+/// Commands whose use is kept, and queries whose choice is.
+constexpr size_t max_usage = 200, max_queries = 100;
+/// What remembering a command for exactly what is typed adds: it comes
+/// first, before anything but a shortcut typed in full.
+constexpr int remembered_exact = 500;
+/// ...and for what is typed so far of a query it was chosen for.
+constexpr int remembered_prefix = 30;
+
+long long Now() {
+    return static_cast<long long>(std::time(nullptr));
+}
+
+std::vector<palette::Usage> ReadUsage() {
+    std::vector<palette::Usage> usage;
+    for (auto const& entry : OPT_GET("App/Command Palette/Usage")->GetListString())
+        if (auto parsed = palette::ParseUsage(entry)) usage.push_back(std::move(*parsed));
+    if (!usage.empty()) return usage;
+    // From before uses were counted: the recent list, a use each, in order
+    long long now = Now();
+    for (auto const& name : OPT_GET("App/Command Palette/Recent")->GetListString())
+        if (!name.empty()) usage.push_back({name, 1, now - static_cast<long long>(usage.size())});
+    return usage;
+}
 constexpr int visible_rows = 10;
+/// At most this many lines found by '@' are listed.
+constexpr size_t max_lines = 500;
+
+bool IsPrefix(wchar_t ch, wchar_t ascii) {
+    // Also as a Chinese input method types it: "＠", "："
+    return ch == ascii || ch == static_cast<wchar_t>(ascii + 0xfee0);
+}
 
 std::wstring Wide(wxString const& text) {
     return text.ToStdWstring();
@@ -215,6 +481,36 @@ wxString HotkeyLabel(std::string const& name) {
     return to_wx(key);
 }
 
+/// Every shortcut of the command, as shown and in CanonicalHotkey form.
+std::vector<std::pair<wxString, std::wstring>> Hotkeys(std::string const& name) {
+    std::vector<std::pair<wxString, std::wstring>> result;
+    for (auto context : {"Default", "Always", "Subtitle Edit Box", "Subtitle Grid", "Audio", "Video", "Translation Assistant"}) {
+        for (auto const& key : hotkey::get_hotkey_strs(context, name)) {
+            auto label = to_wx(key);
+            auto canonical = palette::CanonicalHotkey(label.ToStdWstring(), false);
+            if (std::none_of(result.begin(), result.end(), [&](auto const& known) { return known.second == canonical; }))
+                result.emplace_back(label, canonical);
+        }
+    }
+    return result;
+}
+
+/// Whether the shortcut @p canonical is what @p query (CanonicalHotkey with
+/// typed) asks for; 2 for the very shortcut, 1 for one with all the
+/// modifiers of a query that is only modifiers ("ctrl-shift-"), 0 for neither.
+int HotkeyHit(std::wstring const& query, std::wstring const& canonical) {
+    if (query == canonical) return 2;
+    if (query.empty() || query.back() != L'-') return 0;
+    auto has = [&](std::wstring_view part) {
+        for (size_t start = 0, end; (end = canonical.find(L'-', start)) != std::wstring::npos; start = end + 1)
+            if (std::wstring_view(canonical).substr(start, end - start) == part) return true;
+        return false;
+    };
+    for (size_t start = 0, end; (end = query.find(L'-', start)) != std::wstring::npos; start = end + 1)
+        if (!has(std::wstring_view(query).substr(start, end - start))) return 0;
+    return 1;
+}
+
 bool Listed(std::string_view name) {
     return !name.starts_with("recent/") && name != "app/command_palette";
 }
@@ -225,6 +521,38 @@ bool Listed(std::string_view name) {
 class PaletteList final : public wxVListBox {
     CommandPalette *palette;
     int Pad() const { return FromDIP(5); }
+
+    /// Draw @p text from @p x, the characters at @p marks (counted from
+    /// @p offset) bold in the accent colour; stops at @p right. Where it ends.
+    int DrawMarked(wxDC& dc, wxString const& text, std::vector<size_t> const& marks, size_t offset,
+        int x, int y, int right, wxColour const& colour, bool enabled) const
+    {
+        auto font = GetFont();
+        auto bold = font.Bold();
+        auto accent = theme::UiColours().accent;
+        auto marked_at = [&](size_t i, size_t next) {
+            return i >= offset && next < marks.size() && marks[next] == i - offset;
+        };
+        size_t next = 0;
+        for (size_t i = 0; i < text.size() && x < right;) {
+            bool marked = marked_at(i, next);
+            size_t j = i + 1;
+            if (marked) ++next;
+            else while (j < text.size() && !marked_at(j, next)) ++j;
+            auto run = text.Mid(i, j - i);
+            dc.SetFont(marked ? bold : font);
+            // Out of room: end with an ellipsis, and nothing after it
+            bool cut = x + dc.GetTextExtent(run).x > right;
+            if (cut) run = wxControl::Ellipsize(run, dc, wxELLIPSIZE_END, right - x);
+            dc.SetTextForeground(marked && enabled ? accent : colour);
+            dc.DrawText(run, x, y);
+            x += dc.GetTextExtent(run).x;
+            if (cut) break;
+            i = j;
+        }
+        dc.SetFont(font);
+        return x;
+    }
     int IconSize() const { return FromDIP(16); }
 
 public:
@@ -252,13 +580,40 @@ public:
         dc.DrawRectangle(rect.x, rect.y, FromDIP(3), rect.height);
     }
 
+    /// A row of the '@' and ':' modes: the text with what matched marked
+    /// and the start time on the right; line number, style and actor below.
+    void DrawTarget(wxDC& dc, wxRect const& rect, CommandPalette::Target const& target) const {
+        auto colours = theme::UiColours();
+        int pad = Pad(), y = rect.y + pad, line = GetCharHeight();
+        int x = rect.x + pad * 4 + IconSize();
+        int right = rect.GetRight() - pad * 2;
+        dc.SetFont(GetFont());
+        if (!target.aside.empty()) {
+            auto size = dc.GetTextExtent(target.aside);
+            dc.SetTextForeground(colours.list_dim);
+            dc.DrawText(target.aside, right - size.x, y);
+            right -= size.x + pad * 3;
+        }
+        auto text_colour = target.enabled && !target.comment ? colours.list_text : colours.list_dim;
+        DrawMarked(dc, target.text, target.match.positions, 0, x, y, right, text_colour, target.enabled);
+        wxString detail = target.detail;
+        if (!target.enabled) detail = _("Not available now") + (detail.empty() ? wxString() : wxString::FromUTF8(" · ") + detail);
+        dc.SetFont(GetFont());
+        dc.SetTextForeground(colours.list_dim);
+        int detail_right = rect.GetRight() - pad * 2;
+        dc.DrawText(wxControl::Ellipsize(detail, dc, wxELLIPSIZE_END, detail_right - x), x, y + line + FromDIP(1));
+    }
+
     void OnDrawItem(wxDC& dc, wxRect const& rect, size_t n) const override {
+        if (palette->mode != CommandPalette::Mode::Commands) {
+            if (n < palette->targets.size()) DrawTarget(dc, rect, palette->targets[n]);
+            return;
+        }
         auto const& item = palette->ShownItem(n);
         auto const& match = palette->ShownMatch(n);
         auto colours = theme::UiColours();
         auto text_colour = item.enabled ? colours.list_text : colours.list_dim;
         auto font = GetFont();
-        auto bold = font.Bold();
         int pad = Pad(), x = rect.x + pad * 2, y = rect.y + pad;
         int line = GetCharHeight();
 
@@ -276,38 +631,43 @@ public:
         // Shortcut on the right.
         int right = rect.GetRight() - pad * 2;
         dc.SetFont(font);
-        if (!item.hotkey.empty()) {
-            auto size = dc.GetTextExtent(item.hotkey);
-            dc.SetTextForeground(colours.list_dim);
-            dc.DrawText(item.hotkey, right - size.x, y);
+        // The shortcut that was typed, when the row was found by one.
+        wxString hotkey = match.hotkey.empty() ? item.hotkey : wxString(match.hotkey);
+        if (!hotkey.empty()) {
+            auto size = dc.GetTextExtent(hotkey);
+            dc.SetTextForeground(!match.hotkey.empty() && item.enabled ? colours.accent : colours.list_dim);
+            dc.DrawText(hotkey, right - size.x, y);
             right -= size.x + pad * 3;
         }
 
         // Name, matched characters bold in the accent colour.
         wxString name = item.display;
         if (item.checkable && item.checked) name = wxString::FromUTF8("✓ ") + name;
-        size_t offset = name.size() - item.display.size();
-        size_t next = 0;
-        for (size_t i = 0; i < name.size() && x < right;) {
-            bool marked = i >= offset && next < match.positions.size() && match.positions[next] == i - offset;
-            size_t j = i + 1;
-            if (marked) ++next;
-            else while (j < name.size() && !(j >= offset && next < match.positions.size() && match.positions[next] == j - offset)) ++j;
-            auto run = name.Mid(i, j - i);
-            dc.SetFont(marked ? bold : font);
-            dc.SetTextForeground(marked && item.enabled ? colours.accent : text_colour);
-            dc.DrawText(run, x, y);
-            x += dc.GetTextExtent(run).x;
-            i = j;
-        }
+        x = DrawMarked(dc, name, match.positions, name.size() - item.display.size(), x, y, right, text_colour, item.enabled);
 
-        // Help below the name.
+        // The menu it is in, dim, after the name: tells apart commands of
+        // the same name and shows what "timing shift" matched.
+        if (!item.path.empty() && x + pad * 3 < right)
+            DrawMarked(dc, item.path, match.path_positions, 0, x + pad * 3, y, right, colours.list_dim, item.enabled);
+
+        // Below: the English name when that is what matched, then the help.
+        int help_x = rect.x + pad * 4 + icon, help_y = y + line + FromDIP(1);
+        int help_right = rect.GetRight() - pad * 2;
+        if (!match.original_positions.empty() && !item.original.empty()) {
+            help_x = DrawMarked(dc, item.original, match.original_positions, 0, help_x, help_y, help_right, colours.list_dim, item.enabled);
+            if (help_x < help_right) {
+                auto dot = wxString::FromUTF8(" · ");
+                dc.SetTextForeground(colours.list_dim);
+                dc.DrawText(dot, help_x, help_y);
+                help_x += dc.GetTextExtent(dot).x;
+            }
+        }
         wxString help = item.help;
         if (!item.enabled) help = _("Not available now") + wxString::FromUTF8(" · ") + help;
-        int help_x = rect.x + pad * 4 + icon;
         dc.SetFont(font);
         dc.SetTextForeground(colours.list_dim);
-        dc.DrawText(wxControl::Ellipsize(help, dc, wxELLIPSIZE_END, rect.GetRight() - pad * 2 - help_x), help_x, y + line + FromDIP(1));
+        if (help_x < help_right)
+            dc.DrawText(wxControl::Ellipsize(help, dc, wxELLIPSIZE_END, help_right - help_x), help_x, help_y);
     }
 };
 
@@ -321,7 +681,7 @@ CommandPalette::CommandPalette(agi::Context *c)
 
     input = new wxTextCtrl(this, -1, "", wxDefaultPosition, wxDefaultSize, wxTE_PROCESS_ENTER);
     input->SetName("command-palette-input");
-    input->SetHint(_("Type a command name, pinyin or command id"));
+    input->SetHint(_("Type a command name, pinyin, menu, shortcut or command id"));
     list = new PaletteList(this);
     list->SetBackgroundColour(colours.list_back);
     empty = new wxStaticText(this, -1, _("No matching commands"));
@@ -330,17 +690,25 @@ CommandPalette::CommandPalette(agi::Context *c)
     auto hint = new wxStaticText(this, -1, wxString::FromUTF8("↑↓ ") + _("Select") + wxString::FromUTF8("   Enter ") + _("Run") + wxString::FromUTF8("   Esc ") + _("Close"));
     hint->SetForegroundColour(colours.list_dim);
     hint->SetFont(GetFont().Smaller());
+    modes_hint = new wxStaticText(this, -1, wxString(), wxDefaultPosition, wxDefaultSize, wxST_NO_AUTORESIZE | wxST_ELLIPSIZE_END);
+    modes_hint->SetLabel(wxString::FromUTF8("@ ") + _("Find in subtitles") + wxString::FromUTF8("   : ") + _("Go to line or time") + wxString::FromUTF8("   , ") + _("Settings"));
+    modes_hint->SetForegroundColour(colours.list_dim);
+    modes_hint->SetFont(GetFont().Smaller());
+    auto footer = new wxBoxSizer(wxHORIZONTAL);
+    // The prefixes give way when the palette is narrow: they never widen it
+    modes_hint->SetMinSize(wxSize(FromDIP(40), -1));
+    footer->Add(modes_hint, wxSizerFlags(1).Center().Border(wxRIGHT, FromDIP(12)));
+    footer->Add(hint, wxSizerFlags().Center());
 
     auto sizer = new wxBoxSizer(wxVERTICAL);
     sizer->Add(input, wxSizerFlags().Expand().Border(wxALL, FromDIP(8)));
     sizer->Add(list, wxSizerFlags(1).Expand());
     sizer->Add(empty, wxSizerFlags().Border(wxALL, FromDIP(12)));
-    sizer->Add(hint, wxSizerFlags().Right().Border(wxALL, FromDIP(6)));
+    sizer->Add(footer, wxSizerFlags().Expand().Border(wxALL, FromDIP(6)).Border(wxLEFT | wxRIGHT, FromDIP(10)));
     SetSizer(sizer);
 
     // Every command, as it is now: names and availability change with the project.
-    recent = OPT_GET("App/Command Palette/Recent")->GetListString();
-    std::erase_if(recent, [](std::string const& name) { return name.empty(); });
+    auto paths = menu::CommandPaths();
     for (auto name_view : cmd::get_registered_commands()) {
         if (!Listed(name_view)) continue;
         std::string name(name_view);
@@ -351,12 +719,31 @@ CommandPalette::CommandPalette(agi::Context *c)
         if (item.display.empty()) continue;
         item.help = command->StrHelp();
         item.hotkey = HotkeyLabel(name);
-        item.keys = palette::MakeKeys(Wide(item.display), name);
+        item.hotkeys = Hotkeys(name);
+        item.original = command->StrDisplayOriginal();
+        if (item.original.IsSameAs(item.display, false)) item.original.clear();
+        if (auto path = paths.find(name); path != paths.end()) item.path = path->second;
+        item.keys = palette::MakeKeys(Wide(item.display), name, Wide(item.original), Wide(item.path));
         items.push_back(std::move(item));
     }
-    std::erase_if(recent, [&](std::string const& name) {
-        return std::none_of(items.begin(), items.end(), [&](Item const& item) { return item.name == name; });
-    });
+    // How often and how lately each was chosen, as it is now
+    {
+        std::map<std::string, Item*> by_name;
+        for (auto& item : items) by_name[item.name] = &item;
+        long long now = Now();
+        int rank = 0;
+        for (auto const& use : ReadUsage()) {
+            auto it = by_name.find(use.name);
+            if (it == by_name.end() || it->second->usage_rank >= 0) continue;
+            it->second->usage_rank = rank++;
+            it->second->usage_bonus = palette::UsageBonus(use.count, now - use.last);
+        }
+        for (auto const& entry : OPT_GET("App/Command Palette/Queries")->GetListString()) {
+            auto tab = entry.find('\t');
+            if (tab == 0 || tab == std::string::npos) continue;
+            remembered.emplace_back(Wide(to_wx(entry.substr(0, tab))), entry.substr(tab + 1));
+        }
+    }
 
     int width = FromDIP(620);
     if (auto top = wxGetTopLevelParent(c->parent)) width = std::min(width, std::max(FromDIP(320), top->GetClientSize().x - FromDIP(40)));
@@ -413,22 +800,42 @@ void CommandPalette::SetQuery(wxString const& query) {
 }
 
 void CommandPalette::Filter() {
-    auto query = palette::NormaliseQuery(Wide(input->GetValue()));
+    auto typed = Wide(input->GetValue());
     shown.clear();
     matches.clear();
-    auto recent_rank = [&](std::string const& name) {
-        auto it = std::find(recent.begin(), recent.end(), name);
-        return it == recent.end() ? -1 : static_cast<int>(it - recent.begin());
-    };
-
+    targets.clear();
+    mode = Mode::Commands;
+    if (!typed.empty() && IsPrefix(typed[0], L'@')) {
+        mode = Mode::Lines;
+        FilterLines(std::wstring_view(typed).substr(1));
+        return;
+    }
+    if (!typed.empty() && IsPrefix(typed[0], L':')) {
+        mode = Mode::Goto;
+        FilterGoto(std::wstring_view(typed).substr(1));
+        return;
+    }
+    if (!typed.empty() && IsPrefix(typed[0], L',')) {
+        mode = Mode::Settings;
+        FilterSettings(std::wstring_view(typed).substr(1));
+        return;
+    }
+    auto query = palette::NormaliseQuery(typed);
+    auto hotkey_query = palette::CanonicalHotkey(typed, true);
     if (query.empty()) {
-        // Recently used first, then all by name.
-        for (auto const& name : recent)
-            for (size_t i = 0; i < items.size(); ++i)
-                if (items[i].name == name) shown.push_back(i);
+        // The most used of late first, then all by name.
+        std::vector<size_t> used;
+        for (size_t i = 0; i < items.size(); ++i)
+            if (items[i].usage_rank >= 0) used.push_back(i);
+        std::sort(used.begin(), used.end(), [&](size_t a, size_t b) {
+            if (items[a].usage_bonus != items[b].usage_bonus) return items[a].usage_bonus > items[b].usage_bonus;
+            return items[a].usage_rank < items[b].usage_rank;
+        });
+        if (used.size() > max_recent) used.resize(max_recent);
+        shown = used;
         std::vector<size_t> rest;
         for (size_t i = 0; i < items.size(); ++i)
-            if (recent_rank(items[i].name) < 0) rest.push_back(i);
+            if (std::find(used.begin(), used.end(), i) == used.end()) rest.push_back(i);
         std::stable_sort(rest.begin(), rest.end(), [&](size_t a, size_t b) {
             return items[a].display.CmpNoCase(items[b].display) < 0;
         });
@@ -438,12 +845,30 @@ void CommandPalette::Filter() {
     else {
         std::vector<std::pair<size_t, palette::Match>> found;
         for (size_t i = 0; i < items.size(); ++i) {
-            auto match = palette::BestMatch(query, items[i].keys);
+            auto match = palette::MatchQuery(typed, items[i].keys);
             // A word of the help text, as a last resort.
-            if (!match && query.size() >= 2 && Wide(items[i].help.Lower()).find(query) != std::wstring::npos)
-                match = palette::Match{1, {}};
+            if (!match && query.size() >= 2 && Wide(items[i].help.Lower()).find(query) != std::wstring::npos) {
+                match.emplace();
+                match->score = 1;
+            }
+            // A shortcut: "ctrl+s" and "f6" put that command first,
+            // "ctrl+shift+" lists the commands with both.
+            for (auto const& [label, canonical] : items[i].hotkeys) {
+                int hit = HotkeyHit(hotkey_query, canonical);
+                if (!hit) continue;
+                if (!match) match = palette::Match{};
+                match->score += hit == 2 ? 1000 : 200;
+                match->hotkey = Wide(label);
+                break;
+            }
             if (!match) continue;
-            if (int rank = recent_rank(items[i].name); rank >= 0) match->score += 6 + static_cast<int>(max_recent) - rank;
+            match->score += items[i].usage_bonus;
+            // Chosen before for this very query, or one it starts
+            for (auto const& [typed_then, name] : remembered) {
+                if (name != items[i].name || !typed_then.starts_with(query)) continue;
+                match->score += typed_then == query ? remembered_exact : remembered_prefix;
+                break;
+            }
             found.emplace_back(i, std::move(*match));
         }
         std::stable_sort(found.begin(), found.end(), [&](auto const& a, auto const& b) {
@@ -458,18 +883,187 @@ void CommandPalette::Filter() {
         }
     }
 
-    list->SetItemCount(shown.size());
-    list->SetSelection(shown.empty() ? wxNOT_FOUND : 0);
+    ShowRows(shown.size(), _("No matching commands"));
+}
+
+void CommandPalette::ShowRows(size_t count, wxString const& none) {
+    list->SetItemCount(count);
+    list->SetSelection(count == 0 ? wxNOT_FOUND : 0);
     list->Refresh();
-    GetSizer()->Show(list, !shown.empty());
-    GetSizer()->Show(empty, shown.empty());
-    if (shown.empty()) empty->SetMinSize(list->GetMinSize() - wxSize(FromDIP(24), FromDIP(24)));
+    GetSizer()->Show(list, count != 0);
+    GetSizer()->Show(empty, count == 0);
+    if (count == 0) {
+        empty->SetLabel(none);
+        empty->SetMinSize(list->GetMinSize() - wxSize(FromDIP(24), FromDIP(24)));
+    }
     Layout();
 }
 
+wxString CommandPalette::EmptyMessage() const {
+    return GetSizer()->IsShown(empty) ? empty->GetLabel() : wxString();
+}
+
+void CommandPalette::ReadLines() {
+    if (lines_read) return;
+    lines_read = true;
+    int row = 0;
+    for (auto const& event : c->subtitleAccess->Read().Events) {
+        Line line;
+        line.id = event.Id;
+        line.row = ++row;
+        line.start = event.Start;
+        line.comment = event.Comment;
+        line.text = to_wx(event.GetStrippedText());
+        for (auto code : {"\\N", "\\n", "\\h"}) line.text.Replace(code, " ");
+        line.style = to_wx(event.Style.get());
+        line.actor = to_wx(event.Actor.get());
+        line.keys = palette::MakeTextKeys(Wide(line.text));
+        lines.push_back(std::move(line));
+    }
+}
+
+CommandPalette::Target CommandPalette::LineTarget(Line const& line) const {
+    Target target;
+    target.line_id = line.id;
+    target.text = line.text;
+    target.aside = to_wx(agi::Time(line.start).GetAssFormatted());
+    target.detail = wxString::Format("#%d", line.row);
+    if (line.comment) target.detail += wxString::FromUTF8(" · ") + _("Comment");
+    target.detail += wxString::FromUTF8(" · ") + line.style;
+    if (!line.actor.empty()) target.detail += wxString::FromUTF8(" · ") + line.actor;
+    target.comment = line.comment;
+    target.enabled = !c->workspaceTabs || c->workspaceTabs->Permits("grid/line/next");
+    return target;
+}
+
+void CommandPalette::FilterLines(std::wstring_view query) {
+    if (palette::NormaliseQuery(query).empty()) {
+        ShowRows(0, _("Type text to find in the subtitles: words in any order, pinyin or its initials"));
+        return;
+    }
+    ReadLines();
+    size_t found = 0;
+    for (auto const& line : lines) {
+        auto match = palette::MatchQuery(query, line.keys, true);
+        if (!match) continue;
+        if (++found > max_lines) continue;
+        auto target = LineTarget(line);
+        target.match = std::move(*match);
+        targets.push_back(std::move(target));
+    }
+    ShowRows(targets.size(), _("No matching lines"));
+    if (found > max_lines) {
+        // Say so at the end of the list rather than silently cut it
+        Target more;
+        more.text = wxString::Format(_("%zu more lines match: type more to narrow them down"), found - max_lines);
+        more.enabled = false;
+        more.comment = true;
+        targets.push_back(std::move(more));
+        list->SetItemCount(targets.size());
+        list->Refresh();
+    }
+}
+
+void CommandPalette::FilterGoto(std::wstring_view query) {
+    auto wanted = palette::ParseGoto(query);
+    if (wanted.line > 0) {
+        ReadLines();
+        if (wanted.line <= static_cast<int>(lines.size()))
+            targets.push_back(LineTarget(lines[wanted.line - 1]));
+        ShowRows(targets.size(), wxString::Format(_("There is no line %d: the subtitles have %zu"), wanted.line, lines.size()));
+        return;
+    }
+    if (wanted.time < 0) {
+        ShowRows(0, _("Type a line number, or a time such as 1:23.45 or 0:01:23"));
+        return;
+    }
+
+    // The video to that time, and the line on screen then (or the next one)
+    bool video = c->project && c->project->VideoProvider();
+    Target seek;
+    seek.time = wanted.time;
+    seek.text = wxString::Format(_("Seek video to %s"), to_wx(agi::Time(wanted.time).GetAssFormatted()));
+    seek.detail = video ? wxString() : _("No video is open");
+    seek.enabled = video && (!c->workspaceTabs || c->workspaceTabs->Permits("video/jump"));
+    targets.push_back(std::move(seek));
+    ReadLines();
+    Line const *at = nullptr;
+    // Of the lines on screen then, the one that started last
+    int on_screen = 0, latest = -1;
+    for (auto const& event : c->subtitleAccess->Read().Events) {
+        if (!event.Comment && event.Start <= wanted.time && wanted.time < event.End && static_cast<int>(event.Start) > latest) {
+            latest = event.Start;
+            on_screen = event.Id;
+        }
+    }
+    for (auto const& line : lines)
+        if (on_screen && line.id == on_screen) at = &line;
+    if (!at) {
+        for (auto const& line : lines)
+            if (!line.comment && line.start >= wanted.time && (!at || line.start < at->start)) at = &line;
+    }
+    if (at) targets.push_back(LineTarget(*at));
+    // The line first when there is no video to seek
+    if (!video && targets.size() == 2) std::swap(targets[0], targets[1]);
+    ShowRows(targets.size(), wxString());
+}
+
+void CommandPalette::FilterSettings(std::wstring_view query) {
+    if (palette::NormaliseQuery(query).empty()) {
+        ShowRows(0, _("Type the name of a setting, its pinyin or initials"));
+        return;
+    }
+    auto const& settings = SettingLabels(c->parent);
+    if (setting_keys.empty())
+        for (auto const& setting : settings)
+            setting_keys.push_back(palette::MakeTextKeys(Wide(setting.label)));
+
+    std::vector<std::pair<size_t, palette::Match>> found;
+    for (size_t i = 0; i < settings.size(); ++i)
+        // Each word one run, as in the settings' own search: many labels
+        // are whole sentences, where scattered letters match anything
+        if (auto match = palette::MatchQuery(query, setting_keys[i], true))
+            found.emplace_back(i, std::move(*match));
+    // Best first; then pages before what is on them, then in page order
+    std::stable_sort(found.begin(), found.end(), [&](auto const& a, auto const& b) {
+        if (a.second.score != b.second.score) return a.second.score > b.second.score;
+        return settings[a.first].is_page && !settings[b.first].is_page;
+    });
+    for (auto& [index, match] : found) {
+        auto const& setting = settings[index];
+        Target target;
+        target.setting = setting.label;
+        target.text = setting.label;
+        target.text.Replace("\n", " ");
+        target.aside = setting.is_page ? wxString() : setting.page;
+        target.detail = setting.is_page ? _("Settings page") : _("Setting");
+        target.match = std::move(match);
+        targets.push_back(std::move(target));
+    }
+    ShowRows(targets.size(), _("No matching settings"));
+}
+
+void CommandPalette::GoToChosen() {
+    if (!chosen_target) return;
+    auto const& target = *chosen_target;
+    if (!target.setting.empty()) {
+        ShowPreferences(c->parent, target.setting);
+        return;
+    }
+    if (target.line_id) {
+        for (auto const& event : c->subtitleAccess->Read().Events) {
+            if (event.Id != target.line_id) continue;
+            c->selectionController->SetSelectionAndActiveIDs({target.line_id}, target.line_id);
+            break;
+        }
+    }
+    if (target.time >= 0 && c->project && c->project->VideoProvider())
+        c->videoController->JumpToTime(target.time);
+}
+
 void CommandPalette::Move(int by) {
-    if (shown.empty()) return;
-    int count = static_cast<int>(shown.size());
+    int count = static_cast<int>(list->GetItemCount());
+    if (count == 0) return;
     int index = list->GetSelection() + by;
     if (by == 1 || by == -1) index = (index + count) % count; // arrows wrap around
     else index = std::clamp(index, 0, count - 1);
@@ -503,13 +1097,25 @@ int CommandPalette::Selection() const {
 }
 
 void CommandPalette::Select(int index) {
-    if (index < 0 || index >= static_cast<int>(shown.size())) return;
+    if (index < 0 || index >= static_cast<int>(list->GetItemCount())) return;
     list->SetSelection(index);
     list->RefreshAll();
 }
 
 bool CommandPalette::Accept() {
     int index = list->GetSelection();
+    if (mode != Mode::Commands) {
+        if (index < 0 || index >= static_cast<int>(targets.size())) return false;
+        auto const& target = targets[index];
+        if (!target.enabled || (!target.line_id && target.time < 0 && target.setting.empty())) {
+            wxBell();
+            return false;
+        }
+        chosen_target = targets[index];
+        if (IsModal()) EndModal(wxID_OK);
+        else Hide();
+        return true;
+    }
     if (index < 0 || index >= static_cast<int>(shown.size())) return false;
     auto const& item = ShownItem(index);
     if (!item.enabled) {
@@ -517,22 +1123,50 @@ bool CommandPalette::Accept() {
         return false;
     }
     chosen = item.name;
-    Remember(chosen);
+    Remember(chosen, input->GetValue());
     if (IsModal()) EndModal(wxID_OK);
     else Hide();
     return true;
 }
 
-void CommandPalette::Remember(std::string const& name) {
+void CommandPalette::Remember(std::string const& name, wxString const& query) {
+    // Read before the recent list below changes: with no uses counted yet
+    // they come from it
+    auto usage = ReadUsage();
+
+    // The plain recent list is still kept, for older versions
     auto recent = OPT_GET("App/Command Palette/Recent")->GetListString();
     std::erase_if(recent, [&](std::string const& entry) { return entry == name || entry.empty(); });
     recent.insert(recent.begin(), name);
     if (recent.size() > max_recent) recent.resize(max_recent);
     OPT_SET("App/Command Palette/Recent")->SetListString(std::move(recent));
+
+    palette::Usage use{name, 0, Now()};
+    if (auto it = std::find_if(usage.begin(), usage.end(), [&](auto const& u) { return u.name == name; }); it != usage.end()) {
+        use.count = it->count;
+        usage.erase(it);
+    }
+    ++use.count;
+    usage.insert(usage.begin(), std::move(use));
+    if (usage.size() > max_usage) usage.resize(max_usage);
+    std::vector<std::string> entries;
+    for (auto const& u : usage) entries.push_back(palette::FormatUsage(u));
+    OPT_SET("App/Command Palette/Usage")->SetListString(std::move(entries));
+
+    auto typed = from_wx(wxString(palette::NormaliseQuery(query.ToStdWstring())));
+    if (typed.empty()) return;
+    auto queries = OPT_GET("App/Command Palette/Queries")->GetListString();
+    std::erase_if(queries, [&](std::string const& entry) {
+        return entry.empty() || entry.starts_with(typed + '\t');
+    });
+    queries.insert(queries.begin(), typed + '\t' + name);
+    if (queries.size() > max_queries) queries.resize(max_queries);
+    OPT_SET("App/Command Palette/Queries")->SetListString(std::move(queries));
 }
 
 std::string ShowCommandPalette(agi::Context *c) {
     CommandPalette palette(c);
     palette.ShowModal();
+    palette.GoToChosen();
     return palette.Chosen();
 }

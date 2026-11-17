@@ -17,10 +17,15 @@
 #include <main.h>
 
 #include <libaegisub/audio/provider.h>
+#include <libaegisub/audio/resample.h>
+#include <libaegisub/background_runner.h>
 #include <libaegisub/fs.h>
 #include <libaegisub/path.h>
 #include <libaegisub/util.h>
 
+#include <cmath>
+#include <filesystem>
+#include <numeric>
 #include <fstream>
 
 TEST(lagi_audio, dummy_blank) {
@@ -223,6 +228,29 @@ TEST(lagi_audio, hd_cache) {
 
 	for (size_t i = 0; i < 512; ++i)
 		ASSERT_EQ(static_cast<uint16_t>((1 << 22) - 256 + i), buff[i]);
+}
+
+TEST(lagi_audio, hd_cache_file_goes_with_the_provider) {
+	auto dir = agi::Path().Decode("?temp") / "aegisub-hd-cache-test";
+	std::filesystem::remove_all(dir);
+	std::filesystem::create_directories(dir);
+	{
+		auto provider = agi::CreateHDAudioProvider(std::make_unique<TestAudioProvider<>>(), dir);
+		while (provider->GetDecodedSamples() != provider->GetNumSamples()) agi::util::sleep_for(0);
+	}
+	EXPECT_TRUE(std::filesystem::is_empty(dir)) << "the cache file was left behind";
+	std::filesystem::remove_all(dir);
+}
+
+TEST(lagi_audio, hd_cache_file_names) {
+	EXPECT_TRUE(agi::IsHDAudioCacheFile("aegisub-audio-1763100000-4242"));
+	EXPECT_TRUE(agi::IsHDAudioCacheFile("audio-1763100000-4242")) << "as named before";
+	EXPECT_FALSE(agi::IsHDAudioCacheFile("audio-1763100000-4242.wav"));
+	EXPECT_FALSE(agi::IsHDAudioCacheFile("audio-1763100000"));
+	EXPECT_FALSE(agi::IsHDAudioCacheFile("audio--4242"));
+	EXPECT_FALSE(agi::IsHDAudioCacheFile("audio-abc-4242"));
+	EXPECT_FALSE(agi::IsHDAudioCacheFile("my-audio-1-2"));
+	EXPECT_FALSE(agi::IsHDAudioCacheFile("aegisub-audio-"));
 }
 
 TEST(lagi_audio, convert_8bit) {
@@ -548,4 +576,98 @@ TEST(lagi_audio, wave64_truncated) {
 	}
 
 	agi::fs::Remove(path);
+}
+
+namespace {
+/// A sine of @p hz at @p amplitude, 16-bit mono
+struct SineAudioProvider final : agi::AudioProvider {
+	double hz, amplitude;
+	SineAudioProvider(int rate, double seconds, double hz, double amplitude = 0.5) : hz(hz), amplitude(amplitude) {
+		channels = 1;
+		sample_rate = rate;
+		num_samples = static_cast<int64_t>(seconds * rate);
+		decoded_samples = num_samples;
+		bytes_per_sample = 2;
+		float_samples = false;
+	}
+	void FillBuffer(void *buf, int64_t start, int64_t count) const override {
+		auto out = static_cast<int16_t *>(buf);
+		for (int64_t i = 0; i < count; ++i)
+			out[i] = static_cast<int16_t>(std::lround(32767 * amplitude * std::sin(2 * 3.14159265358979323846 * hz * double(start + i) / sample_rate)));
+	}
+};
+
+/// The RMS of @p s away from its ends, where the filter runs into the silence about the audio
+double MiddleRms(std::vector<float> const& s) {
+	size_t const from = s.size() / 10, to = s.size() - s.size() / 10;
+	double sum = 0;
+	for (size_t i = from; i < to; ++i) sum += double(s[i]) * s[i];
+	return std::sqrt(sum / double(to - from));
+}
+
+/// How many times @p s goes from below 0 to 0 or above, away from its ends
+int RisingCrossings(std::vector<float> const& s) {
+	int n = 0;
+	for (size_t i = s.size() / 10 + 1; i < s.size() - s.size() / 10; ++i)
+		if (s[i - 1] < 0 && s[i] >= 0) ++n;
+	return n;
+}
+
+struct CancelledSink final : agi::ProgressSink {
+	void SetIndeterminate() override {}
+	void SetTitle(std::string const&) override {}
+	void SetMessage(std::string const&) override {}
+	void SetProgress(int64_t, int64_t) override {}
+	void Log(std::string const&) override {}
+	bool IsCancelled() override { return true; }
+};
+}
+
+TEST(lagi_audio, resample_filter_phases_each_pass_a_constant) {
+	for (auto [in, out] : {std::pair{48000, 16000}, {44100, 16000}, {22050, 16000}, {32000, 16000}, {8000, 16000}}) {
+		agi::ResampleFilter f(in, out);
+		EXPECT_EQ(out / std::gcd(in, out), f.phases) << in;
+		EXPECT_EQ(in / std::gcd(in, out), f.step) << in;
+		for (int64_t p = 0; p < f.phases; ++p) {
+			double sum = 0;
+			for (int k = 0; k < f.taps(); ++k) sum += f.Phase(p)[k];
+			ASSERT_NEAR(1.0, sum, 1e-4) << in << " phase " << p;
+		}
+	}
+}
+
+TEST(lagi_audio, resample_keeps_a_tone_below_the_new_nyquist_and_its_pitch) {
+	for (int in : {48000, 44100, 32000}) {
+		SineAudioProvider p(in, 2.0, 1000);
+		auto s = agi::ResampleToFloat(p, 16000);
+		EXPECT_EQ(static_cast<size_t>((p.GetNumSamples() * 16000 + in - 1) / in), s.size()) << in;
+		EXPECT_NEAR(0.5 / std::sqrt(2.0), MiddleRms(s), 0.005) << in;
+		// 1000 rising crossings a second over the middle 1.6 s
+		EXPECT_NEAR(1600, RisingCrossings(s), 2) << in;
+	}
+}
+
+TEST(lagi_audio, resample_takes_away_what_is_above_the_new_nyquist_rather_than_folding_it_down) {
+	for (double hz : {9000.0, 12000.0, 20000.0}) {
+		SineAudioProvider p(48000, 1.0, hz);
+		auto s = agi::ResampleToFloat(p, 16000);
+		EXPECT_LT(MiddleRms(s), 0.5 / std::sqrt(2.0) * 0.01) << hz << " Hz, 40 dB down at least";
+	}
+}
+
+TEST(lagi_audio, resample_at_the_same_rate_is_the_samples_as_floats) {
+	SineAudioProvider p(16000, 0.1, 440);
+	auto s = agi::ResampleToFloat(p, 16000);
+	ASSERT_EQ(static_cast<size_t>(p.GetNumSamples()), s.size());
+	std::vector<int16_t> raw(s.size());
+	p.GetAudio(raw.data(), 0, static_cast<int64_t>(raw.size()));
+	for (size_t i = 0; i < s.size(); ++i) ASSERT_FLOAT_EQ(raw[i] / 32768.f, s[i]);
+}
+
+TEST(lagi_audio, resample_wants_16_bit_mono_and_stops_when_cancelled) {
+	TestAudioProvider<uint8_t> eight_bit(1);
+	EXPECT_THROW(agi::ResampleToFloat(eight_bit, 16000), agi::InternalError);
+	SineAudioProvider p(48000, 1.0, 1000);
+	CancelledSink cancelled;
+	EXPECT_THROW(agi::ResampleToFloat(p, 16000, &cancelled), agi::UserCancelException);
 }

@@ -36,6 +36,10 @@
 #include "libresrc/libresrc.h"
 #include "options.h"
 #include "preferences_base.h"
+#include "secret.h"
+#include "speech_transcribe.h"
+#include "transcribe_local.h"
+#include "dialogs.h"
 #include "theme.h"
 #include "video_provider_manager.h"
 
@@ -48,9 +52,14 @@
 #endif
 
 #include <libaegisub/hotkey.h>
+#include <libaegisub/util.h>
 
+#include <algorithm>
+#include <cstdlib>
+#include <initializer_list>
 #include <unordered_set>
 
+#include <wx/textctrl.h>
 #include <wx/checkbox.h>
 #include <wx/combobox.h>
 #include <wx/dc.h>
@@ -62,6 +71,7 @@
 #include <wx/spinctrl.h>
 #include <wx/statbox.h>
 #include <wx/stattext.h>
+#include <wx/textdlg.h>
 
 namespace {
 wxArrayString get_registered_commands() {
@@ -209,8 +219,6 @@ void Grid(PreferencesBook *book, Preferences *parent) {
 	p->OptionAdd(grid, _("Highlight visible subtitles"), "Subtitle/Grid/Highlight Subtitles in Frame",
 		{.help = _("Lines showing on the video's current frame get their own background")});
 	p->OptionAdd(grid, _("Shade every other row"), "Subtitle/Grid/Alternate Rows");
-	p->OptionAdd(grid, _("Hide overrides symbol"), "Subtitle/Grid/Hide Overrides Char",
-		{.help = _("Leave tags out of the text column, rather than showing a symbol for each")});
 	p->OptionFont(grid, "Subtitle/Grid/");
 
 	p->SetSizerAndFit(p->sizer);
@@ -238,8 +246,149 @@ void Audio(PreferencesBook *book, Preferences *parent) {
 	p->OptionAdd(timing, _("Automatically link nearby subtitles"), "Timing/Link Adjacent Lines",
 		{.help = _("Dragging the boundary between two lines that touch moves both")});
 	p->OptionAdd(timing, _("Link subtitle gaps under (s)"), "Timing/Adjacent Line Gap", {.min = 0, .max = 10, .inc = 0.1});
-	p->OptionAdd(timing, _("Snap to scene changes within (ms)"), "Timing/Scene Snap Distance", {.min = 0, .max = 10000, .inc = 50,
-		.help = _("How far Snap to Nearby Scene Changes moves a line's start or end, before or after it, to land on a scene change")});
+	// Out, a line shows a little longer; in, it would cover a word or cut one
+	// off, so those reach only a few frames
+	p->OptionAdd(timing, _("Snap a start earlier to a scene change within (ms)"), "Timing/Scene Snap/Start Earlier", {.min = 0, .max = 10000, .inc = 50,
+		.help = _("How far Snap to Nearby Scene Changes moves a line's start back to land on a scene change")});
+	p->OptionAdd(timing, _("Snap a start later to a scene change within (ms)"), "Timing/Scene Snap/Start Later", {.min = 0, .max = 10000, .inc = 10,
+		.help = _("How far Snap to Nearby Scene Changes moves a line's start on to land on a scene change: further would hide the line's first word")});
+	p->OptionAdd(timing, _("Snap an end later to a scene change within (ms)"), "Timing/Scene Snap/End Later", {.min = 0, .max = 10000, .inc = 50,
+		.help = _("How far Snap to Nearby Scene Changes moves a line's end on to land just before a scene change")});
+	p->OptionAdd(timing, _("Snap an end earlier to a scene change within (ms)"), "Timing/Scene Snap/End Earlier", {.min = 0, .max = 10000, .inc = 10,
+		.help = _("How far Snap to Nearby Scene Changes moves a line's end back to land just before a scene change: further would take the line away before it is said")});
+
+	auto speech = p->PageSizer(_("Speech Recognition"));
+	p->OptionAdd(speech, _("Pair each line with an empty translation line"), "Tool/Speech Import/Bilingual",
+		{.help = _("Import Speech Recognition gives each line the JP style and a CN line at the same times for its translation")});
+	p->OptionAdd(speech, _("Split sentences longer than (ms)"), "Tool/Speech Import/Max Duration", {.min = 2000, .max = 30000, .inc = 500,
+		.help = _("A sentence heard as longer is split where a clause ends or the speaker pauses")});
+	p->OptionAdd(speech, _("Show each line at least (ms)"), "Tool/Speech Import/Min Duration", {.min = 0, .max = 5000, .inc = 100,
+		.help = _("A short line is shown longer, up to the next line or scene change, to give time to read its translation")});
+	p->OptionAdd(speech, _("Leave marks for the translator in the Effect field"), "Tool/Speech Import/Marks",
+		{.help = _("#group on the lines a long sentence was split into, to be translated together, and ?word on words heard with little confidence; off, the Effect field is left empty")});
+	auto unsure = p->OptionAdd(speech, _("Mark words heard with less confidence than"), "Tool/Speech Import/Unsure Below", {.min = 0, .max = 1, .inc = 0.05,
+		.help = _("Such words are written in the Effect field as ?word, for the translator to check")});
+	p->EnableWhen("Tool/Speech Import/Marks", [](agi::OptionValue const& v) { return v.GetBool(); }, {unsure});
+
+	auto transcribe = p->PageSizer(_("Transcription"));
+	// Listed ElevenLabs, Whisper, a program of one's own; kept as 0, 2 and 1,
+	// Whisper having come last, so that the settings saved by a build with it
+	// mean the same in one without
+	enum { elevenlabs = 0, program = 1, whisper = 2 };
+	wxArrayString choice_backend;
+	std::vector<int> backend_values;
+	choice_backend.Add(_("ElevenLabs Scribe, over the net"));
+	backend_values.push_back(elevenlabs);
+	if (transcribe::CanRunLocal()) {
+		choice_backend.Add(_("Whisper, built in, on this computer"));
+		backend_values.push_back(whisper);
+	}
+	choice_backend.Add(_("A program of your own, run here"));
+	backend_values.push_back(program);
+	p->OptionChoice(transcribe, _("Heard by"), choice_backend, "Tool/Transcribe/Backend", false,
+		transcribe::CanRunLocal()
+			? _("Transcribe the Audio sends the audio to ElevenLabs, which charges by its length; hears it here with Whisper, free, given a model file; or runs a program of your own and reads the JSON it writes. Only what the one chosen uses is shown below")
+			: _("Transcribe the Audio sends the audio to ElevenLabs, which charges by its length, or runs a program of your own and reads the JSON it writes. Only what the one chosen uses is shown below"),
+		backend_values);
+	// The rows each way of hearing uses: shown only while it is chosen, as
+	// the choice is in the dialog
+	auto heard_by = [](std::initializer_list<int> ways) {
+		return [ways = std::vector<int>(ways)](agi::OptionValue const& v) {
+			return std::find(ways.begin(), ways.end(), v.GetInt()) != ways.end();
+		};
+	};
+	p->OptionAdd(transcribe, _("Language"), "Tool/Transcribe/Language",
+		{.help = _("The code of what is spoken: ja, zh, en...; empty to have it detected")});
+	auto secondary = p->OptionAdd(transcribe, _("Other languages among it"), "Tool/Transcribe/Secondary Languages",
+		{.help = _("Codes, separated by commas, of languages mixed into the speech, such as English words in Japanese (ElevenLabs)")});
+	auto diarize = p->OptionAdd(transcribe, _("Tell the speakers apart"), "Tool/Transcribe/Diarize",
+		{.help = _("Each line's speaker goes in its Actor field (ElevenLabs)")});
+	auto actor_terms = p->OptionAdd(transcribe, _("Give the names in the Actor fields as terms to recognise"), "Tool/Transcribe/Keyterms From Actors",
+		{.help = _("Names the recogniser is told of are heard right more often")});
+	auto terms = p->OptionAdd(transcribe, _("Other terms to recognise"), "Tool/Transcribe/Keyterms",
+		{.help = _("Names and words easily misheard, separated by commas; ElevenLabs takes 100 terms at most in all, Whisper as many as fit in what it is told came before")});
+	auto elevenlabs_model = p->OptionAdd(transcribe, _("ElevenLabs model"), "Tool/Transcribe/ElevenLabs/Model",
+		{.help = _("scribe_v3; or scribe_v2, the one before")});
+	wxWindow *key_status;
+	{
+		// The key: where it is, and setting or forgetting it. Not a setting
+		// of the file's: the keychain keeps it where there is one.
+		auto status = new wxStaticText(transcribe.box, -1, "");
+		key_status = status;
+		auto set = new FlatButton(transcribe.box, _("Set..."));
+		auto forget = new FlatButton(transcribe.box, _("Forget"));
+		auto const service = transcribe::key_service;
+		auto refresh = [=] {
+			auto env = agi::util::GetEnv("ELEVENLABS_API_KEY");
+			bool const held = secret::Held(service).has_value();
+			wxString where;
+			if (env && !env->empty()) where = _("From the ELEVENLABS_API_KEY environment variable");
+			else if (held) where = _("Kept until Aegisub is closed: this machine has no keychain");
+			else if (secret::Available()) where = _("Kept in the system's keychain, once set");
+			else where = _("Asked for each time: this machine has no keychain");
+			status->SetLabel(where);
+			forget->Enable(held || secret::Available());
+		};
+		set->Bind(wxEVT_BUTTON, [=](wxCommandEvent&) {
+			bool const keychain = secret::Available();
+			wxString key = wxGetPasswordFromUser(_("Enter your ElevenLabs API key, from the API keys page of elevenlabs.io.") + "\n\n"
+				+ (keychain ? _("It is kept in the system's keychain.") : _("This machine has no keychain Aegisub can use, so it is kept only until Aegisub is closed.")),
+				_("ElevenLabs API key"), "", p);
+			auto entered = transcribe::TrimKey(from_wx(key));
+			if (entered.empty()) return;
+			if (!keychain || !secret::Save(service, entered)) secret::Hold(service, entered);
+			refresh();
+		});
+		forget->Bind(wxEVT_BUTTON, [=](wxCommandEvent&) {
+			secret::Forget(service);
+			secret::Drop(service);
+			refresh();
+		});
+		auto row = new wxBoxSizer(wxHORIZONTAL);
+		row->Add(status, wxSizerFlags(1).CentreVertical());
+		row->Add(set, wxSizerFlags().Border(wxLEFT, p->FromDIP(4)));
+		row->Add(forget, wxSizerFlags().Border(wxLEFT, p->FromDIP(4)));
+		p->Row(transcribe, _("ElevenLabs API key"), row,
+			_("Asked for when the audio is first sent, if not set here. The ELEVENLABS_API_KEY environment variable, when set, is used over anything kept"));
+		refresh();
+	}
+	auto ask = p->OptionAdd(transcribe, _("Ask before sending audio"), "Tool/Transcribe/Ask",
+		{.help = _("Say how long the audio is and that it leaves this computer, and ask, each time before sending it to ElevenLabs")});
+	auto command = p->OptionAdd(transcribe, _("Command"), "Tool/Transcribe/Command",
+		{.help = _("Run with {media} the audio or video file, {out} an empty folder to write a JSON file with each word's times to, and {language} the language above; a part in [brackets] is left out when its value is empty")});
+
+	if (transcribe::CanRunLocal()) {
+		auto model = p->OptionAdd(transcribe, _("Whisper model file"), "Tool/Transcribe/Local/Model",
+			{.help = _("A ggml model, such as ggml-large-v3-turbo-q5_0.bin or, on a slower computer, ggml-small-q5_1.bin; asked for when first needed if empty")});
+		FlatButton *choose;
+		{
+			// Downloading one, or finding one: the path put in the field as
+			// if typed, so it is taken with the dialog's other changes
+			choose = new FlatButton(transcribe.box, _("Download or Choose..."));
+			choose->Bind(wxEVT_BUTTON, [=](wxCommandEvent&) {
+				auto chosen = ChooseWhisperModel(p);
+				if (!chosen) return;
+				for (auto child : model->GetChildren())
+					if (auto text = dynamic_cast<wxTextCtrl *>(child)) text->SetValue(to_wx(chosen->string()));
+			});
+			auto row = new wxBoxSizer(wxHORIZONTAL);
+			row->Add(choose);
+			p->Row(transcribe, _("Whisper models"), row,
+				_("Downloads a model offered, checked to be as published, into the models folder; or takes a file you have"));
+		}
+		auto const gpu = transcribe::Gpu();
+		auto use_gpu = p->OptionAdd(transcribe, _("Use the graphics card for Whisper"), "Tool/Transcribe/Local/Use GPU",
+			{.help = gpu.empty() ? _("Much faster where it can; none it can use was found, so the processor is used")
+			                     : agi::wxformat(_("Much faster where it can; found: %s"), gpu)});
+		auto threads = p->OptionAdd(transcribe, _("Whisper threads"), "Tool/Transcribe/Local/Threads", {.min = 0, .max = 64,
+			.help = _("0 for as many as the processor has, up to 8")});
+		p->ShowWhen("Tool/Transcribe/Backend", heard_by({whisper}), {model, choose, use_gpu, threads});
+	}
+	// Whisper is told the terms as what came before; a program of one's own
+	// is given only the language
+	p->ShowWhen("Tool/Transcribe/Backend", heard_by({elevenlabs}), {secondary, diarize, elevenlabs_model, key_status, ask});
+	p->ShowWhen("Tool/Transcribe/Backend", heard_by({elevenlabs, whisper}), {actor_terms, terms});
+	p->ShowWhen("Tool/Transcribe/Backend", heard_by({program}), {command});
 
 	auto snapping = p->PageSizer(_("Snapping"));
 	p->OptionAdd(snapping, _("Snap markers by default"), "Audio/Snap/Enable");
@@ -278,10 +427,13 @@ void Video(PreferencesBook *book, Preferences *parent) {
 	wxArrayString choice_sens(3, csens_arr);
 	p->OptionChoice(playback, _("Scene change detection"), choice_sens, "Tool/Scene Detection/Sensitivity", false,
 		_("How readily Detect Scene Changes takes a change of picture for a cut. Higher finds more cuts, and more that are not."));
+	p->OptionAdd(playback, _("Also find dissolves and fades"), "Tool/Scene Detection/Gradual",
+		{.help = _("A change of shot that takes a few frames is placed at its middle")});
+	p->OptionAdd(playback, _("Leave out the bottom of the picture (%)"), "Tool/Scene Detection/Subtitle Band",
+		{.min = 0, .max = 50, .help = _("Where subtitles are burnt in, so that their coming and going is not taken for a cut; black bars are left out by themselves")});
 
 	auto magia = p->PageSizer(_("MagiaTimeline"));
 	p->OptionBrowse(magia, _("Installed in"), "Tool/MagiaTimeline/Path");
-	p->OptionAdd(magia, _("Strategy (empty: as its config.yml says)"), "Tool/MagiaTimeline/Strategy");
 
 	auto video_display = p->PageSizer(_("Video Display"));
 	p->OptionAdd(video_display, _("Only show visual tools when mouse is over video"), "Tool/Visual/Autohide");
@@ -786,9 +938,12 @@ void Interface_Hotkeys::OnUpdateFilter(wxCommandEvent&) {
 void Preferences::SetOption(std::unique_ptr<agi::OptionValue> new_value) {
 	pending_changes[new_value->GetName()] = std::move(new_value);
 	applyButton->Enable(true);
-	// The marks of changed settings follow
+	// The marks of changed settings follow, and what a setting enables
 	for (size_t page = 0; book && page < book->GetPageCount(); ++page)
-		if (auto options = dynamic_cast<OptionPage*>(book->GetPage(page))) options->RefreshMarks();
+		if (auto options = dynamic_cast<OptionPage*>(book->GetPage(page))) {
+			options->RefreshMarks();
+			options->RefreshDependents();
+		}
 }
 
 void Preferences::AddPendingChange(Thunk const& callback) {
@@ -960,7 +1115,8 @@ void Preferences::Search(wxString const& query) {
 	search_query = wanted;
 	matching_pages.clear();
 	for (auto& entry : search_entries) {
-		entry.matched = !wanted.empty() && std::any_of(entry.texts.begin(), entry.texts.end(),
+		// Not in a row hidden for now, such as Whisper's while it is not chosen
+		entry.matched = !wanted.empty() && (!entry.window || entry.window->IsShown()) && std::any_of(entry.texts.begin(), entry.texts.end(),
 			[&](std::wstring const& text) { return text.find(wanted) != text.npos; });
 		if (entry.matched && (matching_pages.empty() || matching_pages.back() != entry.page))
 			matching_pages.push_back(entry.page);
@@ -1034,6 +1190,25 @@ wxString Preferences::SearchStatus() const {
 	if (matching_pages.empty()) return _("No matching settings");
 	size_t count = std::count_if(search_entries.begin(), search_entries.end(), [](SearchEntry const& entry) { return entry.matched; });
 	return fmt_tl("%d matches on %d pages; Enter shows the next", count, matching_pages.size());
+}
+
+std::vector<Preferences::Setting> Preferences::Settings() const {
+	std::vector<Setting> settings;
+	for (auto const& entry : search_entries) {
+		auto page = book->GetPageText(entry.page);
+		if (!entry.window) settings.push_back({page, page, true});
+		else if (auto label = SearchLabel(entry.window); !label.empty())
+			settings.push_back({label, page, false});
+	}
+	return settings;
+}
+
+std::vector<Preferences::Setting> const& SettingLabels(wxWindow *parent) {
+	static std::vector<Preferences::Setting> settings = [&] {
+		Preferences dialog(parent);
+		return dialog.Settings();
+	}();
+	return settings;
 }
 
 void ShowPreferences(wxWindow *parent, wxString const& search) {

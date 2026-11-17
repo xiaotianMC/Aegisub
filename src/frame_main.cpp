@@ -43,6 +43,7 @@
 #include "async_video_provider.h"
 #include "audio_controller.h"
 #include "audio_box.h"
+#include "audio_display.h"
 #include "base_grid.h"
 #include "compat.h"
 #include "command/command.h"
@@ -55,6 +56,9 @@
 #include "subs_controller.h"
 #include "subs_edit_box.h"
 #include "status_info.h"
+#include "flat_controls.h"
+#include "keyboard_regions.h"
+#include "script_panel.h"
 #include "style_panel.h"
 #include "utils.h"
 #include "version.h"
@@ -240,16 +244,20 @@ void FrameMain::InitContents() {
 	MainSizer = new wxBoxSizer(wxVERTICAL);
 	MainSizer->Add(TopSizer, 0, wxEXPAND | wxLEFT | wxTOP, gap);
 	MainSizer->Add(context->subsGrid, 1, wxEXPAND | wxLEFT | wxTOP | wxBOTTOM, gap);
-	// The style panel takes the whole height at the right (docs/style-panel.md);
-	// the gap before it is its resize strip
+	// The style panel takes the whole height at the right, or the script
+	// panel in its place (docs/style-panel.md); the gap before it is its
+	// resize strip
 	stylePanel = new StylePanel(Panel, context.get());
-	auto edge = new StylePanelEdge(Panel, stylePanel);
+	scriptPanel = new ScriptPanel(Panel, context.get());
+	auto edge = panelEdge = new StylePanelEdge(Panel, stylePanel, scriptPanel);
 	OuterSizer = new wxBoxSizer(wxHORIZONTAL);
 	OuterSizer->Add(MainSizer, 1, wxEXPAND);
 	OuterSizer->Add(edge, 0, wxEXPAND);
 	OuterSizer->Add(stylePanel, 0, wxEXPAND | wxTOP | wxBOTTOM | wxRIGHT, gap);
+	OuterSizer->Add(scriptPanel, 0, wxEXPAND | wxTOP | wxBOTTOM | wxRIGHT, gap);
 	Panel->SetSizer(OuterSizer);
 	edge->Update();
+	SetUpKeyboardRegions(Panel);
 	tabs->SetEditor(Panel);
 	// The comparison's tabs at the bottom left, in the status bar
 	if (GetStatusBar()) tabs->MoveStripTo(GetStatusBar());
@@ -402,6 +410,28 @@ void FrameMain::OnAudioOpen(agi::AudioProvider *provider) {
 void FrameMain::OnSubtitlesOpen() {
 	UpdateTitle();
 	SetDisplayMode(1, 1);
+}
+
+void FrameMain::SetUpKeyboardRegions(wxWindow *backdrop) {
+	// The order F6 goes in (docs/keyboard-regions.md): the grid, the line's
+	// fields, the audio, the video, the side panel
+	auto side_open = [this] {
+		if (panelEdge->Folded()) panelEdge->Open();
+	};
+	std::vector<regions::Region> list;
+	list.push_back({context->subsGrid, {}, [this] { context->subsGrid->SetFocus(); return true; }});
+	list.push_back({editBox, {}, [this] { return flat::GoHome(editBox); }});
+	list.push_back({audioBox, [this] { return audioBox->IsShownOnScreen() && context->project->AudioProvider(); },
+		[this] { audioBox->GetDisplay()->SetFocus(); return true; }});
+	list.push_back({videoBox, [this] { return videoBox->IsShownOnScreen() && context->project->VideoProvider() && context->videoDisplay; },
+		[this] { context->videoDisplay->SetFocus(); return true; }});
+	// The side panel, opened on the way when it is folded or hidden: the
+	// style panel or the script panel in its place
+	list.push_back({stylePanel, [this] { return !panelEdge->ScriptShown(); },
+		[this, side_open] { side_open(); return stylePanel->TakeKeyboard(); }});
+	list.push_back({scriptPanel, [this] { return panelEdge->ScriptShown(); },
+		[this, side_open] { side_open(); panelEdge->OpenScript(); return scriptPanel->TakeKeyboard(); }});
+	regions::Setup(backdrop, std::move(list));
 }
 
 void FrameMain::OnKeyDown(wxKeyEvent &event) {

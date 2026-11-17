@@ -36,6 +36,7 @@
 #include "../ass_dialogue.h"
 #include "../ass_file.h"
 #include "../audio_controller.h"
+#include "../base_grid.h"
 #include "../audio_timing.h"
 #include "../frame_main.h"
 #include "../include/aegisub/context.h"
@@ -47,6 +48,39 @@
 
 namespace {
 	using cmd::Command;
+
+struct grid_select_toggle final : public Command {
+	CMD_NAME("grid/select/toggle")
+	STR_MENU("Add or Remove the Keyboard's Line")
+	STR_DISP("Add or Remove the Keyboard's Line")
+	STR_HELP("Add the line the keyboard is on in the subtitle grid to the selection, or take it out: Ctrl and the arrows move the keyboard without changing the selection")
+
+	void operator()(agi::Context *c) override {
+		if (c->subsGrid) c->subsGrid->ToggleCursorRow();
+	}
+};
+
+struct grid_select_range final : public Command {
+	CMD_NAME("grid/select/range")
+	STR_MENU("Select up to the Keyboard's Line")
+	STR_DISP("Select up to the Keyboard's Line")
+	STR_HELP("Select the lines from the one the selection is extended from up to the one the keyboard is on in the subtitle grid")
+
+	void operator()(agi::Context *c) override {
+		if (c->subsGrid) c->subsGrid->SelectToCursor(false);
+	}
+};
+
+struct grid_select_range_add final : public Command {
+	CMD_NAME("grid/select/range/add")
+	STR_MENU("Add Lines up to the Keyboard's Line")
+	STR_DISP("Add Lines up to the Keyboard's Line")
+	STR_HELP("Add the lines from the one the selection is extended from up to the one the keyboard is on in the subtitle grid to the selection")
+
+	void operator()(agi::Context *c) override {
+		if (c->subsGrid) c->subsGrid->SelectToCursor(true);
+	}
+};
 
 struct grid_line_next final : public Command {
 	CMD_NAME("grid/line/next")
@@ -470,6 +504,9 @@ namespace cmd {
 		reg(std::make_unique<grid_line_next_create>());
 		reg(std::make_unique<grid_line_next_style>());
 		reg(std::make_unique<grid_line_prev>());
+		reg(std::make_unique<grid_select_toggle>());
+		reg(std::make_unique<grid_select_range>());
+		reg(std::make_unique<grid_select_range_add>());
 		reg(std::make_unique<grid_sort_actor>());
 		reg(std::make_unique<grid_sort_effect>());
 		reg(std::make_unique<grid_sort_end>());

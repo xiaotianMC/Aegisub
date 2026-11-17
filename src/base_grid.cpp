@@ -49,10 +49,12 @@
 #include "subs_controller.h"
 #include "subtitle_binding.h"
 #include "video_controller.h"
+#include "keyboard_regions.h"
 
 #include <libaegisub/util.h>
 
 #include <algorithm>
+#include <climits>
 
 #include <wx/tooltip.h>
 #include <wx/dcbuffer.h>
@@ -71,6 +73,18 @@ namespace {
 wxColour Mix(wxColour const& a, wxColour const& b, double alpha) {
 	auto channel = [&](unsigned char x, unsigned char y) { return static_cast<unsigned char>(x * alpha + y * (1 - alpha) + 0.5); };
 	return wxColour(channel(a.Red(), b.Red()), channel(a.Green(), b.Green()), channel(a.Blue(), b.Blue()));
+}
+
+/// A frame @p thick wide inside @p r, as four filled bars: a pen wider
+/// than a pixel gets round, stepped corners on Windows and is centred on
+/// the edge, so a side can fall outside what is drawn
+void FillFrame(wxDC &dc, wxRect const& r, int thick, wxColour const& colour) {
+	dc.SetPen(*wxTRANSPARENT_PEN);
+	dc.SetBrush(wxBrush(colour));
+	dc.DrawRectangle(r.x, r.y, r.width, thick);
+	dc.DrawRectangle(r.x, r.GetBottom() - thick + 1, r.width, thick);
+	dc.DrawRectangle(r.x, r.y, thick, r.height);
+	dc.DrawRectangle(r.GetRight() - thick + 1, r.y, thick, r.height);
 }
 }
 
@@ -139,9 +153,17 @@ BEGIN_EVENT_TABLE(BaseGrid,wxWindow)
 	EVT_MOUSE_EVENTS(BaseGrid::OnMouseEvent)
 	EVT_KEY_DOWN(BaseGrid::OnKeyDown)
 	EVT_CHAR_HOOK(BaseGrid::OnCharHook)
+	EVT_SET_FOCUS(BaseGrid::OnFocus)
+	EVT_KILL_FOCUS(BaseGrid::OnFocus)
 	EVT_MENU_RANGE(MENU_SHOW_COL,MENU_SHOW_COL+15,BaseGrid::OnShowColMenu)
 	EVT_DPI_CHANGED(BaseGrid::OnDPIChanged)
 END_EVENT_TABLE()
+
+void BaseGrid::OnFocus(wxFocusEvent &e) {
+	// The keyboard's row is framed only while the grid has the keyboard
+	Refresh(false);
+	e.Skip();
+}
 
 void BaseGrid::OnDPIChanged(wxDPIChangedEvent &e) {
 	UpdateStyle();
@@ -251,6 +273,8 @@ void BaseGrid::OnActiveLineChanged() {
 			MakeRowVisible(new_active->Row);
 		active_row = new_active->Row;
         extend_id = new_active->Id;
+		// The keyboard goes with the active line
+		cursor_id = 0;
 		Refresh(false);
 	}
 	else
@@ -385,6 +409,9 @@ void BaseGrid::Draw(wxDC &dc, std::vector<char> const& paint_columns) {
 	const int nDraw = mid(0, drawPerScreen, GetRows() - yPos);
 
 	const auto active_line = context->selectionController->ReadActiveLine();
+	// Framed only once Ctrl moved it off the active line, which has its
+	// own marks: not a second mark on the selected row
+	const int cursor_row = FindFocus() == this && cursor_id && CursorRow() != active_row ? CursorRow() : -1;
 	auto const& mutable_selection = context->selectionController->ReadSelectedSet();
     std::set<AssDialogue const*> selection(mutable_selection.begin(), mutable_selection.end());
 	visible_rows.clear();
@@ -458,6 +485,12 @@ void BaseGrid::Draw(wxDC &dc, std::vector<char> const& paint_columns) {
 			dc.DrawRectangle(0, y, bar, lineHeight - 1);
 		}
 
+		// The row the keyboard is on, moved apart from the active line,
+		// while the grid has the keyboard: a thin frame in the accent colour
+		if (i + yPos == cursor_row) {
+			FillFrame(dc, wxRect(0, y, w, lineHeight - 1), std::max(1, FromDIP(1)), theme::UiColours().accent);
+		}
+
 		// Row divider
 		dc.SetPen(grid_pen);
 		dc.DrawLine(0, y + lineHeight - 1, w, y + lineHeight - 1);
@@ -481,8 +514,7 @@ void BaseGrid::Draw(wxDC &dc, std::vector<char> const& paint_columns) {
 	// Selected rows: an outline in the active line's colour round each run
 	// of them, over the dividers
 	{
-		dc.SetPen(wxPen(active_colour, std::max(1, FromDIP(1))));
-		dc.SetBrush(*wxTRANSPARENT_BRUSH);
+		const int thick = std::max(1, FromDIP(1));
 		auto selected = [&](int row) { return !!selection.count(index_line_map[row + yPos]); };
 		for (int i = 0; i < nDraw; ++i) {
 			if (!selected(i)) continue;
@@ -490,7 +522,7 @@ void BaseGrid::Draw(wxDC &dc, std::vector<char> const& paint_columns) {
 			while (last + 1 < nDraw && selected(last + 1)) ++last;
 			int top = (i + 1) * lineHeight - 1;
 			int bottom = (last + 2) * lineHeight - 1;
-			dc.DrawRectangle(0, top, w, bottom - top + 1);
+			FillFrame(dc, wxRect(0, top, w, bottom - top + 1), thick, active_colour);
 			i = last;
 		}
 	}
@@ -530,6 +562,20 @@ void BaseGrid::OnMouseEvent(wxMouseEvent &event) {
 		wxString tip;
 		if (over_number && !event.Leaving())
 			tip = dlg->Comment ? _("Click to show this subtitle line") : _("Click to hide this subtitle line");
+		else if (dlg && !event.Leaving() && event.GetY() >= lineHeight) {
+			// Over a cell: what it has to say, such as what a tag chip does
+			int x = 0;
+			for (auto const& column : columns) {
+				int width = column->Width();
+				if (width && event.GetX() >= x && event.GetX() < x + width) {
+					wxClientDC dc(this);
+					dc.SetFont(font);
+					tip = column->Tooltip(dc, event.GetX() - x, dlg, context);
+					break;
+				}
+				x += width;
+			}
+		}
 		if (!GetToolTip() || GetToolTip()->GetTip() != tip)
 			SetToolTip(tip);
 		SetCursor(over_number && !event.Leaving() ? wxCURSOR_HAND : wxCURSOR_ARROW);
@@ -589,6 +635,7 @@ void BaseGrid::OnMouseEvent(wxMouseEvent &event) {
 		context->selectionController->SetActiveID(target->Id);
 		ScrollTo(old_y_pos);
 		extend_id = target->Id;
+		cursor_id = 0;
 
 		auto selection = context->selectionController->SelectedIDs();
 
@@ -752,6 +799,71 @@ AssDialogue const* BaseGrid::GetDialogue(int n) const {
 	if (static_cast<size_t>(n) >= index_line_map.size()) return nullptr;
 	return index_line_map[n];
 }
+int BaseGrid::CursorRow() const {
+	if (index_line_map.empty()) return -1;
+	if (cursor_id)
+		for (size_t i = 0; i < index_line_map.size(); ++i)
+			if (index_line_map[i]->Id == cursor_id) return static_cast<int>(i);
+	if (auto active = context->selectionController->ReadActiveLine()) return active->Row;
+	return 0;
+}
+
+void BaseGrid::ToggleCursorRow() {
+	int row = CursorRow();
+	if (row < 0) return;
+	auto target = index_line_map[row];
+	auto ids = context->selectionController->SelectedIDs();
+	if (!ids.count(target->Id)) {
+		ids.insert(target->Id);
+		context->selectionController->SetSelectionAndActiveIDs(std::move(ids), target->Id);
+	}
+	else {
+		// A bound group goes out whole: it is selected as one
+		std::set<int> going;
+		for (auto line : ExpandBoundSelection(context->subtitleAccess->Read(), Selection{target}))
+			going.insert(line->Id);
+		std::set<int> rest;
+		for (int id : ids)
+			if (!going.count(id)) rest.insert(id);
+		if (rest.empty()) return;
+		auto active = context->selectionController->ReadActiveLine();
+		if (active && going.count(active->Id)) {
+			// The active line went: the selected row nearest takes its place
+			int nearest = 0, distance = INT_MAX;
+			for (size_t i = 0; i < index_line_map.size(); ++i) {
+				int d = std::abs(static_cast<int>(i) - row);
+				if (rest.count(index_line_map[i]->Id) && d < distance) {
+					distance = d;
+					nearest = index_line_map[i]->Id;
+				}
+			}
+			context->selectionController->SetSelectionAndActiveIDs(std::move(rest), nearest);
+		}
+		else
+			context->selectionController->SetSelectedIDs(std::move(rest));
+	}
+	// The keyboard stays on the row, wherever the active line went
+	cursor_id = target->Id;
+	MakeRowVisible(row);
+	Refresh(false);
+}
+
+void BaseGrid::SelectToCursor(bool add) {
+	int row = CursorRow();
+	if (row < 0) return;
+	int from = ExtendRow(), old_extend = extend_id;
+	std::set<int> ids;
+	if (add) ids = context->selectionController->SelectedIDs();
+	for (int i = std::min(from, row); i <= std::max(from, row); ++i)
+		ids.insert(index_line_map[i]->Id);
+	context->selectionController->SetSelectionAndActiveIDs(std::move(ids), index_line_map[row]->Id);
+	// Extended from the same row next time, as Shift and the arrows do
+	extend_id = old_extend;
+	cursor_id = 0;
+	MakeRowVisible(row);
+	Refresh(false);
+}
+
 int BaseGrid::ExtendRow() const {
     for (size_t i = 0; i < index_line_map.size(); ++i)
         if (index_line_map[i]->Id == extend_id) return static_cast<int>(i);
@@ -772,6 +884,9 @@ void BaseGrid::OnCharHook(wxKeyEvent &event) {
 		return;
 	}
 	if (hotkey::check("Subtitle Grid", context, event))
+		return;
+	// Tab on in the grid's region, Esc to the subtitle text
+	if (regions::HandleKey(this, event))
 		return;
 
 	int key = event.GetKeyCode();
@@ -823,11 +938,22 @@ void BaseGrid::OnKeyDown(wxKeyEvent &event) {
 	}
     auto const& rows = index_line_map;
 
-	auto active_line = context->selectionController->ReadActiveLine();
     if (rows.empty()) { context->selectionController->SetActiveID(0); return; }
+	// From the keyboard's row, which Ctrl may have moved from the active line
+	int next = mid(0, std::max(0, CursorRow()) + dir * step, GetRows() - 1);
+
+	// Ctrl: the keyboard's row alone, the selection and the active line
+	// as they are, for picking rows here and there with Ctrl+Space
+	if (ctrl && !shift && !alt) {
+		cursor_id = rows.at(next)->Id;
+		MakeRowVisible(next);
+		Refresh(false);
+		return;
+	}
+
 	int old_extend = rows.at(ExtendRow())->Id;
-	int next = mid(0, (active_line ? active_line->Row : 0) + dir * step, GetRows() - 1);
 	context->selectionController->SetActiveID(rows.at(next)->Id);
+	cursor_id = 0;
 
 	// Move selection
 	if (!ctrl && !shift && !alt) {

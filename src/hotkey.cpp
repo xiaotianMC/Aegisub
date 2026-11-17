@@ -71,6 +71,35 @@ namespace {
 		{nullptr}
 	};
 
+	const char *added_hotkeys_style_panel_keyboard[][3] = {
+		{"app/style_panel/keyboard", "Default", "F6"},
+		{nullptr}
+	};
+
+	const char *added_hotkeys_regions[][3] = {
+		{"app/region/next", "Default", "F6"},
+		{"app/region/previous", "Default", "Shift-F6"},
+		{nullptr}
+	};
+
+	const char *added_hotkeys_keys_in_regions[][3] = {
+		{"grid/select/toggle", "Subtitle Grid", "Ctrl-Space"},
+		{"grid/select/range", "Subtitle Grid", "Shift-Space"},
+		{"grid/select/range/add", "Subtitle Grid", "Ctrl-Shift-Space"},
+		{"video/line/prev", "Video", "Up"},
+		{"video/line/next", "Video", "Down"},
+		{"video/jump/start", "Video", "Home"},
+		{"video/jump/end", "Video", "End"},
+		{"time/start/decrease", "Audio", "Shift-Left"},
+		{"time/start/increase", "Audio", "Shift-Right"},
+		{"time/length/decrease", "Audio", "Ctrl-Left"},
+		{"time/length/increase", "Audio", "Ctrl-Right"},
+		{"grid/line/prev", "Audio", "Up"},
+		{"grid/line/next", "Audio", "Down"},
+		{"audio/play/toggle", "Audio", "Space"},
+		{nullptr}
+	};
+
 	void migrate_hotkeys(const char *added[][3]) {
 		auto hk_map = hotkey::inst->GetHotkeyMap();
 		bool changed = false;
@@ -182,6 +211,34 @@ void init() {
 	if (boost::find(migrations, "grid/line/next/style") == end(migrations)) {
 		migrate_hotkeys(added_hotkeys_next_style);
 		migrations.emplace_back("grid/line/next/style");
+	}
+
+	if (boost::find(migrations, "app/style_panel/keyboard") == end(migrations)) {
+		migrate_hotkeys(added_hotkeys_style_panel_keyboard);
+		migrations.emplace_back("app/style_panel/keyboard");
+	}
+
+	// F6 goes round the main window's regions, the side panel one of them
+	// (docs/keyboard-regions.md): taken from the side panel's own command
+	if (boost::find(migrations, "F6 regions") == end(migrations)) {
+		auto hk_map = hotkey::inst->GetHotkeyMap();
+		auto [first, last] = hk_map.equal_range("app/style_panel/keyboard");
+		for (auto it = first; it != last;) {
+			if (it->second.Context() == "Default" && it->second.Str() == "F6")
+				it = hk_map.erase(it);
+			else
+				++it;
+		}
+		hotkey::inst->SetHotkeyMap(std::move(hk_map));
+		migrate_hotkeys(added_hotkeys_regions);
+		migrations.emplace_back("F6 regions");
+	}
+
+	// Keys for the grid's selection, and arrows in the video and the audio
+	// (docs/keyboard-regions.md); a key taken in its context stays as it is
+	if (boost::find(migrations, "keys in regions") == end(migrations)) {
+		migrate_hotkeys(added_hotkeys_keys_in_regions);
+		migrations.emplace_back("keys in regions");
 	}
 
 	// The styling assistant is gone: the style box takes typed letters

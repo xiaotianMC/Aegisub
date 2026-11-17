@@ -1,8 +1,9 @@
 name: Meson CI
 
 on:
+  # Not on pushes to master: work merged there has been run by hand on its
+  # branch (workflow_dispatch) first, so merging does not build it again
   push:
-    branches: [ master ]
     tags: [ 'v*' ]
   pull_request:
     branches: [ master ]
@@ -66,6 +67,7 @@ jobs:
               -Dfribidi:tests=false
               -Dfribidi:docs=false
               -Dlibass:fontconfig=disabled
+              -Dwhisper_gpu=enabled
           - name: Ubuntu Debug
             os: ubuntu-latest
             sccache-key: linux-x86_64-gcc
@@ -169,6 +171,25 @@ jobs:
           Expand-Archive gettext.zip -DestinationPath gettext
           "$PWD\gettext\bin" >> $env:GITHUB_PATH
 
+      # Whisper on the graphics card: Vulkan's headers, glslc and SPIRV-Headers
+      # to build it; the loader comes with the user's graphics driver
+      - name: Install the Vulkan SDK (Windows)
+        if: matrix.config.os == 'windows-latest'
+        env:
+          VULKAN_VERSION: 1.4.363.1
+          VULKAN_SHA256: c02932bd9a968b22d404536108adaacac908c081cd6b0113f5bfefc523dd0a6a
+        run: |
+          $installer = "$env:RUNNER_TEMP\vulkansdk.exe"
+          curl.exe -sSfL -o $installer "https://sdk.lunarg.com/sdk/download/$env:VULKAN_VERSION/windows/vulkansdk-windows-X64-$env:VULKAN_VERSION.exe"
+          $hash = (Get-FileHash -Algorithm SHA256 $installer).Hash.ToLower()
+          if ($hash -ne $env:VULKAN_SHA256) { throw "The Vulkan SDK installer's SHA-256 is $hash, not $env:VULKAN_SHA256" }
+          $root = "C:\VulkanSDK\$env:VULKAN_VERSION"
+          & $installer --root $root --accept-licenses --default-answer --confirm-command install
+          if ($LASTEXITCODE -ne 0) { throw "The Vulkan SDK did not install: $LASTEXITCODE" }
+          "VULKAN_SDK=$root" >> $env:GITHUB_ENV
+          "CMAKE_PREFIX_PATH=$root" >> $env:GITHUB_ENV
+          "$root\Bin" >> $env:GITHUB_PATH
+
       - name: Install dependencies (macOS Debug)
         if: startsWith(matrix.config.os, 'macos-') && matrix.config.buildtype == 'debugoptimized'
         run: |
@@ -209,7 +230,7 @@ jobs:
         if: startsWith(matrix.config.os, 'ubuntu-')
         run: |
           sudo apt-get update
-          sudo apt-get install ninja-build build-essential libx11-dev libfreetype6-dev pkg-config libfontconfig1-dev libass-dev libasound2-dev libffms2-dev intltool libboost-all-dev libhunspell-dev libcurl4-openssl-dev libuchardet-dev libgtest-dev libgmock-dev libwxgtk3.2-dev libportal-gtk3-dev
+          sudo apt-get install ninja-build build-essential libx11-dev libfreetype6-dev pkg-config libfontconfig1-dev libass-dev libasound2-dev libffms2-dev intltool libboost-all-dev libhunspell-dev libcurl4-openssl-dev libuchardet-dev libgtest-dev libgmock-dev libwxgtk3.2-dev libportal-gtk3-dev xvfb
 
           # busted for the automation test suite (LuaJIT is Lua 5.1 to luarocks)
           sudo apt-get install -y lua5.1 liblua5.1-0-dev luarocks
@@ -231,7 +252,9 @@ jobs:
       - name: Build
         run: |
           ${{ matrix.config.devenv }}
-          meson compile -C build
+          # Going on past a file that fails, so that one run shows every
+          # error, not only the first few
+          meson compile -C build --ninja-args=-k0
 
       - name: Verify Intel cross-build architecture
         if: matrix.config.cross_args
@@ -249,9 +272,16 @@ jobs:
 
       # --suite limits this to our own tests, excluding those of subproject deps
       - name: Run test
+        if: runner.os != 'Linux'
         run: |
           ${{ matrix.config.devenv }}
           meson test -C build --verbose --suite Aegisub
+
+      # The ordinary editing tests open windows: on a virtual display, as the
+      # runner has none
+      - name: Run test (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a meson test -C build --verbose --suite Aegisub
 
       - name: Check cross-built tests executed
         if: matrix.config.cross_args
@@ -367,7 +397,8 @@ jobs:
         run: |
           set -e
 
-          meson dist --include-subprojects -C build
+          # It builds the tarball and runs its tests, which open windows
+          xvfb-run -a meson dist --include-subprojects -C build
 
           # Make sure the subprojects we need are included
           mkdir distcheck

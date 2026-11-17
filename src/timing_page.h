@@ -7,6 +7,8 @@
 // every selected line; the commands and dialogs doing the same are kept.
 #pragma once
 
+#include "timing_check.h"
+
 #include <libaegisub/signal.h>
 
 #include <functional>
@@ -48,7 +50,11 @@ public:
 	/// Act as choosing @p index of a switch does: "shift.unit" (time, frames)
 	void Choose(std::string const& name, int index);
 
+	/// Act as clicking issue @p index of the check's list does
+	void PickIssue(size_t index);
+
 	class Readout;
+	class IssueList;
 
 	/// Called when the cards change, for the panel to lay out again
 	std::function<void()> on_layout;
@@ -78,6 +84,9 @@ private:
 	bool has_before = false, has_after = false;
 	/// The selected lines' times, comments left out, sorted by start
 	std::vector<std::pair<int, int>> selected_times;
+	/// What the check found, and the row of the line read
+	std::vector<TimingIssue> issues;
+	int line_row = -1;
 
 	/// Change the selected lines' times: @p change is given them and the
 	/// line read among them, and says whether it changed anything.
@@ -120,6 +129,11 @@ private:
 	void BuildLead();
 	void BuildJoin();
 	void BuildShift();
+	void BuildCheck();
+	/// Find the issues again, if the page is on the screen
+	void Check();
+	/// Select an issue's line and take the video there
+	void GoTo(TimingIssue const& issue);
 	/// A time of the line, with the video's time and a frame back and on
 	void AddTimeRow(bool end);
 };

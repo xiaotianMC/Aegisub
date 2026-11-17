@@ -39,6 +39,7 @@
 #include "format.h"
 #include "include/aegisub/context.h"
 #include "include/aegisub/toolbar.h"
+#include "keyboard_regions.h"
 #include "options.h"
 #include "project.h"
 #include "selection_controller.h"
@@ -157,6 +158,10 @@ VideoBox::VideoBox(wxWindow *parent, bool isDetached, agi::Context *context)
 
 	auto videoDisplay = new VideoDisplay(visualSubToolBar, isDetached, zoomBox, videoArea, context);
 	videoDisplay->MoveBeforeInTabOrder(videoSlider);
+	// Picking a visual tool is for working on the video: the keyboard goes
+	// there, for its keys (docs/keyboard-regions.md)
+	regions::FocusAfterClicks(visualToolBar, videoDisplay);
+	regions::FocusAfterClicks(visualSubToolBar, videoDisplay);
 
 	auto toolbarSizer = new wxBoxSizer(wxVERTICAL);
 	// The column is as wide as the wider of the two: the other sits in its

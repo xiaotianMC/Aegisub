@@ -70,6 +70,9 @@ public:
 	virtual wxString const& Header() const = 0;
 	virtual wxString const& Description() const = 0;
 	virtual void Paint(wxDC &dc, int x, int y, const AssDialogue *d, const agi::Context *c) const;
+	/// The tooltip for the point @p x across the cell of @p d (0 at its left
+	/// edge), measured with @p dc's font; empty for none
+	virtual wxString Tooltip(wxDC &, int /* x */, const AssDialogue *, const agi::Context *) const { return {}; }
 
 	int Width() const { return width; }
 	bool Visible() const { return visible; }

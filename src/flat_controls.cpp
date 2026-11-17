@@ -10,10 +10,14 @@
 
 #include <algorithm>
 #include <cctype>
+#include <memory>
+#include <numbers>
 #include <set>
 
 #include <wx/dcbuffer.h>
 #include <wx/dcgraph.h>
+#include <wx/eventfilter.h>
+#include <wx/graphics.h>
 #include <wx/menu.h>
 #include <wx/panel.h>
 #include <wx/settings.h>
@@ -38,13 +42,45 @@ Palette Colours(wxWindow const *window) {
 	return p;
 }
 
+void DrawOutline(wxDC &dc, wxRect const& rect, double radius, int thick, wxColour const& colour) {
+	if (rect.width <= 0 || rect.height <= 0) return;
+	// A raster DC steps its curves: a context of its own over it smooths them
+	std::unique_ptr<wxGraphicsContext> own;
+	auto gc = dc.GetGraphicsContext();
+	if (!gc) {
+		own.reset(wxGraphicsContext::CreateFromUnknownDC(dc));
+		gc = own.get();
+	}
+	if (gc) {
+		auto path = gc->CreatePath();
+		path.AddRoundedRectangle(rect.x, rect.y, rect.width, rect.height, radius);
+		int inner_w = rect.width - 2 * thick, inner_h = rect.height - 2 * thick;
+		if (inner_w > 0 && inner_h > 0)
+			path.AddRoundedRectangle(rect.x + thick, rect.y + thick, inner_w, inner_h, std::max(0., radius - thick));
+		// No pen: a pen's width would shift the fill by half a pixel
+		gc->SetPen(wxNullGraphicsPen);
+		gc->SetBrush(wxBrush(colour));
+		gc->FillPath(path, wxODDEVEN_RULE);
+		if (!own) {
+			gc->SetPen(dc.GetPen());
+			gc->SetBrush(dc.GetBrush());
+		}
+		return;
+	}
+	// No graphics: a pen inside the rectangle
+	dc.SetBrush(*wxTRANSPARENT_BRUSH);
+	dc.SetPen(wxPen(colour, thick));
+	dc.DrawRoundedRectangle(rect, radius);
+}
+
 void DrawCheck(wxDC &dc, wxWindow const *window, wxRect const& check, int state, Palette const& p) {
 	int thick = std::max(1, window->FromDIP(1));
 	int cy = check.y + check.height / 2;
 	if (state == 0) {
+		dc.SetPen(*wxTRANSPARENT_PEN);
 		dc.SetBrush(wxBrush(p.field));
-		dc.SetPen(wxPen(theme::Mix(p.surface, p.text, 0.45), thick));
 		dc.DrawRoundedRectangle(check, window->FromDIP(3));
+		DrawOutline(dc, check, window->FromDIP(3), thick, theme::Mix(p.surface, p.text, 0.45));
 		return;
 	}
 	dc.SetBrush(wxBrush(p.accent));
@@ -227,6 +263,12 @@ void AddField(wxWindow *field) {
 
 void AddWheelTarget(wxWindow *target) {
 	Track(wheel_targets, target);
+}
+
+bool GoHome(wxWindow *from) {
+	if (!home || !home->IsShownOnScreen() || (from && wxGetTopLevelParent(home) != wxGetTopLevelParent(from))) return false;
+	home->SetFocus();
+	return true;
 }
 
 void LeaveField() {
@@ -978,7 +1020,8 @@ bool FlatCheck::Enable(bool enable) {
 
 wxSize FlatCheck::DoGetBestClientSize() const {
 	wxSize extent = GetTextExtent(wxStripMenuCodes(label, wxStrip_Menu));
-	return wxSize(FromDIP(14) + FromDIP(6) + extent.x + FromDIP(2), std::max(FromDIP(18), extent.y + FromDIP(4)));
+	// Room at the left for the ring round the box when it has the keyboard
+	return wxSize(FromDIP(3) + FromDIP(14) + FromDIP(6) + extent.x + FromDIP(2), std::max(FromDIP(20), extent.y + FromDIP(4)));
 }
 
 void FlatCheck::OnPaint(wxPaintEvent &) {
@@ -991,20 +1034,17 @@ void FlatCheck::OnPaint(wxPaintEvent &) {
 	dc.DrawRectangle(wxPoint(0, 0), size);
 
 	int box = FromDIP(14);
-	wxRect check(0, (size.y - box) / 2, box, box);
+	wxRect check(FromDIP(3), (size.y - box) / 2, box, box);
 	flat::DrawCheck(dc, this, check, value ? 1 : 0, p);
-	if (HasFocus()) {
-		dc.SetBrush(*wxTRANSPARENT_BRUSH);
-		dc.SetPen(wxPen(p.accent, std::max(1, FromDIP(1))));
-		dc.DrawRoundedRectangle(check.Inflate(FromDIP(2)), FromDIP(4));
-	}
+	if (HasFocus())
+		flat::DrawOutline(dc, wxRect(check).Inflate(FromDIP(3)), FromDIP(5), std::max(1, FromDIP(1)), p.accent);
 
 	dc.SetFont(GetFont());
 	// A colour given to it (the preferences' search marking a match) wins
 	dc.SetTextForeground(UseForegroundColour() && IsEnabled() ? GetForegroundColour() : p.text);
 	wxString shown = wxStripMenuCodes(label, wxStrip_Menu);
 	wxSize extent = dc.GetTextExtent(shown);
-	dc.DrawText(shown, box + FromDIP(6), (size.y - extent.y) / 2);
+	dc.DrawText(shown, check.GetRight() + 1 + FromDIP(6), (size.y - extent.y) / 2);
 }
 
 // FlatButton
@@ -1073,9 +1113,69 @@ bool FlatButton::Enable(bool enable) {
 	return changed;
 }
 
+void FlatButton::SetGlyph(FlatGlyph new_glyph) {
+	if (glyph == new_glyph) return;
+	glyph = new_glyph;
+	InvalidateBestSize();
+	Refresh(false);
+}
+
+namespace {
+/// The icon's box and the gap after it, when there are words
+int glyph_width(wxWindow const* w, FlatGlyph glyph, bool words) {
+	if (glyph == FlatGlyph::None) return 0;
+	return w->FromDIP(14) + (words ? w->FromDIP(6) : 0);
+}
+
+/// @p glyph in a square of @p size at @p origin, drawn on a 16-unit grid
+void draw_glyph(wxGraphicsContext *gc, FlatGlyph glyph, wxPoint2DDouble origin, double size, wxColour const& ink) {
+	double k = size / 16;
+	bool mirror = glyph == FlatGlyph::Redo;
+	auto at = [&](double x, double y) { return wxPoint2DDouble(origin.m_x + (mirror ? 16 - x : x) * k, origin.m_y + y * k); };
+	wxGraphicsPath path = gc->CreatePath();
+	auto polyline = [&](std::initializer_list<std::pair<double, double>> points) {
+		bool first = true;
+		for (auto [x, y] : points) {
+			auto p = at(x, y);
+			if (first) path.MoveToPoint(p); else path.AddLineToPoint(p);
+			first = false;
+		}
+	};
+	switch (glyph) {
+		case FlatGlyph::Up: polyline({{4, 10}, {8, 6}, {12, 10}}); break;
+		case FlatGlyph::Down: polyline({{4, 6}, {8, 10}, {12, 6}}); break;
+		case FlatGlyph::Undo:
+		case FlatGlyph::Redo: {
+			polyline({{5.5, 3.5}, {2.5, 6.5}, {5.5, 9.5}});
+			polyline({{2.8, 6.5}, {9.5, 6.5}});
+			// a half turn back down to the baseline
+			auto centre = at(9.5, 10);
+			constexpr double pi = std::numbers::pi;
+			path.AddArc(centre.m_x, centre.m_y, 3.5 * k, -pi / 2, pi / 2, !mirror);
+			path.AddLineToPoint(at(7, 13.5));
+			break;
+		}
+		case FlatGlyph::Filter: polyline({{2.5, 3.5}, {13.5, 3.5}, {9.3, 8.5}, {9.3, 12.5}, {6.7, 13.5}, {6.7, 8.5}, {2.5, 3.5}}); break;
+		case FlatGlyph::Swap:
+			polyline({{3, 5.5}, {13, 5.5}});
+			polyline({{10.5, 3}, {13, 5.5}, {10.5, 8}});
+			polyline({{13, 10.5}, {3, 10.5}});
+			polyline({{5.5, 8}, {3, 10.5}, {5.5, 13}});
+			break;
+		default: return;
+	}
+	gc->SetPen(gc->CreatePen(wxGraphicsPenInfo(ink).Width(std::max(1.0, 1.6 * k)).Cap(wxCAP_ROUND).Join(wxJOIN_ROUND)));
+	gc->SetBrush(*wxTRANSPARENT_BRUSH);
+	gc->StrokePath(path);
+}
+}
+
 wxSize FlatButton::DoGetBestClientSize() const {
-	wxSize extent = GetTextExtent(wxStripMenuCodes(label, wxStrip_Menu));
-	return wxSize(std::max(least.x, extent.x + FromDIP(20)), std::max({least.y, FromDIP(24), extent.y + FromDIP(8)}));
+	auto shown = wxStripMenuCodes(label, wxStrip_Menu);
+	wxSize extent = shown.empty() ? wxSize(0, GetCharHeight()) : GetTextExtent(shown);
+	int icon = glyph_width(this, glyph, !shown.empty());
+	int pad = shown.empty() ? FromDIP(12) : FromDIP(20);
+	return wxSize(std::max(least.x, extent.x + icon + pad), std::max({least.y, FromDIP(24), extent.y + FromDIP(8)}));
 }
 
 void FlatButton::OnPaint(wxPaintEvent &) {
@@ -1106,8 +1206,14 @@ void FlatButton::OnPaint(wxPaintEvent &) {
 	dc.SetFont(GetFont());
 	dc.SetTextForeground(ink);
 	wxString shown = wxStripMenuCodes(label, wxStrip_Menu);
-	wxSize extent = dc.GetTextExtent(shown);
-	dc.DrawText(shown, (size.x - extent.x) / 2, (size.y - extent.y) / 2);
+	wxSize extent = shown.empty() ? wxSize(0, 0) : dc.GetTextExtent(shown);
+	int icon = glyph_width(this, glyph, !shown.empty());
+	int x = (size.x - extent.x - icon) / 2;
+	if (icon) {
+		double s = FromDIP(14);
+		draw_glyph(dc.GetGraphicsContext(), glyph, {double(x), (size.y - s) / 2}, s, ink);
+	}
+	if (!shown.empty()) dc.DrawText(shown, x + icon, (size.y - extent.y) / 2);
 }
 
 // FlatSuggest

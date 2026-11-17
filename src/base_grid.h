@@ -65,6 +65,11 @@ private:
 	int extend_id = 0;
     int ExtendRow() const;
 
+	/// The row the keyboard is on (docs/keyboard-regions.md#字幕表格):
+	/// moved by Ctrl and the arrows without touching the selection or the
+	/// active line. 0: on the active line, as it is but after Ctrl moves it
+	int cursor_id = 0;
+
 	/// First row that is visible at the current scroll position
 	int yPos = 0;
 
@@ -104,6 +109,7 @@ private:
 	std::unique_ptr<wxMenu> context_menu;
 
 	void OnDPIChanged(wxDPIChangedEvent &e);
+	void OnFocus(wxFocusEvent &e);
 	void OnContextMenu(wxContextMenuEvent &evt);
 	void OnHighlightVisibleChange(agi::OptionValue const& opt);
 	void OnKeyDown(wxKeyEvent &event);
@@ -143,6 +149,16 @@ public:
 	~BaseGrid();
 
 	void SetByFrame(bool state);
+	/// The row the keyboard is on: the active line's, unless Ctrl and the
+	/// arrows moved it on its own. -1 when there are no rows
+	int CursorRow() const;
+	/// Ctrl+Space: put the keyboard's row in the selection, as the active
+	/// line, or take it out (a bound group as a whole); the last selected
+	/// row stays
+	void ToggleCursorRow();
+	/// Shift+Space: select from the row the selection is extended from to
+	/// the keyboard's, in place of the selection or, with @p add, added to it
+	void SelectToCursor(bool add);
 	void ScrollTo(int y);
 	/// Height of a row (and of the header) in pixels
 	int LineHeight() const { return lineHeight; }

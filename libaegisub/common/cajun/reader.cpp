@@ -217,7 +217,47 @@ void Reader::MatchString(std::string& string, InputStream& inputStream) {
 				case 'n':  string.push_back('\n'); break;
 				case 'r':  string.push_back('\r'); break;
 				case 't':  string.push_back('\t'); break;
-				case 'u':  // TODO: what do we do with this?
+				case 'u': {
+					// UTF-16 code units, a surrogate pair for one past the BMP
+					auto unit = [&] {
+						uint32_t v = 0;
+						for (int i = 0; i < 4; ++i) {
+							char h = inputStream.EOS() ? 0 : inputStream.Get();
+							int d = h >= '0' && h <= '9' ? h - '0' : h >= 'a' && h <= 'f' ? h - 'a' + 10 : h >= 'A' && h <= 'F' ? h - 'A' + 10 : -1;
+							if (d < 0) throw ScanException("Invalid \\u escape in string", inputStream.GetLocation());
+							v = v * 16 + d;
+						}
+						return v;
+					};
+					uint32_t cp = unit();
+					if (cp >= 0xD800 && cp < 0xDC00) {
+						if (inputStream.EOS() || inputStream.Get() != '\\' || inputStream.EOS() || inputStream.Get() != 'u')
+							throw ScanException("Unpaired surrogate in string", inputStream.GetLocation());
+						uint32_t low = unit();
+						if (low < 0xDC00 || low >= 0xE000)
+							throw ScanException("Unpaired surrogate in string", inputStream.GetLocation());
+						cp = 0x10000 + ((cp - 0xD800) << 10) + (low - 0xDC00);
+					}
+					else if (cp >= 0xDC00 && cp < 0xE000)
+						throw ScanException("Unpaired surrogate in string", inputStream.GetLocation());
+					if (cp < 0x80) string.push_back(static_cast<char>(cp));
+					else if (cp < 0x800) {
+						string.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+						string.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+					}
+					else if (cp < 0x10000) {
+						string.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+						string.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+						string.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+					}
+					else {
+						string.push_back(static_cast<char>(0xF0 | (cp >> 18)));
+						string.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
+						string.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+						string.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+					}
+					break;
+				}
 				default:
 					throw ScanException(std::string("Unrecognized escape sequence found in string: \\") + c, inputStream.GetLocation());
 			}

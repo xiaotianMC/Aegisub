@@ -441,6 +441,80 @@ else
     def_audio = ''
 endif
 
+# Speech recognition built in: the system's whisper.cpp, else the one in
+# subprojects built by CMake for the CPU, for any of the last decade's x86
+# processors rather than the one building it
+whisper_opt = get_option('whisper')
+if not whisper_opt.disabled()
+    whisper_dep = dependency('whisper', required: false, allow_fallback: false)
+    if not whisper_dep.found() and find_program('cmake', required: false).found()
+        whisper_cmake = cmake.subproject_options()
+        # Linked into Aegisub: nothing of it to install beside it
+        whisper_cmake.set_install(false)
+        whisper_cmake.add_cmake_defines({
+            'CMAKE_BUILD_TYPE': 'Release',
+            'CMAKE_POSITION_INDEPENDENT_CODE': true,
+            'BUILD_SHARED_LIBS': false,
+            'GGML_NATIVE': false,
+            'GGML_CCACHE': false,
+            'GGML_OPENMP': false,
+            'GGML_BUILD_TESTS': false,
+            'GGML_BUILD_EXAMPLES': false,
+            'WHISPER_BUILD_TESTS': false,
+            'WHISPER_BUILD_EXAMPLES': false,
+            'WHISPER_BUILD_SERVER': false,
+            'WHISPER_ALL_WARNINGS': false,
+            'WHISPER_CURL': false,
+            'WHISPER_SDL2': false,
+        })
+        if host_machine.system() == 'darwin'
+            whisper_cmake.add_cmake_defines({'CMAKE_OSX_DEPLOYMENT_TARGET': macos_deployment_target})
+        endif
+        # The graphics card: Metal on macOS, its shaders in the binary;
+        # Vulkan on Windows and Linux where its headers, shader compiler and
+        # SPIRV-Headers are (on Windows, the Vulkan SDK, with CMAKE_PREFIX_PATH
+        # naming it), its shaders in the binary too and its loader opened at
+        # run time, so that Aegisub starts where there is none
+        whisper_gpu = get_option('whisper_gpu')
+        whisper_metal = false
+        whisper_vulkan = false
+        if not whisper_gpu.disabled()
+            if host_machine.system() == 'darwin'
+                whisper_metal = true
+            else
+                # All ggml's Vulkan build needs, checked here: if its CMake
+                # failed, Whisper would be left out altogether
+                whisper_vulkan = dependency('vulkan', required: false).found() \
+                    and find_program('glslc', required: false).found() \
+                    and dependency('SPIRV-Headers', method: 'cmake', required: false).found()
+                if whisper_gpu.enabled() and not whisper_vulkan
+                    error('whisper_gpu is enabled, but the Vulkan headers, glslc or SPIRV-Headers are missing')
+                endif
+            endif
+        endif
+        whisper_cmake.add_cmake_defines({
+            'GGML_METAL': whisper_metal,
+            'GGML_METAL_EMBED_LIBRARY': whisper_metal,
+            'GGML_VULKAN': whisper_vulkan,
+        })
+        whisper_cmake.set_override_option('warning_level', '0')
+        whisper_cmake.set_override_option('werror', 'false')
+        whisper_proj = cmake.subproject('whisper.cpp', options: whisper_cmake, required: whisper_opt)
+        if whisper_proj.found()
+            whisper_dep = whisper_proj.dependency('whisper')
+            if whisper_vulkan
+                conf.set('WITH_WHISPER_VULKAN', 1)
+            endif
+        endif
+    endif
+    if whisper_dep.found()
+        deps += whisper_dep
+        conf.set('WITH_WHISPER', 1)
+    elif whisper_opt.enabled()
+        error('whisper is enabled, but neither the system\'s whisper.cpp nor CMake to build the one in subprojects was found')
+    endif
+endif
+
 conf_meson = configuration_data()
 conf_meson.set('DEFAULT_PLAYER_AUDIO', def_audio)
 
@@ -466,6 +540,11 @@ if get_option('enable_update_checker')
     endif
 
     deps += dependency('libcurl', allow_fallback: true, default_options: curl_options)
+    conf.set('WITH_CURL', 1)
+    if host_machine.system() == 'windows'
+        # The system's proxy setting, which curl does not read itself
+        deps += cc.find_library('winhttp', required: true)
+    endif
 endif
 
 luajit = dependency('luajit', version: '>=2.0.0', required: get_option('system_luajit'),
@@ -623,10 +702,19 @@ if get_option('tests')
         objects: ordinary_objects,
         include_directories: [libaegisub_inc, libresrc_inc, version_inc, include_directories('src')],
         dependencies: [tests_deps, deps], link_with: [libresrc, libaegisub],
-        cpp_args: aegisub_defines + ['-DAEGISUB_SOURCE_ROOT="@0@"'.format(meson.project_source_root())],
+        # The feature flags as Aegisub has them: given as arguments where it
+        # has no precompiled header, else read from acconf.h by it, which
+        # these tests do not use
+        # ordinary_edit.cpp has more sections than MSVC's object files hold
+        # without /bigobj
+        cpp_args: (get_option('b_pch') ? conf_defines : []) + aegisub_defines
+            + ['-DAEGISUB_SOURCE_ROOT="@0@"'.format(meson.project_source_root())]
+            + (cxx.get_argument_syntax() == 'msvc' ? ['/bigobj'] : []),
         win_subsystem: 'console')
+    # Some 380 tests, a minute and more of them: more than meson's 30 s
     test('ordinary editing integration', find_program('tests/run_isolated.py'),
-        args: [ordinary_runner, '--output-root', meson.current_build_dir() / 'ordinary-data'])
+        args: [ordinary_runner, '--output-root', meson.current_build_dir() / 'ordinary-data'],
+        timeout: 600)
     # C1-C1c-10: API scan plus real compile-failure cases for the live-model owner.
     # Borrows a production compile command from compile_commands.json (Ninja backend).
     test('live model owner access', find_program('tests/owner_access_check.py'),

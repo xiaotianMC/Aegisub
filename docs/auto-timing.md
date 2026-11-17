@@ -1,0 +1,135 @@
+# 自动打轴
+
+顶层菜单“自动打轴(&M)”放在“时间”和“视频”之间，按工作流排：
+
+| 菜单项 | 命令 | 说明 |
+| --- | --- | --- |
+| 听写音频... | `autotiming/transcribe` | 见下 |
+| 导入语音识别结果... | `autotiming/import_speech` | 见下 |
+| MagiaTimeline 硬字幕打轴... | `tool/magiatimeline` | 从“时间”菜单移过来 |
+| 按画面切换生成时间轴 | `keyframe/timeline` | 见[画面切换检测](scene-detection.md) |
+| 检测画面切换... | `keyframe/detect` | “视频”菜单里也有 |
+| 吸附到附近的画面切换 | `time/snap/scene_nearby` | “时间”菜单和字幕表格右键菜单里也有 |
+| 生成双语轴 | `autotiming/bilingual` | 见下 |
+| 清除自动打轴标记 | `autotiming/clear_marks` | 见下 |
+
+对齐选中行、检查时间轴等以后做好再加入。整体方案见“日文语音识别自动打轴方案”文档。
+
+## 导入语音识别结果
+
+读入 WhisperX 输出的 JSON（`--output_format json`），faster-whisper 同样形状的 JSON 也认（置信度字段叫 `probability`）。用到的是每段的时间、文字、说话人，和每个词的时间、置信度（`score`）、说话人；对齐器没给时间的词（数字、符号）按前后的词补上。`\uXXXX` 转义的文字照常读（项目的 JSON 读取器原来不支持，这次补上了）。
+
+WhisperX 的建议用法（带说话人）：
+
+```
+whisperx ep01.wav --language ja --model large-v3 --diarize --hf_token <令牌> --output_format json
+```
+
+**断句**（一行一句，宁长勿碎）：
+
+1. 相邻两段之间：上一段没有句末标点（。？！…），停顿不超过 300 毫秒，说话人相同，合起来不超过最长时长，就接成一句。
+2. 段内：句末标点、换说话人，都开始新的一句。large-v3 写日文常常不带标点，所以句末形式（です、ます、ました、ね、ください……）后面有停顿也算句末。
+3. 段内的停顿：句末形式后停顿至少 250 毫秒，或任何超过 600 毫秒的停顿，开始新的一句。
+   **每个字都用识别器给的时间，不按音频响度重新定时。** 以前为 WhisperX 的日文逐字对齐（字间没有空隙、时间能偏几秒）做过按音频停顿重新断句、按比例重排字时间的处理，用到 ElevenLabs Scribe 上反而把准确的时间打乱：Scribe 的“、”“。”是零长度、贴在前一个字末尾的独立词，停顿裁剪会把它们挪到停顿之后，变成单独一行的“。”和以“、”开头的行。这套处理已经整个去掉。
+4. 超过最长时长（默认 7 秒）的句子拆开，每块至少 1.5 秒。拆点打分：从句结束（“、”最好，“けど/から/ので/のに”次之，“て/で”再次）、词间停顿越长越好、越靠中间越好；不拆在“ない/です/ます/だ/よ/ね/か/の”和标点之前，日文按 ICU 分词不拆在词中间。
+5. 跨过画面切换、两边都至少 300 毫秒的行，切换点前后 200 毫秒内有至少 100 毫秒的停顿就在那里拆开。
+
+**画面切换**取自视频的关键帧，但编码器按固定间隔放的关键帧不算（`SceneCuts`）：关键帧间距里最常见的那个（前后差一帧算同一个）占到一半以上、至少 3 次时，认为是编码器的固定间隔，距上一个关键帧正好这个间隔（±1 帧）的关键帧去掉，其余的才是镜头切换。网上下载的视频常常只有固定间隔的关键帧（例如每 3 秒一个），以前行首行尾会被吸到这些毫无意义的时间点上。
+5. 打开了 Effect 栏标记时，拆开的几行在 Effect 栏写同一个 `#组号`。
+
+**时间**（顺序很重要）：
+
+1. 加前后余量（时间后处理器的设置），余量范围内有切换点时停在切换点；不越过前一行和后一行（本来就重叠的除外）；两行间的停顿放不下两边的余量时，按余量的比例分给两边。
+2. 不足最短时长（默认 1 秒）的向后延长，不越过下一行和切换点。
+3. 相邻两行间隔不超过时间后处理器的“相邻间隔”时连起来；间隔里有切换点时，两行都对到切换点。
+4. 一头离切换点不到 300 毫秒（在行内）时，这一头对到切换点。
+5. 已有画面切换时，最后用“吸附到附近的画面切换”的四个方向距离对齐到帧。
+
+**标记**：置信度低于阈值（默认 0.3）的词写成 `?词`，连续的几个合成一个。日文按 ICU 分出的词算：一个词各字置信度的平均低于阈值才标（WhisperX 给日文的分数是逐字对齐的把握，不是听写的把握，单字分数很多是 0；真正听错的词未必标得出来，比如人名）；说话人（如 `SPEAKER_00`）写进 Actor 栏；整行是括号标注（“（笑い）”）或只有 ♪、〜 的行改成注释行，不混进对白。
+
+**放到哪里**：字幕还没写东西时替换掉原来的空行，否则按时间插在原有行之间，原有行不动。首选项勾了“每行配一行空的译文行”时，直接按双语轴生成（`JP` 行加空 `CN` 行，样式缺的会补上）。新样式和所有行是一步撤销，新行全部选中。
+
+设置在首选项“音频”页的“语音识别”一节：是否生成双语轴、超过多长拆句、每行至少显示多久、置信度阈值。其他阈值目前是代码里的默认值（`speech::Rules`），等拿真实样片调过再决定要不要开放。
+
+## 听写音频
+
+`autotiming/transcribe`，`src/speech_transcribe.{h,cpp}`。不用自己先跑识别再导入：直接把编辑器里打开的音频交给识别器，结果走和“导入语音识别结果”完全相同的 `speech::ReadJson` → `speech::Import`（内置 Whisper 直接给出 `speech::Transcript`，不经过 JSON）。识别器在首选项“音频”页“听写”一节选。列表顺序是 ElevenLabs、Whisper、自己的程序；设置里存的编号仍是 0、2、1（Whisper 是后加的），所以不带 Whisper 的版本照样读得懂，那里列表只有 ElevenLabs 和自己的程序。下面只显示所选方式用得到的设置，在对话框里一切换就跟着变：
+
+| 设置 | ElevenLabs | Whisper | 自己的程序 |
+| --- | --- | --- | --- |
+| 语言 | ✓ | ✓ | ✓（命令里的 `{language}`） |
+| 夹杂的其他语言、区分说话人 | ✓ | | |
+| 两项识别关键词 | ✓ | ✓（作为提示词） | |
+| ElevenLabs 模型、API 密钥、发送音频前询问 | ✓ | | |
+| 命令 | | | ✓ |
+| Whisper 模型文件、下载或选择、使用显卡、线程数 | | ✓ | |
+
+藏起来的行搜索时也不算匹配。三种方式：
+
+- **ElevenLabs Scribe**（联网，按音频时长收费）。用 libcurl 把文件以 multipart 表单 POST 到 `https://api.elevenlabs.io/v1/speech-to-text`，请求头 `xi-api-key`。字段：`model_id`（默认 `scribe_v3`）、`timestamps_granularity=word`、`diarize`、`tag_audio_events=true`，有设置时再加 `language_code`、`secondary_language_codes`（重复字段）、`keyterms`（重复字段，最多 100 个）。关键词默认取字幕 Actor 栏里的名字（去重，`SPEAKER_00` 这类识别器自己起的名字不算），再加设置里手填的。文件直接上传源文件（它收 mp3/wav/flac/ogg/m4a/aac/opus 和 mp4/mkv/mov/avi/webm 等视频）；不在列表里的格式（mka、ts）先用 `agi::SaveAudioClip` 写成 WAV 再传。上传进度显示在进度窗口里，传完等待时改成来回扫的条；取消就中断连接。
+  - **密钥**（`src/secret.{h,cpp}`，`transcribe::FindKey`）：按顺序找环境变量 `ELEVENLABS_API_KEY`、系统钥匙串、本次运行里记住的。都没有就弹密码框问一次：有钥匙串就存进钥匙串（`wxSecretStore`：Windows 凭据管理器、macOS Keychain、Linux Secret Service），没有就只在本次运行里记住，弹窗会说明是哪种。**绝不写进设置文件**：`config.json` 谁都能读，还会跟着设置被拷贝、同步、贴出来。服务器回 401 时钥匙串和本次记住的都清掉，下次再问。首选项里这一行不是文本框，只显示密钥在哪里，带“设置…”和“忘掉”两个按钮。
+  - **网络**：连不上时报出 curl 的详细错误（`CURLOPT_ERRORBUFFER`），不只是错误类别；走了代理会说是哪个代理。curl 自己只认 `https_proxy`/`all_proxy` 环境变量；Windows 上这些都没设时，读系统的 Internet 代理设置（`WinHttpGetIEProxyConfigForCurrentUser`，有 PAC 脚本或开了自动检测就问 `WinHttpGetProxyForUrl`），解析成 curl 的代理和不走代理列表（`ProxyFromSystem`、`NoProxyFromSystem`，有测试）。Windows 上的 schannel 默认联系不上吊销服务器就让握手失败，这里改成尽力检查（`CURLSSLOPT_REVOKE_BEST_EFFORT`）。macOS 的系统代理还没读，那边要用代理请设 `https_proxy`。
+  - 钥匙串要靠 wxWidgets 编译时开了 `wxUSE_SECRETSTORE`：自带的 wx 在 Windows 和 macOS 上默认开，Linux 上要装 `libsecret-1-dev` 才会开（CMake 的 AUTO）；发行版的 wx 包可能关着（Ubuntu 的 wx 3.2 就是）。关着或者机器上没有钥匙环守护进程时，就走“只在本次运行里记住”。
+  - **发送前确认**：每次发送前弹窗说明音频时长、文件名、会离开本机并按时长收费，勾“不再询问”后不再弹（设置里可以重新打开）。
+  - 构建时没有 libcurl（`enable_update_checker=false` 时也没有）就提示用自己的程序。`meson.build` 在拉入 curl 时定义 `WITH_CURL`。
+- **自己的程序**（本机运行）。设置里填一条命令模板，默认 `whisperx "{media}" --output_dir "{out}" --output_format json [--language {language}]`：`{media}` 是音频或视频文件，`{out}` 是为这次运行新建的临时文件夹，`{language}` 是设置里的语言；方括号里的部分在其中占位符为空时整段去掉。先按引号分词再代入，所以路径里有空格不用管。用 `wxExecute` 启动（和 MagiaTimeline 一样，见 `magia_timeline::Run`），进度窗口显示它最新输出的一行，取消就连子进程一起杀掉。结束后在临时文件夹里找以媒体文件名命名的 `.json`，没有就取唯一的一个，读完删掉文件夹。
+
+- **Whisper**（内置，本机运行，免费）。`src/transcribe_local.{h,cpp}`，whisper.cpp 1.9.5（`subprojects/whisper.cpp.wrap`，Meson 的 CMake 子项目，静态链接进 Aegisub，选项 `-Dwhisper`、`-Dwhisper_gpu`；没有 CMake 时跳过，定义 `WITH_WHISPER`）。
+  - **音频**：编辑器里的音频用 `agi::ResampleToFloat`（`libaegisub/audio/resample.cpp`，Kaiser 窗 sinc 多相滤波，任意两种采样率之间都精确）转成 16 kHz float 交给它，不写临时文件。
+  - **参数**：beam search，`token_timestamps`，`suppress_nst`；提示词是关键词（同 ElevenLabs 的来源），中文另在前面加“以下是普通话的句子。”，不然常写成繁体。线程数默认等于处理器线程数，最多 8。
+  - **token 变成词**（`FromWhisper`）：被拆在两个 token 里的 UTF-8 字符先拼回；汉字、假名、泰文这类不用空格的文字每块一个词（断句交给后面的 ICU），拉丁文接到下一个空格为止；标点并到前一个词上，但不改它的结束时间（否则会把词尾拖过后面的停顿）；词的结束不晚于下一个词的开始，也不超出所在的段。时间用 token 自己的 t0/t1。没用 DTW：它给的时刻接近词的结束而不是开始，而且和 flash attention 不能同时开。
+  - **VAD**：Silero（`ggml-silero-v6.2.0.bin`，885 KB）跟模型一起下载，模型文件夹或模型旁边有就用，只听有人声的部分，静音和音乐里不会编出字来。开 VAD 时 token 的时间要用 `whisper_full_get_token_t0/t1` 取（换回原音频的时间轴），`token_data` 里的是裁掉静音后的时间。
+  - **模型**（`src/transcribe_models.{h,cpp}`，窗口在 `src/dialog_whisper_model.cpp`）：提供 small（190 MB）、large-v3-turbo（574 MB）、large-v3（1.1 GB），各写明适合什么电脑；下载源可选 Hugging Face、hf-mirror.com（中国大陆可访问）或自填地址。默认存在 `?cache/models`（Windows 是 `%LOCALAPPDATA%\Aegisub\models`，便携版就是程序旁边）；Linux 上没有 `~/.aegisub`、用 XDG 目录时改放 `$XDG_DATA_HOME/aegisub/models`（默认 `~/.local/share`），因为那时 `?cache` 是 `~/.cache`，随时可能被用户或清理工具清空，几个 GB 的模型不该放在那里。窗口里可以改，并显示所在磁盘的剩余空间。下载先写到 `.part`：断了或取消了，下次从断点续传（`CURLOPT_RESUME_FROM_LARGE`；服务器不支持范围请求、回 200 或 416 时从头再下一次）；`CURLOPT_FAILONERROR` 保证错误页不会被当成模型存下；一分钟没有数据就放弃。下完核对 Hugging Face 公布的 SHA-256（`agi::Sha256`，`libaegisub/common/sha256.cpp`），对上了才改成正式文件名，对不上就删掉。下载前先检查磁盘空间。curl 的设置（`Prepare`）和出错说明与 ElevenLabs 共用，所以 Windows 的系统代理对下载同样有效。还没有模型时，听写音频会先弹这个窗口；首选项里也有入口。
+  - **显卡**：macOS 用 Metal，Windows 和 Linux 用 Vulkan，着色器都嵌在程序里（Vulkan 的约 42 MB，压缩后约 4 MB）。Vulkan 加载器在运行时才打开，不链接，没有 Vulkan 的电脑照样能启动 Aegisub，Whisper 改用处理器。用显卡加载模型失败时退回处理器重试。首选项里显示找到的显卡。CI 的 Windows 任务安装 Vulkan SDK（版本固定，校验 SHA-256），并且用 `-Dwhisper_gpu=enabled` 要求必须编进去；Linux 上装了 Vulkan 头文件、glslc 和 SPIRV-Headers 才会开（三样都要事先检查：ggml 的 CMake 失败的话，整个 Whisper 都会被去掉）。
+  - **处理器**：ggml-cpu 按 Haswell 的指令集编译（SSE4.2、AVX、AVX2、FMA、F16C、BMI2），缺一个就会在运行时崩溃，而不是报错。所以先用 CPUID 检查（`ProcessorLacks`，AVX 还要确认系统保存了它的寄存器），在下载模型之前就说明缺了什么。`Gpu()` 也先做这个检查，因为一问 ggml 有哪些设备，就会启动它的处理器后端，而首选项页面打开时就会问。ggml-cpu 没有静态初始化代码，所以 Aegisub 启动时不会执行这些指令。
+  - **进度**：进度窗口按目前的速度估算剩余时间（`TimeLeft`，向上取整到分钟）。没有可用的显卡、模型又大（超过 300 MB）、音频超过 10 分钟时，开始前先问一句，可以勾“不再询问”。
+  - **wrap 补丁**（`subprojects/packagefiles/`）：Meson 运行 CMake 的命令时不经过 shell，并且只用单配置的 Ninja。Meson 把 `>>` 当成 `>`，还会去掉参数里的引号，所以 Metal 着色器嵌入的那串命令（`cat`、`sed`、`echo`）改为在 CMake 配置时原样写进脚本，再由 `sh` 执行；否则汇编文件只剩最后一行，链接时找不到 `_ggml_metallib_*` 符号，`sed` 的匹配条件也会落空；`$<CONFIG>` 换成 `Release`；不交叉编译时，着色器生成器作为普通目标编译，不用 ExternalProject（它的 stamp 文件 Meson 找不到，会让每次编译都把着色器和之后的一切重做一遍）；Vulkan 加载器改为运行时加载，ggml 只通过它的 dispatcher 调 Vulkan。
+
+纯逻辑部分（密钥优先级、列表拆分、关键词、表单字段、格式判断、错误说明、命令行拆分、找输出文件）都有测试，`TEST(transcribe, ...)`；网络和进程部分没有自动测试。Whisper 的测试见下面“测试”一节。
+
+## 双语轴
+
+每句原文一行（样式 `JP`），同一时间配一行译文（样式 `CN`），原文保留在文件里，译者和校对对照着看，也能直接出双语字幕。两个样式名暂定，只在 `src/bilingual.h` 一处定义。
+
+- **生成双语轴**：选中的行（注释行和 `CN` 行跳过）改用 `JP` 样式，各在下面插一行同一时间的空 `CN` 行，图层、边距、说话人跟原行一样，Effect 栏留空（标记只在原文行上）。文件里没有 `JP` / `CN` 样式时，先按当前行的样式各复制一份——长什么样留给用户设。已经配好对的行不再加。新样式和新行是一步撤销；没什么可做时不留撤销记录。
+- **翻译助手**：当前行是 `JP` 样式、并且有同一时间的 `CN` 行时，译文写进 `CN` 行，原文不动；下一行、上一行跳过 `CN` 行；回到译过的行时，译文框里是已有的译文。原文有多段（中间夹着标签）时，`CN` 行和原文的标签一致就保留它已译的其他段，不一致就用原文填上其他段。不是双语的文件照旧用译文覆盖原文。
+
+“配对”的规则：同一开始、同一结束时间、`CN` 样式、不是注释的第一行。
+
+## Effect 栏的标记
+
+自动打轴可以在原文行的 Effect 栏里给译者留记号，用空格分开。默认不写，Effect 栏留空；在首选项“音频”页“语音识别”一节勾选“在 Effect 栏给译者留标记”才写，“标记置信度低于此值的词”也只在勾选时可调：
+
+| 记号 | 意思 |
+| --- | --- |
+| `#组号` | 被拆开的连续行，同组的要连起来翻 |
+| `?词` | 没把握的词，可以有多个 |
+
+例如 `#12 ?マミ ?ソウルジェム`。ASS 按逗号分栏，所以词里的逗号写成全角“，”，空格去掉。栏里原有的其他内容保留在前面。以 `Banner;`、`Scroll up;`、`Scroll down;` 开头的值是渲染器的效果，从不当作标记读。
+
+**清除自动打轴标记**：去掉所有行的 `#组号` 和 `?词`，其他内容不动，一步撤销；没有标记时不留撤销记录。翻译校对完、跑会用 Effect 栏的 Lua 脚本之前用。
+
+兼容性（对照代码核对过）：渲染器只认上面三种开头，记号不冲突；卡拉 OK 模板器只处理 Effect 为空或含 `karaoke` 的行，带记号的行会被跳过（歌曲行不打记号）；横幅/滚动效果写入时替换整栏，记号会丢；视频预览在 Effect 非空时改时间会多重画一次；导出 SRT 等格式不带 Effect 栏。字幕表格的 Effect 列、“选择行”和“查找替换”的 Effect 字段都能直接用来找带 `?` 的行。
+
+## 代码
+
+- `src/bilingual.{h,cpp}`：样式名、配对、标记的读写和清除。
+- `src/speech_lines.{h,cpp}`：读入识别 JSON（`ReadJson`）、断句和修整时间（`MakeLines`），不依赖界面，可单独测试；`speech::Import` 在 `command/autotiming.cpp` 里，把结果放进字幕。
+- `libaegisub/common/cajun/reader.cpp`：支持 `\uXXXX` 转义和代理对。
+- `src/command/autotiming.cpp`：生成双语轴、清除标记。新样式先用 `SubtitleValueEdit` 提交，行用 `SubtitleRowListEdit` 以 amend 合进同一步（`SubtitleRowListEdit::Commit` 加了 `amend_id` 参数）。
+- `src/dialog_translation.cpp`：`LoadActive` 同时取原文行和配对行，`SkipLine` 跳过译文行，`TargetBlocks` 取配对行里与原文标签一致的各段。
+
+## 测试
+
+- `speech_lines.*`：读入（转义、缺时间的词、置信度、说话人、faster-whisper 格式、错误文件）；跨段接句、句末和换人断开、长停顿断开；Scribe 逐字、标点零长度时标点留在句末、时间不变；固定间隔的关键帧不算画面切换；长句在从句处拆开并同组；不确定的词、注释行；余量、最短时长、相邻行相接、切换点处相接、切换点吸走行尾；在切换点的停顿处拆开。
+- `ordinary_edit.speech_recognition_imported_a_sentence_a_line_in_one_step`：双语轴导入、说话人和标记、余量、连同样式一步撤销；已有字幕时按时间插入。
+- `lagi_cajun.ReadUnicodeEscapes`
+- `bilingual_marks.read_and_written_in_the_effect_field_beside_what_else_it_holds`
+- `ordinary_edit.make_bilingual_pairs_each_line_with_an_empty_translation_line_in_one_step`：配对、样式、一步撤销（连同样式），翻译助手写进译文行、跳过译文行、回来时带出已有译文。
+- `ordinary_edit.clear_auto_timing_marks_leaves_the_rest_of_the_effect_field`
+- `ordinary_edit.timeline_from_scene_changes_gives_the_shots_with_no_line_one_and_keeps_the_rest`
+- `ordinary_edit.one_scene_snap_distance_set_before_goes_out_and_a_little_way_in`
+- `transcribe_local.*`：token 拼成词的各条规则（拆开的字符、不用空格的文字、日文里的英文、词尾不越过下一个词和所在段、标点）；剩余时间的说法；缺了哪些指令集。设了 `AEGISUB_WHISPER_MODEL` 时用真模型听 whisper.cpp 自带的 `samples/jfk.wav`，走编辑器的音频路径；再设 `AEGISUB_WHISPER_VAD` 时，在前后各加 20 秒噪音，检查噪音里没有听出字、时间仍是原音频的。
+- `transcribe_models.*`：提供的模型、地址和大小的写法；用 `file://` 测断点续传、`.part` 比文件还大时从头下、哈希不对时丢弃；设了 `AEGISUB_RANGELESS_SERVER` 时测不支持范围请求的服务器；设了 `AEGISUB_NETWORK_TESTS` 时真从 Hugging Face 下载 VAD 模型。
+- `lagi_sha256.*`：标准测试向量、分块输入、一个 Whisper 模型公布的哈希。
+- `lagi_audio.resample_*`：各相位对常数的增益为 1、保留新奈奎斯特频率以下的音调、滤掉以上的而不是折叠下来、同采样率时直接转成 float、只收 16 位单声道、可以取消。

@@ -3,6 +3,12 @@
         "app/command_palette" : [
             "Ctrl-Shift-P"
         ],
+        "app/region/next" : [
+            "F6"
+        ],
+        "app/region/previous" : [
+            "Shift-F6"
+        ],
         "app/minimize" : [
             "Ctrl-M"
         ],

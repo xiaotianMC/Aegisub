@@ -37,6 +37,7 @@
 #include "../dialog_manager.h"
 #include "../dialog_translation.h"
 #include "../dialogs.h"
+#include "../dialog_magia_timeline.h"
 #include "../include/aegisub/context.h"
 #include "../libresrc/libresrc.h"
 #include "../resolution_resampler.h"
@@ -45,6 +46,7 @@
 #include <libaegisub/fs.h>
 #include <libaegisub/path.h>
 
+#include "../async_video_provider.h"
 #include "../ass_dialogue.h"
 #include "../ass_file.h"
 #include "../format.h"
@@ -56,6 +58,9 @@
 #include "../subtitle_row_list_edit.h"
 
 #include <libaegisub/io.h>
+
+#include <algorithm>
+#include <optional>
 
 #include <wx/dirdlg.h>
 #include <wx/msgdlg.h>
@@ -81,7 +86,7 @@ struct tool_magiatimeline final : public Command {
 	CMD_NAME("tool/magiatimeline")
 	STR_MENU("Time &Hardsubs with MagiaTimeline...")
 	STR_DISP("Time Hardsubs with MagiaTimeline")
-	STR_HELP("Run MagiaTimeline on the video to find when the subtitles burnt into it show, and add an empty line for each, to be filled in")
+	STR_HELP("Run MagiaTimeline on the video to find when the subtitles burnt into it show, and add a line for each, with the text it reads if it is set to")
 	CMD_TYPE(COMMAND_VALIDATE)
 
 	bool Validate(const agi::Context *c) override {
@@ -119,12 +124,29 @@ struct tool_magiatimeline final : public Command {
 			Fail(c, fmt_tl("MagiaTimeline's config.yml could not be read in %s.", launch->folder.string()));
 			return;
 		}
+		// What to run it with: its config, with what was chosen before over
+		// it, as chosen now
+		auto const installed = magia_timeline::Inspect(config);
+		auto const saved = magia_timeline::ParseSaved(OPT_GET("Tool/MagiaTimeline/Settings")->GetString());
+		auto chosen = ShowMagiaTimelineDialog(c, installed, magia_timeline::Effective(installed, saved),
+			launch->folder / "config.yml");
+		if (!chosen) return;
+		auto overrides = magia_timeline::Changes(installed, *chosen);
+		OPT_SET("Tool/MagiaTimeline/Settings")->SetString(magia_timeline::FormatSaved(overrides));
+		auto jobs = magia_timeline::ParseList(chosen->count("extraJobs") ? chosen->at("extraJobs") : "");
+		bool const reads_text = std::find(jobs.begin(), jobs.end(), "ocr") != jobs.end();
+		// The text it reads put in the lines it writes, where it can
+		if (reads_text && installed.Has("ocr/standaloneOutput")) overrides["ocr/standaloneOutput"] = "false";
+
 		auto const work = config::path->Decode("?temp/");
 		auto const destination = work / "aegisub-magiatimeline";
 		auto const output = work / "aegisub-magiatimeline.ass";
 		auto const config_file = work / "aegisub-magiatimeline.yml";
-		auto written = magia_timeline::WriteConfig(config, video.string(), destination.string(),
-			OPT_GET("Tool/MagiaTimeline/Strategy")->GetString());
+		// 1.0 writes the text to a file of its own beside it
+		std::optional<agi::fs::path> ocr_output;
+		if (reads_text && installed.Has("ocr/suffix"))
+			ocr_output = agi::fs::path(destination.string() + magia_timeline::Unquote(installed.Get("ocr/suffix")));
+		auto written = magia_timeline::WriteConfig(config, video.string(), destination.string(), overrides);
 		if (!written) {
 			Fail(c, _("MagiaTimeline's config.yml has no source and destination to fill in."));
 			return;
@@ -132,6 +154,7 @@ struct tool_magiatimeline final : public Command {
 		try {
 			agi::fs::CreateDirectory(work);
 			if (agi::fs::FileExists(output)) agi::fs::Remove(output);
+			if (ocr_output && agi::fs::FileExists(*ocr_output)) agi::fs::Remove(*ocr_output);
 			agi::io::Save(config_file).Get() << *written;
 		}
 		catch (agi::Exception const& e) {
@@ -139,12 +162,16 @@ struct tool_magiatimeline final : public Command {
 			return;
 		}
 
-		auto outcome = magia_timeline::Run(*launch, config_file, c->parent);
+		// The video's length, for how far through it MagiaTimeline is
+		int duration_ms = 0;
+		if (auto provider = c->project->VideoProvider(); provider && c->project->Timecodes().IsLoaded())
+			duration_ms = c->project->Timecodes().TimeAtFrame(provider->GetFrameCount());
+		auto outcome = magia_timeline::Run(*launch, config_file, c->parent, duration_ms);
 		if (outcome.cancelled) return;
 		bool const wrote = agi::fs::FileExists(output);
 		if (outcome.reported_error || !wrote) {
 			Fail(c, _("MagiaTimeline did not finish. The last of what it said:") + "\n\n" +
-				to_wx(magia_timeline::LastLines(outcome.output, 15)));
+				to_wx(magia_timeline::LastLines(magia_timeline::WithoutProgress(outcome.output), 15)));
 			return;
 		}
 
@@ -158,6 +185,14 @@ struct tool_magiatimeline final : public Command {
 			return;
 		}
 		auto intervals = magia_timeline::ReadTimeline(result);
+		if (ocr_output) {
+			try {
+				auto in = agi::io::Open(*ocr_output);
+				std::string text(std::istreambuf_iterator<char>(*in), std::istreambuf_iterator<char>{});
+				magia_timeline::AddReadText(intervals, text);
+			}
+			catch (agi::Exception const&) { }
+		}
 		if (intervals.empty()) {
 			wxMessageBox(_("MagiaTimeline found no subtitles in the video."), _("Time Hardsubs with MagiaTimeline"), wxOK | wxICON_INFORMATION, c->parent);
 			return;
@@ -175,6 +210,7 @@ struct tool_magiatimeline final : public Command {
 			line->Start = interval.start;
 			line->End = interval.end;
 			line->Style = style;
+			line->Text = interval.text;
 			staged.file.Events.push_back(*line);
 			added.insert(line);
 			if (!first) first = line;

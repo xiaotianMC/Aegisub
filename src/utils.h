@@ -31,7 +31,9 @@
 
 #include <libaegisub/fs.h>
 
+#include <chrono>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -84,6 +86,10 @@ bool ForwardMouseWheelEvent(wxWindow *source, wxMouseEvent &evt);
 bool WheelAltDown(wxMouseEvent const& evt);
 bool WheelCmdDown(wxMouseEvent const& evt);
 bool WheelShiftDown(wxMouseEvent const& evt);
+/// Hold @p modifiers (wxMOD_ALT, wxMOD_CMD, wxMOD_SHIFT; 0 lets go) for the
+/// three above, as if held on the keyboard; for tests, which on Windows could
+/// otherwise only press a key for the whole desktop
+void HoldWheelModifiersForTests(int modifiers);
 
 /// Alt was held for a wheel action: releasing it should not select the menu
 /// bar. The main window asks with TakeAltUsedForWheel() when Windows is about
@@ -99,6 +105,13 @@ void ResetAltUsedForWheel();
 /// @param max_size Maximum size of directory in MB
 /// @param max_files Maximum number of files
 void CleanCache(agi::fs::path const& directory, std::string const& file_type, uint64_t max_size, uint64_t max_files = -1);
+
+/// Remove from @p directory what an earlier run left there, files or
+/// folders, as when it was ended without cleaning up: each entry whose name
+/// @p left says is one and not changed within @p age. What cannot be
+/// removed, as when another run is using it, is passed over.
+/// @return How many were removed
+size_t RemoveLeftovers(agi::fs::path const& directory, std::function<bool(std::string_view)> const& left, std::chrono::seconds age);
 
 /// @brief Templated abs() function
 template <typename T> T tabs(T x) { return x < 0 ? -x : x; }

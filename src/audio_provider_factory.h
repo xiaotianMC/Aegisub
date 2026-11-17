@@ -29,5 +29,7 @@ namespace agi {
 std::unique_ptr<agi::AudioProvider> GetAudioProvider(agi::fs::path const& filename,
                                                      agi::Path const& path_helper,
                                                      agi::BackgroundRunner *br);
+/// Where the HD audio cache writes, by Audio/Cache/HD/Location
+agi::fs::path AudioCacheFolder(agi::Path const& path_helper);
 std::vector<std::string> GetAudioProviderNames();
 std::vector<std::string> GetAudioProviderFileExtensions();

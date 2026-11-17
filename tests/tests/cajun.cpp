@@ -167,6 +167,17 @@ TEST(lagi_cajun, ObjectCreateArray) {
 	EXPECT_STREQ("", static_cast<std::string>(static_cast<json::Object&>(array[0])["Inside"]).c_str());
 }
 
+TEST(lagi_cajun, ReadUnicodeEscapes) {
+	// As Python's json writes text outside ASCII: こ, é and a pair for 😀
+	json::UnknownElement root;
+	std::istringstream doc("{\"s\" : \"\\u3053\\u00e9\\ud83d\\ude00!\"}");
+	ASSERT_NO_THROW(json::Reader::Read(root, doc));
+	json::Object& obj = root;
+	EXPECT_EQ("\xE3\x81\x93\xC3\xA9\xF0\x9F\x98\x80!", static_cast<std::string>(obj["s"]));
+	std::istringstream lone("{\"s\" : \"\\ud83d\"}");
+	EXPECT_THROW(json::Reader::Read(root, lone), json::Exception);
+}
+
 TEST(lagi_cajun, Read) {
 	json::UnknownElement root;
 	std::istringstream doc("{\"String\" : \"This is a test\", \"Boolean\" : false, \"Null\" : null }");

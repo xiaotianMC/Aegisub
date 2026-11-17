@@ -133,6 +133,31 @@ Automation tests also need Intel builds of Busted's native Lua modules; the
 workflow shows the LuaRocks compiler overrides. Use a separate LuaRocks tree
 if native arm64 tests need to run on the same machine.
 
+## Checking on Linux what CI finds on macOS and Windows
+
+`tools/ci-precheck.py` runs, on Linux, checks for errors that CI otherwise
+finds only on its macOS or Windows runners, a build later:
+
+- `winmacros`: names in code every platform builds that `windows.h` makes
+  macros of, such as `ChooseFont`, which becomes `ChooseFontW` in the units that
+  include it and stays itself in those that do not, so that they do not link.
+- `cmakecmds`: custom commands of the subprojects built with
+  `cmake.subproject()` that are written for a shell, which Meson does not run
+  them in: it writes `>>` as `>`, gives `<`, `|` and `&&` to the command as
+  arguments, and drops quotes within arguments.
+- `libcxx`: Aegisub's own sources parsed (`-fsyntax-only`) by clang with libc++,
+  as macOS builds them, rather than by GCC with libstdc++.
+- `headless`: the test suites on a 1024x768 virtual display with no sound
+  device. On Linux the ALSA player opens even then, as it opens the device only
+  once it plays, so Windows CI's having no player at all is not reproduced.
+
+With no argument it runs all four. It reads the compile database of a build
+directory (`-B`, default `build-ci`), which must have been configured and built
+once; `--since REF` checks only the units including a file changed since `REF`.
+It needs `clang`, `libc++-dev`, `libc++abi-dev`, `mingw-w64-x86-64-dev` and
+`xvfb`. It cannot check what only macOS or Windows builds or does: Objective-C++
+and Cocoa, Metal, MSVC's limits, or how wxMSW sends events.
+
 ## Running Doxygen
 
 You can run Doxygen with the following command:

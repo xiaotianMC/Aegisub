@@ -74,6 +74,13 @@ std::vector<std::string> GetAudioProviderFileExtensions() {
 	return extensions;
 }
 
+agi::fs::path AudioCacheFolder(agi::Path const& path_helper) {
+	auto path = OPT_GET("Audio/Cache/HD/Location")->GetString();
+	if (path == "default")
+		path = "?temp";
+	return path_helper.MakeAbsolute(path_helper.Decode(path), "?temp");
+}
+
 std::unique_ptr<agi::AudioProvider> GetAudioProvider(fs::path const& filename,
                                                      Path const& path_helper,
                                                      BackgroundRunner *br) {
@@ -136,11 +143,7 @@ std::unique_ptr<agi::AudioProvider> GetAudioProvider(fs::path const& filename,
 
 	// Convert to HD
 	if (cache == 2) {
-		auto path = OPT_GET("Audio/Cache/HD/Location")->GetString();
-		if (path == "default")
-			path = "?temp";
-		auto cache_dir = path_helper.MakeAbsolute(path_helper.Decode(path), "?temp");
-		return CreateHDAudioProvider(std::move(provider), cache_dir);
+		return CreateHDAudioProvider(std::move(provider), AudioCacheFolder(path_helper));
 	}
 
 	throw InternalError("Invalid audio caching method");

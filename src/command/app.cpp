@@ -40,12 +40,16 @@
 #include "../dialog_detached_video.h"
 #include "../dialog_manager.h"
 #include "../dialogs.h"
+#include "../flat_controls.h"
 #include "../frame_main.h"
 #include "../include/aegisub/context.h"
 #include "../libresrc/libresrc.h"
 #include "../main.h"
 #include "../options.h"
 #include "../project.h"
+#include "../keyboard_regions.h"
+#include "../script_panel.h"
+#include "../style_panel.h"
 #include "../theme.h"
 #include "../utils.h"
 
@@ -240,18 +244,6 @@ struct app_options final : public Command {
 	}
 };
 
-struct app_project_manager final : public Command {
-	CMD_NAME("app/project_manager")
-	CMD_ICON(new_window_menu)
-	STR_MENU("Project Management...")
-	STR_DISP("Project Management")
-	STR_HELP("Open the project dashboard")
-
-	void operator()(agi::Context *) override {
-		wxGetApp().ShowProjectDashboard();
-	}
-};
-
 struct app_toggle_global_hotkeys final : public Command {
 	CMD_NAME("app/toggle/global_hotkeys")
 	CMD_ICON(toggle_audio_medusa)
@@ -309,6 +301,66 @@ struct app_toggle_style_panel final : public Command {
 	void operator()(agi::Context *) override {
 		agi::OptionValue *opt = OPT_SET("App/Style Panel/Show");
 		opt->SetBool(!opt->GetBool());
+	}
+};
+
+struct app_style_panel_keyboard final : public Command {
+	CMD_NAME("app/style_panel/keyboard")
+	STR_MENU("Style Panel &Keyboard")
+	STR_DISP("Style Panel Keyboard")
+	STR_HELP("Move the keyboard to the style panel, showing it if it is hidden; from the panel, back to the subtitle text")
+
+	void operator()(agi::Context *c) override {
+		auto panel = c->frame ? c->frame->GetStylePanel() : nullptr;
+		if (!panel) return;
+		// The script panel when it is the one at the right: into its text
+		auto edge = c->frame->GetPanelEdge();
+		auto script = c->frame->GetScriptPanel();
+		if (edge && script && edge->ScriptShown()) {
+			if (script->HasKeyboard()) flat::GoHome(script);
+			else {
+				if (!OPT_GET("App/Style Panel/Show")->GetBool()) OPT_SET("App/Style Panel/Show")->SetBool(true);
+				edge->OpenScript();
+				script->TakeKeyboard();
+			}
+			return;
+		}
+		if (panel->HasKeyboard()) flat::GoHome(panel);
+		else panel->TakeKeyboard();
+	}
+};
+
+struct app_region_next final : public Command {
+	CMD_NAME("app/region/next")
+	STR_MENU("Next Region")
+	STR_DISP("Next Region")
+	STR_HELP("Move the keyboard to the next part of the window: the subtitle grid, the line's fields, the audio, the video, the side panel")
+
+	void operator()(agi::Context *) override {
+		regions::Next(true);
+	}
+};
+
+struct app_region_previous final : public Command {
+	CMD_NAME("app/region/previous")
+	STR_MENU("Previous Region")
+	STR_DISP("Previous Region")
+	STR_HELP("Move the keyboard to the part of the window before: the side panel, the video, the audio, the line's fields, the subtitle grid")
+
+	void operator()(agi::Context *) override {
+		regions::Next(false);
+	}
+};
+
+struct app_script_text final : public Command {
+	CMD_NAME("app/script_text")
+	STR_MENU("&Script")
+	STR_DISP("Script Panel")
+	STR_HELP("Show the script panel in the style panel's place, to type or paste in the video's script and check the subtitles against it; from there, back to the style panel")
+
+	void operator()(agi::Context *c) override {
+		if (auto edge = c->frame ? c->frame->GetPanelEdge() : nullptr)
+			edge->ToggleScript();
 	}
 };
 
@@ -406,10 +458,13 @@ namespace cmd {
 		reg(std::make_unique<app_log>());
 		reg(std::make_unique<app_new_window>());
 		reg(std::make_unique<app_options>());
-		reg(std::make_unique<app_project_manager>());
 		reg(std::make_unique<app_toggle_global_hotkeys>());
 		reg(std::make_unique<app_toggle_toolbar>());
 		reg(std::make_unique<app_toggle_style_panel>());
+		reg(std::make_unique<app_style_panel_keyboard>());
+		reg(std::make_unique<app_script_text>());
+		reg(std::make_unique<app_region_next>());
+		reg(std::make_unique<app_region_previous>());
 #ifdef __WXMAC__
 		reg(std::make_unique<app_minimize>());
 		reg(std::make_unique<app_maximize>());

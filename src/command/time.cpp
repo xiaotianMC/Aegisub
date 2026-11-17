@@ -234,7 +234,7 @@ struct time_snap_scene_nearby final : public Command {
 	CMD_NAME("time/snap/scene_nearby")
 	STR_MENU("Snap to &Nearby Scene Changes")
 	STR_DISP("Snap to Nearby Scene Changes")
-	STR_HELP("Move the selected lines' starts and ends onto the keyframes near them, as far as the distance set in Preferences > Timing")
+	STR_HELP("Move the selected lines' starts and ends onto the keyframes near them, as far as the distances set in Preferences > Timing")
 	CMD_TYPE(COMMAND_VALIDATE)
 
 	bool Validate(const agi::Context *c) override {
@@ -249,14 +249,13 @@ struct time_snap_scene_nearby final : public Command {
 		SubtitleRowEdit staged(c);
 		if (staged.rows.empty()) return;
 		auto provider = c->project->VideoProvider();
-		int const distance = OPT_GET("Timing/Scene Snap Distance")->GetInt();
 		auto moved = SnapToKeyframes({staged.rows.begin(), staged.rows.end()}, c->project->Keyframes(),
-			provider ? provider->GetFrameCount() : 0, c->project->Timecodes(), {distance, distance, distance, distance});
+			provider ? provider->GetFrameCount() : 0, c->project->Timecodes(), KeyframeSnapThresholds::FromSceneSnap());
 		// Say what was done, and when nothing was, why: a line far from
 		// any cut is otherwise left with no sign the command ran
 		if (c->frame) {
 			if (moved.starts + moved.ends == 0)
-				c->frame->StatusTimeout(fmt_tl("No scene change within %d ms of the selected lines' starts or ends: the distance is set in Preferences > Timing", distance), 10000);
+				c->frame->StatusTimeout(_("No scene change near enough to the selected lines' starts or ends: the distances are set in Preferences > Timing"), 10000);
 			else
 				c->frame->StatusTimeout(fmt_tl("Snapped %d starts and %d ends to scene changes", moved.starts, moved.ends), 10000);
 		}

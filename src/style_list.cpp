@@ -46,6 +46,12 @@ wxString Describe(AssStyle const& style) {
 
 // StyleList
 
+wxColour StyleList::SampleField(AssStyle const& style) {
+	agi::Color edge = style.outline_w > 0 ? style.outline : style.primary;
+	double luma = (0.299 * edge.r + 0.587 * edge.g + 0.114 * edge.b) / 255;
+	return luma < 0.4 ? wxColour(226, 228, 232) : wxColour(46, 48, 54);
+}
+
 StyleList::StyleList(wxWindow *parent, wxString const& empty)
 : wxVScrolledWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE | wxWANTS_CHARS)
 , empty_text(empty)
@@ -290,11 +296,11 @@ void StyleList::OnPaint(wxPaintEvent &) {
 			dc.DrawRoundedRectangle(box, FromDIP(6));
 		}
 
-		// A sample of the style, on a dark field as on the video
+		// A sample of the style, on a field it shows on (SampleField)
 		int sample_size = box.height - FromDIP(14);
 		wxRect sample(box.x + FromDIP(10), box.y + (box.height - sample_size) / 2, sample_size * 3 / 2, sample_size);
 		dc.SetPen(wxPen(theme::Mix(p.surface, p.text, 0.15), std::max(1, FromDIP(1))));
-		dc.SetBrush(wxBrush(wxColour(46, 48, 54)));
+		dc.SetBrush(wxBrush(StyleList::SampleField(style)));
 		dc.DrawRoundedRectangle(sample, FromDIP(5));
 		{
 			wxFont face(wxFontInfo(std::max(9, font.GetPointSize() + 3)).FaceName(to_wx(style.font)).Bold(style.bold).Italic(style.italic).Underlined(style.underline).Strikethrough(style.strikeout));

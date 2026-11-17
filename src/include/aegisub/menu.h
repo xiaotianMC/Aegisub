@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include <map>
 #include <memory>
 #include <string>
 
@@ -28,6 +29,7 @@ namespace agi { struct Context; }
 class wxFrame;
 class wxMenu;
 class wxMenuBar;
+class wxString;
 class wxWindow;
 
 /*
@@ -73,4 +75,10 @@ namespace menu {
 	/// ui events on the opening window rather than the menu for some bizarre
 	/// reason
 	void OpenPopupMenu(wxMenu *menu, wxWindow *parent_window);
+
+	/// Where each command sits in the main menu bar, e.g. "Timing › Shift
+	/// Times..." gives "Timing" for time/shift: the translated submenu names
+	/// without mnemonics, joined by " › ". The first place wins for a command
+	/// that is in several; commands not in the menu bar are left out.
+	std::map<std::string, wxString> CommandPaths();
 }

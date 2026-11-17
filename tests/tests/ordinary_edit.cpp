@@ -18,6 +18,7 @@
 #include "timeedit_ctrl.h"
 #include "time_unit_toggle.h"
 #include "flat_controls.h"
+#include "keyboard_regions.h"
 #include "base_grid.h"
 #include "auto4_base.h"
 #include "dialog_export_ebu3264.h"
@@ -25,6 +26,16 @@
 #include "options.h"
 #include "command/command.h"
 #include "include/aegisub/hotkey.h"
+#include <libaegisub/audio/provider.h>
+#include <libaegisub/audio/resample.h>
+#include <libaegisub/hotkey.h>
+#include <libaegisub/sha256.h>
+#include <libaegisub/util.h>
+#ifdef WITH_CURL
+#include <curl/curl.h>
+#endif
+#include <tuple>
+#include <typeinfo>
 #include "flat_dialog.h"
 #include "flat_list.h"
 #include "command/edit.h"
@@ -43,6 +54,7 @@
 #include "preferences_base.h"
 #include "style_list.h"
 #include "status_info.h"
+#include <wx/sashwin.h>
 #include <wx/checkbox.h>
 #include "include/aegisub/toolbar.h"
 #include "libresrc/libresrc.h"
@@ -54,6 +66,7 @@
 #include "compat.h"
 #include "utils.h"
 #include "audio_controller.h"
+#include "include/aegisub/audio_player.h"
 #include "audio_timing.h"
 #include "audio_display.h"
 #include "audio_box.h"
@@ -75,17 +88,31 @@
 #include "animation_page.h"
 #include "animation_tags.h"
 #include "style_look.h"
+#include "script_panel.h"
+#include "tag_summary.h"
+#include "grid_column.h"
+
+#include <wx/dcmemory.h>
+#include <wx/image.h>
 #include "style_panel.h"
 #include "style_panel_parts.h"
 #include "timing_adjust.h"
+#include "timing_check.h"
 #include "timing_page.h"
 #include "video_controller.h"
 #include "async_video_provider.h"
 #include "video_frame.h"
 #include "include/aegisub/video_provider.h"
+#include "bilingual.h"
 #include "keyframe_snap.h"
+#include "speech_lines.h"
+#include "speech_transcribe.h"
+#include "transcribe_local.h"
+#include "transcribe_models.h"
+#include "secret.h"
 #include "scene_detect.h"
 #include "magia_timeline.h"
+#include "dialog_magia_timeline.h"
 #include <signal.h>
 #include <libaegisub/io.h>
 #include <limits>
@@ -140,6 +167,9 @@
 #include <wx/panel.h>
 #include <wx/sizer.h>
 #include <wx/slider.h>
+#ifdef __WXMSW__
+#include <wx/msw/wrapwin.h>
+#endif
 #include <filesystem>
 #ifdef __WXGTK__
 #include <gtk/gtk.h>
@@ -153,6 +183,19 @@ public:
     AcceptMessages() { Register(); }
     int Enter(wxDialog* dialog) override { return dynamic_cast<wxMessageDialog*>(dialog) ? wxID_OK : wxID_NONE; }
 };
+/// Why no audio player opens here, or empty if one does. Where none does, as
+/// on a machine with no audio device (CI's Windows runner), AudioController
+/// closes the audio it was given, and tests of loaded audio have none
+std::string NoAudioPlayer(wxWindow* parent) {
+    auto provider=agi::CreateDummyAudioProvider("dummy-audio:silence?sr=44100&bd=16&ch=1&ln=441000",nullptr);
+    try{AudioPlayerFactory::GetAudioPlayer(provider.get(),parent);return {};}
+    catch(agi::Exception const& e){return e.GetMessage().empty()?"no reason given":e.GetMessage();}
+    catch(std::exception const& e){return e.what();}
+}
+#define SKIP_IF_THE_AUDIO_WAS_CLOSED_FOR_WANT_OF_A_PLAYER() \
+    if(!c->project->AudioProvider()) \
+        if(auto why=NoAudioPlayer(c->parent);!why.empty()) \
+            GTEST_SKIP() << "the audio was closed, as no audio player opens here: " << why
 class RunModal : public wxModalDialogHook {
     wxString title;
     std::function<void(wxDialog*)> action;
@@ -660,8 +703,313 @@ TEST_F(ordinary_edit, command_palette_matches_word_starts_runs_and_pinyin) {
     EXPECT_EQ((std::vector<size_t>{2, 3}), characters->positions);
 }
 
+TEST_F(ordinary_edit, command_palette_matches_words_in_any_order_english_names_menus_and_shortcuts) {
+    // Words in any order, each where it fits best.
+    auto keys = palette::MakeKeys(L"Hide Tags", "grid/tags/hide");
+    auto swapped = palette::MatchQuery(L"tags hide", keys);
+    ASSERT_TRUE(swapped);
+    EXPECT_EQ((std::vector<size_t>{0, 1, 2, 3, 5, 6, 7, 8}), swapped->positions);
+    EXPECT_FALSE(palette::MatchQuery(L"tags xyz", keys)) << "every word has to match";
+    EXPECT_TRUE(palette::MatchQuery(L"  hide   tags ", keys));
+
+    // The English name in a translated interface, drawn below the name.
+    auto translated = palette::MakeKeys(L"\u5e73\u79fb\u65f6\u95f4...", "time/shift", L"Shift Times...", L"\u65f6\u95f4\u8f74"); // 平移时间, 时间轴
+    auto english = palette::MatchQuery(L"shift times", translated);
+    ASSERT_TRUE(english);
+    EXPECT_TRUE(english->positions.empty());
+    EXPECT_EQ((std::vector<size_t>{0, 1, 2, 3, 4, 6, 7, 8, 9, 10}), english->original_positions);
+    auto native = palette::MatchQuery(L"shift times", palette::MakeKeys(L"Shift Times...", "time/shift"));
+    ASSERT_TRUE(native);
+    EXPECT_GT(native->score, english->score) << "the shown name before the English one";
+    EXPECT_EQ(2u, palette::MakeKeys(L"Open", "", L"open").size()) << "no English key when it is the name";
+
+    // The menu: "sjz py" is 时间轴 (the menu) then 平移 (the name).
+    auto by_menu = palette::MatchQuery(L"sjz py", translated);
+    ASSERT_TRUE(by_menu);
+    EXPECT_EQ((std::vector<size_t>{0, 1}), by_menu->positions);
+    EXPECT_EQ((std::vector<size_t>{0, 1, 2}), by_menu->path_positions);
+    auto name_only = palette::MatchQuery(L"py", translated), menu_only = palette::MatchQuery(L"sj", palette::MakeKeys(L"\u6253\u5f00", "x", L"", L"\u65f6\u95f4"));
+    ASSERT_TRUE(name_only && menu_only);
+    EXPECT_GT(name_only->score, menu_only->score) << "the name before the menu";
+
+    // Shortcuts as typed.
+    EXPECT_EQ(L"ctrl-shift-p", palette::CanonicalHotkey(L"Shift+Ctrl+P", true));
+    EXPECT_EQ(L"ctrl-shift-p", palette::CanonicalHotkey(L"ctrl shift p", true));
+    EXPECT_EQ(L"ctrl-shift-p", palette::CanonicalHotkey(L"Ctrl-Shift-P", false));
+    EXPECT_EQ(L"ctrl--", palette::CanonicalHotkey(L"Ctrl--", true));
+    EXPECT_EQ(L"f6", palette::CanonicalHotkey(L"F6", true));
+    EXPECT_EQ(L"ctrl-shift-", palette::CanonicalHotkey(L"ctrl+shift+", true));
+    EXPECT_EQ(L"", palette::CanonicalHotkey(L"ctrl shift", true)) << "modifiers alone, no '+' after";
+    EXPECT_EQ(L"", palette::CanonicalHotkey(L"hide tags", true));
+    EXPECT_EQ(L"", palette::CanonicalHotkey(L"a", true)) << "one letter is a name being typed";
+    EXPECT_EQ(L"a", palette::CanonicalHotkey(L"A", false));
+}
+
+TEST_F(ordinary_edit, command_palette_finds_dialogue_as_runs_and_reads_goto_queries) {
+    // Dialogue: each word one run, in the text or its pinyin, not scattered.
+    auto keys = palette::MakeTextKeys(L"\u6253\u5f00\u5b57\u5e55\u6587\u4ef6"); // 打开字幕文件
+    auto syllables = palette::MatchQuery(L"zimu", keys, true);
+    ASSERT_TRUE(syllables);
+    EXPECT_EQ((std::vector<size_t>{2, 3}), syllables->positions);
+    EXPECT_FALSE(palette::MatchQuery(L"imu", keys, true)) << "pinyin runs start a syllable";
+    EXPECT_FALSE(palette::MatchQuery(L"dz", keys, true)) << "initials not side by side";
+    EXPECT_TRUE(palette::MatchQuery(L"dz", keys, false)) << "as a command name it would match";
+    auto words = palette::MatchQuery(L"wj dk", keys, true);
+    ASSERT_TRUE(words);
+    EXPECT_EQ((std::vector<size_t>{0, 1, 4, 5}), words->positions);
+    auto english = palette::MatchQuery(L"orl", palette::MakeTextKeys(L"Hello world"), true);
+    ASSERT_TRUE(english);
+    EXPECT_EQ((std::vector<size_t>{7, 8, 9}), english->positions) << "plain text: anywhere";
+
+    EXPECT_EQ(120, palette::ParseGoto(L" 120 ").line);
+    EXPECT_EQ(-1, palette::ParseGoto(L"120").time);
+    EXPECT_EQ(83450, palette::ParseGoto(L"1:23.45").time);
+    EXPECT_EQ(3723000, palette::ParseGoto(L"1:02:03").time);
+    EXPECT_EQ(83000, palette::ParseGoto(L"1\uff1a23").time) << "a Chinese input method's colon";
+    EXPECT_EQ(12, palette::ParseGoto(L"\uff11\uff12").line) << "full-width digits";
+    EXPECT_EQ(0, palette::ParseGoto(L"abc").line);
+    EXPECT_EQ(-1, palette::ParseGoto(L"abc").time);
+    EXPECT_EQ(0, palette::ParseGoto(L"").line);
+    EXPECT_EQ(-1, palette::ParseGoto(L":").time) << "no digits";
+}
+
+TEST_F(ordinary_edit, command_palette_finds_lines_and_goes_to_lines_and_times) {
+    std::vector<int> ids{LiveRead(*c).Events.front().Id};
+    {
+        auto write = c->subtitleAccess->TryWrite();
+        auto& file = LiveWriteForTest(*c);
+        struct { int start, end; char const *text; bool comment; } rows[] = {
+            {1000, 2000, "{\\i1}Hello\\Nworld", false},
+            {3000, 5000, "\u6253\u5f00\u5b57\u5e55\u6587\u4ef6", false},
+            {6000, 7000, "a note world", true},
+        };
+        for (auto const& row : rows) {
+            auto line = new AssDialogue;
+            line->Start = row.start; line->End = row.end;
+            line->Text = row.text; line->Comment = row.comment;
+            line->Actor = "Kei";
+            file.Events.push_back(*line);
+            ids.push_back(line->Id);
+        }
+        file.Commit("", AssFile::COMMIT_DIAG_ADDREM);
+    }
+
+    CommandPalette palette(c.get());
+    palette.SetQuery("@");
+    EXPECT_EQ(CommandPalette::Mode::Lines, palette.CurrentMode());
+    EXPECT_TRUE(palette.Targets().empty());
+    EXPECT_FALSE(palette.EmptyMessage().empty()) << "says what to type";
+
+    palette.SetQuery("@world");
+    ASSERT_EQ(2u, palette.Targets().size()) << "a comment is found too";
+    EXPECT_TRUE(palette.Shown().empty()) << "no commands in this mode";
+    auto const& hello = palette.Targets()[0];
+    EXPECT_EQ(ids[1], hello.line_id);
+    EXPECT_EQ("Hello world", hello.text) << "tags dropped, \\N a space";
+    EXPECT_EQ((std::vector<size_t>{6, 7, 8, 9, 10}), hello.match.positions);
+    EXPECT_EQ("0:00:01.00", hello.aside);
+    EXPECT_TRUE(hello.detail.StartsWith("#2"));
+    EXPECT_TRUE(hello.detail.Contains("Kei"));
+    EXPECT_TRUE(palette.Targets()[1].comment);
+
+    palette.SetQuery(wxString::FromUTF8("\uff20zimu")); // ＠, as a Chinese input method types it
+    ASSERT_EQ(1u, palette.Targets().size());
+    EXPECT_EQ(ids[2], palette.Targets()[0].line_id);
+    palette.SetQuery("@world hello");
+    ASSERT_EQ(1u, palette.Targets().size());
+    palette.SetQuery("@hw");
+    EXPECT_TRUE(palette.Targets().empty());
+    EXPECT_FALSE(palette.EmptyMessage().empty());
+
+    // ':' a line number
+    palette.SetQuery(":3");
+    EXPECT_EQ(CommandPalette::Mode::Goto, palette.CurrentMode());
+    ASSERT_EQ(1u, palette.Targets().size());
+    EXPECT_EQ(ids[2], palette.Targets()[0].line_id);
+    palette.SetQuery(":99");
+    EXPECT_TRUE(palette.Targets().empty());
+    EXPECT_TRUE(palette.EmptyMessage().Contains("99"));
+    palette.SetQuery(":");
+    EXPECT_TRUE(palette.Targets().empty());
+    EXPECT_FALSE(palette.EmptyMessage().empty());
+
+    // ...or a time: with no video, the line on screen then first; seeking
+    // is there but not available.
+    palette.SetQuery(":0:00:03.5");
+    ASSERT_EQ(2u, palette.Targets().size());
+    EXPECT_EQ(ids[2], palette.Targets()[0].line_id);
+    EXPECT_EQ(3500, palette.Targets()[1].time);
+    EXPECT_FALSE(palette.Targets()[1].enabled);
+    palette.SetQuery(":5.5");
+    ASSERT_EQ(1u, palette.Targets().size()) << "nothing on screen or after but a comment";
+    EXPECT_EQ(5500, palette.Targets()[0].time);
+
+    palette.SetQuery(":0:00:03.5");
+    palette.Select(1);
+    EXPECT_FALSE(palette.Accept()) << "no video to seek";
+    palette.Select(0);
+    EXPECT_TRUE(palette.Accept());
+    ASSERT_TRUE(palette.ChosenTarget());
+    palette.GoToChosen();
+    EXPECT_EQ(ids[2], c->selectionController->ActiveID());
+    EXPECT_EQ(std::set<int>{ids[2]}, c->selectionController->SelectedIDs());
+
+    // Through the command: the line is gone to once the palette has closed.
+    struct Choose : wxModalDialogHook {
+        Choose() { Register(); }
+        int Enter(wxDialog *dialog) override {
+            auto palette = dynamic_cast<CommandPalette*>(dialog);
+            if (!palette) return wxID_NONE;
+            palette->SetQuery(wxString::FromUTF8("\uff1a2"));
+            palette->CallAfter([palette] { EXPECT_TRUE(palette->Accept()); });
+            return wxID_NONE;
+        }
+        void Exit(wxDialog *) override {}
+    } choose;
+    cmd::call("app/command_palette", c.get());
+    EXPECT_EQ(ids[1], c->selectionController->ActiveID());
+
+    // While the comparison tab is in front the lines are shown, not gone to.
+    auto page = new testing_comparison_page(tabs->Book());
+    tabs->OpenComparison(page, "other.ass");
+    CommandPalette locked(c.get());
+    locked.SetQuery("@world");
+    ASSERT_FALSE(locked.Targets().empty());
+    EXPECT_FALSE(locked.Targets()[0].enabled);
+    EXPECT_FALSE(locked.Accept());
+    tabs->ComparisonEnded(false);
+}
+
+TEST_F(ordinary_edit, command_palette_finds_settings_and_opens_them_searched_for) {
+    CommandPalette palette(c.get());
+    palette.SetQuery(",");
+    EXPECT_EQ(CommandPalette::Mode::Settings, palette.CurrentMode());
+    EXPECT_TRUE(palette.Targets().empty());
+    EXPECT_FALSE(palette.EmptyMessage().empty());
+
+    palette.SetQuery(", seek line start");
+    ASSERT_FALSE(palette.Targets().empty());
+    auto const& seek = palette.Targets()[0];
+    EXPECT_EQ("Seek video to line start on selection change", seek.text);
+    EXPECT_EQ(seek.text, seek.setting);
+    EXPECT_FALSE(seek.aside.empty()) << "the page it is on";
+    EXPECT_FALSE(seek.match.positions.empty());
+
+    palette.SetQuery(wxString::FromUTF8("\uff0caudio")); // ，, as a Chinese input method types it
+    auto const& audio = palette.Targets();
+    ASSERT_FALSE(audio.empty());
+    EXPECT_TRUE(std::any_of(audio.begin(), audio.end(), [](auto const& t) { return t.aside.empty() && t.text == "Audio"; })) << "the page itself";
+    palette.SetQuery(",qqqqzzzz");
+    EXPECT_TRUE(palette.Targets().empty());
+
+    // Chosen: once the palette has closed, the settings open searched for it.
+    palette.SetQuery(", seek line start");
+    ASSERT_TRUE(palette.Accept());
+    struct Look : wxModalDialogHook {
+        bool seen = false;
+        Look() { Register(); }
+        int Enter(wxDialog *dialog) override {
+            auto prefs = dynamic_cast<Preferences*>(dialog);
+            if (!prefs) return wxID_NONE;
+            seen = true;
+            EXPECT_FALSE(prefs->MatchingPages().empty());
+            EXPECT_EQ(prefs->MatchingPages().front(), prefs->CurrentPage());
+            EXPECT_FALSE(prefs->MatchingControls(prefs->CurrentPage()).empty());
+            return wxID_CANCEL;
+        }
+        void Exit(wxDialog *) override {}
+    } look;
+    palette.GoToChosen();
+    EXPECT_TRUE(look.seen);
+}
+
+TEST_F(ordinary_edit, command_palette_orders_by_use_and_remembers_what_was_chosen_for_a_query) {
+    // The bonus: more for more uses, less as they get older, never much.
+    EXPECT_EQ(0, palette::UsageBonus(0, 0));
+    EXPECT_GT(palette::UsageBonus(3, 0), palette::UsageBonus(1, 0));
+    EXPECT_GT(palette::UsageBonus(1, 0), palette::UsageBonus(1, 2 * 86400));
+    EXPECT_GT(palette::UsageBonus(1, 2 * 86400), palette::UsageBonus(1, 60 * 86400));
+    EXPECT_EQ(24, palette::UsageBonus(1000, 0));
+    auto use = palette::ParseUsage("time/shift\t3\t1700000000");
+    ASSERT_TRUE(use);
+    EXPECT_EQ("time/shift", use->name);
+    EXPECT_EQ(3, use->count);
+    EXPECT_EQ(1700000000, use->last);
+    EXPECT_EQ("time/shift\t3\t1700000000", palette::FormatUsage(*use));
+    for (auto bad : {"", "time/shift", "time/shift\tx\t1", "\t1\t1", "a\t0\t1"})
+        EXPECT_FALSE(palette::ParseUsage(bad)) << bad;
+
+    auto clear = [] {
+        for (auto option : {"App/Command Palette/Recent", "App/Command Palette/Usage", "App/Command Palette/Queries"})
+            OPT_SET(option)->SetListString({});
+    };
+
+    // Before uses were counted: the recent list is read as one use each.
+    clear();
+    OPT_SET("App/Command Palette/Recent")->SetListString({"app/exit", "grid/tags/hide"});
+    {
+        CommandPalette old(c.get());
+        auto order = old.Shown();
+        ASSERT_GE(order.size(), 2u);
+        EXPECT_EQ("app/exit", order[0]);
+        EXPECT_EQ("grid/tags/hide", order[1]);
+    }
+
+    // The first use counted is one, not one more than the recent list
+    // it was read from before it was written.
+    clear();
+    CommandPalette::Remember("app/exit");
+    EXPECT_TRUE(OPT_GET("App/Command Palette/Usage")->GetListString().at(0).starts_with("app/exit\t1\t"));
+
+    // Used more often comes before used once more lately.
+    clear();
+    for (int i = 0; i < 3; ++i) CommandPalette::Remember("app/exit");
+    CommandPalette::Remember("grid/tags/hide");
+    EXPECT_EQ("grid/tags/hide\t1", OPT_GET("App/Command Palette/Usage")->GetListString().at(0).substr(0, 16));
+    {
+        CommandPalette often(c.get());
+        auto order = often.Shown();
+        ASSERT_GE(order.size(), 2u);
+        EXPECT_EQ("app/exit", order[0]);
+        EXPECT_EQ("grid/tags/hide", order[1]);
+        EXPECT_GT(often.ShownItem(0).usage_bonus, often.ShownItem(1).usage_bonus);
+    }
+
+    // What was chosen for a query comes first for it, and gains a little
+    // while the query is being typed.
+    clear();
+    std::string wanted;
+    {
+        CommandPalette before(c.get());
+        before.SetQuery("sa");
+        auto found = before.Shown();
+        ASSERT_GE(found.size(), 3u);
+        wanted = found[2];
+    }
+    CommandPalette::Remember(wanted, "S A");
+    EXPECT_EQ("sa\t" + wanted, OPT_GET("App/Command Palette/Queries")->GetListString().at(0)) << "kept lower case, without spaces";
+    {
+        CommandPalette after(c.get());
+        after.SetQuery("sa");
+        ASSERT_FALSE(after.Shown().empty());
+        EXPECT_EQ(wanted, after.Shown()[0]);
+        int remembered = after.ShownMatch(0).score;
+        after.SetQuery("s");
+        auto partly = after.Shown();
+        auto at = std::find(partly.begin(), partly.end(), wanted);
+        ASSERT_NE(partly.end(), at);
+        EXPECT_LT(after.ShownMatch(at - partly.begin()).score, remembered);
+    }
+    CommandPalette::Remember("app/exit", "sa");
+    auto queries = OPT_GET("App/Command Palette/Queries")->GetListString();
+    EXPECT_EQ("sa\tapp/exit", queries.at(0));
+    EXPECT_EQ(1, std::count_if(queries.begin(), queries.end(), [](auto const& q) { return q.starts_with("sa\t"); })) << "one choice a query, the latest";
+    clear();
+}
+
 TEST_F(ordinary_edit, command_palette_lists_commands_remembers_choices_and_runs_after_closing) {
-    OPT_SET("App/Command Palette/Recent")->SetListString({});
+    for (auto option : {"App/Command Palette/Recent", "App/Command Palette/Usage", "App/Command Palette/Queries"})
+        OPT_SET(option)->SetListString({});
     {
         CommandPalette palette(c.get());
         auto all = palette.Shown();
@@ -685,6 +1033,29 @@ TEST_F(ordinary_edit, command_palette_lists_commands_remembers_choices_and_runs_
         palette.SetQuery("qqqqzzzz");
         EXPECT_TRUE(palette.Shown().empty());
         EXPECT_FALSE(palette.Accept());
+
+        // Words in any order; the menu each command is in.
+        palette.SetQuery("tags hide");
+        ASSERT_FALSE(palette.Shown().empty());
+        EXPECT_EQ("grid/tags/hide", palette.Shown()[0]);
+        EXPECT_FALSE(palette.ShownItem(0).path.empty());
+        palette.SetQuery("timing shift");
+        auto timing = palette.Shown();
+        ASSERT_GE(timing.size(), 1u);
+        auto shift = std::find(timing.begin(), timing.end(), "time/shift");
+        ASSERT_NE(timing.end(), shift);
+        EXPECT_LT(shift - timing.begin(), 3);
+        EXPECT_FALSE(palette.ShownMatch(shift - timing.begin()).path_positions.empty());
+
+        // By shortcut, in any spelling, the shortcut marked.
+        palette.SetQuery("q+ctrl");
+        ASSERT_FALSE(palette.Shown().empty());
+        EXPECT_EQ("app/exit", palette.Shown()[0]);
+        EXPECT_EQ(L"Ctrl-Q", palette.ShownMatch(0).hotkey);
+        palette.SetQuery("ctrl+");
+        auto with_ctrl = palette.Shown();
+        EXPECT_GT(with_ctrl.size(), 10u);
+        EXPECT_NE(with_ctrl.end(), std::find(with_ctrl.begin(), with_ctrl.end(), "app/exit"));
     }
 
     // Through the command: the palette closes, then the chosen command runs.
@@ -1090,6 +1461,79 @@ TEST_F(ordinary_edit, preferences_rows_are_drawn_controls_that_set_their_options
     EXPECT_TRUE(enable->GetValue() == pending("App/Auto/Save")->GetBool());
 }
 
+TEST_F(ordinary_edit, preferences_transcription_shows_what_the_way_chosen_uses) {
+    auto backend = OPT_GET("Tool/Transcribe/Backend")->GetInt();
+    Preferences prefs(window);
+    auto book = prefs.Book();
+    OptionPage *page = nullptr;
+    for (size_t i = 0; i < book->GetPageCount(); ++i)
+        if (auto p = dynamic_cast<OptionPage*>(book->GetPage(i)); p && p->ControlOf("Tool/Transcribe/Backend")) page = p;
+    ASSERT_TRUE(page);
+    auto list = dynamic_cast<FlatChoice*>(page->ControlOf("Tool/Transcribe/Backend"));
+    ASSERT_TRUE(list);
+    // Whisper listed before a program of one's own, each kept as it was:
+    // ElevenLabs 0, a program 1, Whisper 2
+    bool const local = transcribe::CanRunLocal();
+    std::vector<int> const values = local ? std::vector<int>{0, 2, 1} : std::vector<int>{0, 1};
+    ASSERT_EQ(values.size(), list->GetItems().size());
+    EXPECT_EQ(_("ElevenLabs Scribe, over the net"), list->GetItems().front());
+    EXPECT_EQ(_("A program of your own, run here"), list->GetItems().back());
+    if (local) EXPECT_EQ(_("Whisper, built in, on this computer"), list->GetItems()[1]);
+
+    auto shown = [&](const char *option) {
+        auto control = page->ControlOf(option);
+        EXPECT_TRUE(control) << option;
+        return control && control->IsShown();
+    };
+    std::vector<const char*> const whisper_rows{"Tool/Transcribe/Local/Model", "Tool/Transcribe/Local/Use GPU", "Tool/Transcribe/Local/Threads"};
+    std::vector<const char*> const elevenlabs_rows{"Tool/Transcribe/Secondary Languages", "Tool/Transcribe/Diarize",
+        "Tool/Transcribe/ElevenLabs/Model", "Tool/Transcribe/Ask"};
+    std::vector<const char*> const term_rows{"Tool/Transcribe/Keyterms From Actors", "Tool/Transcribe/Keyterms"};
+    // As the list is changed, before OK: only what the way chosen uses
+    for (int index : local ? std::vector<int>{1, 2, 0, 1} : std::vector<int>{1, 0}) {
+        list->Choose(index);
+        int const way = values[index];
+        auto pending = prefs.Pending("Tool/Transcribe/Backend");
+        ASSERT_TRUE(pending);
+        EXPECT_EQ(way, pending->GetInt()) << index;
+        EXPECT_TRUE(shown("Tool/Transcribe/Language")) << "every way's: " << way;
+        if (local) for (auto option : whisper_rows) EXPECT_EQ(way == 2, shown(option)) << option << " " << way;
+        for (auto option : elevenlabs_rows) EXPECT_EQ(way == 0, shown(option)) << option << " " << way;
+        for (auto option : term_rows) EXPECT_EQ(way != 1, shown(option)) << "ElevenLabs' and Whisper's: " << option << " " << way;
+        EXPECT_EQ(way == 1, shown("Tool/Transcribe/Command")) << way;
+    }
+    // A row hidden for now is not found by searching
+    prefs.Search("ElevenLabs model");
+    EXPECT_TRUE(prefs.MatchingPages().empty()) << "a program of one's own chosen";
+    // The ↺ back to the default, ElevenLabs, as well
+    page->Reset("Tool/Transcribe/Backend");
+    EXPECT_TRUE(shown("Tool/Transcribe/ElevenLabs/Model"));
+    EXPECT_FALSE(shown("Tool/Transcribe/Command"));
+    if (local) EXPECT_FALSE(shown(whisper_rows.front()));
+    prefs.Search("ElevenLabs model");
+    EXPECT_FALSE(prefs.MatchingPages().empty());
+    prefs.Search("");
+    EXPECT_EQ(backend, OPT_GET("Tool/Transcribe/Backend")->GetInt()) << "only once OK is pressed";
+}
+
+TEST_F(ordinary_edit, preferences_unsure_threshold_only_with_the_effect_marks) {
+    Preferences prefs(window);
+    auto book = prefs.Book();
+    OptionPage *page = nullptr;
+    for (size_t i = 0; i < book->GetPageCount(); ++i)
+        if (auto p = dynamic_cast<OptionPage*>(book->GetPage(i)); p && p->ControlOf("Tool/Speech Import/Marks")) page = p;
+    ASSERT_TRUE(page);
+    auto marks = dynamic_cast<FlatCheck*>(page->ControlOf("Tool/Speech Import/Marks"));
+    auto unsure = page->ControlOf("Tool/Speech Import/Unsure Below");
+    ASSERT_TRUE(marks); ASSERT_TRUE(unsure);
+    EXPECT_FALSE(marks->GetValue()) << "off unless asked for";
+    EXPECT_FALSE(unsure->IsThisEnabled());
+    marks->Toggle();
+    EXPECT_TRUE(unsure->IsThisEnabled());
+    page->Reset("Tool/Speech Import/Marks");
+    EXPECT_FALSE(unsure->IsThisEnabled());
+}
+
 TEST_F(ordinary_edit, preferences_pages_are_listed_by_use_with_their_matches) {
     Preferences prefs(window);
     auto book = prefs.Book();
@@ -1431,6 +1875,47 @@ TEST_F(ordinary_edit, style_look_applies_the_tags_before_a_point_of_the_line) {
     EXPECT_EQ(0,PlainPosition("{\\b1}abc",5)); EXPECT_EQ(2,PlainPosition("{\\b1}abc",7)); EXPECT_EQ(3,PlainPosition("a{b",3));
 }
 
+TEST_F(ordinary_edit, ctrl_z_from_anywhere_in_the_style_panel_undoes) {
+    {auto write=c->subtitleAccess->TryWrite();auto &file=LiveWriteForTest(*c);
+     file.Events.front().Text="Hello world";
+     file.Commit("fixture",AssFile::COMMIT_NEW);}
+    auto line=[&] { return std::string(LiveRead(*c).Events.front().Text.get()); };
+    auto id=LiveRead(*c).Events.front().Id;
+    c->selectionController->SetSelectionAndActiveIDs({id},id);
+    c->textSelectionController->SetSelection(0,0);
+    // As the main window has its hotkeys
+    auto frame_keys=[&](wxKeyEvent &e){ hotkey::check("Main Frame",c.get(),e); };
+    window->Bind(wxEVT_CHAR_HOOK,frame_keys);
+    BOOST_SCOPE_EXIT_ALL(&){ window->Unbind(wxEVT_CHAR_HOOK,frame_keys); };
+    auto panel=new StylePanel(window,c.get());
+    window->SetSize(500,900); window->Show(); window->Layout(); panel->SetSize(window->GetClientSize());
+    BOOST_SCOPE_EXIT_ALL(&){ window->Hide(); };
+    panel->UpdateNow(); wxYield();
+    auto ctrl_z=[&](wxWindow *at){
+        wxKeyEvent e(wxEVT_CHAR_HOOK); e.m_keyCode='Z'; e.SetControlDown(true); e.SetEventObject(at);
+        at->GetEventHandler()->ProcessEvent(e);
+    };
+    // From each part Tab stops at, on every page
+    for(int page=0;page<3;++page){
+        panel->ShowPage(static_cast<StylePanel::Page>(page)); panel->UpdateNow(); wxYield();
+        auto parts=panel->KeyboardParts();
+        ASSERT_FALSE(parts.empty());
+        for(auto part:parts){
+            panel->EnterNumber("size",52,true);
+            ASSERT_EQ("{\\fs52}Hello world",line());
+            ctrl_z(part);
+            EXPECT_EQ("Hello world",line()) << "page " << page << ": " << typeid(*part).name();
+            panel->UpdateNow();
+        }
+        panel->ShowPage(StylePanel::Page::Style);
+    }
+    // From the box a number is typed in
+    panel->UpdateNow();
+    panel->EnterNumber("size",52,true);
+    ctrl_z(panel);
+    EXPECT_EQ("Hello world",line()) << "from the panel itself";
+}
+
 TEST_F(ordinary_edit, style_panel_changes_the_text_through_its_controls) {
     {auto write=c->subtitleAccess->TryWrite();auto &file=LiveWriteForTest(*c);
      auto style=new AssStyle();style->name="Look";style->fontsize=40;style->alignment=2;file.Styles.push_back(*style);
@@ -1474,14 +1959,18 @@ TEST_F(ordinary_edit, style_panel_changes_the_text_through_its_controls) {
     EXPECT_FALSE(box->IsShown());
     EXPECT_EQ("{\\i1\\an9\\fsp1.5}Hello world",line());
     panel->StartEditing("spacing"); box->ChangeValue("abc");
+    // Kept open for the number to be put right while it has the keyboard; it
+    // has not where wxOSX's window is not the key window (CI's macOS runner)
+    bool const typing=box->HasFocus();
     box->GetEventHandler()->ProcessEvent(enter);
-    EXPECT_TRUE(box->IsShown()) << "not a number: stays open";
+    if (typing) EXPECT_TRUE(box->IsShown()) << "not a number: stays open";
+    else EXPECT_FALSE(box->IsShown()) << "not a number, and the keyboard elsewhere: closed";
     wxKeyEvent escape(wxEVT_CHAR_HOOK); escape.m_keyCode=WXK_ESCAPE; escape.SetEventObject(box); box->GetEventHandler()->ProcessEvent(escape);
     EXPECT_FALSE(box->IsShown());
     EXPECT_EQ("{\\i1\\an9\\fsp1.5}Hello world",line());
 
     // Font and weight
-    panel->ChooseFont("Test Font");
+    panel->ChooseFontName("Test Font");
     EXPECT_EQ("{\\i1\\an9\\fsp1.5\\fnTest Font}Hello world",line());
     panel->ChooseWeight(700,false);
     EXPECT_EQ("{\\an9\\fsp1.5\\fnTest Font\\b1}Hello world",line());
@@ -1677,7 +2166,7 @@ TEST_F(ordinary_edit, style_panel_moves_scales_turns_and_fades_lines) {
     c->textSelectionController->SetSelection(0,0);
     auto panel=new StylePanel(window,c.get());
     auto shown=[&] { panel->UpdateNow(); return panel->Shown(); };
-    EXPECT_FALSE(panel->IsSectionShown("transform")) << "folded at first";
+    EXPECT_TRUE(panel->IsSectionShown("transform")) << "open at first";
 
     // Without \pos: where alignment and margins put it
     auto s=shown();
@@ -1905,8 +2394,17 @@ TEST_F(ordinary_edit, edit_box_style_box_is_typed_in_and_completes_a_style) {
     ASSERT_NE(nullptr,style);
     auto editor=style->GetEditor(); ASSERT_NE(nullptr,editor);
     auto line_style=[&](int n) { return std::next(LiveRead(*c).Events.begin(),n)->Style.get(); };
-    // Typing replaces what is chosen in the field, as a key does
-    auto type=[&](wxString const& text) { editor->WriteText(text); wxTheApp->ProcessPendingEvents(); };
+    // Typing replaces what is chosen in the field, as a key does: the field
+    // changed, then told of once. Not WriteText, after which wxMSW tells of it
+    // again where a handler changed the field meanwhile, as no key has it do
+    auto type=[&](wxString const& text) {
+        long from,to; editor->GetSelection(&from,&to);
+        wxString value=editor->GetValue(); value.replace(from,to-from,text);
+        editor->ChangeValue(value); editor->SetInsertionPoint(from+static_cast<long>(text.length()));
+        wxCommandEvent changed(wxEVT_TEXT,editor->GetId()); changed.SetEventObject(editor); changed.SetString(value);
+        editor->GetEventHandler()->ProcessEvent(changed);
+        wxTheApp->ProcessPendingEvents();
+    };
     auto chosen=[&] { long from,to; editor->GetSelection(&from,&to); return editor->GetValue().Mid(from,to-from); };
     EXPECT_EQ("Default",editor->GetValue()) << "the field shows the line's style";
 
@@ -2191,6 +2689,371 @@ TEST_F(ordinary_edit, style_panel_folds_away_in_narrow_windows_and_opens_from_it
     delete frame; // now: it watches an option the next test changes
 }
 
+TEST(style_list, samples_dark_letters_on_a_light_field) {
+    AssStyle white; white.primary=agi::Color(255,255,255); white.outline=agi::Color(0,0,0); white.outline_w=2;
+    auto light=[](wxColour c){ return c.Red()+c.Green()+c.Blue()>3*128; };
+    EXPECT_TRUE(light(StyleList::SampleField(white))) << "a black border: the edge is black";
+    white.outline_w=0;
+    EXPECT_FALSE(light(StyleList::SampleField(white))) << "white letters: the dark field, as on video";
+    AssStyle black; black.primary=agi::Color(0,0,0); black.outline_w=0;
+    EXPECT_TRUE(light(StyleList::SampleField(black))) << "black letters, no border";
+    black.outline=agi::Color(0,0,0); black.outline_w=2;
+    EXPECT_TRUE(light(StyleList::SampleField(black))) << "black letters, black border";
+    black.outline=agi::Color(255,255,255);
+    EXPECT_FALSE(light(StyleList::SampleField(black))) << "a white border shows on the dark field";
+    AssStyle navy; navy.primary=agi::Color(20,30,90); navy.outline_w=0;
+    EXPECT_TRUE(light(StyleList::SampleField(navy))) << "dark blue too";
+}
+
+TEST(tag_summary, says_what_each_block_of_tags_does) {
+    using namespace tag_summary;
+    auto kinds=[](Piece const& p){ std::vector<Kind> k; for(auto const& m:p.marks)k.push_back(m.kind); return k; };
+    auto u=[](const char *text){ return wxString::FromUTF8(text); };
+    auto pieces=Summarize("{\\fad(200,200)\\pos(640,80)}你好{\\c&H0000FF&}世界{译注：双关}");
+    ASSERT_EQ(5u,pieces.size());
+    EXPECT_TRUE(pieces[0].block);
+    EXPECT_EQ((std::vector<Kind>{Kind::Fade,Kind::Pos}),kinds(pieces[0]));
+    EXPECT_EQ("你好",pieces[1].text);
+    ASSERT_EQ((std::vector<Kind>{Kind::Colour}),kinds(pieces[2]));
+    EXPECT_EQ(1,pieces[2].marks[0].index);
+    EXPECT_EQ(agi::Color(255,0,0),pieces[2].marks[0].colour) << "&HBBGGRR&";
+    EXPECT_EQ((std::vector<Kind>{Kind::Note}),kinds(pieces[4])) << "a block without tags";
+    EXPECT_EQ(u("[Fade·Position]"),PlainText(pieces[0]));
+    auto tip=Describe(pieces[0]);
+    EXPECT_NE(wxString::npos,tip.find("Fade: in 200 ms, out 200 ms")) << tip;
+    EXPECT_NE(wxString::npos,tip.find("Position: (640, 80)")) << tip;
+    EXPECT_TRUE(tip.EndsWith("{\\fad(200,200)\\pos(640,80)}")) << "the block as written last";
+    EXPECT_EQ(u("Note: 译注：双关"),Describe(pieces[4]));
+    EXPECT_EQ(u("Primary colour: #FF0000\n{\\c&H0000FF&}"),Describe(pieces[2]));
+    // Where each piece is in the text, in bytes: the comparison page marks
+    // changed blocks by it
+    std::string whole="{\\fad(200,200)\\pos(640,80)}你好{\\c&H0000FF&}世界{译注：双关}";
+    for (size_t i=1;i<pieces.size();++i) EXPECT_EQ(pieces[i-1].end,pieces[i].begin);
+    EXPECT_EQ(0u,pieces[0].begin); EXPECT_EQ(whole.size(),pieces[4].end);
+    EXPECT_EQ(pieces[0].raw,whole.substr(pieces[0].begin,pieces[0].end-pieces[0].begin));
+    EXPECT_EQ("你好",whole.substr(pieces[1].begin,pieces[1].end-pieces[1].begin));
+
+    // The longest name first: \bord not \b, \be and \blur one kind, \fscx not \fs
+    auto one=Summarize("{\\bord2\\be1\\b1\\blur3\\fscx120\\fscy80\\fs40\\fsp2\\an8}x");
+    EXPECT_EQ((std::vector<Kind>{Kind::Border,Kind::Blur,Kind::Bold,Kind::Scale,Kind::FontSize,Kind::Spacing,Kind::Align}),kinds(one[0]));
+    EXPECT_EQ(8,one[0].marks.back().index);
+    EXPECT_EQ(2u,one[0].marks[3].tags.size()) << "\\fscx and \\fscy together";
+    // \t's tags are its own; \i0 is switched off
+    auto t=Summarize("{\\t(0,500,\\frz30\\fscx120)\\i0\\b1}x");
+    EXPECT_EQ((std::vector<Kind>{Kind::Transform,Kind::Italic,Kind::Bold}),kinds(t[0]));
+    EXPECT_TRUE(t[0].marks[1].off); EXPECT_FALSE(t[0].marks[2].off);
+    // Colours one a mark each, \3c and \4c told apart
+    auto c=Summarize("{\\3c&H000000&\\4c&H404040&\\c&HFF0000&}x");
+    ASSERT_EQ(3u,c[0].marks.size());
+    EXPECT_EQ(3,c[0].marks[0].index); EXPECT_EQ(4,c[0].marks[1].index); EXPECT_EQ(1,c[0].marks[2].index);
+    EXPECT_EQ(agi::Color(0,0,255),c[0].marks[2].colour);
+    // A rectangle clip and a drawn one
+    EXPECT_EQ(Kind::Clip,Summarize("{\\clip(0,0,640,360)}")[0].marks[0].kind);
+    EXPECT_EQ(Kind::VectorClip,Summarize("{\\clip(m 0 0 l 10 0 10 10)}")[0].marks[0].kind);
+    EXPECT_EQ(Kind::VectorClip,Summarize("{\\iclip(2,m 0 0 l 10 0 10 10)}")[0].marks[0].kind);
+    // \a as \an; tags it doesn't know
+    EXPECT_EQ(7,Summarize("{\\a5}")[0].marks[0].index);
+    EXPECT_EQ(5,Summarize("{\\a10}")[0].marks[0].index);
+    auto unknown=Summarize("{\\xyz9\\q2}");
+    EXPECT_EQ((std::vector<Kind>{Kind::Unknown}),kinds(unknown[0])) << "one icon for those it doesn't know";
+    EXPECT_EQ(2u,unknown[0].marks[0].tags.size());
+    EXPECT_NE(wxString::npos,Describe(unknown[0]).find("\\xyz9 \\q2")) << "each named in the tooltip";
+
+    // Karaoke timing alone: a bar between syllables
+    auto k=Summarize("{\\k20}这{\\kf30}是{\\k10\\b1}卡");
+    EXPECT_TRUE(k[0].karaoke); EXPECT_TRUE(k[2].karaoke);
+    EXPECT_FALSE(k[4].karaoke) << "with other tags: a chip";
+    EXPECT_EQ("|",PlainText(k[0]));
+
+    // A drawing: its points counted, the block ending it left out
+    auto d=Summarize("{\\an7\\pos(10,10)\\p1}m 0 0 l 100 0 100 100 0 100{\\p0}after");
+    ASSERT_EQ(3u,d.size());
+    EXPECT_EQ((std::vector<Kind>{Kind::Align,Kind::Pos,Kind::Drawing}),kinds(d[0]));
+    EXPECT_EQ(4,d[1].drawing_points);
+    EXPECT_EQ("after",d[2].text);
+    EXPECT_EQ(std::string("{\\an7\\pos(10,10)\\p1}m 0 0 l 100 0 100 100 0 100{\\p0}").size(),d[2].begin) << "past the block left out";
+    EXPECT_EQ("(4 points)",PlainText(d[1]));
+
+    // Braces left open: text as written
+    auto open=Summarize("abc{\\b1");
+    ASSERT_EQ(1u,open.size()); EXPECT_EQ("abc{\\b1",open[0].text);
+    EXPECT_TRUE(Summarize("").empty());
+
+    // Every kind drawn from an icon has one
+    for(int i=0;i<=static_cast<int>(Kind::Unknown);++i){
+        auto kind=static_cast<Kind>(i);
+        if(kind==Kind::Colour||kind==Kind::Align){EXPECT_EQ(nullptr,IconName(kind));continue;}
+        ASSERT_NE(nullptr,IconName(kind)) << i;
+        EXPECT_NE(nullptr,libresrc_modern_icon(IconName(kind))) << IconName(kind);
+        EXPECT_FALSE(KindName(kind).empty());
+    }
+}
+
+TEST_F(ordinary_edit, grid_text_column_draws_tag_chips_with_tooltips) {
+    auto columns=GetGridColumns();
+    auto &text=*columns.back();
+    ASSERT_EQ(_("Text"),text.Header());
+    AssDialogue line;
+    line.Text=std::string("{\\fad(200,200)\\pos(640,80)}Hello{\\i1}there");
+    BOOST_SCOPE_EXIT_ALL(&){ OPT_SET("Subtitle/Grid/Hide Overrides")->SetInt(1); };
+    OPT_SET("Subtitle/Grid/Hide Overrides")->SetInt(1);
+    wxBitmap bitmap(600,40);
+    wxMemoryDC dc(bitmap);
+    dc.SetFont(*wxNORMAL_FONT);
+    dc.SetBrush(*wxWHITE_BRUSH);dc.SetTextForeground(*wxBLACK);
+    dc.Clear();
+    text.Paint(dc,0,0,&line,c.get());
+    // Chips are drawn: something other than the text's black and the row's white
+    wxImage image=bitmap.ConvertToImage();
+    bool grey=false;
+    for(int y=0;y<image.GetHeight()&&!grey;++y)for(int x=0;x<GridColumn::cell_padding+40&&!grey;++x){
+        int r=image.GetRed(x,y);grey=r>200&&r<250&&image.GetGreen(x,y)==r;
+    }
+    EXPECT_TRUE(grey) << "the chip's fill";
+    // Its tooltip says what it does; between the chips, none
+    auto tip=text.Tooltip(dc,GridColumn::cell_padding+4,&line,c.get());
+    EXPECT_NE(wxString::npos,tip.find("Fade")) << tip;
+    EXPECT_TRUE(text.Tooltip(dc,2,&line,c.get()).empty()) << "left of it";
+    int hello=dc.GetTextExtent("Hel").x;
+    // Past the first chip, in "Hello": none
+    std::vector<int> tipped;
+    for(int x=0;x<400;++x) if(!text.Tooltip(dc,x,&line,c.get()).empty()) tipped.push_back(x);
+    ASSERT_FALSE(tipped.empty());
+    bool gap=false;for(size_t i=1;i<tipped.size();++i)if(tipped[i]>tipped[i-1]+hello)gap=true;
+    EXPECT_TRUE(gap) << "two chips with the text between";
+    // Shown in full, or left out: no chips, no tooltips
+    OPT_SET("Subtitle/Grid/Hide Overrides")->SetInt(0);
+    EXPECT_TRUE(text.Tooltip(dc,GridColumn::cell_padding+4,&line,c.get()).empty());
+    OPT_SET("Subtitle/Grid/Hide Overrides")->SetInt(2);
+    EXPECT_TRUE(text.Tooltip(dc,GridColumn::cell_padding+4,&line,c.get()).empty());
+    dc.SelectObject(wxNullBitmap);
+}
+
+TEST(script_text, splits_into_one_sentence_a_line) {
+    using script_text::SplitSentences;
+    auto u=[](const char *text){ return wxString::FromUTF8(text); };
+    EXPECT_EQ(u("今天天气很好。\n我们去公园吧！\n好吗？"),SplitSentences(u("今天天气很好。我们去公园吧！好吗？")));
+    EXPECT_EQ(u("他说：“好。”\n然后走了。"),SplitSentences(u("他说：“好。”然后走了。"))) << "the closing quote with its sentence";
+    EXPECT_EQ(u("真的吗？！\n嗯……\n我想想。"),SplitSentences(u("真的吗？！嗯……我想想。"))) << "a run of marks together";
+    EXPECT_EQ(u("Hello there.\nIt costs 3.14 dollars!\nReally?!"),SplitSentences(u("Hello there. It costs 3.14 dollars! Really?!")))
+        << "half-width marks only before a space";
+    EXPECT_EQ(u("Wait...\n\"Why?\"\nNo."),SplitSentences(u("Wait... \"Why?\" No.")));
+    EXPECT_EQ(u("e.g.this stays"),SplitSentences(u("e.g.this stays")));
+    EXPECT_EQ(u("第一行没有标点\n第二行。"),SplitSentences(u("第一行没有标点\n\n  第二行。　"))) << "lines kept, empty ones and spaces gone";
+    EXPECT_EQ(u("a\nb"),SplitSentences(u("a\r\nb")));
+    EXPECT_EQ(u(""),SplitSentences(u("   \n")));
+    auto once=SplitSentences(u("一。二！三"));
+    EXPECT_EQ(once,SplitSentences(once)) << "split again: as it was";
+    EXPECT_EQ(3,script_text::CountLines(u("a\n\nb\n c \n")));
+    EXPECT_EQ(0,script_text::CountLines(u("")));
+}
+
+TEST_F(ordinary_edit, script_text_is_saved_in_the_ass_file_and_marks_it_changed) {
+    using Field=SubtitleProjectAccess::MetadataField;
+    auto path=agi::fs::path((std::filesystem::current_path()/"script-text.ass").wstring());
+    c->subsController->Save(path,"utf-8");ASSERT_FALSE(c->subsController->IsModified());
+    auto undo=c->subsController->GetUndoDescription();
+    // The characters the section uses, a line break and a line starting with "["
+    std::string script="第一句，有逗号: 冒号 # 井号 | 竖线。\n[Events]\n  indented\n";
+    c->subtitleAccess->SetMetadata(Field::ScriptText,script);
+    EXPECT_TRUE(c->subsController->IsModified());
+    EXPECT_EQ(undo,c->subsController->GetUndoDescription()) << "not a step to undo";
+    c->subsController->Save(path,"utf-8");EXPECT_FALSE(c->subsController->IsModified());
+    {
+        std::ifstream in(path.string());std::string all((std::istreambuf_iterator<char>(in)),std::istreambuf_iterator<char>());
+        EXPECT_NE(std::string::npos,all.find("\nScript Text: ")) << "in [Aegisub Project Garbage]";
+        EXPECT_EQ(std::string::npos,all.find("\n[Events]\n  indented")) << "on one line";
+    }
+    c->subsController->Close();
+    EXPECT_EQ("",LiveRead(*c).Properties.script_text);
+    c->subsController->Load(path,"utf-8");
+    EXPECT_EQ(script,LiveRead(*c).Properties.script_text);
+    EXPECT_FALSE(c->subsController->IsModified());
+    EXPECT_EQ(1u,static_cast<size_t>(std::distance(LiveRead(*c).Events.begin(),LiveRead(*c).Events.end()))) << "no line read from it";
+    // Emptied: a change too
+    c->subtitleAccess->SetMetadata(Field::ScriptText,"");
+    EXPECT_TRUE(c->subsController->IsModified());
+}
+
+TEST_F(ordinary_edit, script_panel_takes_the_style_panels_place_and_writes_the_script) {
+    auto u=[](const char *text){ return wxString::FromUTF8(text); };
+    OPT_SET("App/Style Panel/Show")->SetBool(true);
+    OPT_SET("App/Script Panel/Show")->SetBool(false);
+    auto frame=new wxFrame(nullptr,-1,"script");
+    BOOST_SCOPE_EXIT_ALL(&){ delete frame; OPT_SET("App/Script Panel/Show")->SetBool(false); OPT_SET("App/Style Panel/Show")->SetBool(true); };
+    auto root=new wxPanel(frame);
+    auto panel=new StylePanel(root,c.get());
+    auto script=new ScriptPanel(root,c.get());
+    auto edge=new StylePanelEdge(root,panel,script);
+    auto sizer=new wxBoxSizer(wxHORIZONTAL);
+    sizer->Add(new wxPanel(root),1,wxEXPAND);sizer->Add(edge,0,wxEXPAND);sizer->Add(panel,0,wxEXPAND);sizer->Add(script,0,wxEXPAND);
+    root->SetSizer(sizer);
+    frame->SetSize(frame->FromDIP(1400),700);frame->Show();
+    // Wide whatever the screen: a frame is kept within it, and CI's Windows
+    // runner's is 1024 wide, where the style panel folds
+    root->SetSize(root->FromDIP(1400),700);edge->Update();root->Layout();
+    panel->ShowPage(StylePanel::Page::Timing);
+    EXPECT_FALSE(script->IsShown());
+    EXPECT_TRUE(panel->IsShown());
+    EXPECT_EQ(0u,panel->Shown().count("script")) << "no button for it on the style panel";
+
+    // It takes the style panel's place, as wide; the script panel's own
+    // button puts the style panel back on its page
+    edge->OpenScript();
+    wxYield();
+    EXPECT_TRUE(edge->ScriptShown());
+    EXPECT_TRUE(script->IsShown());
+    EXPECT_FALSE(panel->IsShown()) << "not a page of the style panel: one or the other";
+    EXPECT_TRUE(OPT_GET("App/Script Panel/Show")->GetBool());
+    EXPECT_EQ(2,OPT_GET("App/Style Panel/Page")->GetInt()) << "the style panel's page left as it was";
+    EXPECT_EQ(panel->GetMinSize().x,script->GetSize().x);
+    EXPECT_GT(script->TextBox()->GetSize().y,script->GetClientSize().y/2) << "the text down the panel";
+    EXPECT_EQ("One sentence a line disabled",script->Shown()["split"]) << "nothing to split";
+    script->Press("style");
+    EXPECT_FALSE(edge->ScriptShown());
+    EXPECT_FALSE(script->IsShown());
+    EXPECT_TRUE(panel->IsShown());
+    EXPECT_EQ(StylePanel::Page::Timing,panel->ShownPage());
+    edge->ToggleScript();
+    EXPECT_TRUE(script->IsShown()) << "as the View menu does";
+    EXPECT_FALSE(panel->IsShown());
+    edge->ToggleScript();
+    EXPECT_TRUE(panel->IsShown()) << "and again: back";
+    EXPECT_FALSE(script->IsShown());
+    // A page asked for, as a shape line does, brings the style panel back
+    edge->OpenScript();
+    ASSERT_TRUE(script->IsShown());
+    panel->EditShape();
+    EXPECT_TRUE(panel->IsShown());
+    EXPECT_FALSE(script->IsShown());
+    // » folds it away; opened again, it is the script panel still
+    edge->OpenScript();
+    script->Press("collapse");
+    EXPECT_TRUE(edge->Folded());
+    EXPECT_FALSE(OPT_GET("App/Style Panel/Show")->GetBool());
+    edge->Open();
+    EXPECT_TRUE(script->IsShown());
+    EXPECT_FALSE(panel->IsShown());
+
+    // Typed: in the file at once, which is changed but has nothing to undo
+    auto undo=c->subsController->GetUndoDescription();
+    script->Type(u("第一句。第二句！\n第三句"));
+    EXPECT_EQ("第一句。第二句！\n第三句",LiveRead(*c).Properties.script_text);
+    EXPECT_TRUE(c->subsController->IsModified());
+    EXPECT_EQ(undo,c->subsController->GetUndoDescription());
+    EXPECT_EQ("2 lines",script->Shown()["count"]);
+    EXPECT_EQ("One sentence a line",script->Shown()["split"]);
+
+    // Split, then taken back by the same button
+    script->Press("split");
+    EXPECT_EQ(u("第一句。\n第二句！\n第三句"),script->TextBox()->GetValue());
+    EXPECT_EQ("第一句。\n第二句！\n第三句",LiveRead(*c).Properties.script_text);
+    EXPECT_EQ("3 lines",script->Shown()["count"]);
+    EXPECT_EQ("Undo the split",script->Shown()["split"]);
+    script->Press("split");
+    EXPECT_EQ("第一句。第二句！\n第三句",LiveRead(*c).Properties.script_text);
+    EXPECT_EQ("One sentence a line",script->Shown()["split"]);
+    // Typing after a split keeps it
+    script->Press("split");
+    script->Type(script->TextBox()->GetValue()+"\n");
+    EXPECT_EQ("One sentence a line",script->Shown()["split"]);
+    EXPECT_EQ("第一句。\n第二句！\n第三句\n",LiveRead(*c).Properties.script_text);
+
+    // Keys editing text stay in the box; the window's others go on to it
+    std::vector<int> reached;
+    {
+        frame->Bind(wxEVT_CHAR_HOOK,[&](wxKeyEvent &e){ reached.push_back(e.GetKeyCode()); });
+        auto press=[&](int key,int modifiers){
+            wxKeyEvent e(wxEVT_CHAR_HOOK);e.m_keyCode=key;
+            e.SetControlDown(modifiers&wxMOD_CONTROL);e.SetShiftDown(modifiers&wxMOD_SHIFT);e.SetAltDown(modifiers&wxMOD_ALT);
+            e.SetEventObject(script->TextBox());script->TextBox()->GetEventHandler()->ProcessEvent(e);
+        };
+        press('Z',wxMOD_CONTROL);press('V',wxMOD_CONTROL);press(WXK_DELETE,wxMOD_CONTROL);press(WXK_SPACE,0);press('A',wxMOD_SHIFT);
+        EXPECT_TRUE(reached.empty()) << "undo, paste, Ctrl+Delete, Space and typing are the box's";
+        press('S',wxMOD_CONTROL);press(WXK_F6,0);press('O',wxMOD_ALT);
+        EXPECT_EQ((std::vector<int>{'S',WXK_F6,'O'}),reached) << "save, F6 and Alt keys are the window's";
+    }
+
+    // Compared: the file's script can't change, nor the box
+    {
+        auto comparison=c->subtitleEditGate.TryBeginComparison();ASSERT_TRUE(comparison);
+        script->Type("changed");
+        EXPECT_EQ("第一句。\n第二句！\n第三句\n",LiveRead(*c).Properties.script_text);
+        EXPECT_EQ(u("第一句。\n第二句！\n第三句\n"),script->TextBox()->GetValue());
+        EXPECT_FALSE(script->Shown()["note"].empty()) << "says why";
+    }
+    script->Type("after");
+    EXPECT_EQ("after",LiveRead(*c).Properties.script_text);
+    EXPECT_TRUE(script->Shown()["note"].empty());
+
+    // Another file: its script in the box
+    {
+        auto write=c->subtitleAccess->TryWrite();
+        LiveWriteForTest(*c).LoadDefault();LiveWriteForTest(*c).Commit("",AssFile::COMMIT_NEW);
+    }
+    c->subtitleAccess->SetMetadata(SubtitleProjectAccess::MetadataField::ScriptText,"other");
+    EXPECT_EQ("other",script->TextBox()->GetValue());
+
+    // Folded, the strip names it after the pages and opens it
+    edge->Open(StylePanel::Page::Style);
+    EXPECT_TRUE(panel->IsShown()) << "a page's name: the style panel";
+    EXPECT_FALSE(script->IsShown());
+    OPT_SET("App/Style Panel/Show")->SetBool(false);
+    ASSERT_TRUE(edge->Folded());
+    int x=edge->GetClientSize().x-edge->FromDIP(10), script_at=-1, timing_at=-1;
+    for(int y=0;y<edge->FromDIP(500);y+=2){int p=edge->PageAt(wxPoint(x,y));if(p==2&&timing_at<0)timing_at=y;if(p==StylePanelEdge::script_name&&script_at<0)script_at=y;}
+    ASSERT_GT(timing_at,0); EXPECT_GT(script_at,timing_at);
+    edge->OpenScript();
+    EXPECT_FALSE(edge->Folded());
+    EXPECT_TRUE(script->IsShown());
+    EXPECT_FALSE(panel->IsShown());
+
+    // Once a page of the style panel: opened on the script panel instead
+    OPT_SET("App/Script Panel/Show")->SetBool(false);
+    OPT_SET("App/Style Panel/Page")->SetInt(3);
+    auto again=new StylePanel(root,c.get());
+    EXPECT_TRUE(OPT_GET("App/Script Panel/Show")->GetBool());
+    EXPECT_EQ(StylePanel::Page::Style,again->ShownPage());
+    EXPECT_EQ(0,OPT_GET("App/Style Panel/Page")->GetInt());
+    again->Destroy();
+}
+
+TEST_F(ordinary_edit, script_panel_writes_nothing_while_a_file_is_opened) {
+    // A file opened: the panel puts its script in the box while the file is
+    // sealed, until it is in. wxMSW tells of the box's colour then changed
+    // as of its text, which the panel would have stored, refused and an error
+    // where nothing was typed: told of here, after the panel has the script
+    auto path=agi::fs::path((std::filesystem::current_path()/"script-panel-opened.ass").wstring());
+    c->subtitleAccess->SetMetadata(SubtitleProjectAccess::MetadataField::ScriptText,"opened");
+    c->subsController->Save(path,"utf-8");
+    c->subsController->Close();
+    auto frame=new wxFrame(nullptr,-1,"script");
+    BOOST_SCOPE_EXIT_ALL(&){ delete frame; };
+    ScriptPanel *script=nullptr;
+    int told=0;
+    // Before the panel's, so called after it, as listeners are, newest first
+    agi::signal::Connection colour=LiveRead(*c).AddCommitListener([&](int type,AssDialogue const*,SubtitleModelRebindTicket ticket){
+        if(type==AssFile::COMMIT_NEW&&script){
+            ++told;
+            EXPECT_TRUE(LiveRead(*c).IsInstalling());
+            EXPECT_EQ(wxString("opened"),script->TextBox()->GetValue()) << "the panel's listener first";
+            wxCommandEvent changed(wxEVT_TEXT,script->TextBox()->GetId());
+            changed.SetEventObject(script->TextBox());changed.SetString(script->TextBox()->GetValue());
+            script->TextBox()->GetEventHandler()->ProcessEvent(changed);
+        }
+        if(ticket.Current())ticket.Acknowledge(ticket.Revision());
+    });
+    script=new ScriptPanel(frame,c.get());
+    EXPECT_EQ(wxString(),script->TextBox()->GetValue());
+    // On Windows the box's own colour, the hint's taken off, as well
+    EXPECT_NO_THROW(c->subsController->Load(path,"utf-8"));
+    EXPECT_EQ(1,told);
+    EXPECT_EQ("opened",LiveRead(*c).Properties.script_text);
+    EXPECT_EQ(wxString("opened"),script->TextBox()->GetValue());
+    EXPECT_FALSE(c->subsController->IsModified());
+    EXPECT_EQ(wxString(),script->Shown()["note"]);
+}
+
 TEST_F(ordinary_edit, style_edit_writes_one_property_for_lines_or_selected_text) {
     using namespace style_edit;
     auto fs=TagNames(Property::Size), b=TagNames(Property::Weight), i=TagNames(Property::Italic);
@@ -2412,7 +3275,7 @@ TEST_F(audio_edit, studio_waveform_shades_only_selected_ranges_and_draws_a_db_sc
     EXPECT_LT(zoomed.front().db, 0);
     EXPECT_TRUE(AudioWaveformRenderer::DbGrid(20, 1.f, 16).empty());
 
-    c->project->LoadAudio("dummy-audio:noise?sr=44100&bd=16&ch=1&ln=441000");
+    c->project->LoadAudio("dummy-audio:noise?sr=44100&bd=16&ch=1&ln=441000");SKIP_IF_THE_AUDIO_WAS_CLOSED_FOR_WANT_OF_A_PLAYER();
     // Spread of lightness over the waveform's colours (not the black
     // background or the dark scale lines): one shade, or peaks and averages.
     // Lines are antialiased on some platforms, so blends of a shade appear too.
@@ -2620,7 +3483,7 @@ TEST_F(audio_edit, karaoke_drag_and_controller_switch_cancel_pending_cache) {
     EXPECT_TRUE(c->subtitleEditGate.TryBeginComparison());
 }
 TEST_F(audio_edit, real_wx_audio_drag_release_and_destroyed_controller_borrow) {
-    auto display=Display();
+    auto display=Display();SKIP_IF_THE_AUDIO_WAS_CLOSED_FOR_WANT_OF_A_PLAYER();
     Mouse(display,wxEVT_LEFT_DOWN,1001,true);EXPECT_TRUE(display->HasCapture());
     Mouse(display,wxEVT_MOTION,1200,true);
     EXPECT_EQ(1001,LiveRead(*c).Events.front().Start.GetMilliseconds());
@@ -3494,6 +4357,868 @@ TEST_F(ordinary_edit, translation_dialog_persists_only_confirmed_text_and_keeps_
     auto save=agi::fs::path((std::filesystem::current_path()/"dialog-result.ass").wstring());{auto write=c->subtitleAccess->TryWrite();c->subsController->Save(save);}
     AssFile reopened;SubtitleFormat::GetReader(save,"utf-8")->ReadFile(&reopened,save,c->project->Timecodes(),"utf-8");EXPECT_EQ("中 文",reopened.Events.front().Text.get());ASSERT_EQ(1u,reopened.Extradata.size());EXPECT_EQ("payload",reopened.Extradata.front().value);
 }
+namespace {
+speech::Word SW(std::string text,int start,int end,double score=0.9,std::string speaker={}){
+    return {std::move(text),start,end,score,std::move(speaker)};
+}
+speech::Segment SS(std::vector<speech::Word> words,std::string speaker={}){
+    speech::Segment s;s.start=words.front().start;s.end=words.back().end;s.speaker=std::move(speaker);
+    for(auto const& w:words)s.text+=w.text;
+    s.words=std::move(words);return s;
+}
+/// No lead, no stretching: what sentences are made, as heard
+speech::Rules PlainRules(){
+    speech::Rules r;r.lead_in=r.lead_out=0;r.min_duration=0;r.adjacent_gap=0;return r;
+}
+std::vector<std::string> Texts(std::vector<speech::Line> const& lines){
+    std::vector<std::string> out;for(auto const& l:lines)out.push_back(l.text);return out;
+}
+}
+
+TEST(speech_lines, whisperx_json_is_read_with_escapes_missing_times_scores_and_speakers) {
+    std::istringstream in(R"({"segments":[{"start":1.0,"end":2.5,"text":"こんにちは","speaker":"SPEAKER_00",
+        "words":[{"word":"こん","start":1.0,"end":1.4,"score":0.91,"speaker":"SPEAKER_00"},
+                 {"word":"にちは","start":1.5,"end":2.5,"score":0.3}, {"word":"2"}]}],
+        "word_segments":[],"language":"ja"})");
+    auto t=speech::ReadJson(in);
+    EXPECT_EQ("ja",t.language);
+    ASSERT_EQ(1u,t.segments.size());
+    auto const& seg=t.segments[0];
+    EXPECT_EQ(1000,seg.start);EXPECT_EQ(2500,seg.end);EXPECT_EQ("SPEAKER_00",seg.speaker);
+    ASSERT_EQ(3u,seg.words.size());
+    EXPECT_EQ("こん",seg.words[0].text);EXPECT_DOUBLE_EQ(0.91,seg.words[0].score);
+    EXPECT_EQ(1500,seg.words[1].start);EXPECT_DOUBLE_EQ(0.3,seg.words[1].score);
+    EXPECT_EQ(-1,seg.words[2].start) << "a number the aligner gave no time";
+    // faster-whisper's: "probability", integer seconds
+    std::istringstream fw(R"({"segments":[{"start":0,"end":1,"text":" Hi","words":[{"word":" Hi","start":0,"end":1,"probability":0.8}]}]})");
+    EXPECT_DOUBLE_EQ(0.8,speech::ReadJson(fw).segments[0].words[0].score);
+    std::istringstream nothing(R"({"text":"x"})");
+    EXPECT_THROW(speech::ReadJson(nothing),agi::InvalidInputException);
+    std::istringstream garbage("not json");
+    EXPECT_THROW(speech::ReadJson(garbage),agi::InvalidInputException);
+}
+
+TEST(speech_lines, elevenlabs_scribe_json_is_read_by_speaker_with_sounds_apart_and_its_language_shortened) {
+    std::istringstream in(R"j({"language_code":"jpn","language_probability":0.98,"text":"こんにちは。(笑い)うん。",
+        "words":[{"text":"こんにちは。","start":1.0,"end":1.8,"type":"word","speaker_id":"speaker_0","logprob":-0.1},
+                 {"text":" ","start":1.8,"end":2.0,"type":"spacing","speaker_id":"speaker_0"},
+                 {"text":"(笑い)","start":2.0,"end":2.6,"type":"audio_event","speaker_id":"speaker_0"},
+                 {"text":"laughter","start":2.6,"end":2.9,"type":"audio_event","speaker_id":"speaker_0"},
+                 {"text":"うん","start":3.0,"end":3.2,"type":"word","speaker_id":"speaker_1"},
+                 {"text":"。","start":3.2,"end":3.3,"type":"word","speaker_id":"speaker_1"}]})j");
+    auto t=speech::ReadJson(in);
+    EXPECT_EQ("ja",t.language) << "ISO 639-3 made the 639-1 the unspaced languages are known by";
+    ASSERT_EQ(4u,t.segments.size()) << "a piece a speaker's run, each sound its own";
+    EXPECT_EQ(1000,t.segments[0].start);EXPECT_EQ(1800,t.segments[0].end);
+    ASSERT_EQ(1u,t.segments[0].words.size()) << "spacing dropped";
+    EXPECT_NEAR(0.905,t.segments[0].words[0].score,0.001);
+    EXPECT_EQ("speaker_0",t.segments[0].speaker);
+    EXPECT_EQ("(笑い)",t.segments[1].words[0].text);
+    EXPECT_EQ("(laughter)",t.segments[2].words[0].text) << "a sound named bare is bracketed";
+    EXPECT_EQ("speaker_1",t.segments[3].speaker);
+    ASSERT_EQ(2u,t.segments[3].words.size());
+    EXPECT_EQ(-1,t.segments[3].words[0].score) << "no logprob, no score";
+
+    auto lines=speech::MakeLines(t,PlainRules(),{});
+    EXPECT_EQ((std::vector<std::string>{"こんにちは。","(笑い)","(laughter)","うん。"}),Texts(lines));
+    ASSERT_EQ(4u,lines.size());
+    EXPECT_FALSE(lines[0].note);EXPECT_TRUE(lines[1].note);EXPECT_TRUE(lines[2].note);
+    EXPECT_EQ("speaker_1",lines[3].speaker);
+
+    std::istringstream channels(R"({"transcripts":[{"words":[]}]})");
+    EXPECT_THROW(speech::ReadJson(channels),agi::InvalidInputException);
+}
+
+TEST(speech_lines, a_sound_heard_never_shares_a_line_with_what_is_said) {
+    speech::Transcript t;t.language="en";
+    t.segments.push_back(SS({SW("Well",0,300),SW("(laughs)",350,700),SW("okay.",750,1000)},"A"));
+    EXPECT_EQ((std::vector<std::string>{"Well","(laughs)","okay."}),Texts(speech::MakeLines(t,PlainRules(),{})));
+}
+
+TEST(transcribe, the_key_comes_from_the_environment_then_the_keychain_then_this_run_and_never_the_settings_file) {
+    using transcribe::KeyPlace;
+    auto found=transcribe::FindKey({"env","chain","held"});
+    EXPECT_EQ("env",found.key);EXPECT_EQ(KeyPlace::Environment,found.place);
+    found=transcribe::FindKey({"","chain","held"});
+    EXPECT_EQ("chain",found.key) << "set but empty is not set";EXPECT_EQ(KeyPlace::Keychain,found.place);
+    found=transcribe::FindKey({std::nullopt,std::nullopt," held\n"});
+    EXPECT_EQ("held",found.key);EXPECT_EQ(KeyPlace::Session,found.place);
+    found=transcribe::FindKey({std::nullopt,std::string(""),std::nullopt});
+    EXPECT_EQ("",found.key);EXPECT_EQ(KeyPlace::None,found.place);
+    EXPECT_EQ("abc",transcribe::TrimKey(" abc\n"));
+    std::ifstream defaults(std::string(AEGISUB_SOURCE_ROOT)+"/src/libresrc/default_config.json");
+    std::string config((std::istreambuf_iterator<char>(defaults)),std::istreambuf_iterator<char>());
+    ASSERT_FALSE(config.empty());
+    EXPECT_EQ(std::string::npos,config.find("\"Key\"")) << "no setting for a key: it is never written as plain text";
+    // What a machine without a keychain is given is held for the run
+    secret::Hold("test service","abc");
+    EXPECT_EQ("abc",secret::Held("test service").value_or(""));
+    EXPECT_FALSE(secret::Held("other"));
+    secret::Drop("test service");
+    EXPECT_FALSE(secret::Held("test service"));
+    std::string why;
+    if(!secret::Available(&why))EXPECT_FALSE(why.empty()) << "told why there is none";
+    EXPECT_EQ((std::vector<std::string>{"en","zh","fr"}),transcribe::SplitCodes("en, zh  fr"));
+    EXPECT_EQ((std::vector<std::string>{"Tokyo Tower","Madoka"}),transcribe::SplitList(" Tokyo Tower, Madoka,\n")) << "a term keeps its spaces";
+    EXPECT_TRUE(transcribe::SplitList("").empty());
+}
+
+TEST(secret, the_keychain_keeps_a_secret_gives_it_back_and_forgets_it_where_there_is_one) {
+    std::string why;
+    if(!secret::Available(&why)){
+        std::cout<<"  no keychain here ("<<why<<"): the round trip is not tried\n";
+        EXPECT_FALSE(secret::Load("Aegisub test: keychain"));
+        EXPECT_FALSE(secret::Save("Aegisub test: keychain","x"));
+        return;
+    }
+    secret::Forget("Aegisub test: keychain");
+    EXPECT_FALSE(secret::Load("Aegisub test: keychain")) << "nothing kept yet";
+    ASSERT_TRUE(secret::Save("Aegisub test: keychain","sk_日本語 secret"));
+    EXPECT_EQ("sk_日本語 secret",secret::Load("Aegisub test: keychain").value_or("")) << "back as it was, UTF-8 and spaces kept";
+    ASSERT_TRUE(secret::Save("Aegisub test: keychain","second"));
+    EXPECT_EQ("second",secret::Load("Aegisub test: keychain").value_or("")) << "saving again replaces";
+    EXPECT_TRUE(secret::Forget("Aegisub test: keychain"));
+    EXPECT_FALSE(secret::Load("Aegisub test: keychain"));
+    EXPECT_FALSE(secret::Forget("Aegisub test: keychain")) << "nothing to forget";
+}
+
+TEST(transcribe, the_actors_names_are_terms_to_recognise_each_once_after_the_extras_but_not_a_recognisers_speaker_labels) {
+    AssFile file;
+    for(auto actor:{"Madoka","","Madoka","SPEAKER_00","speaker_1"," Homura "}){auto l=new AssDialogue;l->Actor=actor;file.Events.push_back(*l);}
+    EXPECT_EQ((std::vector<std::string>{"Mami","Madoka","Homura"}),transcribe::Keyterms(file,{"Mami","Madoka"}));
+    EXPECT_EQ((std::vector<std::string>{"Mami","Madoka"}),transcribe::Keyterms(file,{"Mami"},2)) << "no more than the limit";
+}
+
+TEST(transcribe, the_form_sent_to_elevenlabs_has_the_model_the_options_and_each_list_repeated) {
+    transcribe::Request r;r.media="ep01.mkv";r.diarize=false;
+    transcribe::ElevenLabs el;
+    auto fields=transcribe::Form(r,el);
+    auto value=[&](std::string const& name){std::vector<std::string> v;for(auto const& f:fields)if(f.first==name)v.push_back(f.second);return v;};
+    EXPECT_EQ((std::vector<std::string>{"scribe_v3"}),value("model_id"));
+    EXPECT_EQ((std::vector<std::string>{"word"}),value("timestamps_granularity"));
+    EXPECT_EQ((std::vector<std::string>{"false"}),value("diarize"));
+    EXPECT_TRUE(value("language_code").empty()) << "none given, none sent: it is detected";
+    EXPECT_TRUE(value("file").empty()) << "the file is not a text field";
+    r.language="ja";r.secondary_languages={"en","zh"};r.keyterms={"Madoka","Homura"};r.diarize=true;el.model="scribe_v2";
+    fields=transcribe::Form(r,el);
+    EXPECT_EQ((std::vector<std::string>{"scribe_v2"}),value("model_id"));
+    EXPECT_EQ((std::vector<std::string>{"true"}),value("diarize"));
+    EXPECT_EQ((std::vector<std::string>{"ja"}),value("language_code"));
+    EXPECT_EQ((std::vector<std::string>{"en","zh"}),value("secondary_language_codes"));
+    EXPECT_EQ((std::vector<std::string>{"Madoka","Homura"}),value("keyterms"));
+    r.keyterms.assign(150,"x");
+    fields=transcribe::Form(r,el);
+    EXPECT_EQ(100u,value("keyterms").size()) << "no more than 100 terms";
+}
+
+TEST(transcribe, what_elevenlabs_takes_as_it_is_and_what_its_answers_mean) {
+    EXPECT_TRUE(transcribe::Accepted("/v/ep01.mkv"));
+    EXPECT_TRUE(transcribe::Accepted("C:\\a\\song.MP3"));
+    EXPECT_FALSE(transcribe::Accepted("/v/ep01.mka")) << "written out as WAV first";
+    EXPECT_FALSE(transcribe::Accepted("/v/ep01.ts"));
+    EXPECT_EQ("",transcribe::Explain(200,"{}"));
+    auto refused=transcribe::Explain(401,R"({"detail":{"status":"invalid_api_key","message":"Invalid API key"}})");
+    EXPECT_NE(std::string::npos,refused.find("API key")) << refused;
+    EXPECT_NE(std::string::npos,refused.find("Invalid API key")) << refused;
+    EXPECT_NE(std::string::npos,transcribe::Explain(422,R"({"detail":"keyterms: too many"})").find("keyterms: too many"));
+    EXPECT_NE(std::string::npos,transcribe::Explain(500,"<html>Bad Gateway</html>").find("500"));
+    EXPECT_EQ(std::string::npos,transcribe::Explain(500,"<html>Bad Gateway</html>").find("<html>")) << "no markup shown";
+    EXPECT_EQ("24:03",transcribe::Duration(1443000));
+    EXPECT_EQ("1:02:03",transcribe::Duration(3723000));
+    EXPECT_EQ("0:05",transcribe::Duration(5400));
+}
+
+TEST(transcribe, the_users_command_line_gets_the_paths_put_in_its_quotes_taken_off_and_bracketed_parts_dropped_when_empty) {
+    std::string templ="whisperx \"{media}\" --output_dir '{out}' --output_format json [--language {language}] --model large-v3";
+    auto with=transcribe::CommandLine(templ,"/videos/ep 01.mkv","/tmp/out dir","ja");
+    EXPECT_EQ((std::vector<std::string>{"whisperx","/videos/ep 01.mkv","--output_dir","/tmp/out dir","--output_format","json","--language","ja","--model","large-v3"}),with);
+    auto without=transcribe::CommandLine(templ,"/videos/ep 01.mkv","/tmp/out","");
+    EXPECT_EQ((std::vector<std::string>{"whisperx","/videos/ep 01.mkv","--output_dir","/tmp/out","--output_format","json","--model","large-v3"}),without);
+    EXPECT_EQ((std::vector<std::string>{"a","/videos/ep 01.mkv"}),transcribe::CommandLine("a {media}","/videos/ep 01.mkv","o","")) << "a path with spaces stays one word even unquoted";
+    EXPECT_EQ((std::vector<std::string>{"x","",""}),transcribe::CommandLine("x \"\" ''","m","o","")) << "an empty quoted word is a word";
+    EXPECT_TRUE(transcribe::CommandLine("   ","m","o","").empty());
+}
+
+TEST(transcribe, windows_proxy_settings_become_curls_the_https_entry_first_then_one_for_all_then_socks) {
+    EXPECT_EQ(transcribe::ProxyFromSystem(""), "");
+    EXPECT_EQ(transcribe::ProxyFromSystem("127.0.0.1:7890"), "http://127.0.0.1:7890");
+    EXPECT_EQ(transcribe::ProxyFromSystem("http=a:1;https=b:2;ftp=c:3"), "http://b:2");
+    EXPECT_EQ(transcribe::ProxyFromSystem("HTTPS=b:2"), "http://b:2");
+    EXPECT_EQ(transcribe::ProxyFromSystem("http=a:1;ftp=c:3"), "");
+    EXPECT_EQ(transcribe::ProxyFromSystem("http=a:1;socks=s:1080"), "socks4a://s:1080");
+    EXPECT_EQ(transcribe::ProxyFromSystem("p1:8080; p2:8080"), "http://p1:8080");
+    EXPECT_EQ(transcribe::ProxyFromSystem("socks5://127.0.0.1:7891"), "socks5://127.0.0.1:7891");
+    EXPECT_EQ(transcribe::NoProxyFromSystem(""), "");
+    EXPECT_EQ(transcribe::NoProxyFromSystem("<local>;localhost;127.*;10.*;*.lan;example.com"), "localhost,.lan,example.com");
+    EXPECT_EQ(transcribe::NoProxyFromSystem("a.com;*"), "*");
+}
+
+TEST(transcribe, the_json_the_command_wrote_is_the_one_named_after_the_media_else_the_only_one) {
+    agi::fs::path dir=agi::fs::path(std::filesystem::temp_directory_path()/("aegisub-transcribe-test-"+std::to_string(::getpid())));
+    std::filesystem::remove_all(std::filesystem::path(dir));std::filesystem::create_directories(std::filesystem::path(dir));
+    EXPECT_FALSE(transcribe::OutputJson(dir,"/v/ep01.mkv")) << "nothing yet";
+    {std::ofstream(dir/"other.json")<<"{}";}
+    auto only=transcribe::OutputJson(dir,"/v/ep01.mkv");
+    ASSERT_TRUE(only);EXPECT_EQ("other.json",only->filename().string());
+    {std::ofstream(dir/"ep01.json")<<"{}";std::ofstream(dir/"ep01.txt")<<"";}
+    auto named=transcribe::OutputJson(dir,"/v/ep01.mkv");
+    ASSERT_TRUE(named);EXPECT_EQ("ep01.json",named->filename().string());
+    EXPECT_FALSE(transcribe::OutputJson(dir,"/v/ep02.mkv")) << "two, neither its own";
+    std::filesystem::remove_all(std::filesystem::path(dir));
+}
+
+TEST(transcribe, a_runs_folder_is_known_by_its_name_and_no_other_is_taken_for_one) {
+    agi::fs::path dir=agi::fs::path(std::filesystem::temp_directory_path()/("aegisub-runfolder-test-"+std::to_string(::getpid())));
+    std::filesystem::remove_all(std::filesystem::path(dir));std::filesystem::create_directories(std::filesystem::path(dir));
+    auto made=transcribe::RunFolder(dir);
+    EXPECT_TRUE(std::filesystem::is_directory(std::filesystem::path(made)));
+    EXPECT_TRUE(transcribe::IsRunFolder(made.filename().string())) << made.filename().string();
+    EXPECT_TRUE(transcribe::IsRunFolder("aegisub-transcribe-1234-567890"));
+    EXPECT_FALSE(transcribe::IsRunFolder("aegisub-transcribe-test-1234")) << "the tests' own";
+    EXPECT_FALSE(transcribe::IsRunFolder("aegisub-transcribe-1234"));
+    EXPECT_FALSE(transcribe::IsRunFolder("aegisub-transcribe-1234-"));
+    EXPECT_FALSE(transcribe::IsRunFolder("aegisub-transcribe-1234-5x"));
+    EXPECT_FALSE(transcribe::IsRunFolder("aegisub-magiatimeline"));
+    std::filesystem::remove_all(std::filesystem::path(dir));
+}
+
+namespace {
+transcribe::Token Tok(std::string text,int start,int end,double p=0.9,bool special=false){
+    transcribe::Token t;t.text=std::move(text);t.start=start;t.end=end;t.p=p;t.special=special;return t;
+}
+}
+
+TEST(transcribe_local, a_character_split_between_tokens_is_joined_and_each_unspaced_piece_is_a_word) {
+    // 東 is E6 9D B1, 京 E4 BA AC: whisper.cpp may give 東's bytes in two tokens
+    transcribe::WhisperSegment seg;seg.start=1000;seg.end=2000;
+    seg.tokens={Tok("[_BEG_]",1000,1000,1,true),Tok("\xE6\x9D",1000,1100,0.8),Tok("\xB1\xE4\xBA\xAC",1100,1400,0.6),
+                Tok("\xE3\x81\xA7\xE3\x81\x99",1450,1700,0.95),Tok("<|endoftext|>",2000,2000,1,true)};
+    auto t=transcribe::FromWhisper({seg},"ja");
+    EXPECT_EQ("ja",t.language);
+    ASSERT_EQ(1u,t.segments.size());
+    EXPECT_EQ("\xE6\x9D\xB1\xE4\xBA\xAC\xE3\x81\xA7\xE3\x81\x99",t.segments[0].text) << "no special tokens in the text";
+    auto const& w=t.segments[0].words;
+    ASSERT_EQ(2u,w.size());
+    EXPECT_EQ("\xE6\x9D\xB1\xE4\xBA\xAC",w[0].text);
+    EXPECT_EQ(1000,w[0].start) << "where its first token starts";
+    EXPECT_EQ(1400,w[0].end);
+    EXPECT_DOUBLE_EQ(0.6,w[0].score) << "the least sure of its tokens";
+    EXPECT_EQ("\xE3\x81\xA7\xE3\x81\x99",w[1].text);
+    EXPECT_EQ(1450,w[1].start);
+}
+
+TEST(transcribe_local, spaced_words_are_their_pieces_up_to_the_next_space_their_punctuation_kept) {
+    transcribe::WhisperSegment seg;seg.start=0;seg.end=3000;
+    seg.tokens={Tok(" Hello",0,400),Tok(",",400,450),Tok(" wor",600,800),Tok("ld",800,1000),Tok(".",1000,1050)};
+    auto t=transcribe::FromWhisper({seg},"en");
+    auto const& w=t.segments.at(0).words;
+    ASSERT_EQ(2u,w.size());
+    EXPECT_EQ("Hello,",w[0].text);EXPECT_EQ(0,w[0].start);EXPECT_EQ(400,w[0].end) << "not the comma's";
+    EXPECT_EQ("world.",w[1].text);EXPECT_EQ(600,w[1].start);EXPECT_EQ(1000,w[1].end);
+    EXPECT_EQ("Hello, world.",t.segments[0].text);
+}
+
+TEST(transcribe_local, english_among_japanese_is_a_word_of_its_own) {
+    transcribe::WhisperSegment seg;seg.start=0;seg.end=2000;
+    seg.tokens={Tok("\xE6\x9D\xB1\xE4\xBA\xAC",0,300),Tok(" Tower",300,700),Tok("\xE3\x81\xB8",700,900)};
+    auto const heard_w=transcribe::FromWhisper({seg},"ja");
+    auto const& w=heard_w.segments.at(0).words;
+    ASSERT_EQ(3u,w.size());
+    EXPECT_EQ("Tower",w[1].text);
+    EXPECT_EQ("\xE3\x81\xB8",w[2].text) << "kana after a Latin word starts its own";
+}
+
+TEST(transcribe_local, a_word_ends_no_later_than_the_next_starts_and_stays_within_its_segment) {
+    transcribe::WhisperSegment seg;seg.start=1000;seg.end=2000;
+    // Times overlapping, before the segment, past it and of no length
+    seg.tokens={Tok(" one",900,1600),Tok(" two",1500,1500),Tok(" three",1900,2500)};
+    auto const heard_w=transcribe::FromWhisper({seg},"en");
+    auto const& w=heard_w.segments.at(0).words;
+    ASSERT_EQ(3u,w.size());
+    EXPECT_EQ(1000,w[0].start) << "not before its segment";
+    EXPECT_EQ(1500,w[0].end) << "cut where the next starts";
+    EXPECT_EQ(1500,w[1].start);
+    EXPECT_EQ(1500,w[1].end);
+    EXPECT_EQ(2000,w[2].end) << "not past its segment";
+    for(auto const& x:w) EXPECT_LE(x.start,x.end) << x.text;
+}
+
+TEST(transcribe_local, punctuation_goes_on_the_word_before_without_carrying_its_end_over_the_pause) {
+    // As whisper.cpp heard JFK: the comma's token comes after the pause
+    transcribe::WhisperSegment seg;seg.start=0;seg.end=2000;
+    seg.tokens={Tok(" so",330,530),Tok(",",680,740),Tok(" my",740,950)};
+    auto const heard_w=transcribe::FromWhisper({seg},"en");
+    auto const& w=heard_w.segments.at(0).words;
+    ASSERT_EQ(2u,w.size());
+    EXPECT_EQ("so,",w[0].text);EXPECT_EQ(530,w[0].end) << "the pause after it kept";
+    transcribe::WhisperSegment ja;ja.start=0;ja.end=2000;
+    // 東京、です。
+    ja.tokens={Tok("\xE6\x9D\xB1\xE4\xBA\xAC",0,400),Tok("\xE3\x80\x81",500,600),Tok("\xE3\x81\xA7\xE3\x81\x99",700,900),Tok("\xE3\x80\x82",950,1000)};
+    auto const heard_j=transcribe::FromWhisper({ja},"ja");
+    auto const& j=heard_j.segments.at(0).words;
+    ASSERT_EQ(2u,j.size()) << "the ideographic comma and full stop are not words";
+    EXPECT_EQ("\xE6\x9D\xB1\xE4\xBA\xAC\xE3\x80\x81",j[0].text);EXPECT_EQ(400,j[0].end);
+    EXPECT_EQ("\xE3\x81\xA7\xE3\x81\x99\xE3\x80\x82",j[1].text);EXPECT_EQ(900,j[1].end);
+}
+
+TEST(transcribe_local, a_segment_of_nothing_but_special_tokens_is_left_out_and_an_unfinished_character_kept) {
+    transcribe::WhisperSegment empty;empty.start=0;empty.end=500;
+    empty.tokens={Tok("[_BEG_]",0,0,1,true),Tok("<|endoftext|>",500,500,1,true)};
+    transcribe::WhisperSegment cut;cut.start=500;cut.end=900;
+    cut.tokens={Tok("\xE3\x81\x82",500,600),Tok("\xE3\x81",600,700)};
+    auto t=transcribe::FromWhisper({empty,cut},"ja");
+    ASSERT_EQ(1u,t.segments.size());
+    EXPECT_EQ(500,t.segments[0].start);
+    ASSERT_EQ(2u,t.segments[0].words.size());
+    EXPECT_EQ("\xE3\x81",t.segments[0].words[1].text) << "kept as whisper.cpp would print it";
+}
+
+// Whisper run for real, on whisper.cpp's own sample, through the same
+// conversion and resampling as the editor's audio: only with a model named
+// by AEGISUB_WHISPER_MODEL, ggml-tiny.bin being enough
+TEST(transcribe_local, whisper_hears_a_sample_through_the_editors_audio_path) {
+    if(!transcribe::CanRunLocal()) GTEST_SKIP() << "built without whisper.cpp";
+    auto model=agi::util::GetEnv("AEGISUB_WHISPER_MODEL");
+    if(!model||model->empty()) GTEST_SKIP() << "AEGISUB_WHISPER_MODEL is not set";
+    agi::fs::path wav=agi::fs::path(AEGISUB_SOURCE_ROOT)/"subprojects"/"whisper.cpp-1.9.5"/"samples"/"jfk.wav";
+    if(!agi::fs::FileExists(wav)) GTEST_SKIP() << "no " << wav.string();
+    auto audio=agi::CreateConvertAudioProvider(agi::CreatePCMAudioProvider(wav,nullptr));
+    ASSERT_EQ(32000,audio->GetSampleRate()) << "16 kHz is doubled for the editor, so this resamples";
+    auto samples=agi::ResampleToFloat(*audio,16000);
+    EXPECT_NEAR(11.0,samples.size()/16000.0,0.1);
+    transcribe::Request request;request.language="en";
+    transcribe::Local settings;settings.model=*model;settings.use_gpu=false;
+    auto t=transcribe::RunLocal(request,settings,samples,nullptr);
+    EXPECT_EQ("en",t.language);
+    std::string text,times;size_t words=0,lasting=0;int last=-1;
+    for(auto const& seg:t.segments){
+        text+=seg.text+" ";
+        for(auto const& w:seg.words){
+            ++words;
+            if(w.end>w.start) ++lasting;
+            times+=agi::format("%s %d-%d  ",w.text,w.start,w.end);
+            EXPECT_GE(w.start,0) << w.text;EXPECT_GE(w.end,w.start) << w.text;
+            EXPECT_GE(w.start,last) << w.text << " starts before the word before it";
+            EXPECT_LE(w.end,11100) << w.text;
+            last=w.start;
+        }
+    }
+    for(auto& ch:text) ch=static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    EXPECT_NE(std::string::npos,text.find("country")) << text;
+    EXPECT_NE(std::string::npos,text.find("ask")) << text;
+    EXPECT_GE(words,15u) << text;
+    EXPECT_GE(lasting*10,words*9) << "words of no length: " << times;
+    std::printf("whisper heard: %s(%zu words)\n%s\n",text.c_str(),words,times.c_str());
+    // Made into lines as any recogniser's words are
+    auto lines=speech::MakeLines(t,speech::Rules(),{});
+    ASSERT_FALSE(lines.empty());
+    int prev=-1;
+    for(auto const& l:lines){
+        EXPECT_LT(l.start,l.end) << l.text;
+        EXPECT_GE(l.start,prev) << l.text;
+        EXPECT_FALSE(l.text.empty());
+        prev=l.start;
+        std::printf("  line %d-%d %s\n",l.start,l.end,l.text.c_str());
+    }
+}
+
+// Whisper with VAD, on the sample between 20 s of faint noise each side:
+// only with AEGISUB_WHISPER_MODEL and AEGISUB_WHISPER_VAD naming the models
+TEST(transcribe_local, with_vad_the_noise_about_speech_is_not_heard_and_the_times_stay_the_audios) {
+    if(!transcribe::CanRunLocal()) GTEST_SKIP() << "built without whisper.cpp";
+    auto model=agi::util::GetEnv("AEGISUB_WHISPER_MODEL");
+    auto vad=agi::util::GetEnv("AEGISUB_WHISPER_VAD");
+    if(!model||model->empty()||!vad||vad->empty()) GTEST_SKIP() << "AEGISUB_WHISPER_MODEL and AEGISUB_WHISPER_VAD are not both set";
+    agi::fs::path wav=agi::fs::path(AEGISUB_SOURCE_ROOT)/"subprojects"/"whisper.cpp-1.9.5"/"samples"/"jfk.wav";
+    if(!agi::fs::FileExists(wav)) GTEST_SKIP() << "no " << wav.string();
+    auto audio=agi::CreateConvertAudioProvider(agi::CreatePCMAudioProvider(wav,nullptr));
+    auto speech=agi::ResampleToFloat(*audio,16000);
+    std::vector<float> samples;
+    uint32_t seed=1;
+    auto noise=[&]{ seed=seed*1664525u+1013904223u; return (static_cast<float>(seed>>8)/16777216.f-0.5f)*0.006f; };
+    for(int i=0;i<20*16000;++i) samples.push_back(noise());
+    for(float v:speech) samples.push_back(v+noise());
+    for(int i=0;i<20*16000;++i) samples.push_back(noise());
+
+    transcribe::Request request;request.language="en";
+    transcribe::Local settings;settings.model=*model;settings.use_gpu=false;settings.vad_model=*vad;
+    // What the progress dialog would be told
+    struct Recorder final : agi::ProgressSink {
+        std::vector<std::string> messages;int64_t most=0;
+        void SetIndeterminate() override {}
+        void SetTitle(std::string const&) override {}
+        void SetMessage(std::string const& m) override { messages.push_back(m); }
+        void SetProgress(int64_t cur,int64_t) override { most=std::max(most,cur); }
+        void Log(std::string const&) override {}
+        bool IsCancelled() override { return false; }
+    } recorder;
+    auto t=transcribe::RunLocal(request,settings,samples,&recorder);
+    for(auto const& m:recorder.messages) std::printf("told: %s\n",m.c_str());
+    EXPECT_EQ(100,recorder.most) << "the progress goes to the end";
+    std::string text,times;int first=-1,last=-1;
+    for(auto const& seg:t.segments){
+        text+=seg.text+" ";
+        for(auto const& w:seg.words){
+            if(first<0) first=w.start;
+            last=std::max(last,w.end);
+            times+=agi::format("%s %d-%d  ",w.text,w.start,w.end);
+        }
+    }
+    std::printf("with VAD: %s\n%s\n",text.c_str(),times.c_str());
+    for(auto& ch:text) ch=static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    EXPECT_NE(std::string::npos,text.find("ask not what your country")) << text;
+    EXPECT_GE(first,19800) << "nothing heard in the noise before, and the times the audio's own";
+    EXPECT_LE(first,21000);
+    EXPECT_LE(last,31500) << "nothing heard in the noise after";
+
+    settings.vad_model.clear();
+    auto plain=transcribe::RunLocal(request,settings,samples,nullptr);
+    std::string plain_text;
+    for(auto const& seg:plain.segments) plain_text+=agi::format("[%d-%d] %s ",seg.start,seg.end,seg.text);
+    std::printf("without VAD: %s\n",plain_text.c_str());
+}
+
+TEST(transcribe_local, a_processor_without_what_whisper_is_built_for_is_told_what_it_lacks) {
+    transcribe::ProcessorFeatures all;
+    all.sse42=all.avx=all.avx2=all.fma=all.f16c=all.bmi2=true;
+    EXPECT_EQ("",transcribe::Missing(all));
+    EXPECT_EQ("SSE4.2, AVX, AVX2, FMA, F16C, BMI2",transcribe::Missing({}));
+    // Ivy Bridge, as in the Macs of 2012: AVX and F16C but not Haswell's
+    transcribe::ProcessorFeatures ivy;
+    ivy.sse42=ivy.avx=ivy.f16c=true;
+    EXPECT_EQ("AVX2, FMA, BMI2",transcribe::Missing(ivy));
+#if (defined(__x86_64__) || defined(_M_X64)) && !defined(__APPLE__)
+    // Where the tests are run (not Rosetta, whose x86 is its own): a
+    // processor with all of it, not one taken for lacking it
+    EXPECT_EQ("",transcribe::ProcessorLacks());
+#endif
+}
+
+TEST(transcribe_local, the_time_left_is_told_from_the_pace_so_far_once_enough_is_done) {
+    EXPECT_EQ("",transcribe::TimeLeft(10,2)) << "too little done to tell";
+    EXPECT_EQ("",transcribe::TimeLeft(1,50)) << "too soon to tell";
+    EXPECT_EQ("",transcribe::TimeLeft(100,100)) << "done";
+    EXPECT_EQ("less than a minute left",transcribe::TimeLeft(20,50));
+    EXPECT_EQ("about 1 minute left",transcribe::TimeLeft(59.7,50)) << "a minute is a minute, not less";
+    EXPECT_EQ("about 2 minutes left",transcribe::TimeLeft(35.1,30)) << "1.4 minutes rounded up";
+    EXPECT_EQ("about 9 minutes left",transcribe::TimeLeft(60,10));
+}
+
+TEST(transcribe_models, the_models_offered_their_addresses_and_sizes) {
+    auto const& models=transcribe::Models();
+    ASSERT_EQ(3u,models.size());
+    EXPECT_EQ("ggml-small-q5_1.bin",models[0].file);
+    for(size_t i=1;i<models.size();++i) EXPECT_LT(models[i-1].bytes,models[i].bytes) << "quicker to better";
+    for(auto const& m:models) EXPECT_EQ(64u,m.sha256.size()) << m.file;
+    EXPECT_EQ(&models[1],transcribe::FindModel("/somewhere/ggml-large-v3-turbo-q5_0.bin"));
+    EXPECT_EQ(nullptr,transcribe::FindModel("/somewhere/ggml-tiny.bin"));
+    auto const& small_model=models[0];
+    EXPECT_EQ("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin",transcribe::ModelUrl(small_model,""));
+    EXPECT_EQ("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin",transcribe::ModelUrl(small_model,"huggingface"));
+    EXPECT_EQ("https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin",transcribe::ModelUrl(small_model,"hf-mirror"));
+    EXPECT_EQ("https://example.com/models/ggml-small-q5_1.bin",transcribe::ModelUrl(small_model,"https://example.com/models/ "));
+    EXPECT_EQ("190 MB",transcribe::SizeText(190085487));
+    EXPECT_EQ("574 MB",transcribe::SizeText(574041195));
+    EXPECT_EQ("1.1 GB",transcribe::SizeText(1081140203));
+    EXPECT_EQ("885 KB",transcribe::SizeText(885098));
+    EXPECT_EQ("https://hf-mirror.com/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin",transcribe::ModelUrl(transcribe::VadModel(),"hf-mirror"));
+}
+
+#ifdef WITH_CURL
+namespace {
+bool CurlReadsFiles(){
+    for(auto p=curl_version_info(CURLVERSION_NOW)->protocols;p&&*p;++p) if(std::string(*p)=="file") return true;
+    return false;
+}
+std::string FileUrl(std::filesystem::path const& p){
+    auto s=p.generic_string();
+    return s.front()=='/'?"file://"+s:"file:///"+s;
+}
+std::string Slurp(std::filesystem::path const& p){
+    std::ifstream in(p,std::ios::binary);
+    return {std::istreambuf_iterator<char>(in),std::istreambuf_iterator<char>()};
+}
+}
+
+TEST(transcribe_models, a_download_goes_on_from_what_an_earlier_try_left_and_is_kept_only_if_it_is_the_model) {
+    if(!CurlReadsFiles()) GTEST_SKIP() << "this curl does not read files";
+    namespace sfs=std::filesystem;
+    sfs::path dir=sfs::temp_directory_path()/("aegisub-download-test-"+std::to_string(::getpid()));
+    sfs::remove_all(dir);sfs::create_directories(dir/"server");sfs::create_directories(dir/"models");
+    std::string data;
+    for(int i=0;i<300000;++i) data+=static_cast<char>((i*2654435761u)>>24);
+    {std::ofstream(dir/"server"/"ggml-test.bin",std::ios::binary)<<data;}
+    agi::Sha256 h;h.Update(data);
+    std::string const sha=h.HexDigest();
+    transcribe::Model const model{"ggml-test.bin","test/test",static_cast<int64_t>(data.size()),sha};
+    std::string const source=FileUrl(dir/"server");
+    EXPECT_EQ(source+"/ggml-test.bin",transcribe::ModelUrl(model,source));
+
+    // A third of it there from a try cut off
+    auto part=dir/"models"/"ggml-test.bin.part";
+    {std::ofstream(part,std::ios::binary)<<data.substr(0,100000);}
+    transcribe::Download(transcribe::ModelUrl(model,source),agi::fs::path(part),model.bytes,nullptr);
+    EXPECT_EQ(data,Slurp(part)) << "the rest put after what was there";
+
+    // More there than the whole: begun again
+    {std::ofstream(part,std::ios::binary)<<data<<"junk";}
+    transcribe::Download(transcribe::ModelUrl(model,source),agi::fs::path(part),model.bytes,nullptr);
+    EXPECT_EQ(data,Slurp(part));
+
+    // Not the model: thrown away, and nothing put in its place
+    std::string const zeros(64,'0');
+    transcribe::Model const other{"ggml-test.bin","test/test",model.bytes,zeros};
+    auto dest=dir/"models"/"ggml-test.bin";
+    EXPECT_THROW(transcribe::TakeDownload(agi::fs::path(part),agi::fs::path(dest),other,nullptr),agi::EnvironmentError);
+    EXPECT_FALSE(sfs::exists(part));
+    EXPECT_FALSE(sfs::exists(dest));
+
+    // The whole way: downloaded, checked and put in place, and then there
+    auto got=transcribe::GetModel(model,agi::fs::path(dir/"models"),source,nullptr);
+    EXPECT_EQ(dest,sfs::path(got));
+    EXPECT_EQ(data,Slurp(dest));
+    EXPECT_FALSE(sfs::exists(part));
+    EXPECT_TRUE(transcribe::Downloaded(model,agi::fs::path(dir/"models")));
+
+    // The server has less than the whole: told, what came kept to go on from
+    transcribe::Model const longer{"ggml-test.bin","test/test",model.bytes+10,sha};
+    EXPECT_THROW(transcribe::Download(transcribe::ModelUrl(longer,source),agi::fs::path(part),longer.bytes,nullptr),agi::EnvironmentError);
+    EXPECT_THROW(transcribe::Download(FileUrl(dir/"server"/"missing.bin"),agi::fs::path(dir/"models"/"missing.part"),10,nullptr),agi::EnvironmentError);
+    sfs::remove_all(dir);
+}
+
+// A server that sends the whole file when asked for the rest, as Python's
+// http.server does: only with AEGISUB_RANGELESS_SERVER the address of one
+// serving a folder that holds ggml-test.bin, 300 000 bytes
+TEST(transcribe_models, a_server_that_will_not_send_only_the_rest_is_downloaded_from_from_the_start) {
+    auto server=agi::util::GetEnv("AEGISUB_RANGELESS_SERVER");
+    if(!server||server->empty()) GTEST_SKIP() << "AEGISUB_RANGELESS_SERVER is not set";
+    namespace sfs=std::filesystem;
+    sfs::path dir=sfs::temp_directory_path()/("aegisub-rangeless-test-"+std::to_string(::getpid()));
+    sfs::remove_all(dir);sfs::create_directories(dir);
+    auto part=dir/"ggml-test.bin.part";
+    {std::ofstream(part,std::ios::binary)<<std::string(1000,'x');}
+    transcribe::Download(*server+"/ggml-test.bin",agi::fs::path(part),300000,nullptr);
+    std::string const got=Slurp(part);
+    EXPECT_EQ(300000u,got.size());
+    EXPECT_NE(std::string(1000,'x'),got.substr(0,1000)) << "what was there replaced, not added to";
+    sfs::remove_all(dir);
+}
+
+// From Hugging Face itself: only with AEGISUB_NETWORK_TESTS set. The VAD
+// model, small, is fetched there as the Whisper models are.
+TEST(transcribe_models, a_download_from_hugging_face_is_whole) {
+    if(!agi::util::GetEnv("AEGISUB_NETWORK_TESTS")) GTEST_SKIP() << "AEGISUB_NETWORK_TESTS is not set";
+    namespace sfs=std::filesystem;
+    sfs::path dir=sfs::temp_directory_path()/("aegisub-hf-test-"+std::to_string(::getpid()));
+    sfs::remove_all(dir);sfs::create_directories(dir);
+    auto const& vad=transcribe::VadModel();
+    auto got=transcribe::GetModel(vad,agi::fs::path(dir),"huggingface",nullptr);
+    EXPECT_TRUE(transcribe::Downloaded(vad,agi::fs::path(dir)));
+    EXPECT_EQ(std::string(vad.sha256),transcribe::Sha256File(got,nullptr));
+    sfs::remove_all(dir);
+}
+#endif
+
+TEST(utils, leftovers_are_removed_when_named_so_and_old_and_nothing_else) {
+    namespace sfs=std::filesystem;
+    sfs::path dir=sfs::temp_directory_path()/("aegisub-leftovers-test-"+std::to_string(::getpid()));
+    sfs::remove_all(dir);sfs::create_directories(dir);
+    auto const old=sfs::file_time_type::clock::now()-std::chrono::hours(48);
+    sfs::create_directories(dir/"aegisub-transcribe-1-2"/"inner");
+    {std::ofstream(dir/"aegisub-transcribe-1-2"/"ep01.wav")<<"riff";}
+    sfs::last_write_time(dir/"aegisub-transcribe-1-2",old);
+    sfs::create_directories(dir/"aegisub-transcribe-3-4");
+    {std::ofstream(dir/"aegisub-audio-5-6")<<"pcm";}
+    sfs::last_write_time(dir/"aegisub-audio-5-6",old);
+    {std::ofstream(dir/"someone-elses.tmp")<<"x";}
+    sfs::last_write_time(dir/"someone-elses.tmp",old);
+
+    EXPECT_EQ(1u,RemoveLeftovers(agi::fs::path(dir),transcribe::IsRunFolder,std::chrono::hours(24)));
+    EXPECT_FALSE(sfs::exists(dir/"aegisub-transcribe-1-2")) << "old, and everything in it";
+    EXPECT_TRUE(sfs::exists(dir/"aegisub-transcribe-3-4")) << "new: a run may be using it";
+    EXPECT_TRUE(sfs::exists(dir/"aegisub-audio-5-6")) << "not what was asked for";
+    EXPECT_TRUE(sfs::exists(dir/"someone-elses.tmp"));
+
+    EXPECT_EQ(1u,RemoveLeftovers(agi::fs::path(dir),agi::IsHDAudioCacheFile,std::chrono::hours(1)));
+    EXPECT_FALSE(sfs::exists(dir/"aegisub-audio-5-6"));
+    EXPECT_TRUE(sfs::exists(dir/"someone-elses.tmp"));
+    EXPECT_EQ(0u,RemoveLeftovers(agi::fs::path(dir/"not-there"),transcribe::IsRunFolder,std::chrono::hours(0))) << "a folder that is not there is nothing to do";
+    sfs::remove_all(dir);
+}
+
+#ifndef _WIN32
+namespace {
+struct TranscribeCancelledSink final : agi::ProgressSink {
+    void SetIndeterminate() override {}
+    void SetTitle(std::string const&) override {}
+    void SetMessage(std::string const&) override {}
+    void SetProgress(int64_t,int64_t) override {}
+    void Log(std::string const&) override {}
+    bool IsCancelled() override { return true; }
+};
+}
+
+TEST(transcribe, a_program_of_the_users_is_run_its_output_and_exit_code_read_and_the_json_it_wrote_found) {
+    agi::fs::path dir=agi::fs::path(std::filesystem::temp_directory_path()/("aegisub-transcribe-run-"+std::to_string(::getpid())));
+    std::filesystem::remove_all(std::filesystem::path(dir));std::filesystem::create_directories(std::filesystem::path(dir));
+    {
+        std::vector<std::string> argv{"sh","-c","printf '{\"words\":[]}' > \"$0/ep01.json\"; echo started; echo 'done 日本語'; exit 3",dir.string()};
+        transcribe::Program program(argv,dir);
+        DialogProgress progress(nullptr,"Transcribing","Running sh...");
+        EXPECT_NO_THROW(progress.Run([&](agi::ProgressSink *ps){ program.Wait(ps); }));
+        EXPECT_EQ(3,program.ExitCode());
+        EXPECT_NE(std::string::npos,program.Output().find("done 日本語")) << program.Output();
+        auto json=transcribe::OutputJson(dir,"/v/ep01.mkv");
+        ASSERT_TRUE(json);
+        auto t=speech::ReadJson(*agi::io::Open(*json));
+        EXPECT_TRUE(t.segments.empty()) << "ElevenLabs' shape, read as it is";
+    }
+    EXPECT_THROW(transcribe::Program({dir.string()+"/no-such-program"},dir),agi::EnvironmentError);
+    {
+        // Cancelled: it is killed and the wait ends in a cancel
+        transcribe::Program slow({"sh","-c","sleep 30"},dir);
+        TranscribeCancelledSink cancelled;
+        EXPECT_THROW(slow.Wait(&cancelled),agi::UserCancelException);
+    }
+    for(int i=0;i<50;++i){wxYield();wxMilliSleep(5);}
+    std::filesystem::remove_all(std::filesystem::path(dir));
+}
+#endif
+
+TEST(speech_lines, a_line_a_sentence_joined_across_pieces_and_ended_by_a_full_stop_or_another_speaker) {
+    speech::Transcript t;t.language="ja";
+    // Heard in two pieces, no sentence end between: one line
+    t.segments.push_back(SS({SW("今日は",0,800)},"A"));
+    t.segments.push_back(SS({SW("いい",900,1200),SW("天気ですね。",1200,2000),SW("本当に",2100,2500),SW("ね。",2500,2800)},"A"));
+    // Another speaker, close after
+    t.segments.push_back(SS({SW("うん。",2900,3200)},"B"));
+    // A long pause in a piece ends the sentence
+    t.segments.push_back(SS({SW("じゃあ",5000,5400),SW("行こう",6500,7000)},"A"));
+    auto lines=speech::MakeLines(t,PlainRules(),{});
+    EXPECT_EQ((std::vector<std::string>{"今日はいい天気ですね。","本当にね。","うん。","じゃあ","行こう"}),Texts(lines));
+    EXPECT_EQ("B",lines[2].speaker);
+    EXPECT_EQ(0,lines[0].start);EXPECT_EQ(2000,lines[0].end);
+    for(auto const& l:lines)EXPECT_EQ(0,l.group);
+}
+
+TEST(speech_lines, scribes_japanese_a_character_at_a_time_keeps_its_times_and_its_stops_at_the_sentences_ends) {
+    // As ElevenLabs gave it for a real clip: each character timed, each 、
+    // and 。 taking no time at the end of the character before, pauses after
+    std::string const json=R"j({"language_code":"jpn","words":[
+        {"text":"皆","start":4.68,"end":4.9,"type":"word","speaker_id":"speaker_0"},
+        {"text":"さ","start":4.9,"end":4.96,"type":"word","speaker_id":"speaker_0"},
+        {"text":"ん","start":5.04,"end":5.12,"type":"word","speaker_id":"speaker_0"},
+        {"text":"こ","start":5.12,"end":5.2,"type":"word","speaker_id":"speaker_0"},
+        {"text":"ん","start":5.2,"end":5.34,"type":"word","speaker_id":"speaker_0"},
+        {"text":"に","start":5.34,"end":5.46,"type":"word","speaker_id":"speaker_0"},
+        {"text":"ち","start":5.46,"end":5.68,"type":"word","speaker_id":"speaker_0"},
+        {"text":"は","start":5.68,"end":5.72,"type":"word","speaker_id":"speaker_0"},
+        {"text":"。","start":5.72,"end":5.72,"type":"word","speaker_id":"speaker_0"},
+        {"text":"は","start":7.08,"end":7.24,"type":"word","speaker_id":"speaker_0"},
+        {"text":"い","start":7.32,"end":7.36,"type":"word","speaker_id":"speaker_0"},
+        {"text":"、","start":7.36,"end":7.36,"type":"word","speaker_id":"speaker_0"},
+        {"text":"ゴ","start":7.84,"end":7.94,"type":"word","speaker_id":"speaker_0"},
+        {"text":"ジ","start":7.94,"end":8.06,"type":"word","speaker_id":"speaker_0"},
+        {"text":"ラ","start":8.06,"end":8.16,"type":"word","speaker_id":"speaker_0"},
+        {"text":"で","start":8.2,"end":8.3,"type":"word","speaker_id":"speaker_0"},
+        {"text":"し","start":8.3,"end":8.4,"type":"word","speaker_id":"speaker_0"},
+        {"text":"た","start":8.4,"end":8.6,"type":"word","speaker_id":"speaker_0"},
+        {"text":"。","start":8.6,"end":8.6,"type":"word","speaker_id":"speaker_0"},
+        {"text":"う","start":9.2,"end":9.3,"type":"word","speaker_id":"speaker_0"},
+        {"text":"ん","start":9.3,"end":9.5,"type":"word","speaker_id":"speaker_0"}]})j";
+    std::istringstream in(json);
+    auto lines=speech::MakeLines(speech::ReadJson(in),PlainRules(),{});
+    EXPECT_EQ((std::vector<std::string>{"皆さんこんにちは。","はい、ゴジラでした。","うん"}),Texts(lines));
+    ASSERT_EQ(3u,lines.size());
+    EXPECT_EQ(4680,lines[0].start);EXPECT_EQ(5720,lines[0].end);
+    EXPECT_EQ(7080,lines[1].start);EXPECT_EQ(8600,lines[1].end);
+    EXPECT_EQ(9200,lines[2].start);
+}
+
+TEST(speech_lines, keyframes_put_every_so_many_frames_are_not_scene_changes_those_between_are) {
+    // A clip from the web: a keyframe every 3 s at 60 fps, nothing else
+    EXPECT_EQ((std::vector<int>{0}),speech::SceneCuts({0,180,361,541,720,901,1080}));
+    // The encoder's 250 between scene changes it found
+    EXPECT_EQ((std::vector<int>{0,100,437,900}),speech::SceneCuts({0,100,350,437,687,900,1150,1400}));
+    // Keyframes with no interval among them are all scene changes
+    EXPECT_EQ((std::vector<int>{0,40,95,300,420}),speech::SceneCuts({0,40,95,300,420}));
+    EXPECT_EQ((std::vector<int>{}),speech::SceneCuts({}));
+    EXPECT_EQ((std::vector<int>{0,250}),speech::SceneCuts({0,250}));
+}
+
+TEST(speech_lines, a_long_sentence_is_split_where_a_clause_ends_and_both_parts_share_a_group) {
+    speech::Transcript t;t.language="ja";
+    // 10 s: the clause ends after けど、 with a pause; splitting before です would
+    // be shorter work for the middle but wrong
+    t.segments.push_back(SS({SW("朝から",0,1500),SW("雨が",1500,3000),SW("降っていたけど、",3000,4500),
+        SW("午後には",4900,6500),SW("晴れてきて",6500,8200),SW("よかったです。",8200,10000)}));
+    auto r=PlainRules();
+    auto lines=speech::MakeLines(t,r,{});
+    EXPECT_EQ((std::vector<std::string>{"朝から雨が降っていたけど、","午後には晴れてきてよかったです。"}),Texts(lines));
+    ASSERT_EQ(2u,lines.size());
+    EXPECT_GT(lines[0].group,0);EXPECT_EQ(lines[0].group,lines[1].group);
+    EXPECT_EQ(4500,lines[0].end);EXPECT_EQ(4900,lines[1].start);
+    // Short enough: left whole
+    r.max_duration=12000;
+    EXPECT_EQ(1u,speech::MakeLines(t,r,{}).size());
+}
+
+TEST(speech_lines, unsure_words_notes_and_the_times_around_lines_and_cuts) {
+    speech::Transcript t;t.language="ja";
+    t.segments.push_back(SS({SW("マミ",0,300,0.2),SW("さん",300,500,0.3),SW("は",500,600),SW("ソウルジェム",600,1400,0.1),SW("を",1400,1500),SW("持ってる。",1500,2000)}));
+    t.segments.push_back(SS({SW("（笑い）",5000,5600)}));
+    auto plain=PlainRules();plain.unsure_below=0.5;
+    auto lines=speech::MakeLines(t,plain,{});
+    ASSERT_EQ(2u,lines.size());
+    EXPECT_EQ((std::vector<std::string>{"マミさん","ソウルジェム"}),lines[0].unsure) << "a run of unsure words is one";
+    EXPECT_FALSE(lines[0].note);EXPECT_TRUE(lines[1].note);
+
+    // Timed: lead in and out, stretched to a second, near lines meeting, at
+    // a cut between them when there is one, and a cut just inside an end
+    // taking it
+    speech::Transcript u;u.language="ja";
+    u.segments.push_back(SS({SW("はい。",1000,1300)}));
+    u.segments.push_back(SS({SW("そうです。",2500,4000)}));
+    u.segments.push_back(SS({SW("では。",4300,6000)}));
+    speech::Rules r;r.lead_in=100;r.lead_out=200;r.min_duration=1000;r.adjacent_gap=300;
+    lines=speech::MakeLines(u,r,{});
+    ASSERT_EQ(3u,lines.size());
+    EXPECT_EQ(900,lines[0].start);EXPECT_EQ(1900,lines[0].end) << "a second long";
+    EXPECT_EQ(2400,lines[1].start);
+    EXPECT_EQ(lines[2].start,lines[1].end) << "less than 300 ms apart: they meet";
+    lines=speech::MakeLines(u,r,{4150});
+    EXPECT_EQ(4150,lines[1].end);EXPECT_EQ(4150,lines[2].start) << "at the cut between them";
+    // Said on 50 ms past a cut, 250 ms with the lead-out: the cut takes the end
+    lines=speech::MakeLines(u,r,{5950});
+    EXPECT_EQ(5950,lines[2].end);
+}
+
+TEST(speech_lines, a_line_across_a_cut_is_split_at_a_pause_there_else_kept) {
+    speech::Transcript t;t.language="ja";
+    t.segments.push_back(SS({SW("それで",0,1000),SW("どうしたの？",1000,2000)}));
+    t.segments.push_back(SS({SW("それで",3000,4000),SW("次は",4400,5400),SW("何を",5400,6000)}));
+    auto lines=speech::MakeLines(t,PlainRules(),{1000,4200});
+    EXPECT_EQ((std::vector<std::string>{"それでどうしたの？","それで","次は何を"}),Texts(lines))
+        << "no pause at the first cut: kept whole; a pause at the second: split";
+    EXPECT_GT(lines[1].group,0);EXPECT_EQ(lines[1].group,lines[2].group);
+}
+
+TEST_F(ordinary_edit, speech_recognition_imported_a_sentence_a_line_in_one_step) {
+    speech::Transcript t;t.language="ja";
+    t.segments.push_back(SS({SW("こんにちは。",1000,2000,0.9,"SPEAKER_00")},"SPEAKER_00"));
+    t.segments.push_back(SS({SW("マミ",3000,3500,0.2,"SPEAKER_01"),SW("です。",3500,4500,0.9,"SPEAKER_01")},"SPEAKER_01"));
+    auto description=c->subsController->GetUndoDescription();
+    BOOST_SCOPE_EXIT_ALL(&){ OPT_SET("Tool/Speech Import/Bilingual")->SetBool(false); OPT_SET("Tool/Speech Import/Marks")->SetBool(false); };
+    OPT_SET("Tool/Speech Import/Bilingual")->SetBool(true);
+    EXPECT_FALSE(OPT_GET("Tool/Speech Import/Marks")->GetBool()) << "no marks unless asked for";
+    OPT_SET("Tool/Speech Import/Marks")->SetBool(true);
+    size_t styles=LiveRead(*c).Styles.size();
+    EXPECT_EQ(2u,speech::Import(c.get(),t));
+    std::vector<std::tuple<std::string,std::string,std::string,std::string>> lines;
+    for(auto const& row:LiveRead(*c).Events)lines.emplace_back(row.Style.get(),row.Actor.get(),row.Effect.get(),row.Text.get());
+    EXPECT_EQ((std::vector<std::tuple<std::string,std::string,std::string,std::string>>{
+        {"JP","SPEAKER_00","","こんにちは。"},{"CN","SPEAKER_00","",""},
+        {"JP","SPEAKER_01","?マミ","マミです。"},{"CN","SPEAKER_01","",""}}),lines) << "the new file's empty line made way";
+    auto const& first=LiveRead(*c).Events.front();
+    EXPECT_EQ(900,int(first.Start));EXPECT_EQ(2350,int(first.End)) << "the timing post-processor's lead";
+    EXPECT_EQ(styles+2,LiveRead(*c).Styles.size());
+    c->subsController->Undo();
+    EXPECT_EQ(1u,LiveRead(*c).Events.size());
+    EXPECT_EQ(styles,LiveRead(*c).Styles.size()) << "one step, styles and all";
+    EXPECT_EQ(description,c->subsController->GetUndoDescription());
+    // Something written: kept, the lines put in among it by time; without
+    // the marks, the Effect field left empty
+    OPT_SET("Tool/Speech Import/Bilingual")->SetBool(false);
+    OPT_SET("Tool/Speech Import/Marks")->SetBool(false);
+    {auto write=c->subtitleAccess->TryWrite();auto& row=LiveWriteForTest(*c).Events.front();row.Start=2500;row.End=2800;row.Text="written";LiveWriteForTest(*c).Commit("text",AssFile::COMMIT_DIAG_FULL);}
+    EXPECT_EQ(2u,speech::Import(c.get(),t));
+    std::vector<std::string> texts;for(auto const& row:LiveRead(*c).Events)texts.push_back(row.Text.get());
+    EXPECT_EQ((std::vector<std::string>{"こんにちは。","written","マミです。"}),texts);
+    EXPECT_EQ("",LiveRead(*c).Events.back().Effect.get()) << "?マミ only with the marks on";
+}
+
+TEST(bilingual_marks, read_and_written_in_the_effect_field_beside_what_else_it_holds) {
+    auto marks=bilingual::ParseMarks("#12 ?マミ ?ソウルジェム");
+    EXPECT_EQ(12,marks.group);
+    EXPECT_EQ((std::vector<std::string>{"マミ","ソウルジェム"}),marks.unsure);
+    EXPECT_EQ("",marks.rest);
+    marks=bilingual::ParseMarks("note #3 ?a b");
+    EXPECT_EQ(3,marks.group);EXPECT_EQ("note b",marks.rest);
+    // A renderer's effect is never read as marks
+    EXPECT_EQ(0,bilingual::ParseMarks("Scroll up;10;20;#5").group);
+    EXPECT_EQ("Banner;20",bilingual::ClearMarks("Banner;20"));
+    // No commas in the field, and no spaces in a word
+    bilingual::Marks written;written.group=7;written.unsure={"a, b"};written.rest="note";
+    EXPECT_EQ("note #7 ?a\xEF\xBC\x8C" "b",bilingual::FormatMarks(written));
+    EXPECT_EQ("note",bilingual::ClearMarks(bilingual::FormatMarks(written)));
+    EXPECT_EQ("karaoke",bilingual::ClearMarks("karaoke"));
+    EXPECT_EQ("a  b",bilingual::ClearMarks("a  b")) << "untouched when it holds no marks";
+}
+
+TEST_F(ordinary_edit, make_bilingual_pairs_each_line_with_an_empty_translation_line_in_one_step) {
+    {auto write=c->subtitleAccess->TryWrite();auto& f=LiveWriteForTest(*c);
+     auto& first=f.Events.front();first.Start=1000;first.End=2000;first.Text="こんにちは";first.Effect="#1";first.Actor="マミ";
+     auto second=new AssDialogue;second->Start=3000;second->End=4000;second->Text="さようなら";f.Events.push_back(*second);
+     f.Commit("lines",AssFile::COMMIT_DIAG_ADDREM);}
+    std::set<int> ids;for(auto const& row:LiveRead(*c).Events)ids.insert(row.Id);
+    c->selectionController->SetSelectionAndActiveIDs(ids,LiveRead(*c).Events.front().Id);
+    auto description=c->subsController->GetUndoDescription();
+    size_t styles=LiveRead(*c).Styles.size();
+    cmd::call("autotiming/bilingual",c.get());
+    std::vector<std::tuple<std::string,int,int,std::string,std::string,std::string>> lines;
+    for(auto const& row:LiveRead(*c).Events)lines.emplace_back(row.Style.get(),row.Start,row.End,row.Text.get(),row.Actor.get(),row.Effect.get());
+    EXPECT_EQ((std::vector<std::tuple<std::string,int,int,std::string,std::string,std::string>>{
+        {"JP",1000,2000,"こんにちは","マミ","#1"},{"CN",1000,2000,"","マミ",""},
+        {"JP",3000,4000,"さようなら","",""},{"CN",3000,4000,"","",""}}),lines) << "marks stay on the original";
+    EXPECT_NE(nullptr,LiveRead(*c).GetStyle("JP"));EXPECT_NE(nullptr,LiveRead(*c).GetStyle("CN"));
+    EXPECT_EQ(styles+2,LiveRead(*c).Styles.size());
+    // Done again, nothing is to do: no step
+    auto made=c->subsController->GetUndoDescription();
+    cmd::call("autotiming/bilingual",c.get());
+    EXPECT_EQ(4u,LiveRead(*c).Events.size());
+    // One step back: the lines and the styles both
+    c->subsController->Undo();
+    EXPECT_EQ(2u,LiveRead(*c).Events.size());
+    EXPECT_EQ(styles,LiveRead(*c).Styles.size());
+    EXPECT_EQ("Default",LiveRead(*c).Events.front().Style.get());
+    EXPECT_EQ(description,c->subsController->GetUndoDescription());
+    c->subsController->Redo();
+    EXPECT_EQ(made,c->subsController->GetUndoDescription());
+
+    // The translation assistant writes in the translation line, keeps the
+    // original, and goes from original to original
+    c->selectionController->SetSelectionAndActiveIDs({LiveRead(*c).Events.front().Id},LiveRead(*c).Events.front().Id);
+    auto row=[&](size_t i){return std::next(LiveRead(*c).Events.begin(),i);};
+    {DialogTranslation dialog(c.get());SubsTextEditCtrl* target=nullptr;for(auto child:descendants(&dialog))if(auto text=dynamic_cast<SubsTextEditCtrl*>(child))target=text;ASSERT_NE(nullptr,target);
+     target->SetTextRaw("你好");dialog.Commit(true);
+     EXPECT_EQ("こんにちは",row(0)->Text.get());EXPECT_EQ("你好",row(1)->Text.get());
+     EXPECT_EQ(row(2)->Id,c->selectionController->ReadActiveLine()->Id) << "the translation line passed over";
+     target->SetTextRaw("再见");dialog.Commit(false);
+     EXPECT_EQ("さようなら",row(2)->Text.get());EXPECT_EQ("再见",row(3)->Text.get());}
+    // Back on a translated line, its translation is there to go on from
+    c->selectionController->SetSelectionAndActiveIDs({row(0)->Id},row(0)->Id);
+    {DialogTranslation dialog(c.get());SubsTextEditCtrl* target=nullptr;for(auto child:descendants(&dialog))if(auto text=dynamic_cast<SubsTextEditCtrl*>(child))target=text;ASSERT_NE(nullptr,target);
+     EXPECT_EQ("你好",std::string(target->GetTextRaw().data()));}
+}
+
+TEST_F(ordinary_edit, clear_auto_timing_marks_leaves_the_rest_of_the_effect_field) {
+    {auto write=c->subtitleAccess->TryWrite();auto& f=LiveWriteForTest(*c);
+     f.Events.front().Effect="#3 ?マミ";
+     for(auto effect:{"Banner;20","karaoke","note ?x"}){auto line=new AssDialogue;line->Effect=effect;f.Events.push_back(*line);}
+     f.Commit("lines",AssFile::COMMIT_DIAG_ADDREM);}
+    auto description=c->subsController->GetUndoDescription();
+    cmd::call("autotiming/clear_marks",c.get());
+    std::vector<std::string> effects;for(auto const& row:LiveRead(*c).Events)effects.push_back(row.Effect.get());
+    EXPECT_EQ((std::vector<std::string>{"","Banner;20","karaoke","note"}),effects);
+    auto cleared=c->subsController->GetUndoDescription();
+    EXPECT_NE(description,cleared);
+    cmd::call("autotiming/clear_marks",c.get());
+    EXPECT_EQ(cleared,c->subsController->GetUndoDescription()) << "nothing left to clear: no step";
+    c->subsController->Undo();
+    EXPECT_EQ("#3 ?マミ",LiveRead(*c).Events.front().Effect.get());
+}
+
 TEST_F(ordinary_edit, dialog_dependency_changes_and_explicit_hide_release_pending_work) {
     SubtitleDialogEdit edit(c.get());edit.ResetActive();
     {auto write=c->subtitleAccess->TryWrite();LiveWriteForTest(*c).Events.front().Start=1;}
@@ -4479,7 +6204,7 @@ TEST_F(model_installation, repeated_load_keeps_selection_before_active_and_rejec
 TEST_F(model_installation, real_grid_audio_and_long_lived_dialogs_rebind_and_edit_the_installed_document) {
     Input("old dialog input");auto path=Candidate("ui-observers");
     c->subsGrid=new BaseGrid(window,c.get());c->audioBox=new AudioBox(window,c.get());
-    c->project->LoadAudio("dummy-audio:silence?sr=44100&bd=16&ch=1&ln=441000");
+    c->project->LoadAudio("dummy-audio:silence?sr=44100&bd=16&ch=1&ln=441000");SKIP_IF_THE_AUDIO_WAS_CLOSED_FOR_WANT_OF_A_PLAYER();
     {
         DialogTranslation translation(c.get());
         c->subsController->Load(path,"utf-8");
@@ -4828,7 +6553,7 @@ TEST_F(ordinary_edit, undo_with_throwing_commit_observer_keeps_model_history_and
 // the provider, then fail in SetMetadata before announcing it, leaving the
 // audio controller on a freed provider. They are now refused before any effect.
 TEST_F(document_lifecycle, media_changes_are_refused_without_side_effects_while_recovery_is_blocked) {
-    c->project->LoadAudio("dummy-audio:silence?sr=44100&bd=16&ch=1&ln=441000");
+    c->project->LoadAudio("dummy-audio:silence?sr=44100&bd=16&ch=1&ln=441000");SKIP_IF_THE_AUDIO_WAS_CLOSED_FOR_WANT_OF_A_PLAYER();
     auto first=c->project->AudioProvider();ASSERT_TRUE(first);int announced=0;
     agi::signal::Connection l=c->project->AddAudioProviderListener([&](agi::AudioProvider*){++announced;});
     auto path=Candidate("media-recovery");c->subsController->Load(path,"utf-8");
@@ -4921,7 +6646,7 @@ TEST_F(visual_edit, subtitle_overlay_is_rendered_on_the_worker_after_queued_upda
 // media changes are refused; Export still works. All without side effects.
 TEST_F(document_lifecycle, comparison_session_freezes_save_target_metadata_and_media) {
     auto saved=Local("compare-saved.ass");c->subsController->Save(saved,"utf-8");
-    c->project->LoadAudio("dummy-audio:silence?sr=44100&bd=16&ch=1&ln=441000");
+    c->project->LoadAudio("dummy-audio:silence?sr=44100&bd=16&ch=1&ln=441000");SKIP_IF_THE_AUDIO_WAS_CLOSED_FOR_WANT_OF_A_PLAYER();
     auto provider=c->project->AudioProvider();ASSERT_TRUE(provider);
     Input("compared edit");ASSERT_TRUE(c->subsController->IsModified());
     auto autosave_root=std::filesystem::current_path()/"compare-autosave";
@@ -5456,9 +7181,15 @@ wxString Label(wxWindow* dialog, char const* name) {
     auto w = Named(dialog, name);
     return w ? w->GetLabel() : wxString();
 }
+// The foot's one-line summary, then the whole report its tooltip holds.
 wxString Report(wxWindow* dialog) {
-    auto t = Named<wxTextCtrl>(dialog, "compare-report");
-    return t ? t->GetValue() : wxString();
+    auto t = Named<wxStaticText>(dialog, "compare-report");
+    return t ? t->GetLabelText() + "\n" + t->GetToolTipText() : wxString();
+}
+// Where the current difference is, then the counter's tooltip saying it in words.
+wxString Counter(wxWindow* dialog) {
+    auto t = Named(dialog, "compare-counter");
+    return t ? t->GetLabel() + " | " + t->GetToolTipText() : wxString();
 }
 // Open the comparison tab for @p path and settle it with the active hook.
 // True if the comparison ended by writing to the subtitles.
@@ -5486,12 +7217,12 @@ TEST_F(ordinary_edit, compare_window_writes_decisions_as_one_undo_step) {
     wxString counter, finish_first, report, stats;
     CompareHook hook([&](wxWindow* dialog) {
         writer_blocked = !c->subtitleAccess->TryWrite();
-        counter = Label(dialog, "compare-counter");
+        counter = Counter(dialog);
         finish_first = dialog->FindWindow(wxID_OK)->GetLabel();
         EXPECT_NE(wxNOT_FOUND, Label(dialog, "compare-right-title").Find("target project"));
         Press(dialog, "compare-reject-current");          // restore the file's text
         Press(dialog, "compare-next");
-        EXPECT_EQ("Difference 2 of 2", Label(dialog, "compare-counter"));
+        EXPECT_EQ("2 / 2 | Difference 2 of 2", Counter(dialog));
         Press(dialog, "compare-reject-current");          // restore the file's line
         unchanged_while_deciding = LiveTexts(*c) == std::vector<std::string>{"current"};
         report = Report(dialog);
@@ -5501,10 +7232,11 @@ TEST_F(ordinary_edit, compare_window_writes_decisions_as_one_undo_step) {
     EXPECT_TRUE(RunCompare(c.get(), path));
     EXPECT_EQ(1, hook.shown); EXPECT_TRUE(hook.messages.empty());
     EXPECT_TRUE(writer_blocked); EXPECT_TRUE(unchanged_while_deciding);
-    EXPECT_EQ("Difference 1 of 2", counter);
+    EXPECT_EQ("1 / 2 | Difference 1 of 2", counter);
     EXPECT_EQ("Done", wxStripMenuCodes(finish_first));
+    EXPECT_TRUE(report.StartsWith("Writing changes 1 lines, adds 1, removes 0\n")) << report;
     EXPECT_NE(wxNOT_FOUND, report.Find("1 lines modified, 1 added, 0 removed")) << report;
-    EXPECT_EQ("0 pending, 0 accepted, 2 rejected, 0 partial", stats);
+    EXPECT_EQ(wxString::FromUTF8("0 pending · 2 left · 0 right · 0 partial"), stats);
     EXPECT_EQ((std::vector<std::string>{"from baseline", "added"}), LiveTexts(*c));
     EXPECT_EQ(id, LiveRead(*c).Events.front().Id);
     EXPECT_EQ("apply comparison", c->subsController->GetUndoDescription());
@@ -5575,7 +7307,7 @@ TEST_F(ordinary_edit, compare_window_takes_only_the_chosen_fields) {
     });
     EXPECT_TRUE(RunCompare(c.get(), path));
     EXPECT_LT(text_y, actor_y); // in field order, text first
-    EXPECT_EQ("0 pending, 0 accepted, 0 rejected, 1 partial", stats);
+    EXPECT_EQ(wxString::FromUTF8("0 pending · 0 left · 0 right · 1 partial"), stats);
     EXPECT_EQ("current", LiveRead(*c).Events.front().Text.get());
     EXPECT_EQ("baseline actor", LiveRead(*c).Events.front().Actor.get());
 }
@@ -5613,13 +7345,255 @@ TEST_F(ordinary_edit, compare_window_decides_detail_fields_by_keyboard) {
     EXPECT_TRUE(first.StartsWith("Text: Ctrl+Left")) << first;
     EXPECT_TRUE(second.StartsWith("Actor: Ctrl+Left")) << second;
     EXPECT_EQ(second, clamped);
-    EXPECT_EQ("0 pending, 0 accepted, 0 rejected, 1 partial", after_left);
+    EXPECT_EQ(wxString::FromUTF8("0 pending · 0 left · 0 right · 1 partial"), after_left);
     EXPECT_EQ(resting, after_escape);
     EXPECT_TRUE(still_open);
-    EXPECT_EQ("0 pending, 1 accepted, 0 rejected, 0 partial", whole);
+    EXPECT_EQ(wxString::FromUTF8("0 pending · 0 left · 1 right · 0 partial"), whole);
     EXPECT_EQ(after_left, undone);
     EXPECT_EQ("current", LiveRead(*c).Events.front().Text.get());
     EXPECT_EQ("baseline actor", LiveRead(*c).Events.front().Actor.get());
+}
+TEST_F(ordinary_edit, compare_window_decides_from_the_current_line_bar_and_checks_from_the_gutter) {
+    Input("current");
+    auto path = WriteBaseline(*c, "compare-bar.ass", [](AssFile& f) {
+        f.Events.front().Text = "baseline text";
+        auto line = new AssDialogue; line->Text = "added"; line->Start = 9000; line->End = 9500; f.Events.push_back(*line);
+    });
+    bool found_bar = false, found_check = false;
+    wxString after_bar, checked;
+    CompareHook hook([&](wxWindow* dialog) {
+        auto pane = dialog->FindWindow("compare-right"); ASSERT_NE(nullptr, pane);
+        auto gutter = dialog->FindWindow("compare-gutter"); ASSERT_NE(nullptr, gutter);
+        auto hint = Named<wxStaticText>(dialog, "compare-hint"); ASSERT_NE(nullptr, hint);
+        auto mouse = [](wxWindow* w, wxEventType type, int x, int y) {
+            wxMouseEvent event(type); event.SetPosition({x, y}); event.SetEventObject(w);
+            w->GetEventHandler()->ProcessEvent(event);
+        };
+        // The current difference carries a bar at the pane's right edge;
+        // the other lines have no buttons.
+        auto size = pane->GetClientSize();
+        for (int y = 0; y < size.GetHeight() && !found_bar; y += 2)
+            for (int x = size.GetWidth() - 1; x > size.GetWidth() / 2 && !found_bar; x -= 3) {
+                mouse(pane, wxEVT_MOTION, x, y);
+                if (hint->GetLabelText().StartsWith("Use Left:")) {
+                    found_bar = true;
+                    mouse(pane, wxEVT_LEFT_DOWN, x, y);
+                    after_bar = Label(dialog, "compare-stats");
+                }
+            }
+        // The right line number turns into a check box under the pointer.
+        auto gsize = gutter->GetClientSize();
+        for (int y = 0; y < gsize.GetHeight() && !found_check; y += 2)
+            for (int x = gsize.GetWidth() / 2; x < gsize.GetWidth() && !found_check; x += 2) {
+                mouse(gutter, wxEVT_MOTION, x, y);
+                if (hint->GetLabelText().StartsWith("Select this difference")) {
+                    found_check = true;
+                    mouse(gutter, wxEVT_LEFT_DOWN, x, y);
+                    checked = Label(dialog, "compare-checked-count");
+                }
+            }
+    });
+    EXPECT_FALSE(RunCompare(c.get(), path));
+    EXPECT_TRUE(found_bar);
+    EXPECT_EQ(wxString::FromUTF8("1 pending · 1 left · 0 right · 0 partial"), after_bar);
+    EXPECT_TRUE(found_check);
+    EXPECT_EQ("1 selected", checked);
+}
+namespace {
+// A pane's vertical scroll bar: its range is the number of rows, its thumb the top row.
+wxScrollBar* RowsBar(wxWindow* pane) {
+    for (auto child : pane->GetChildren())
+        if (auto bar = dynamic_cast<wxScrollBar*>(child); bar && bar->IsVertical()) return bar;
+    return nullptr;
+}
+void Key(wxWindow* target, wxEventType type, int code, int mods = wxMOD_NONE) {
+    wxKeyEvent event(type); event.m_keyCode = code;
+    event.SetControlDown(mods & wxMOD_CONTROL); event.SetShiftDown(mods & wxMOD_SHIFT);
+    event.SetEventObject(target);
+    target->GetEventHandler()->ProcessEvent(event);
+}
+void Wheel(wxWindow* target, int rotation, bool shift = false) {
+    wxMouseEvent event(wxEVT_MOUSEWHEEL);
+    event.m_wheelRotation = rotation; event.m_wheelDelta = 120; event.m_linesPerAction = 3;
+    event.SetShiftDown(shift); event.SetEventObject(target);
+    target->GetEventHandler()->ProcessEvent(event);
+}
+}
+TEST_F(ordinary_edit, compare_window_moves_a_line_cursor_by_keyboard) {
+    // Fifteen lines, the first and the last changed: the seven between their
+    // context fold into one row.
+    std::string lines;
+    for (int i = 1; i <= 14; ++i) lines += (i > 1 ? "\n" : "") + std::string("line ") + std::to_string(i);
+    cmd::PasteSubtitleLines(c.get(), lines);
+    ASSERT_EQ(15u, LiveRead(*c).Events.size());
+    auto path = WriteBaseline(*c, "compare-cursor.ass", [](AssFile& f) {
+        f.Events.front().Text = "first changed";
+        f.Events.back().Text = "last changed";
+    });
+    int folded = 0, unfolded = 0;
+    wxString start_counter, after_enter, after_space, after_home_space, help_on_fold;
+    wxWindow *focus_f6 = nullptr, *focus_back = nullptr;
+    bool focus_seen = false;
+    CompareHook hook([&](wxWindow* dialog) {
+        auto right = dialog->FindWindow("compare-right"); ASSERT_NE(nullptr, right);
+        auto left = dialog->FindWindow("compare-left"); ASSERT_NE(nullptr, left);
+        auto hint = Named<wxStaticText>(dialog, "compare-hint"); ASSERT_NE(nullptr, hint);
+        auto bar = RowsBar(right); ASSERT_NE(nullptr, bar);
+        start_counter = Counter(dialog);
+        folded = bar->GetRange();
+        // From the first difference, down past its three lines of context to the fold.
+        for (int i = 0; i < 4; ++i) Key(right, wxEVT_KEY_DOWN, WXK_DOWN);
+        right->SetFocus();
+        wxTheApp->ProcessPendingEvents();
+        // Whether the toolkit tells of the focus: wxOSX tells of none where the
+        // window is not the key window, as where the app cannot be made active
+        // (CI's macOS runner)
+        focus_seen = wxWindow::FindFocus() == right;
+        help_on_fold = hint->IsShown() ? hint->GetLabelText() : wxString();
+        Key(right, wxEVT_KEY_DOWN, WXK_RETURN);              // opens it in place
+        unfolded = bar->GetRange();
+        Key(right, wxEVT_KEY_DOWN, WXK_END);                 // the last line: the second difference
+        Key(right, wxEVT_KEY_DOWN, WXK_RETURN);
+        after_enter = Counter(dialog);
+        Key(right, wxEVT_KEY_DOWN, WXK_SPACE);
+        after_space = Label(dialog, "compare-checked-count");
+        Key(right, wxEVT_KEY_DOWN, WXK_HOME);                // the first difference, not current
+        Key(right, wxEVT_KEY_DOWN, WXK_SPACE);               // selects the line it is on
+        after_home_space = Label(dialog, "compare-checked-count");
+        // F6 from side to side.
+        Key(dialog, wxEVT_CHAR_HOOK, WXK_F6);
+        focus_f6 = wxWindow::FindFocus();
+        Key(dialog, wxEVT_CHAR_HOOK, WXK_F6);
+        focus_back = wxWindow::FindFocus();
+        if (focus_seen) {
+            EXPECT_EQ(left, focus_f6);
+            EXPECT_EQ(right, focus_back);
+        }
+        // Tab goes from pane to pane past what only the mouse uses (moving
+        // the focus is the toolkit's, which a window never shown does not do).
+        for (auto name : {"compare-gutter", "compare-left-header", "compare-right-header"})
+            EXPECT_FALSE(dialog->FindWindow(name)->AcceptsFocusFromKeyboard()) << name;
+        for (auto pane : {left, right})
+            for (auto child : pane->GetChildren())
+                EXPECT_FALSE(child->AcceptsFocusFromKeyboard()) << "a pane's scroll bar";
+        EXPECT_TRUE(right->AcceptsFocusFromKeyboard());
+    });
+    EXPECT_FALSE(RunCompare(c.get(), path));
+    EXPECT_EQ("1 / 2 | Difference 1 of 2", start_counter);
+    EXPECT_EQ(9, folded) << "a difference, three lines, the fold, three lines, a difference";
+    EXPECT_EQ(15, unfolded);
+    if (!help_on_fold.empty()) EXPECT_TRUE(help_on_fold.StartsWith("Enter shows the hidden lines")) << help_on_fold;
+    EXPECT_EQ("2 / 2 | Difference 2 of 2", after_enter);
+    EXPECT_EQ("1 selected", after_space);
+    EXPECT_EQ("2 selected", after_home_space);
+}
+TEST_F(ordinary_edit, compare_window_scrolls_by_the_wheel_wherever_it_is_over_the_sides) {
+    std::string lines;
+    for (int i = 1; i <= 80; ++i) lines += (i > 1 ? "\n" : "") + std::string("line ") + std::to_string(i);
+    cmd::PasteSubtitleLines(c.get(), lines);
+    auto path = WriteBaseline(*c, "compare-wheel.ass", [](AssFile& f) { f.Events.front().Text = "changed"; });
+    int over_bar = -1, over_header = -1, over_gutter = -1, fine = -1, left_top = -1, back = -1;
+    bool across = false;
+    CompareHook hook([&](wxWindow* dialog) {
+        Named<FlatSwitch>(dialog, "compare-view")->Choose(1);  // every line
+        auto right = dialog->FindWindow("compare-right"); ASSERT_NE(nullptr, right);
+        auto bar = RowsBar(right), left_bar = RowsBar(dialog->FindWindow("compare-left"));
+        ASSERT_NE(nullptr, bar); ASSERT_NE(nullptr, left_bar);
+        ASSERT_GT(bar->GetRange(), bar->GetThumbSize()) << "more lines than fit";
+        int top = bar->GetThumbPosition();
+        Wheel(bar, -120); over_bar = bar->GetThumbPosition() - top;
+        Wheel(dialog->FindWindow("compare-right-header"), -120); over_header = bar->GetThumbPosition() - top;
+        Wheel(dialog->FindWindow("compare-gutter"), -120); over_gutter = bar->GetThumbPosition() - top;
+        // A fine wheel's eighths add up to one step.
+        for (int i = 0; i < 8; ++i) Wheel(right, -15);
+        fine = bar->GetThumbPosition() - top;
+        left_top = left_bar->GetThumbPosition() - top;           // in sync
+        Wheel(right, 120); back = bar->GetThumbPosition() - top;
+        auto hbar = [](wxWindow* pane) -> wxScrollBar* {
+            for (auto child : pane->GetChildren())
+                if (auto b = dynamic_cast<wxScrollBar*>(child); b && !b->IsVertical()) return b;
+            return nullptr;
+        }(right);
+        ASSERT_NE(nullptr, hbar);
+        int x = hbar->GetThumbPosition();
+        Wheel(right, 120, true);
+        Wheel(right, -120, true);
+        across = hbar->GetRange() <= hbar->GetThumbSize() || hbar->GetThumbPosition() != x || x == 0;
+    });
+    RunCompare(c.get(), path);
+    EXPECT_EQ(3, over_bar);
+    EXPECT_EQ(6, over_header);
+    EXPECT_EQ(9, over_gutter);
+    EXPECT_EQ(12, fine);
+    EXPECT_EQ(12, left_top);
+    EXPECT_EQ(9, back);
+    EXPECT_TRUE(across);
+}
+TEST_F(ordinary_edit, compare_window_simplifies_override_tags_as_the_grid_does) {
+    OPT_SET("Subtitle/Grid/Hide Overrides")->SetInt(0);
+    Input("{\\fad(100,100)}current");
+    auto path = WriteBaseline(*c, "compare-tags.ass", [](AssFile& f) { f.Events.front().Text = "{\\fad(200,200)}current"; });
+    int simplified = -1, hidden = -1, full = -1;
+    wxString tip, counter_hidden;
+    CompareHook hook([&](wxWindow* dialog) {
+        Press(dialog, "compare-filter");
+        auto tags = Named<FlatSwitch>(dialog, "compare-tags"); ASSERT_NE(nullptr, tags);
+        EXPECT_EQ(0, tags->GetSelection());
+        tags->Choose(1);
+        simplified = OPT_GET("Subtitle/Grid/Hide Overrides")->GetInt();
+        // Pointing at the chip tells what its tags do.
+        auto right = dialog->FindWindow("compare-right"); ASSERT_NE(nullptr, right);
+        auto size = right->GetClientSize();
+        for (int y = 2; y < std::min(size.GetHeight(), 60) && tip.empty(); y += 4)
+            for (int x = 0; x < size.GetWidth() && tip.empty(); x += 2) {
+                wxMouseEvent event(wxEVT_MOTION); event.SetPosition({x, y}); event.SetEventObject(right);
+                right->GetEventHandler()->ProcessEvent(event);
+                if (right->GetToolTipText().StartsWith("Fade")) tip = right->GetToolTipText();
+            }
+        tags->Choose(2);
+        hidden = OPT_GET("Subtitle/Grid/Hide Overrides")->GetInt();
+        counter_hidden = Counter(dialog);
+        // Set elsewhere (the grid's menu): the page follows.
+        OPT_SET("Subtitle/Grid/Hide Overrides")->SetInt(0);
+        full = tags->GetSelection();
+    });
+    RunCompare(c.get(), path);
+    EXPECT_EQ(1, simplified);
+    EXPECT_NE(wxNOT_FOUND, tip.Find("Fade: in 100 ms, out 100 ms")) << tip;
+    EXPECT_TRUE(tip.EndsWith("{\\fad(100,100)}")) << tip;
+    EXPECT_EQ(2, hidden);
+    EXPECT_EQ("1 / 1 | Difference 1 of 1", counter_hidden) << "a change of tags alone is still a difference";
+    EXPECT_EQ(0, full);
+    OPT_SET("Subtitle/Grid/Hide Overrides")->SetInt(1);
+}
+TEST_F(ordinary_edit, compare_window_shows_only_pending_differences_keeping_the_one_being_decided) {
+    Input("current");
+    auto path = WriteBaseline(*c, "compare-pending.ass", [](AssFile& f) {
+        f.Events.front().Text = "baseline text";
+        auto line = new AssDialogue; line->Text = "added"; line->Start = 9000; line->End = 9500; f.Events.push_back(*line);
+    });
+    wxString filtered, decided, moved_on, undone, chip;
+    CompareHook hook([&](wxWindow* dialog) {
+        Press(dialog, "compare-filter");
+        auto box = Named<FlatCheck>(dialog, "compare-pending"); ASSERT_NE(nullptr, box);
+        box->Toggle();
+        filtered = Counter(dialog);
+        Press(dialog, "compare-reject-current");   // decided, but still the one on show
+        decided = Counter(dialog);
+        Press(dialog, "compare-next");              // moving on leaves it behind
+        moved_on = Counter(dialog);
+        Press(dialog, "compare-undo");              // pending again: back in the list
+        undone = Counter(dialog);
+        Press(dialog, "compare-filter");            // closed: the setting as a chip
+        for (auto child : dialog->GetChildren())
+            if (auto b = dynamic_cast<FlatButton*>(child); b && b->IsShown() && b->GetLabel().StartsWith("Pending only")) chip = b->GetLabel();
+    });
+    EXPECT_FALSE(RunCompare(c.get(), path));
+    EXPECT_EQ("1 / 2 | Difference 1 of 2 (2 in total)", filtered);
+    EXPECT_EQ("1 / 2 | Difference 1 of 2 (2 in total)", decided);
+    EXPECT_EQ("1 / 1 | Difference 1 of 1 (2 in total)", moved_on);
+    EXPECT_EQ("2 / 2 | Difference 2 of 2 (2 in total)", undone);
+    EXPECT_TRUE(chip.StartsWith("Pending only")) << chip;
 }
 TEST_F(ordinary_edit, compare_window_filters_by_category_and_leaves_ignored_fields_alone) {
     Input("current");
@@ -5639,31 +7613,32 @@ TEST_F(ordinary_edit, compare_window_filters_by_category_and_leaves_ignored_fiel
             auto b = Named<FlatCheck>(dialog, name); ASSERT_NE(nullptr, b);
             if (b->GetValue() != value) b->Toggle();
         };
-        all_counter = Label(dialog, "compare-counter");
+        Press(dialog, "compare-filter");                 // the filters' row
+        all_counter = Counter(dialog);
         EXPECT_EQ("Time only 1", Named<FlatButton>(dialog, "compare-category-Time")->GetLabel());
         EXPECT_FALSE(Named<FlatButton>(dialog, "compare-category-Text")->IsShown()); // nothing of that kind
         // Only the time change: Reject All covers just what is shown.
         toggle("compare-category-Time");
-        time_counter = Label(dialog, "compare-counter");
+        time_counter = Counter(dialog);
         Press(dialog, "compare-reject-all");
         time_stats = Label(dialog, "compare-stats");
         Press(dialog, "compare-undo");
         // Ignoring times instead: the time change is no longer a difference.
         toggle("compare-category-all");
         check("compare-ignore-Time", true);
-        ignored_counter = Label(dialog, "compare-counter");
+        ignored_counter = Counter(dialog);
         time_hidden = !Named<FlatButton>(dialog, "compare-category-Time")->IsShown();
         Press(dialog, "compare-reject-all");
         ignored_stats = Label(dialog, "compare-stats");
         button(dialog->FindWindow(wxID_OK), wxID_OK);
     });
     EXPECT_TRUE(RunCompare(c.get(), path));
-    EXPECT_EQ("Difference 1 of 2", all_counter);
-    EXPECT_EQ("Difference 1 of 1 (2 in total)", time_counter);
-    EXPECT_EQ("1 pending, 0 accepted, 1 rejected, 0 partial", time_stats);
-    EXPECT_EQ("Difference 1 of 1 (2 in total)", ignored_counter);
+    EXPECT_EQ("1 / 2 | Difference 1 of 2", all_counter);
+    EXPECT_EQ("1 / 1 | Difference 1 of 1 (2 in total)", time_counter);
+    EXPECT_EQ(wxString::FromUTF8("1 pending · 1 left · 0 right · 0 partial"), time_stats);
+    EXPECT_EQ("1 / 1 | Difference 1 of 1 (2 in total)", ignored_counter);
     EXPECT_TRUE(time_hidden);
-    EXPECT_EQ("1 pending, 0 accepted, 1 rejected, 0 partial", ignored_stats);
+    EXPECT_EQ(wxString::FromUTF8("1 pending · 1 left · 0 right · 0 partial"), ignored_stats);
     ASSERT_EQ(2u, hook.messages.size());
     EXPECT_NE(wxNOT_FOUND, hook.messages[0].Find("the 1 differences shown")) << hook.messages[0];
     EXPECT_NE(wxNOT_FOUND, hook.messages[1].Find("Ignored fields keep their current choice: Start, End")) << hook.messages[1];
@@ -5696,7 +7671,7 @@ TEST_F(ordinary_edit, compare_window_shows_refusals_and_batch_actions_confirm_th
     });
     EXPECT_FALSE(RunCompare(c.get(), path));
     EXPECT_TRUE(disabled); EXPECT_TRUE(enabled_after_all); EXPECT_TRUE(undone);
-    EXPECT_NE(wxNOT_FOUND, report.Find("Bound lines must be applied together")) << report;
+    EXPECT_TRUE(report.StartsWith("Cannot write: Bound lines must be applied together")) << report;
     ASSERT_EQ(1u, hook.messages.size());
     EXPECT_NE(wxNOT_FOUND, hook.messages[0].Find("all 2 differences")) << hook.messages[0];
     EXPECT_NE(wxNOT_FOUND, hook.messages[0].Find("1 of them will change")) << hook.messages[0];
@@ -5740,14 +7715,14 @@ TEST_F(ordinary_edit, compare_page_is_drawn_flat_buttons_checks_and_a_view_switc
         auto sync = Named<FlatCheck>(dialog, "compare-sync"); ASSERT_NE(nullptr, sync);
         sync->Toggle(); sync_off = !sync->GetValue();
         // Alt with a button's underlined letter presses it, as in a dialog.
-        wxKeyEvent alt(wxEVT_CHAR_HOOK); alt.m_keyCode = 'A'; alt.SetAltDown(true);
+        wxKeyEvent alt(wxEVT_CHAR_HOOK); alt.m_keyCode = 'R'; alt.SetAltDown(true);
         dialog->GetEventHandler()->ProcessEvent(alt);
         stats = Label(dialog, "compare-stats");
     });
     EXPECT_FALSE(RunCompare(c.get(), path));
     EXPECT_FALSE(system_controls); EXPECT_TRUE(finish_accent);
     EXPECT_TRUE(everything); EXPECT_TRUE(sync_off);
-    EXPECT_EQ("0 pending, 1 accepted, 0 rejected, 0 partial", stats);
+    EXPECT_EQ(wxString::FromUTF8("0 pending · 0 left · 1 right · 0 partial"), stats);
 }
 TEST_F(ordinary_edit, compare_command_refuses_while_editing_and_reports_unreadable_files) {
     CompareHook hook(nullptr);
@@ -5800,11 +7775,11 @@ TEST_F(ordinary_edit, compare_tab_locks_the_editor_until_the_comparison_ends) {
     // Its own shortcuts work there, and no key goes on to the main window.
     auto pane = page->FindWindow("compare-right"); ASSERT_NE(nullptr, pane);
     Press(page, "compare-reject-current");
-    EXPECT_EQ("0 pending, 0 accepted, 1 rejected, 0 partial", Label(page, "compare-stats"));
+    EXPECT_EQ(wxString::FromUTF8("0 pending · 1 left · 0 right · 0 partial"), Label(page, "compare-stats"));
     key(pane, 'Z', wxMOD_CONTROL);
-    EXPECT_EQ("1 pending, 0 accepted, 0 rejected, 0 partial", Label(page, "compare-stats"));
+    EXPECT_EQ(wxString::FromUTF8("1 pending · 0 left · 0 right · 0 partial"), Label(page, "compare-stats"));
     key(pane, 'Y', wxMOD_CONTROL);
-    EXPECT_EQ("0 pending, 0 accepted, 1 rejected, 0 partial", Label(page, "compare-stats"));
+    EXPECT_EQ(wxString::FromUTF8("0 pending · 1 left · 0 right · 0 partial"), Label(page, "compare-stats"));
     key(pane, 'S', wxMOD_CONTROL);
     EXPECT_EQ(1, frame_keys);
 
@@ -5861,10 +7836,15 @@ TEST_F(ordinary_edit, style_panel_switches_between_its_style_and_animation_pages
     EXPECT_EQ(StylePanel::Page::Style, panel->ShownPage());
     EXPECT_EQ("Style", panel->Shown()["page"]);
     EXPECT_TRUE(panel->IsSectionVisible("text"));
-    EXPECT_FALSE(panel->IsSectionShown("transform")); // folded at the start
+    EXPECT_TRUE(panel->IsSectionShown("transform")); // open at the start
+    panel->ShowSection("transform", false);
+    // Not the scroll bars, nor the plate in their corner, which wxOSX makes a
+    // scrolled window's children, and shows when the page is taller than it
     auto visible=[&] {
         int shown = 0;
-        for (auto child : panel->GetChildren()) if (child->IsShown()) ++shown;
+        for (auto child : panel->GetChildren())
+            if (child->IsShown() && !dynamic_cast<wxScrollBar*>(child)
+                && wxString(child->GetClassInfo()->GetClassName()) != "wxBlindPlateWindow") ++shown;
         return shown;
     };
     int on_style = visible();
@@ -5940,7 +7920,18 @@ TEST(libresrc, dialog_icons_are_the_monochrome_ones_unless_classic_icons_are_cho
     wxBitmap got; got.CopyFromIcon(drawn);
     auto a=expected.ConvertToImage(), b=got.ConvertToImage();
     ASSERT_EQ(a.GetSize(),b.GetSize());
-    EXPECT_EQ(0,memcmp(a.GetData(),b.GetData(),a.GetWidth()*a.GetHeight()*3)) << "the toolbar's icon";
+    // Compared as they show: each colour times its opacity, as MSW's icons
+    // keep them, whose round trip moves the colour where little or none shows
+    int differing=0,worst=0;
+    for(int y=0;y<a.GetHeight();++y) for(int x=0;x<a.GetWidth();++x) {
+        int const aa=a.HasAlpha()?a.GetAlpha(x,y):255, ba=b.HasAlpha()?b.GetAlpha(x,y):255;
+        int d=std::abs(aa-ba);
+        for(auto channel:{&wxImage::GetRed,&wxImage::GetGreen,&wxImage::GetBlue})
+            d=std::max(d,std::abs((a.*channel)(x,y)*aa/255-(b.*channel)(x,y)*ba/255));
+        if(d>2)++differing;
+        worst=std::max(worst,d);
+    }
+    EXPECT_EQ(0,differing) << "the toolbar's icon; differing by up to " << worst;
     libresrc_set_classic(true);
     EXPECT_FALSE(GETICONS(options_button).GetIcon(wxSize(20,20),wxIconBundle::FALLBACK_NONE).IsOk()) << "the coloured bitmaps";
 }
@@ -6225,7 +8216,7 @@ TEST_F(ordinary_edit, timing_page_edits_times_snaps_to_scene_changes_and_adds_le
     auto vc=c->videoController.get();
     auto description=c->subsController->GetUndoDescription();
 
-    EXPECT_EQ("time scene lead join shift",shown()["cards"]);
+    EXPECT_EQ("time scene lead join shift check",shown()["cards"]);
     EXPECT_EQ(wxS("0:00:01.60 → 0:00:05.60"),shown()["line"]);
     EXPECT_EQ(fmt_tl("%d characters per second",CharactersPerSecond("Hello, world",4000,true,true)),shown()["summary.cps"]);
     EXPECT_EQ(_("No line before it"),shown()["summary.prev"]);
@@ -6239,7 +8230,17 @@ TEST_F(ordinary_edit, timing_page_edits_times_snaps_to_scene_changes_and_adds_le
     EXPECT_EQ(wxS(" error"),shown()["summary.cps"].Right(6));
 
     // Scene changes: frame 50 is 10 frames after the start, frame 150 ends
-    // the scene the end is in
+    // the scene the end is in. Moving the start in that far needs more than
+    // the few frames a start may move later by default.
+    EXPECT_EQ(fmt_tl("Start: none within %d ms",100),shown()["scene.start"]);
+    EXPECT_EQ(wxS(" disabled"),shown()["scene.snap_start"].Right(9));
+    BOOST_SCOPE_EXIT_ALL(&){
+        for(auto o:{"Start Earlier","End Later"})OPT_SET(std::string("Timing/Scene Snap/")+o)->SetInt(500);
+        for(auto o:{"Start Later","End Earlier"})OPT_SET(std::string("Timing/Scene Snap/")+o)->SetInt(100); };
+    shown(); page->EnterNumber("scene.in",500,true);
+    EXPECT_EQ(500,OPT_GET("Timing/Scene Snap/Start Later")->GetInt());
+    EXPECT_EQ(500,OPT_GET("Timing/Scene Snap/End Earlier")->GetInt());
+    EXPECT_EQ(500,OPT_GET("Timing/Scene Snap/Start Earlier")->GetInt()) << "out is set apart";
     EXPECT_EQ(fmt_plural(10,"Start %d frame early","Start %d frames early",10),shown()["scene.start"]);
     page->Press("scene.snap_start");
     EXPECT_EQ(c->project->Timecodes().TimeAtFrame(50,agi::vfr::START),times(0).first);
@@ -6251,13 +8252,13 @@ TEST_F(ordinary_edit, timing_page_edits_times_snaps_to_scene_changes_and_adds_le
     c->subsController->Undo(); c->subsController->Undo();
     EXPECT_EQ(std::make_pair(1600,5600),times(0));
     EXPECT_EQ(description,c->subsController->GetUndoDescription());
-    // The distance is the one Snap to Nearby Scene Changes keeps
-    shown(); page->EnterNumber("scene.distance",100,true);
-    BOOST_SCOPE_EXIT_ALL(&){ OPT_SET("Timing/Scene Snap Distance")->SetInt(500); };
-    EXPECT_EQ(100,OPT_GET("Timing/Scene Snap Distance")->GetInt());
-    EXPECT_EQ(fmt_tl("Start: none within %d ms",100),shown()["scene.start"]);
-    EXPECT_EQ(wxS(" disabled"),shown()["scene.snap_start"].Right(9));
-    OPT_SET("Timing/Scene Snap Distance")->SetInt(500);
+    // The end moves out: the out distance is the one that reaches it
+    shown(); page->EnterNumber("scene.out",100,true);
+    EXPECT_EQ(100,OPT_GET("Timing/Scene Snap/Start Earlier")->GetInt());
+    EXPECT_EQ(100,OPT_GET("Timing/Scene Snap/End Later")->GetInt());
+    EXPECT_EQ(fmt_tl("End: none within %d ms",100),shown()["scene.end"]);
+    EXPECT_EQ(wxS(" disabled"),shown()["scene.snap_end"].Right(9));
+    shown(); page->EnterNumber("scene.out",500,true);
     shown(); page->Press("scene.both");
     EXPECT_EQ(std::make_pair(c->project->Timecodes().TimeAtFrame(50,agi::vfr::START),c->project->Timecodes().TimeAtFrame(149,agi::vfr::END)),times(0));
     c->subsController->Undo();
@@ -6373,6 +8374,125 @@ TEST_F(ordinary_edit, timing_page_edits_times_snaps_to_scene_changes_and_adds_le
     EXPECT_EQ(0,OPT_GET("App/Style Panel/Page")->GetInt());
     again->Destroy();
     panel->Destroy();
+}
+
+TEST(timing_check, finds_short_fast_overlapping_close_and_nearly_cut_lines) {
+    agi::vfr::Framerate fps(25,1);
+    std::vector<std::unique_ptr<AssDialogue>> owned;
+    auto line=[&](int start,int end,std::string text,std::string style="Default",bool comment=false){
+        auto d=std::make_unique<AssDialogue>();d->Start=start;d->End=end;d->Text=text;d->Style=style;d->Comment=comment;
+        d->Row=int(owned.size());owned.push_back(std::move(d));return owned.back().get();};
+    line(1000,3000,"Hi");                                   // 0 fine
+    line(4000,4490,"Hi","S1");                              // 1 too short
+    line(5000,5500,"Hi","S2");                              // 2 just long enough
+    line(6000,7000,"abcdefghijklmnopqrst","S3");            // 3 20 a second: fast
+    line(7000,8000,std::string(40,'a'),"S4");               // 4 40 a second: too fast
+    line(8000,9000,"Hi","A");                               // 5
+    line(8800,9500,"Hi","A");                               // 6 overlaps 5 by 200
+    line(8900,9600,"Hi","B");                               // 7 another style: not
+    line(8000,10000,"Hi","A",true);                         // 8 a comment: not
+    line(fps.TimeAtFrame(52,agi::vfr::START),fps.TimeAtFrame(52,agi::vfr::START)+1500,"Hi","C"); // 9 starts 2 frames after the cut at 50
+    line(fps.TimeAtFrame(50,agi::vfr::START),fps.TimeAtFrame(50,agi::vfr::START)+1500,"Hi","D"); // 10 on it
+    line(fps.TimeAtFrame(55,agi::vfr::START),fps.TimeAtFrame(55,agi::vfr::START)+1500,"Hi","E"); // 11 5 frames: too far to be meant
+    line(fps.TimeAtFrame(100,agi::vfr::START),fps.TimeAtFrame(148,agi::vfr::END),"Hi","F");      // 12 ends a frame before the cut's own frame before
+    line(11000,12000,"Hi","G");                             // 13
+    line(12060,13000,"Hi","G");                             // 14 60 ms after 13: too close
+    line(13100,14000,"Hi","G");                             // 15 100 ms after: far enough
+    line(14000,15000,"Hi","G");                             // 16 right after: joined, not a gap
+    std::vector<AssDialogue const*> lines; for(auto const& d:owned) lines.push_back(d.get());
+    TimingCheckLimits limits; limits.min_duration=500; limits.min_gap=100; limits.cps_warning=15; limits.cps_error=30; limits.cut_frames=3;
+    auto list=[&](std::vector<TimingIssue> const& issues){std::string out;for(auto const& i:issues){
+        out+=std::to_string(i.row)+":"+"SFOGN"[int(i.kind)]+(i.end?"e":"")+(i.severe?"!":"")+"="+std::to_string(i.value)+(i.other_row>=0?"/"+std::to_string(i.other_row):"")+" ";}return out;};
+    std::vector<int> kf{0,50,150};
+    EXPECT_EQ("1:S=490 3:F=20 4:F!=40 6:O=200/5 9:N=-2 12:Ne=1 14:G=60/13 ",list(FindTimingIssues(lines,nullptr,limits,kf,0,fps)));
+    // Only the selected: still overlapping the one that is not
+    std::set<int> only{owned[6]->Id,owned[0]->Id};
+    EXPECT_EQ("6:O=200/5 ",list(FindTimingIssues(lines,&only,limits,kf,0,fps)));
+    // No keyframes, no scene changes to miss
+    EXPECT_EQ("1:S=490 3:F=20 4:F!=40 6:O=200/5 14:G=60/13 ",list(FindTimingIssues(lines,nullptr,limits,{},0,fps)));
+    // Two frames is within one frame's limit no longer
+    limits.cut_frames=1;
+    EXPECT_EQ("1:S=490 3:F=20 4:F!=40 6:O=200/5 12:Ne=1 14:G=60/13 ",list(FindTimingIssues(lines,nullptr,limits,kf,0,fps)));
+    // Gaps not looked for; and one too close for a wider limit
+    limits.min_gap=0;
+    EXPECT_EQ("1:S=490 3:F=20 4:F!=40 6:O=200/5 12:Ne=1 ",list(FindTimingIssues(lines,nullptr,limits,kf,0,fps)));
+    limits.min_gap=101;
+    EXPECT_EQ("1:S=490 3:F=20 4:F!=40 6:O=200/5 12:Ne=1 14:G=60/13 15:G=100/14 ",list(FindTimingIssues(lines,nullptr,limits,kf,0,fps)));
+}
+
+TEST_F(ordinary_edit, timing_page_lists_timing_problems_and_goes_to_them) {
+    window->Show();
+    BOOST_SCOPE_EXIT_ALL(&){ window->Hide(); };
+    c->project->LoadVideo("?dummy:25:250:64:48:64:64:64:");
+    ASSERT_NE(nullptr,c->project->VideoProvider());
+    PumpFirstFrame(c.get(),window);
+    agi::fs::path kf((std::filesystem::current_path()/"timing-check-keyframes.txt").wstring());
+    agi::keyframe::Save(kf,{0,50,150});
+    c->project->LoadKeyframes(kf);
+    auto min_duration=OPT_GET("Timing/Check/Min Duration")->GetInt();
+    auto min_gap=OPT_GET("Timing/Check/Min Gap")->GetInt();
+    BOOST_SCOPE_EXIT_ALL(&){ c->project->CloseKeyframes(); c->project->CloseVideo(); OPT_SET("App/Style Panel/Page")->SetInt(0);
+        OPT_SET("Timing/Check/Min Duration")->SetInt(min_duration); OPT_SET("Timing/Check/Min Gap")->SetInt(min_gap);
+        OPT_SET("Timing/Check/Selection Only")->SetBool(false); };
+    auto vc=c->videoController.get();
+    std::vector<int> ids;
+    {auto write=c->subtitleAccess->TryWrite();auto &file=LiveWriteForTest(*c);
+     auto &row=file.Events.front();row.Text="Hello, world";row.Start=1600;row.End=5600;
+     auto add=[&](int start,int end,std::string text,std::string style){auto d=new AssDialogue(row);d->Start=start;d->End=end;d->Text=text;d->Style=style;file.Events.push_back(*d);};
+     add(6000,6300,"Hi","Default");                 // too short
+     add(6200,8000,"Next","Default");               // overlaps the one before
+     int at=vc->TimeAtFrame(152,agi::vfr::START);
+     add(at,at+2000,"Sign","Sign");                 // two frames after the cut at 150
+     add(8050,9000,"Then","Default");               // 50 ms after the one before: flickers
+     file.Commit("fixture",AssFile::COMMIT_NEW);
+     for(auto const& d:file.Events) ids.push_back(d.Id);}
+    c->selectionController->SetSelectionAndActiveIDs({ids[0]},ids[0]);
+    auto panel=new StylePanel(window,c.get());
+    BOOST_SCOPE_EXIT_ALL(&){ panel->Destroy(); };
+    panel->ShowPage(StylePanel::Page::Timing);
+    auto page=panel->Timing();
+    auto shown=[&]{page->UpdateNow();return page->Shown();};
+
+    EXPECT_EQ(fmt_tl("%d too short",1)+wxS(" · ")+fmt_tl("%d overlapping",1)+wxS(" · ")+fmt_tl("%d too close",1)+wxS(" · ")+fmt_tl("%d off a cut",1),shown()["check.summary"]);
+    EXPECT_EQ(wxS("#2 ")+fmt_tl("Too short: %s s",wxS("0.30"))+wxS("\n#3 ")+fmt_tl("Overlaps #%d by %d ms",2,100)
+        +wxS("\n#4 ")+fmt_plural(2,"Start %d frame late","Start %d frames late",2)+wxS("\n#5 ")+fmt_tl("#%d ends only %d ms before",3,50),shown()["check.list"]);
+    EXPECT_EQ(wxS(" disabled"),shown()["check.prev"].Right(9)) << "nothing before the first line";
+
+    // From the current line, one problem on and back; picking one
+    page->Press("check.next");
+    EXPECT_EQ(ids[1],c->selectionController->ReadActiveLine()->Id);
+    EXPECT_EQ(vc->FrameAtTime(6000,agi::vfr::START),vc->GetFrameN()) << "the video goes there";
+    shown(); page->Press("check.next");
+    EXPECT_EQ(ids[2],c->selectionController->ReadActiveLine()->Id);
+    shown(); page->Press("check.prev");
+    EXPECT_EQ(ids[1],c->selectionController->ReadActiveLine()->Id);
+    page->PickIssue(2);
+    EXPECT_EQ(ids[3],c->selectionController->ReadActiveLine()->Id);
+    page->PickIssue(3);
+    EXPECT_EQ(ids[4],c->selectionController->ReadActiveLine()->Id);
+    EXPECT_EQ(vc->FrameAtTime(8050,agi::vfr::START),vc->GetFrameN());
+    EXPECT_TRUE(shown()["check.list"].EndsWith(" (current)"));
+    EXPECT_EQ(wxS(" disabled"),shown()["check.next"].Right(9)) << "nothing after the last";
+
+    // Only the selected lines
+    c->selectionController->SetSelectionAndActiveIDs({ids[0]},ids[0]);
+    shown(); page->Choose("check.scope",1);
+    EXPECT_TRUE(OPT_GET("Timing/Check/Selection Only")->GetBool());
+    EXPECT_EQ(_("No timing problems found"),shown()["check.summary"]);
+    page->Choose("check.scope",0);
+
+    // A shorter shortest; then a problem mended on the page
+    shown(); page->EnterNumber("check.min_duration",200,true);
+    EXPECT_EQ(200,OPT_GET("Timing/Check/Min Duration")->GetInt());
+    EXPECT_EQ(fmt_tl("%d overlapping",1)+wxS(" · ")+fmt_tl("%d too close",1)+wxS(" · ")+fmt_tl("%d off a cut",1),shown()["check.summary"]);
+    // Gaps not looked for
+    page->EnterNumber("check.min_gap",0,true);
+    EXPECT_EQ(0,OPT_GET("Timing/Check/Min Gap")->GetInt());
+    EXPECT_EQ(fmt_tl("%d overlapping",1)+wxS(" · ")+fmt_tl("%d off a cut",1),shown()["check.summary"]);
+    c->selectionController->SetSelectionAndActiveIDs({ids[2]},ids[2]);
+    shown(); page->EnterNumber("time.start",6300,true);
+    EXPECT_EQ(6300,int(std::next(LiveRead(*c).Events.begin(),2)->Start));
+    EXPECT_EQ(fmt_tl("%d off a cut",1),shown()["check.summary"]);
 }
 
 TEST_F(ordinary_edit, compare_tab_is_one_at_a_time_and_refuses_drops_while_open) {
@@ -6619,6 +8739,14 @@ TEST_F(audio_edit, main_window_blocks_sit_on_a_backdrop_without_borders) {
     editors(edit_box);EXPECT_EQ(1,stc);
 }
 
+namespace {
+/// Modifiers held for the wheel while it lives, as on the keyboard, which is
+/// what Windows reads for the wheel rather than the event (WheelAltDown)
+struct HeldForWheel {
+    explicit HeldForWheel(int modifiers) { HoldWheelModifiersForTests(modifiers); }
+    ~HeldForWheel() { HoldWheelModifiersForTests(0); }
+};
+}
 TEST_F(audio_edit, scrollbar_thumb_edges_zoom_and_alt_wheel_zooms) {
     window->SetSize(1100,400);window->Show(); // the scrollbar captures the mouse while dragging
     auto box=c->audioBox=new AudioBox(window,c.get());
@@ -6630,7 +8758,7 @@ TEST_F(audio_edit, scrollbar_thumb_edges_zoom_and_alt_wheel_zooms) {
     AudioDisplay* display=nullptr;
     std::function<void(wxWindow*)> find=[&](wxWindow*w){for(auto ch:w->GetChildren()){if(auto d=dynamic_cast<AudioDisplay*>(ch))display=d;find(ch);}};
     find(box);ASSERT_NE(nullptr,display);
-    c->project->LoadAudio("dummy-audio:silence?sr=44100&bd=16&ch=1&ln=441000");
+    c->project->LoadAudio("dummy-audio:silence?sr=44100&bd=16&ch=1&ln=441000");SKIP_IF_THE_AUDIO_WAS_CLOSED_FOR_WANT_OF_A_PLAYER();
     display->SetZoomLevel(-50); // a wide thumb
     const int width=display->GetClientSize().x, bar_y=display->GetClientSize().y-5;
     const double duration=display->GetDuration();
@@ -6688,6 +8816,7 @@ TEST_F(audio_edit, scrollbar_thumb_edges_zoom_and_alt_wheel_zooms) {
         display->SetZoomLevel(0);
         wxMouseEvent wheel(wxEVT_MOUSEWHEEL);wheel.SetAltDown(true);wheel.m_wheelRotation=120;wheel.m_wheelDelta=120;
         wheel.SetPosition({width/2,80});wheel.SetEventObject(display);
+        HeldForWheel alt(wxMOD_ALT);
         display->GetEventHandler()->ProcessEvent(wheel);
         EXPECT_EQ(1,display->GetZoomLevel()) << "wheel defaults to zoom: " << default_zoom;
         EXPECT_EQ(1,OPT_GET("Audio/Zoom/Horizontal")->GetInt());
@@ -6711,12 +8840,14 @@ TEST_F(audio_edit, alt_wheel_zoom_does_not_leave_alt_to_the_menu_bar) {
     AudioDisplay* display=nullptr;
     std::function<void(wxWindow*)> find=[&](wxWindow*w){for(auto ch:w->GetChildren()){if(auto d=dynamic_cast<AudioDisplay*>(ch))display=d;find(ch);}};
     find(box);ASSERT_NE(nullptr,display);
-    c->project->LoadAudio("dummy-audio:silence?sr=44100&bd=16&ch=1&ln=441000");
+    c->project->LoadAudio("dummy-audio:silence?sr=44100&bd=16&ch=1&ln=441000");SKIP_IF_THE_AUDIO_WAS_CLOSED_FOR_WANT_OF_A_PLAYER();
     OPT_SET("Audio/Wheel Default to Zoom")->SetBool(false);
     display->SetZoomLevel(0);display->ScrollPixelToLeft(2000);
     auto wheel=[&](bool alt){
         wxMouseEvent event(wxEVT_MOUSEWHEEL);event.SetAltDown(alt);event.m_wheelRotation=-120;event.m_wheelDelta=120;
-        event.SetPosition({400,80});event.SetEventObject(display);display->GetEventHandler()->ProcessEvent(event);
+        event.SetPosition({400,80});event.SetEventObject(display);
+        HeldForWheel held(alt?wxMOD_ALT:0);
+        display->GetEventHandler()->ProcessEvent(event);
     };
     wheel(true);
     EXPECT_EQ(-1,display->GetZoomLevel());
@@ -7215,7 +9346,105 @@ TEST_F(ordinary_edit, progress_cancels_with_a_flat_button_and_stays_for_its_log)
         EXPECT_NO_THROW(progress.Run([](agi::ProgressSink *ps){ ps->Log("written"); }));
     }
     EXPECT_TRUE(ran);
+    ran=false;
+    {
+        // The bar is drawn: it glides to how far the task has got, the per
+        // cent under it; not known how far, a piece sweeps and no number
+        std::atomic<int> step{0};
+        RunModal hook("Working",[&](wxDialog *dialog){
+            ProgressBar *bar=nullptr; for(auto child:descendants(dialog))if(auto b=dynamic_cast<ProgressBar*>(child))bar=b;
+            ASSERT_NE(nullptr,bar);
+            for(int i=0;i<400 && bar->GetValue()!=0.5;++i){wxYield();wxMilliSleep(5);}
+            EXPECT_DOUBLE_EQ(0.5,bar->GetValue());
+            auto has_label=[&](wxString const& label){ for(auto child:descendants(dialog))if(auto t=dynamic_cast<wxStaticText*>(child))if(t->GetLabel()==label)return true; return false; };
+            EXPECT_TRUE(has_label("50%"));
+            for(int i=0;i<400 && bar->GetShown()!=0.5;++i){wxYield();wxMilliSleep(5);}
+            EXPECT_DOUBLE_EQ(0.5,bar->GetShown()) << "it glides all the way there";
+            step=1;
+            for(int i=0;i<400 && !bar->IsIndeterminate();++i){wxYield();wxMilliSleep(5);}
+            EXPECT_TRUE(bar->IsIndeterminate());
+            EXPECT_FALSE(has_label("50%"));
+            ran=true;
+            wxKeyEvent esc(wxEVT_CHAR_HOOK);esc.m_keyCode=WXK_ESCAPE;esc.SetEventObject(dialog);dialog->GetEventHandler()->ProcessEvent(esc);
+            for(int i=0;i<400 && dialog->IsShown();++i){wxYield();wxMilliSleep(5);}
+        });
+        DialogProgress progress(window,"Working","Something long");
+        EXPECT_THROW(progress.Run([&](agi::ProgressSink *ps){
+            ps->SetProgress(50,100);
+            while(step==0 && !ps->IsCancelled())wxMilliSleep(5);
+            ps->SetIndeterminate();
+            while(!ps->IsCancelled())wxMilliSleep(5);
+        }),agi::UserCancelException);
+    }
+    EXPECT_TRUE(ran);
 }
+TEST_F(ordinary_edit, progress_keeps_its_run_when_shown_again) {
+    // Hidden and shown again in the middle of a run, as Windows does when
+    // Aegisub goes to the taskbar and comes back: not started over
+    bool ran=false;
+    RunModal hook("Working",[&](wxDialog *dialog){
+        ProgressBar *bar=nullptr; for(auto child:descendants(dialog))if(auto b=dynamic_cast<ProgressBar*>(child))bar=b;
+        ASSERT_NE(nullptr,bar);
+        for(int i=0;i<400 && bar->GetValue()!=0.5;++i){wxYield();wxMilliSleep(5);}
+        ASSERT_DOUBLE_EQ(0.5,bar->GetValue());
+        for(bool show:{false,true}){wxShowEvent event(dialog->GetId(),show);event.SetEventObject(dialog);dialog->GetEventHandler()->ProcessEvent(event);}
+        EXPECT_DOUBLE_EQ(0.5,bar->GetValue()) << "the bar not emptied";
+        bool percent=false; for(auto child:descendants(dialog))if(auto t=dynamic_cast<wxStaticText*>(child))percent|=t->GetLabel()=="50%";
+        EXPECT_TRUE(percent);
+        // Cancel still cancels, once
+        auto cancel=dynamic_cast<FlatButton*>(dialog->FindWindow(wxID_CANCEL)); ASSERT_NE(nullptr,cancel);
+        EXPECT_EQ(_("Cancel"),cancel->GetLabel());
+        wxKeyEvent esc(wxEVT_CHAR_HOOK);esc.m_keyCode=WXK_ESCAPE;esc.SetEventObject(dialog);dialog->GetEventHandler()->ProcessEvent(esc);
+        EXPECT_EQ(_("Cancelling..."),cancel->GetLabel());
+        for(int i=0;i<400 && dialog->IsShown();++i){wxYield();wxMilliSleep(5);}
+        ran=true;
+    });
+    DialogProgress progress(window,"Working","Something long");
+    EXPECT_THROW(progress.Run([](agi::ProgressSink *ps){
+        ps->SetProgress(50,100);
+        while(!ps->IsCancelled())wxMilliSleep(5);
+    }),agi::UserCancelException);
+    EXPECT_TRUE(ran);
+}
+
+#ifdef __WXMSW__
+TEST_F(ordinary_edit, progress_goes_to_the_taskbar_with_the_main_window_and_back) {
+    // A dialog over the main window and the progress over that, as a Whisper
+    // model downloaded from Preferences has them: Windows hides the first
+    // with the main window, the progress is hidden with them
+    window->Show();
+    auto middle=new wxDialog(window,-1,"Middle");
+    middle->Show();
+    BOOST_SCOPE_EXIT_ALL(&){ middle->Destroy(); window->Iconize(false); window->Hide(); };
+    auto visible=[](wxWindow *w){ return ::IsWindowVisible(w->GetHWND()) != FALSE; };
+    bool ran=false;
+    RunModal hook("Working",[&](wxDialog *dialog){
+        window->Iconize(true);
+        for(int i=0;i<200 && visible(dialog);++i){wxYield();wxMilliSleep(5);}
+        EXPECT_FALSE(visible(dialog));
+        EXPECT_FALSE(visible(middle));
+        window->Iconize(false);
+        for(int i=0;i<200 && !visible(dialog);++i){wxYield();wxMilliSleep(5);}
+        EXPECT_TRUE(visible(dialog)) << "back with the main window";
+        EXPECT_TRUE(visible(middle));
+        EXPECT_TRUE(dialog->IsModal());
+        // Asked itself to go, it takes the main window with it
+        ::SendMessage(dialog->GetHWND(),WM_SYSCOMMAND,SC_MINIMIZE,0);
+        EXPECT_TRUE(window->IsIconized());
+        EXPECT_FALSE(dialog->IsIconized()) << "not a little window of its own";
+        window->Iconize(false);
+        for(int i=0;i<200 && !visible(dialog);++i){wxYield();wxMilliSleep(5);}
+        EXPECT_TRUE(visible(dialog));
+        wxKeyEvent esc(wxEVT_CHAR_HOOK);esc.m_keyCode=WXK_ESCAPE;esc.SetEventObject(dialog);dialog->GetEventHandler()->ProcessEvent(esc);
+        for(int i=0;i<400 && dialog->IsShown();++i){wxYield();wxMilliSleep(5);}
+        ran=true;
+    });
+    DialogProgress progress(middle,"Working","Something long");
+    EXPECT_THROW(progress.Run([](agi::ProgressSink *ps){ while(!ps->IsCancelled())wxMilliSleep(5); }),agi::UserCancelException);
+    EXPECT_TRUE(ran);
+}
+#endif
+
 TEST_F(ordinary_edit, color_picker_is_drawn_number_fields_a_mode_switch_and_code_fields) {
     OPT_SET("Tool/Colour Picker/Mode")->SetInt(0);
     bool ran=false;
@@ -7312,7 +9541,7 @@ struct CancelledSink final : agi::ProgressSink {
 };
 }
 
-TEST(scene_detect, finds_cuts_but_not_motion_flashes_or_fades) {
+TEST(scene_detect, finds_cuts_and_fades_but_not_motion_or_flashes) {
     DrawnVideo video(180,320,180);
     video.draw=[](int n,int x,int y,unsigned char *bgr){
         if(n<40)return Shot(0,n,x,y,bgr);              // A, panning
@@ -7329,17 +9558,24 @@ TEST(scene_detect, finds_cuts_but_not_motion_flashes_or_fades) {
         Shot(4,n,x,y,bgr);
     };
     auto cuts=scene_detect::Detect(video,nullptr,scene_detect::Params{});
-    ASSERT_EQ(3u,cuts.size()) << ::testing::PrintToString(cuts);
+    ASSERT_EQ(4u,cuts.size()) << ::testing::PrintToString(cuts);
     EXPECT_EQ(0,cuts[0]);
     EXPECT_EQ(40,cuts[1]);
-    EXPECT_TRUE(cuts[2]==140||cuts[2]==143) << "cuts 3 frames apart are one: " << cuts[2];
+    EXPECT_NEAR(90,cuts[2],2) << "the fade, at its middle";
+    EXPECT_TRUE(cuts[3]==140||cuts[3]==143) << "cuts 3 frames apart are one: " << cuts[3];
     EXPECT_EQ(180,video.reads) << "each frame read once";
+    scene_detect::Params hard;
+    hard.gradual=false;
+    video.reads=0;
+    auto only_cuts=scene_detect::Detect(video,nullptr,hard);
+    ASSERT_EQ(3u,only_cuts.size()) << "fades not looked for: " << ::testing::PrintToString(only_cuts);
+    EXPECT_EQ(40,only_cuts[1]);
 
     CancelledSink cancelled;
     EXPECT_TRUE(scene_detect::Detect(video,&cancelled,scene_detect::Params{}).empty());
 }
 
-TEST(scene_detect, another_angle_in_the_same_colours_is_a_cut_and_a_flat_dissolve_is_not) {
+TEST(scene_detect, another_angle_in_the_same_colours_is_a_cut_and_a_flat_dissolve_one_at_its_middle) {
     // Drawn as cartoons are: flat colours, a sky and the ground, a few
     // shapes. The second shot is the same place from elsewhere: the same
     // colours in much the same amounts, laid out otherwise
@@ -7363,7 +9599,108 @@ TEST(scene_detect, another_angle_in_the_same_colours_is_a_cut_and_a_flat_dissolv
         for(int i=0;i<3;++i)bgr[i]=static_cast<unsigned char>(a[i]*(1-t)+b[i]*t);
     };
     auto cuts=scene_detect::Detect(video,nullptr,scene_detect::ForSensitivity(1));
-    EXPECT_EQ((std::vector<int>{0,40}),cuts) << "medium sensitivity";
+    ASSERT_EQ(3u,cuts.size()) << "medium sensitivity: " << ::testing::PrintToString(cuts);
+    EXPECT_EQ(40,cuts[1]);
+    EXPECT_NEAR(90,cuts[2],2) << "the dissolve, at its middle, once";
+    auto hard=scene_detect::ForSensitivity(1);
+    hard.gradual=false;
+    EXPECT_EQ((std::vector<int>{0,40}),scene_detect::Detect(video,nullptr,hard)) << "dissolves not looked for";
+}
+
+TEST(scene_detect, dissolves_and_fades_short_and_long_are_found_and_a_pan_is_not) {
+    // Shots of their own colours, each with a texture moving 2 px a frame
+    auto mix=[](int a,int b,double t,int n,int x,int y,unsigned char *bgr){
+        unsigned char p[3],q[3];Shot(a,n,x,y,p);Shot(b,n,x,y,q);
+        for(int i=0;i<3;++i)bgr[i]=static_cast<unsigned char>(p[i]*(1-t)+q[i]*t);
+    };
+    // Shot 4 is near black: a fade
+    struct Gradual { int from, length; };
+    for(auto g:{Gradual{60,6},Gradual{60,12},Gradual{60,30},Gradual{60,45}}) {
+        DrawnVideo video(160,160,90);
+        video.draw=[&](int n,int x,int y,unsigned char *bgr){
+            if(n<g.from)return Shot(0,n,x,y,bgr);
+            if(n<g.from+g.length)return mix(0,2,(n-g.from+1.)/(g.length+1),n,x,y,bgr);
+            Shot(2,n,x,y,bgr);
+        };
+        auto cuts=scene_detect::Detect(video,nullptr,scene_detect::ForSensitivity(1));
+        ASSERT_EQ(2u,cuts.size()) << g.length << " frames: " << ::testing::PrintToString(cuts);
+        EXPECT_NEAR(g.from+g.length/2.,cuts[1],3) << g.length << " frames: at its middle";
+    }
+    // Faded out to black and in again: once, about the black
+    DrawnVideo fades(160,160,90);
+    fades.draw=[&](int n,int x,int y,unsigned char *bgr){
+        if(n<50)return Shot(0,n,x,y,bgr);
+        if(n<60)return mix(0,4,(n-49)/11.,n,x,y,bgr);
+        if(n<64)return Shot(4,n,x,y,bgr);
+        if(n<74)return mix(4,1,(n-63)/11.,n,x,y,bgr);
+        Shot(1,n,x,y,bgr);
+    };
+    auto cuts=scene_detect::Detect(fades,nullptr,scene_detect::ForSensitivity(1));
+    ASSERT_GE(cuts.size(),2u) << ::testing::PrintToString(cuts);
+    ASSERT_LE(cuts.size(),3u) << "out and in, at most: " << ::testing::PrintToString(cuts);
+    EXPECT_GE(cuts[1],50);EXPECT_LE(cuts.back(),74);
+
+    // The camera panning fast over one place, at high sensitivity: no
+    // dissolve however the picture changes
+    DrawnVideo pan(160,160,90);
+    pan.draw=[](int n,int x,int y,unsigned char *bgr){Shot(3,3*n,x,y,bgr);};
+    EXPECT_EQ((std::vector<int>{0}),scene_detect::Detect(pan,nullptr,scene_detect::ForSensitivity(2)));
+    auto m=scene_detect::Measure(pan,nullptr,3);
+    double most=0;for(double f:m.far_difference)most=std::max(most,f);
+    EXPECT_GT(most,0.3) << "frames 12 apart do differ";
+
+    // Tilting up a smooth sky: the frame half way is exactly the two either
+    // side mixed, as in a dissolve, but moving the picture explains it
+    DrawnVideo tilt(80,160,180);
+    tilt.draw=[](int n,int,int y,unsigned char *bgr){
+        double v=(y+4*n)*0.5;
+        bgr[0]=static_cast<unsigned char>(v);bgr[1]=static_cast<unsigned char>(255-v);bgr[2]=120;
+    };
+    auto sky=scene_detect::Measure(tilt,nullptr,3);
+    EXPECT_GT(sky.far_difference[40],0.9) << "every cell changes";
+    EXPECT_LT(sky.blend[40],0.05) << "and looks mixed";
+    EXPECT_EQ((std::vector<int>{0}),scene_detect::Cuts(sky,scene_detect::ForSensitivity(2)));
+}
+
+TEST(scene_detect, black_bars_and_the_subtitles_band_are_left_out) {
+    // A picture letterboxed: black above and below, a subtitle burnt in
+    // near its bottom now and then
+    auto frame=[](int n,int x,int y,unsigned char *bgr){
+        if(y<20||y>=160){bgr[0]=bgr[1]=bgr[2]=0;return;}
+        if(n%30>=15&&y>=128&&y<156&&x>=30&&x<290&&(x/6+y/5)%2){bgr[0]=bgr[1]=bgr[2]=255;return;}
+        Shot(n<60?0:1,0,x,y,bgr);
+    };
+    DrawnVideo video(120,320,180);
+    video.draw=frame;
+    auto picture=scene_detect::FindPicture(video,24);
+    EXPECT_EQ(0,picture.left);EXPECT_EQ(scene_detect::thumb_w,picture.right);
+    EXPECT_NEAR(20*scene_detect::thumb_h/180.,picture.top,1) << "the bar above";
+    EXPECT_NEAR(160*scene_detect::thumb_h/180.,picture.bottom,1) << "the bar below";
+
+    // Without the band the subtitles' coming and going are cuts at high
+    // sensitivity; with it only the cut is
+    auto high=scene_detect::ForSensitivity(2);
+    auto whole=scene_detect::Cuts(scene_detect::Measure(video,nullptr,3,picture),high);
+    EXPECT_GT(whole.size(),2u) << "the subtitles seen: " << ::testing::PrintToString(whole);
+    auto band=scene_detect::WithoutSubtitles(picture,25);
+    EXPECT_EQ(picture.top,band.top);
+    EXPECT_LT(band.bottom,picture.bottom);
+    EXPECT_EQ((std::vector<int>{0,60}),scene_detect::Cuts(scene_detect::Measure(video,nullptr,3,band),high));
+
+    // The bars change nothing but the share: the same cut is as strong
+    // as in the picture without them
+    DrawnVideo bare(120,320,140);
+    bare.draw=[](int n,int x,int y,unsigned char *bgr){Shot(n<60?0:1,0,x,y+20,bgr);};
+    auto barred=scene_detect::Measure(video,nullptr,3,picture);
+    auto plain=scene_detect::Measure(bare,nullptr,3);
+    EXPECT_NEAR(plain.diffs[60],barred.diffs[60],0.1);
+    EXPECT_LT(scene_detect::Measure(video,nullptr,3).diffs[60],barred.diffs[60]) << "the bars counted dilute it";
+
+    // A dark video is not all bar
+    DrawnVideo dark(30,320,180);
+    dark.draw=[](int,int,int,unsigned char *bgr){bgr[0]=bgr[1]=bgr[2]=5;};
+    EXPECT_EQ(scene_detect::Area{},scene_detect::FindPicture(dark,8));
+    EXPECT_EQ(scene_detect::Area{},scene_detect::FindPicture(std::vector<scene_detect::Signature>{}));
 }
 
 TEST(scene_detect, signature_reads_any_pitch_and_flipped_frames) {
@@ -7391,6 +9728,43 @@ TEST(scene_detect, close_cuts_keep_the_strongest_and_the_start_is_not_one) {
     EXPECT_EQ((std::vector<int>{23}),scene_detect::FindCuts(diffs,across,scene_detect::ForSensitivity(0))) << "low sensitivity misses the weak cut";
 }
 
+TEST(scene_detect, things_moving_each_their_own_way_are_not_a_cut_and_a_cut_into_fast_motion_is) {
+    // A still scene; at frame 40 three things in it jump a few cells, each
+    // its own way, as arms and ears do. At 60 a cut to a shot panning fast.
+    struct Thing { int x,y,w,h,dx,dy; unsigned char colour[3]; };
+    static const Thing things[]={{40,30,70,55,15,0,{30,30,220}},{150,90,60,60,-15,10,{40,200,60}},{230,40,55,70,0,-15,{220,140,30}}};
+    DrawnVideo video(100,320,180);
+    video.draw=[](int n,int x,int y,unsigned char *bgr){
+        if(n>=60)return Shot(1,20*n,x,y,bgr);
+        bgr[0]=static_cast<unsigned char>(200-y/3);bgr[1]=static_cast<unsigned char>(150+x/8);bgr[2]=90;
+        for(auto const& t:things){
+            int const ox=t.x+(n>=40?t.dx:0),oy=t.y+(n>=40?t.dy:0);
+            if(x>=ox&&x<ox+t.w&&y>=oy&&y<oy+t.h){
+                // Each with a pattern of its own, moving with it
+                int const stripe=((x-ox)/6+(y-oy)/9)%2;
+                for(int c=0;c<3;++c)bgr[c]=static_cast<unsigned char>(t.colour[c]*(stripe?1.:0.6));
+            }
+        }
+    };
+    auto m=scene_detect::Measure(video,nullptr,3);
+    ASSERT_EQ(100u,m.unmatched.size());
+    EXPECT_GE(m.diffs[40],scene_detect::ForSensitivity(1).threshold) << "enough changes to be taken for a cut";
+    EXPECT_LT(m.unmatched[40],0.4) << "but each part is found moved a little";
+    EXPECT_GT(m.unmatched[60],0.9) << "another picture";
+    auto high=scene_detect::ForSensitivity(2);
+    high.gradual=false;
+    EXPECT_EQ((std::vector<int>{0,60}),scene_detect::Cuts(m,high));
+    auto unchecked=high;
+    unchecked.least_unmatched=0;
+    EXPECT_EQ((std::vector<int>{40,60}),scene_detect::FindCuts(m.diffs,m.across,unchecked,m.unmatched)) << "the things moving were a cut before";
+    // The frames after the cut change as much as it does: it is a cut by
+    // the still frames before it, being so wholly another picture
+    EXPECT_GT(m.diffs[70],0.5);
+    std::vector<double> partly(m.unmatched.size(),0.85);
+    EXPECT_EQ((std::vector<int>{40}),scene_detect::FindCuts(m.diffs,m.across,unchecked,partly)) << "not when less of it is another";
+    EXPECT_EQ(scene_detect::UnmatchedShare(scene_detect::Signature{},scene_detect::Signature{}),0.) << "nothing changed";
+}
+
 TEST(scene_detect, parts_read_on_their_own_find_what_one_reading_finds) {
     int const n=4*scene_detect::min_part_frames+7;
     auto draw=[](int f,int x,int y,unsigned char *bgr){
@@ -7404,8 +9778,12 @@ TEST(scene_detect, parts_read_on_their_own_find_what_one_reading_finds) {
     auto parts=scene_detect::Measure(raw,nullptr,3);
     EXPECT_EQ(whole.diffs,parts.diffs);
     EXPECT_EQ(whole.across,parts.across);
+    EXPECT_EQ(whole.far_difference,parts.far_difference);
+    EXPECT_EQ(whole.blend,parts.blend);
+    EXPECT_EQ(whole.moved,parts.moved);
+    EXPECT_EQ(whole.unmatched,parts.unmatched);
     int reads=0;for(auto const& v:videos){EXPECT_GT(v->reads,0) << "each reader has a part";reads+=v->reads;}
-    EXPECT_LE(reads,n+3*(2*3+1)) << "each frame read once, but for a few each side of a part";
+    EXPECT_LE(reads,n+3*(scene_detect::gradual_span+3)) << "each frame read once, but for a few each side of a part";
     EXPECT_EQ(scene_detect::Cuts(whole,scene_detect::Params{}),scene_detect::Cuts(parts,scene_detect::Params{}));
 
     // Too short to be worth cutting up: one reader
@@ -7439,12 +9817,16 @@ TEST(scene_detect, measures_are_kept_and_read_back) {
     m.flash_span=3;
     m.diffs={0.,0.25,0.5};
     m.across={std::numeric_limits<double>::infinity(),0.125,1.};
+    m.far_difference={0.,0.5,0.75};m.blend={1.,0.25,0.};m.moved={1.,1.,0.5};m.unmatched={1.,0.25,0.75};
+    m.area={1,63,2,30};
     agi::fs::path file((std::filesystem::current_path()/"kept.measures").wstring());
     scene_detect::SaveMeasures(file,m);
     auto back=scene_detect::LoadMeasures(file);
     EXPECT_EQ(3,back.flash_span);
     EXPECT_EQ(m.diffs,back.diffs);
     EXPECT_EQ(m.across,back.across);
+    EXPECT_EQ(m.far_difference,back.far_difference);EXPECT_EQ(m.blend,back.blend);EXPECT_EQ(m.moved,back.moved);EXPECT_EQ(m.unmatched,back.unmatched);
+    EXPECT_EQ(m.area,back.area);
     EXPECT_EQ((std::vector<int>{0}),scene_detect::Cuts(back,scene_detect::Params{})) << "frames too near the start";
     {agi::io::Save junk(file);junk.Get()<<"not measures";}
     EXPECT_TRUE(scene_detect::LoadMeasures(file).empty());
@@ -7526,8 +9908,121 @@ TEST_F(ordinary_edit, detect_scene_changes_loads_them_as_keyframes_and_keeps_the
     OPT_SET("Tool/Scene Detection/Sensitivity")->SetInt(sensitivity==2?0:2);
     cmd::call("keyframe/detect",c.get());
     EXPECT_EQ((std::vector<int>{0,100}),c->project->Keyframes());
+
+    // Dissolves looked for: from the same measures, the video not read
+    // again. One made up in them at frame 200, mixed from 194 to 206.
+    measures=scene_detect::LoadMeasures(measured[0]);
+    for(int i=200;i<=206;++i){measures.far_difference[i]=0.9;measures.blend[i]=0.;measures.moved[i]=0.9;}
+    scene_detect::SaveMeasures(measured[0],measures);
+    // (the cuts already decided from them, before it was made up, forgotten)
+    for(auto const& f:std::filesystem::directory_iterator(std::filesystem::path(config::path->Decode("?user/scenes").wstring())))
+        if(f.path().filename().string().ends_with(".key.txt"))std::filesystem::remove(f.path());
+    bool const gradual=OPT_GET("Tool/Scene Detection/Gradual")->GetBool();
+    BOOST_SCOPE_EXIT_ALL(&){ OPT_SET("Tool/Scene Detection/Gradual")->SetBool(gradual); };
+    OPT_SET("Tool/Scene Detection/Gradual")->SetBool(false);
+    cmd::call("keyframe/detect",c.get());
+    EXPECT_EQ((std::vector<int>{0,100}),c->project->Keyframes()) << "dissolves not looked for";
+    OPT_SET("Tool/Scene Detection/Gradual")->SetBool(true);
+    cmd::call("keyframe/detect",c.get());
+    EXPECT_EQ((std::vector<int>{0,100,197}),c->project->Keyframes()) << "the dissolve, at its middle";
+
+    // Another band left out for subtitles: other cells compared, so the
+    // video is read again, into measures of their own
+    int const band=OPT_GET("Tool/Scene Detection/Subtitle Band")->GetInt();
+    BOOST_SCOPE_EXIT_ALL(&){ OPT_SET("Tool/Scene Detection/Subtitle Band")->SetInt(band); };
+    OPT_SET("Tool/Scene Detection/Subtitle Band")->SetInt(band==30?10:30);
+    cmd::call("keyframe/detect",c.get());
+    EXPECT_EQ((std::vector<int>{0}),c->project->Keyframes()) << "read again: one plain shot";
+    int kept=0;
+    for(auto const& f:std::filesystem::directory_iterator(std::filesystem::path(config::path->Decode("?user/scenes").wstring())))
+        kept+=f.path().filename().string().ends_with(".measures");
+    EXPECT_EQ(2,kept);
+    auto banded=scene_detect::LoadMeasures(measured[0]);
+    ASSERT_EQ(250u,banded.far_difference.size());
+    EXPECT_FLOAT_EQ(0.9f,static_cast<float>(banded.far_difference[200])) << "the first band's are as they were";
     c->project->CloseKeyframes();
     EXPECT_FALSE(c->project->CanCloseKeyframes());
+}
+
+TEST_F(ordinary_edit, detect_scene_changes_times_empty_subtitles_a_line_a_shot) {
+    c->project->LoadVideo("?dummy:25:250:64:48:64:64:64:");
+    ASSERT_NE(nullptr,c->project->VideoProvider());
+    PumpFirstFrame(c.get(),window);
+    BOOST_SCOPE_EXIT_ALL(&){ c->project->CloseKeyframes(); c->project->CloseVideo(); };
+    auto const& fps=c->project->Timecodes();
+    std::filesystem::remove_all(std::filesystem::path(config::path->Decode("?user/scenes").wstring()));
+    // A new file: its one empty line makes way for one a shot
+    ASSERT_EQ(1u,LiveRead(*c).Events.size());
+    cmd::call("keyframe/detect",c.get());
+    ASSERT_EQ(1u,LiveRead(*c).Events.size()) << "one plain shot";
+    EXPECT_EQ(0,int(LiveRead(*c).Events.front().Start));
+    EXPECT_EQ(fps.TimeAtFrame(249,agi::vfr::END),int(LiveRead(*c).Events.front().End));
+
+    agi::fs::path cached;
+    for(auto const& f:std::filesystem::directory_iterator(std::filesystem::path(config::path->Decode("?user/scenes").wstring())))
+        if(f.path().filename().string().ends_with(".key.txt"))cached=agi::fs::path(f.path().wstring());
+    ASSERT_FALSE(cached.empty());
+    agi::keyframe::Save(cached,{0,100,200});
+    // Still all empty: timed again, from each cut to the frame before the next
+    cmd::call("keyframe/detect",c.get());
+    ASSERT_EQ(3u,LiveRead(*c).Events.size());
+    std::vector<std::pair<int,int>> times;
+    for(auto const& line:LiveRead(*c).Events){ times.emplace_back(line.Start,line.End); EXPECT_EQ("",line.Text.get()); }
+    EXPECT_EQ((std::vector<std::pair<int,int>>{
+        {0,fps.TimeAtFrame(99,agi::vfr::END)},
+        {fps.TimeAtFrame(100,agi::vfr::START),fps.TimeAtFrame(199,agi::vfr::END)},
+        {fps.TimeAtFrame(200,agi::vfr::START),fps.TimeAtFrame(249,agi::vfr::END)}}),times);
+    EXPECT_EQ(3u,c->selectionController->ReadSelectedLines().size()) << "the lines made are selected";
+    // One undo step back to the one line
+    c->subsController->Undo();
+    EXPECT_EQ(1u,LiveRead(*c).Events.size());
+    c->subsController->Redo();
+    ASSERT_EQ(3u,LiveRead(*c).Events.size());
+
+    // Something written: the lines are left as they are
+    { auto write=c->subtitleAccess->TryWrite(); LiveWriteForTest(*c).Events.front().Text="hello"; LiveWriteForTest(*c).Commit("type",AssFile::COMMIT_DIAG_TEXT); }
+    agi::keyframe::Save(cached,{0,50});
+    cmd::call("keyframe/detect",c.get());
+    EXPECT_EQ(3u,LiveRead(*c).Events.size());
+    EXPECT_EQ((std::vector<int>{0,50}),c->project->Keyframes()) << "the keyframes are still loaded";
+}
+
+TEST_F(ordinary_edit, timeline_from_scene_changes_gives_the_shots_with_no_line_one_and_keeps_the_rest) {
+    c->project->LoadVideo("?dummy:25:250:64:48:64:64:64:");
+    ASSERT_NE(nullptr,c->project->VideoProvider());
+    PumpFirstFrame(c.get(),window);
+    agi::fs::path kf((std::filesystem::current_path()/"timeline-keyframes.txt").wstring());
+    agi::keyframe::Save(kf,{0,100,200});
+    c->project->LoadKeyframes(kf);
+    BOOST_SCOPE_EXIT_ALL(&){ c->project->CloseKeyframes(); c->project->CloseVideo(); };
+    auto const& fps=c->project->Timecodes();
+    auto command=cmd::get("keyframe/timeline");
+    ASSERT_TRUE(command->Validate(c.get()));
+    // A line written in the middle shot, and a comment over the first: a
+    // comment is not shown, so that shot still has none
+    {auto write=c->subtitleAccess->TryWrite();auto& f=LiveWriteForTest(*c);
+     auto& row=f.Events.front();row.Start=fps.TimeAtFrame(110,agi::vfr::START);row.End=fps.TimeAtFrame(180,agi::vfr::END);row.Text="hello";
+     auto note=new AssDialogue;note->Comment=true;note->Start=0;note->End=1000;note->Text="note";f.Events.push_back(*note);
+     f.Commit("lines",AssFile::COMMIT_DIAG_ADDREM);}
+    auto description=c->subsController->GetUndoDescription();
+    cmd::call("keyframe/timeline",c.get());
+    std::vector<std::tuple<int,int,std::string>> lines;
+    for(auto const& line:LiveRead(*c).Events) lines.emplace_back(line.Start,line.End,line.Text.get());
+    EXPECT_EQ((std::vector<std::tuple<int,int,std::string>>{
+        {0,fps.TimeAtFrame(99,agi::vfr::END),""},
+        {fps.TimeAtFrame(110,agi::vfr::START),fps.TimeAtFrame(180,agi::vfr::END),"hello"},
+        {0,1000,"note"},
+        {fps.TimeAtFrame(200,agi::vfr::START),fps.TimeAtFrame(249,agi::vfr::END),""}}),lines) << "among the others by time, all kept";
+    EXPECT_EQ(2u,c->selectionController->ReadSelectedLines().size());
+    c->subsController->Undo();
+    EXPECT_EQ(2u,LiveRead(*c).Events.size()) << "one undo step";
+    EXPECT_EQ(description,c->subsController->GetUndoDescription());
+    c->subsController->Redo();
+    // Every shot has a line now: nothing added, no empty undo step
+    cmd::call("keyframe/timeline",c.get());
+    EXPECT_EQ(4u,LiveRead(*c).Events.size());
+    c->subsController->Undo();
+    EXPECT_EQ(2u,LiveRead(*c).Events.size());
 }
 
 TEST_F(ordinary_edit, snap_to_nearby_scene_changes_moves_the_selected_lines_in_one_step) {
@@ -7539,7 +10034,8 @@ TEST_F(ordinary_edit, snap_to_nearby_scene_changes_moves_the_selected_lines_in_o
     c->project->LoadKeyframes(kf);
     BOOST_SCOPE_EXIT_ALL(&){ c->project->CloseKeyframes(); c->project->CloseVideo(); };
     // Timed to the audio, a line starts and ends further from the cuts than
-    // the timing post-processor's few frames: the default distance reaches
+    // the timing post-processor's few frames: the default distance out
+    // reaches the end, 400 ms on; the start, 400 ms in, stays
     {auto write=c->subtitleAccess->TryWrite();auto& row=LiveWriteForTest(*c).Events.front();
      row.Start=1600;row.End=5600;LiveWriteForTest(*c).Commit("times",AssFile::COMMIT_DIAG_TIME);}
     {auto id=LiveRead(*c).Events.front().Id;c->selectionController->SetSelectionAndActiveIDs({id},id);}
@@ -7547,17 +10043,46 @@ TEST_F(ordinary_edit, snap_to_nearby_scene_changes_moves_the_selected_lines_in_o
     ASSERT_TRUE(cmd::get("time/snap/scene_nearby")->Validate(c.get()));
     cmd::call("time/snap/scene_nearby",c.get());
     auto const& row=LiveRead(*c).Events.front();
-    EXPECT_EQ(c->project->Timecodes().TimeAtFrame(50,agi::vfr::START),int(row.Start));
+    EXPECT_EQ(1600,int(row.Start));
     EXPECT_EQ(c->project->Timecodes().TimeAtFrame(149,agi::vfr::END),int(row.End));
+    c->subsController->Undo();
+    // Set to reach in that far, the start goes too
+    BOOST_SCOPE_EXIT_ALL(&){ OPT_SET("Timing/Scene Snap/Start Later")->SetInt(100); };
+    OPT_SET("Timing/Scene Snap/Start Later")->SetInt(500);
+    cmd::call("time/snap/scene_nearby",c.get());
+    EXPECT_EQ(c->project->Timecodes().TimeAtFrame(50,agi::vfr::START),int(LiveRead(*c).Events.front().Start));
+    EXPECT_EQ(c->project->Timecodes().TimeAtFrame(149,agi::vfr::END),int(LiveRead(*c).Events.front().End));
     c->subsController->Undo();
     EXPECT_EQ(1600,int(LiveRead(*c).Events.front().Start));EXPECT_EQ(5600,int(LiveRead(*c).Events.front().End));
     EXPECT_EQ(description,c->subsController->GetUndoDescription());
     // Nothing within the distance: nothing changed, no empty undo step
-    OPT_SET("Timing/Scene Snap Distance")->SetInt(100);
-    BOOST_SCOPE_EXIT_ALL(&){ OPT_SET("Timing/Scene Snap Distance")->SetInt(500); };
+    OPT_SET("Timing/Scene Snap/Start Later")->SetInt(100);
+    OPT_SET("Timing/Scene Snap/End Later")->SetInt(100);
+    BOOST_SCOPE_EXIT_ALL(&){ OPT_SET("Timing/Scene Snap/End Later")->SetInt(500); };
     cmd::call("time/snap/scene_nearby",c.get());
     EXPECT_EQ(1600,int(LiveRead(*c).Events.front().Start));EXPECT_EQ(5600,int(LiveRead(*c).Events.front().End));
     EXPECT_EQ(description,c->subsController->GetUndoDescription());
+}
+
+TEST_F(ordinary_edit, one_scene_snap_distance_set_before_goes_out_and_a_little_way_in) {
+    BOOST_SCOPE_EXIT_ALL(&){
+        OPT_SET("Timing/Scene Snap Distance")->SetInt(-1);
+        for(auto o:{"Start Earlier","End Later"})OPT_SET(std::string("Timing/Scene Snap/")+o)->SetInt(500);
+        for(auto o:{"Start Later","End Earlier"})OPT_SET(std::string("Timing/Scene Snap/")+o)->SetInt(100); };
+    // Nothing set before: the four stay as they are
+    OPT_SET("Timing/Scene Snap/Start Later")->SetInt(40);
+    MigrateSceneSnapDistance();
+    EXPECT_EQ(40,OPT_GET("Timing/Scene Snap/Start Later")->GetInt());
+    OPT_SET("Timing/Scene Snap Distance")->SetInt(300);
+    MigrateSceneSnapDistance();
+    EXPECT_EQ(300,OPT_GET("Timing/Scene Snap/Start Earlier")->GetInt());
+    EXPECT_EQ(300,OPT_GET("Timing/Scene Snap/End Later")->GetInt());
+    EXPECT_EQ(100,OPT_GET("Timing/Scene Snap/Start Later")->GetInt());
+    EXPECT_EQ(100,OPT_GET("Timing/Scene Snap/End Earlier")->GetInt());
+    EXPECT_EQ(-1,OPT_GET("Timing/Scene Snap Distance")->GetInt()) << "once";
+    OPT_SET("Timing/Scene Snap Distance")->SetInt(60);
+    MigrateSceneSnapDistance();
+    EXPECT_EQ(60,OPT_GET("Timing/Scene Snap/Start Later")->GetInt()) << "less than 100 in stays as it was";
 }
 
 namespace {
@@ -7568,9 +10093,36 @@ std::string MagiaConfig() {
            "destination:\n- ...\n# - MagiaTimelineOutput2\n"
            "outputSrt: false\n"
            "assTemplate: template.asst\n"
+           "enableOpenCL: false\n"
+           "maxResWidth: 2000\nmaxResHeight: 1200\n"
            "strategy: dtd\n"
            "preset: default\n"
-           "bcs:\n  default:\n    dialogRect: [0.00, 1.00, 0.75, 1.00]\n";
+           "mr:\n  default:\n    dialogOutlineRect: [0.25, 0.75, 0.60, 0.95]\n  narrow:\n    dialogOutlineRect: [0.21, 0.79, 0.60, 0.97]\n"
+           "otl:\n  hotelzdm:\n    dialogRect: [0.00, 1.00, 0.75, 1.00]\n    textHSVRanges:\n      - [0, 0, 240, 180, 16, 255]\n    sobelThreshold: 200\n"
+           "bcs:\n  default:\n    dialogRect: [0.00, 1.00, 0.75, 1.00]\n    featureThreshold: 0.3\n"
+           "dtd:\n  default:\n    dialogRect: [0.00, 1.00, 0.75, 1.00]\n    featureThreshold: 2 # how much must change\n"
+           "engine: speculative\n"
+           "framewise:\n  # sampleInterval: in how many frames to sample a frame\n  sampleInterval: 1\n  debug: true\n"
+           "speculative:\n  emptyGapForceCheck: 1000\n"
+           "extraJobs: []\n"
+           "ocr:\n  standaloneOutput: true\n  standaloneOutputSuffix: \"-ocr.txt\"\n  doPaddle: true\n  doTesseract: false\n  tesseractLang: \"jpn\"\n";
+}
+std::string Magia10Config() {
+    // 1.0's: no dtd, no size limit, its OCR written to a file of its own
+    return "source:\n- src.mp4\n"
+           "destination:\n- MagiaTimelineOutput\n"
+           "assTemplate: template.asst\n"
+           "enableOpenCL: false\n"
+           "contentRect: [0.0, 1.0, 0.0, 1.0]\n"
+           "strategy: bcs\n"
+           "preset: default\n"
+           "bcs:\n  default:\n    dialogRect: [0.00, 1.00, 0.75, 1.00]\n"
+           "otl:\n  default:\n    dialogRect: [0.00, 1.00, 0.75, 1.00]\n"
+           "engine: speculative\n"
+           "framewise:\n  sampleInterval: 1\n"
+           "speculative:\n  emptyGapForceCheck: 1000\n"
+           "extraJobs:\n"
+           "ocr:\n  suffix: \"-ocr.txt\"\n  separator: \"@\"\n  doPaddle: true\n  paddleLang: \"japan\"\n  doTesseract: true\n  tesseractLang: \"jpn\"\n";
 }
 agi::fs::path MagiaFolder(std::string const& name) {
     auto dir=std::filesystem::current_path()/name;
@@ -7613,6 +10165,84 @@ TEST(magia_timeline, config_is_given_the_video_and_where_to_write_and_keeps_the_
     EXPECT_FALSE(magia_timeline::WriteConfig("strategy: bcs\n","v","o",""));
 }
 
+TEST(magia_timeline, its_config_is_read_for_what_it_offers) {
+    auto in=magia_timeline::Inspect(MagiaConfig());
+    EXPECT_EQ((std::vector<std::string>{"mr","otl","bcs","dtd"}),in.strategies) << "the keys holding presets, in its order";
+    EXPECT_EQ((std::vector<std::string>{"default","narrow"}),in.presets["mr"]);
+    EXPECT_EQ("dtd",in.Get("strategy"));
+    EXPECT_EQ("2",in.Get("dtd/default/featureThreshold")) << "without the comment after it";
+    EXPECT_EQ("[[0, 0, 240, 180, 16, 255]]",in.Get("otl/hotelzdm/textHSVRanges")) << "a list an item a line";
+    EXPECT_EQ("1",in.Get("framewise/sampleInterval")) << "past the comment above it";
+    EXPECT_EQ("\"jpn\"",in.Get("ocr/tesseractLang"));
+    EXPECT_EQ("[]",in.Get("extraJobs"));
+    EXPECT_TRUE(in.Has("maxResWidth"));
+    EXPECT_FALSE(in.Has("ocr/suffix"));
+    EXPECT_FALSE(in.Has("framewise")) << "a key holding others has no value of its own";
+
+    auto old=magia_timeline::Inspect(Magia10Config());
+    EXPECT_EQ((std::vector<std::string>{"bcs","otl"}),old.strategies);
+    EXPECT_FALSE(old.Has("maxResWidth"));
+    EXPECT_TRUE(old.Has("ocr/suffix"));
+    EXPECT_TRUE(old.Has("extraJobs")) << "there, with nothing after it";
+    EXPECT_EQ("",old.Get("extraJobs"));
+
+    auto rect=magia_timeline::ParseRect("[0.00, 1.00, 0.75, 1.00]");
+    ASSERT_TRUE(rect);
+    EXPECT_DOUBLE_EQ(0.75,rect->top);
+    EXPECT_EQ("[0.0, 1.0, 0.75, 1.0]",magia_timeline::FormatRect(*rect));
+    EXPECT_FALSE(magia_timeline::ParseRect("[0.0, 1.0, 0.5]"));
+    EXPECT_FALSE(magia_timeline::ParseRect("[0.0, 1.0, x, 1.0]"));
+    EXPECT_EQ("jpn",magia_timeline::Unquote("\"jpn\""));
+
+    // What was chosen before, over what is installed
+    magia_timeline::Values saved{{"strategy","dtd"},{"maxResWidth","1000"},{"bcs/default/dialogRect","[0.1, 0.9, 0.8, 1.0]"},{"preset","narrow"}};
+    EXPECT_EQ(saved,magia_timeline::ParseSaved(magia_timeline::FormatSaved(saved)));
+    auto on_old=magia_timeline::Effective(old,saved);
+    EXPECT_EQ("bcs",on_old["strategy"]) << "a strategy it has not: its own";
+    EXPECT_EQ("default",on_old["preset"]) << "a preset the strategy has not: its own";
+    EXPECT_EQ(0u,on_old.count("maxResWidth")) << "a setting it has not is not given to it";
+    EXPECT_EQ("[0.1, 0.9, 0.8, 1.0]",on_old["bcs/default/dialogRect"]);
+    auto on_new=magia_timeline::Effective(in,saved);
+    EXPECT_EQ("dtd",on_new["strategy"]);
+    EXPECT_EQ("default",on_new["preset"]) << "dtd has no narrow";
+    EXPECT_EQ("1000",on_new["maxResWidth"]);
+    EXPECT_EQ((magia_timeline::Values{{"bcs/default/dialogRect","[0.1, 0.9, 0.8, 1.0]"},{"maxResWidth","1000"}}),magia_timeline::Changes(in,on_new))
+        << "only what is not as installed is kept";
+    EXPECT_TRUE(magia_timeline::Changes(in,in.values).empty());
+
+    EXPECT_TRUE(magia_timeline::CanSkipFrames("bcs"));
+    EXPECT_FALSE(magia_timeline::CanSkipFrames("mr"));
+    EXPECT_TRUE(magia_timeline::CanReadText("dtd"));
+    EXPECT_FALSE(magia_timeline::CanReadText("prk"));
+}
+
+TEST(magia_timeline, config_is_written_with_what_was_chosen_where_it_is_and_nothing_added) {
+    magia_timeline::Values chosen{{"strategy","bcs"},{"bcs/default/dialogRect","[0.1, 0.9, 0.8, 1.0]"},
+        {"framewise/sampleInterval","3"},{"extraJobs","[ocr]"},{"otl/hotelzdm/textHSVRanges","[[1, 2, 3, 4, 5, 6]]"}};
+    auto out=magia_timeline::WriteConfig(MagiaConfig(),"v.mkv","o",chosen);
+    ASSERT_TRUE(out);
+    EXPECT_NE(std::string::npos,out->find("strategy: bcs\n"));
+    EXPECT_NE(std::string::npos,out->find("bcs:\n  default:\n    dialogRect: [0.1, 0.9, 0.8, 1.0]\n    featureThreshold: 0.3\n")) << *out;
+    EXPECT_NE(std::string::npos,out->find("dtd:\n  default:\n    dialogRect: [0.00, 1.00, 0.75, 1.00]\n")) << "the same key of another strategy untouched";
+    EXPECT_NE(std::string::npos,out->find("  # sampleInterval: in how many frames to sample a frame\n  sampleInterval: 3\n  debug: true\n")) << *out;
+    EXPECT_NE(std::string::npos,out->find("    textHSVRanges: [[1, 2, 3, 4, 5, 6]]\n    sobelThreshold: 200\n")) << "its old items gone, what follows kept: " << *out;
+    EXPECT_NE(std::string::npos,out->find("extraJobs: [ocr]\nocr:\n"));
+    EXPECT_NE(std::string::npos,out->find("featureThreshold: 2 # how much must change\n")) << "a line not chosen is left as it was";
+
+    auto old=magia_timeline::WriteConfig(Magia10Config(),"v.mkv","o",magia_timeline::Values{{"maxResWidth","999"},{"extraJobs","[ocr]"}});
+    ASSERT_TRUE(old);
+    EXPECT_EQ(std::string::npos,old->find("maxResWidth")) << "not added to a version that has it not";
+    EXPECT_NE(std::string::npos,old->find("extraJobs: [ocr]\nocr:\n")) << *old;
+}
+
+TEST(magia_timeline, text_read_by_1_0_is_put_on_the_stretches_of_its_names) {
+    std::vector<magia_timeline::Interval> intervals{{0,1000,"","Subtitle_Dialog_0"},{1000,2000,"","Subtitle_Dialog_1"},{2000,3000,"あ","Subtitle_Dialog_2"}};
+    magia_timeline::AddReadText(intervals,"Subtitle_Dialog_0,こんにちは@世界\r\nSubtitle_Dialog_2,ignored\nbroken line\n");
+    EXPECT_EQ("こんにちは@世界",intervals[0].text);
+    EXPECT_EQ("",intervals[1].text);
+    EXPECT_EQ("あ",intervals[2].text) << "text already read kept";
+}
+
 TEST(magia_timeline, found_by_its_folder_its_script_or_its_program) {
     auto none=MagiaFolder("magia-none");
     EXPECT_FALSE(magia_timeline::FindLaunch(none));
@@ -7620,13 +10250,19 @@ TEST(magia_timeline, found_by_its_folder_its_script_or_its_program) {
 
     auto source=MagiaFolder("magia-source");
     WriteText(source/"MagiaTimeline.py","print()\n");
+    // Where Python and the venv's are on each system
+#ifdef _WIN32
+    char const* const system_python="python";char const* const venv_python="venv/Scripts/python.exe";
+#else
+    char const* const system_python="python3";char const* const venv_python="venv/bin/python3";
+#endif
     auto bare=magia_timeline::FindLaunch(source);
     ASSERT_TRUE(bare);
-    EXPECT_EQ("python3",bare->program.string()) << "no venv: the Python on the path";
-    WriteText(source/"venv/bin/python3","",true);
+    EXPECT_EQ(system_python,bare->program.string()) << "no venv: the Python on the path";
+    WriteText(source/venv_python,"",true);
     auto launch=magia_timeline::FindLaunch(source);
     ASSERT_TRUE(launch);
-    EXPECT_EQ((source/"venv/bin/python3").string(),launch->program.string());
+    EXPECT_EQ((source/venv_python).string(),launch->program.string());
     EXPECT_EQ(source.string(),launch->folder.string()) << "run in its folder, where its config's paths start";
     EXPECT_EQ((std::vector<std::string>{"-u",(source/"MagiaTimeline.py").string(),"--config","/c.yml"}),magia_timeline::Arguments(*launch,"/c.yml"));
     auto by_script=magia_timeline::FindLaunch(source/"MagiaTimeline.py");
@@ -7646,23 +10282,76 @@ TEST(magia_timeline, its_errors_are_read_from_what_it_prints) {
     EXPECT_TRUE(magia_timeline::ReportsError("Exception caught:  bad config\n"));
     EXPECT_TRUE(magia_timeline::ReportsError("Traceback (most recent call last):\n  File x\n"));
     EXPECT_EQ("50%\nd\n",magia_timeline::LastLines("a\nb\r\nc\r50%\rd\n",2)) << "a progress bar redrawn with \\r: each drawing a line";
+    EXPECT_EQ("download x\nException caught:  tesseract is not installed\n",
+        magia_timeline::WithoutProgress(" 18%|\xe2\x96\x88   | 1714/9740 [00:00<00:01, 5515.30it/s]\r100%|\xe2\x96\x88\xe2\x96\x88| 9740/9740\ndownload x\n  0%|          | 0/2138\nException caught:  tesseract is not installed\n"))
+        << "its progress bars dropped, what it said kept";
+    EXPECT_EQ("50% done\n",magia_timeline::WithoutProgress("50% done\n")) << "a percentage alone is not a bar";
 }
 
+TEST(magia_timeline, how_far_it_is_is_read_from_what_it_prints) {
+    std::string const start="Task 0: a.mp4 -> b\nResolution: 1920x1080\n==== Running Engine ====\n";
+    EXPECT_FALSE(magia_timeline::ProgressOf(start,100000)) << "starting: no telling";
+    EXPECT_FALSE(magia_timeline::ProgressOf(start+"INFO: Could not find files for the given pattern(s).\r\n",100000)) << "what something else it ran said tells nothing";
+
+    std::string const building=start+"==== IIR Building ====\n";
+    EXPECT_EQ(0.0,magia_timeline::ProgressOf(building,100000)) << "building, before its first frame";
+    EXPECT_FALSE(magia_timeline::ProgressOf(building,0)) << "the video's length unknown";
+    EXPECT_DOUBLE_EQ(0.25,*magia_timeline::ProgressOf(building+"frame 00:00:10.00\nframe 00:00:25.00\n",100000));
+    EXPECT_DOUBLE_EQ(0.25,*magia_timeline::ProgressOf(building+"frame 00:00:25.00\r\nsomething said\r\n",100000)) << "the last frame, past what else was said";
+    EXPECT_DOUBLE_EQ(0.61,*magia_timeline::ProgressOf(building+"frame 01:01:00.00\n",6000000)) << "hours and minutes";
+    EXPECT_DOUBLE_EQ(1.0,*magia_timeline::ProgressOf(building+"frame 00:02:00.00\n",100000)) << "past the end it is at the end";
+    EXPECT_DOUBLE_EQ(0.5,*magia_timeline::ProgressOf(start+"==== FPIR Building ====\nframe 00:00:50.00\n",100000)) << "the engine going frame by frame";
+
+    std::string const built=building+"frame 00:01:40.00\n==== IIR Passes ====\niirPassMerge\nTimeline Elapsed 3.00 s\n";
+    EXPECT_FALSE(magia_timeline::ProgressOf(built,100000)) << "past building: no telling";
+
+    std::string const reading=built+"==== Extra Job: ocr ====\nIIRTextExtractionPass: processing 200 intervals\nStandalone output disabled. Writing to ass file.\n";
+    EXPECT_EQ(0.0,magia_timeline::ProgressOf(reading,100000)) << "reading, before the first";
+    EXPECT_DOUBLE_EQ(0.5,*magia_timeline::ProgressOf(reading+"Subtitle_Dialog_0\nSubtitle_Dialog_10\nSubtitle_Dialog_99\n",100000)) << "the hundredth of 200 read";
+    EXPECT_DOUBLE_EQ(0.5,*magia_timeline::ProgressOf(reading+"Subtitle_Dialog_99\n",0)) << "reading needs no video length";
+    EXPECT_FALSE(magia_timeline::ProgressOf(reading+"Subtitle_Dialog_199\n==== IIR to ASS ====\n",100000)) << "past reading: no telling";
+}
+
+TEST(magia_timeline, the_stage_it_is_in_is_read_from_what_it_prints) {
+    using magia_timeline::Stage;
+    EXPECT_EQ(Stage::Starting,magia_timeline::StageOf(""));
+    EXPECT_EQ(Stage::Starting,magia_timeline::StageOf("INFO: Could not find files for the given pattern(s).\r\n")) << "what something it ran said, while loading";
+    std::string const analysing="Task 0: a.mp4 -> b\n==== Running Engine ====\n==== IIR Building ====\nframe 00:00:10.00\n";
+    EXPECT_EQ(Stage::Analysing,magia_timeline::StageOf(analysing));
+    EXPECT_EQ(Stage::Analysing,magia_timeline::StageOf(analysing+"==== Extra Job: sty ====\n")) << "another extra job is still analysing";
+    std::string const reading=analysing+"==== Extra Job: ocr ====\nIIRTextExtractionPass: processing 2 intervals\n";
+    EXPECT_EQ(Stage::Reading,magia_timeline::StageOf(reading));
+    EXPECT_EQ(Stage::Writing,magia_timeline::StageOf(reading+"Subtitle_Dialog_0\n==== IIR to ASS ====\n"));
+    EXPECT_EQ(Stage::Writing,magia_timeline::StageOf(analysing+"==== IIR to ASS ====\nResult written to b.ass\n")) << "without reading";
+}
+
+// MagiaTimeline stood in for by a shell script as its virtual environment's
+// Python, which Windows cannot run
+#ifndef _WIN32
 namespace {
 /// Stands in for MagiaTimeline's virtual environment's Python: checks it is
 /// run as it would be, says what it was given, and writes what it writes
+// sed's } after a ;, as POSIX has it and as macOS's sed takes nothing else:
+// without, it read no destination there, and the subtitles were not written
+// where Aegisub looked for them
 std::string const fake_magia=R"SH(#!/bin/sh
 cfg=""
 while [ $# -gt 0 ]; do if [ "$1" = "--config" ]; then cfg="$2"; shift; fi; shift; done
 if [ ! -f config.yml ]; then echo "Exception caught:  not run in its own folder"; exit 0; fi
-dest=$(sed -n "/^destination:/{n;s/^- \"\(.*\)\"$/\1/p}" "$cfg")
-src=$(sed -n "/^source:/{n;s/^- \"\(.*\)\"$/\1/p}" "$cfg")
+dest=$(sed -n "/^destination:/{n;s/^- \"\(.*\)\"$/\1/p;}" "$cfg")
+src=$(sed -n "/^source:/{n;s/^- \"\(.*\)\"$/\1/p;}" "$cfg")
 echo "src=$src" > seen.txt
 sed -n 's/^strategy: /strategy=/p' "$cfg" >> seen.txt
+cp "$cfg" used.yml
 echo "Task 0: $src -> $dest"
 if [ "$(cat mode.txt 2>/dev/null)" = "hang" ]; then sleep 30 & echo $! > pid.txt; wait; fi
 if [ "$(cat mode.txt 2>/dev/null)" = "fail" ]; then echo "Exception caught:  the video could not be opened"; read x; exit 0; fi
-cat > "$dest.ass" <<'ASS'
+t0=Subtitle_Dialog_0; t1=Subtitle_Dialog_1
+if grep -q '^extraJobs: \[ocr\]' "$cfg"; then
+  if grep -q '^  suffix:' "$cfg"; then printf 'Subtitle_Dialog_1,\346\226\207\345\255\227\n' > "$dest-ocr.txt"
+  else t1=$(printf '\346\226\207\345\255\227'); fi
+fi
+cat > "$dest.ass" <<ASS
 [Script Info]
 ScriptType: v4.00+
 PlayResX: 1280
@@ -7674,8 +10363,8 @@ Style: Default,Microsoft YaHei,40,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-Dialogue: 0,0:00:03.00,0:00:05.50,Default,,0,0,0,,Subtitle_Dialog_1
-Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,Subtitle_Dialog_0
+Dialogue: 0,0:00:03.00,0:00:05.50,Default,,0,0,0,,$t1
+Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,$t0
 ASS
 echo "==== IIR to ASS ===="
 read x
@@ -7683,23 +10372,47 @@ echo "Overall Elapsed 1 s"
 )SH";
 }
 
+namespace {
+/// Answers the dialog it is run with: does @p act in it, then runs or cancels
+struct MagiaDialog : wxModalDialogHook {
+    std::function<void(wxDialog*)> act;
+    int answer=wxID_OK, shown=0;
+    explicit MagiaDialog(std::function<void(wxDialog*)> act={}):act(std::move(act)){Register();}
+    int Enter(wxDialog* dialog) override {
+        if(dynamic_cast<wxMessageDialog*>(dialog) || dialog->GetTitle()!=_("Time Hardsubs with MagiaTimeline"))return wxID_NONE;
+        ++shown;
+        if(act)act(dialog);
+        return answer;
+    }
+    void Exit(wxDialog*) override {}
+};
+template<class T> T* MagiaControl(wxWindow* parent,wxString const& name) {
+    for(auto w:descendants(parent))if(w->GetName()==name)if(auto t=dynamic_cast<T*>(w))return t;
+    return nullptr;
+}
+}
+
 TEST_F(ordinary_edit, magiatimeline_adds_an_empty_line_for_each_subtitle_it_finds_in_one_step) {
     c->project->LoadVideo("?dummy:25:250:64:48:64:64:64:");
     ASSERT_NE(nullptr,c->project->VideoProvider());
     PumpFirstFrame(c.get(),window);
-    BOOST_SCOPE_EXIT_ALL(&){ c->project->CloseVideo(); OPT_SET("Tool/MagiaTimeline/Path")->SetString(""); OPT_SET("Tool/MagiaTimeline/Strategy")->SetString(""); };
+    BOOST_SCOPE_EXIT_ALL(&){ c->project->CloseVideo(); OPT_SET("Tool/MagiaTimeline/Path")->SetString(""); OPT_SET("Tool/MagiaTimeline/Settings")->SetString(""); };
     auto folder=MagiaFolder("magia-fake");
     WriteText(folder/"MagiaTimeline.py","");
     WriteText(folder/"config.yml",MagiaConfig());
     WriteText(folder/"venv/bin/python3",fake_magia,true);
     OPT_SET("Tool/MagiaTimeline/Path")->SetString(folder.string());
-    OPT_SET("Tool/MagiaTimeline/Strategy")->SetString("bcs");
+    OPT_SET("Tool/MagiaTimeline/Settings")->SetString("strategy=bcs\n");
     ASSERT_TRUE(cmd::get("tool/magiatimeline")->Validate(c.get()));
+    MagiaDialog run;
 
     size_t const before=LiveRead(*c).Events.size();
     std::string const style=LiveRead(*c).Events.front().Style;
     auto description=c->subsController->GetUndoDescription();
+    // What it says it could not do answered, not left open for no one to close
+    RecordMessages messages;
     cmd::call("tool/magiatimeline",c.get());
+    ASSERT_TRUE(messages.messages.empty()) << messages.messages[0];
     auto seen=ReadText(folder/"seen.txt");
     EXPECT_NE(std::string::npos,seen.find("src="+c->project->VideoName().string())) << seen;
     EXPECT_NE(std::string::npos,seen.find("strategy=bcs")) << seen;
@@ -7718,7 +10431,6 @@ TEST_F(ordinary_edit, magiatimeline_adds_an_empty_line_for_each_subtitle_it_find
 
     // It says it failed: nothing added, and what it said is shown
     WriteText(folder/"mode.txt","fail");
-    RecordMessages messages;
     cmd::call("tool/magiatimeline",c.get());
     EXPECT_EQ(before,LiveRead(*c).Events.size());
     ASSERT_EQ(1u,messages.messages.size());
@@ -7730,6 +10442,7 @@ TEST_F(ordinary_edit, magiatimeline_cancelled_stops_it_and_what_it_started_and_a
     ASSERT_NE(nullptr,c->project->VideoProvider());
     PumpFirstFrame(c.get(),window);
     BOOST_SCOPE_EXIT_ALL(&){ c->project->CloseVideo(); OPT_SET("Tool/MagiaTimeline/Path")->SetString(""); };
+    MagiaDialog run;
     auto folder=MagiaFolder("magia-hang");
     WriteText(folder/"MagiaTimeline.py","");
     WriteText(folder/"config.yml",MagiaConfig());
@@ -7761,4 +10474,549 @@ TEST_F(ordinary_edit, magiatimeline_cancelled_stops_it_and_what_it_started_and_a
     bool gone=false;
     for(int i=0;i<50&&!gone;++i){gone=::kill(pid,0)!=0;if(!gone)wxMilliSleep(50);}
     EXPECT_TRUE(gone) << "what it started is killed with it";
+}
+
+TEST_F(ordinary_edit, magiatimeline_is_run_as_chosen_in_its_dialog_and_the_choice_kept) {
+    c->project->LoadVideo("?dummy:25:250:64:48:64:64:64:");
+    ASSERT_NE(nullptr,c->project->VideoProvider());
+    PumpFirstFrame(c.get(),window);
+    BOOST_SCOPE_EXIT_ALL(&){ c->project->CloseVideo(); OPT_SET("Tool/MagiaTimeline/Path")->SetString(""); OPT_SET("Tool/MagiaTimeline/Settings")->SetString(""); };
+    auto folder=MagiaFolder("magia-dialog");
+    WriteText(folder/"MagiaTimeline.py","");
+    WriteText(folder/"config.yml",MagiaConfig());
+    WriteText(folder/"venv/bin/python3",fake_magia,true);
+    OPT_SET("Tool/MagiaTimeline/Path")->SetString(folder.string());
+    OPT_SET("Tool/MagiaTimeline/Settings")->SetString("");
+    size_t const before=LiveRead(*c).Events.size();
+
+    {
+        MagiaDialog run([&](wxDialog* d) {
+            auto strategy=MagiaControl<FlatChoice>(d,"strategy");
+            auto preset=MagiaControl<FlatChoice>(d,"preset");
+            auto engine=MagiaControl<FlatSwitch>(d,"engine");
+            auto ocr=MagiaControl<FlatCheck>(d,"ocr");
+            ASSERT_TRUE(strategy&&preset&&engine&&ocr);
+            ASSERT_EQ(4u,strategy->GetItems().size()) << "the strategies its config has";
+            EXPECT_EQ(3,strategy->GetSelection()) << "its own, dtd";
+            EXPECT_NE(nullptr,MagiaControl<FlatFrame>(d,"maxResWidth")) << "1.1 has a size limit";
+            EXPECT_NE(nullptr,MagiaControl<FlatSwitch>(d,"ocrEngine"));
+            EXPECT_FALSE(ocr->GetValue());
+            EXPECT_TRUE(ocr->IsEnabled());
+
+            strategy->Choose(0); // mr: every frame, no OCR
+            EXPECT_EQ(2u,preset->GetItems().size());
+            EXPECT_EQ(1,engine->GetSelection()) << "a strategy for one game looks at every frame";
+            EXPECT_FALSE(engine->IsItemEnabled(0));
+            EXPECT_FALSE(ocr->IsEnabled());
+            preset->Choose(1);
+
+            strategy->Choose(2); // bcs
+            EXPECT_TRUE(engine->IsItemEnabled(0));
+            EXPECT_FALSE(ocr->IsEnabled()) << "OCR only when frames are skipped";
+            engine->Choose(0);
+            EXPECT_TRUE(ocr->IsEnabled());
+            ocr->Toggle();
+            EXPECT_TRUE(ocr->GetValue());
+            auto language=MagiaControl<FlatFrame>(d,"ocrLanguage");
+            ASSERT_NE(nullptr,language);
+            EXPECT_FALSE(language->IsShown()) << "PaddleOCR's language is not set in 1.1";
+
+            // The subtitles' rectangle dragged on the frame
+            auto picker=MagiaControl<MagiaRectPicker>(d,"picker");
+            auto region=MagiaControl<FlatChoice>(d,"region");
+            ASSERT_TRUE(picker&&region);
+            ASSERT_EQ(1u,region->GetItems().size()) << "bcs's default has dialogRect alone; 1.1's config here has no contentRect";
+            EXPECT_EQ(wxGETTEXT_IN_CONTEXT("region","Subtitles"),region->GetStringSelection());
+            EXPECT_TRUE(picker->IsEditing());
+            auto area=picker->ImageArea();
+            auto at=[&](double x,double y){return wxPoint(area.x+int(std::lround(x*area.width)),area.y+int(std::lround(y*area.height)));};
+            picker->Press(at(0.1,0.5));
+            picker->Drag(at(0.5,0.7));
+            picker->Release(at(0.9,0.9));
+            auto r=picker->GetRect();
+            EXPECT_NEAR(0.1,r.left,0.01);EXPECT_NEAR(0.9,r.right,0.01);EXPECT_NEAR(0.5,r.top,0.01);EXPECT_NEAR(0.9,r.bottom,0.01);
+            // Its top side dragged down
+            picker->Press(at(0.5,0.5));
+            picker->Release(at(0.5,0.6));
+            EXPECT_NEAR(0.6,picker->GetRect().top,0.01);
+            EXPECT_NEAR(0.9,picker->GetRect().bottom,0.01) << "the other sides stay";
+            // Moved from inside, kept in the frame
+            picker->Press(at(0.5,0.75));
+            picker->Release(at(0.5,0.95));
+            EXPECT_NEAR(0.7,picker->GetRect().top,0.01);
+            EXPECT_NEAR(1.0,picker->GetRect().bottom,0.01);
+
+            // The sensitivity bcs has, scrubbed
+            auto threshold=MagiaControl<FlatFrame>(d,"featureThreshold");
+            ASSERT_NE(nullptr,threshold);
+            EXPECT_TRUE(threshold->IsShown());
+            threshold->Scrub(2,true);
+        });
+        cmd::call("tool/magiatimeline",c.get());
+        EXPECT_EQ(1,run.shown);
+    }
+    auto used=ReadText(folder/"used.yml");
+    EXPECT_NE(std::string::npos,used.find("strategy: bcs\n")) << used;
+    EXPECT_NE(std::string::npos,used.find("preset: default\n")) << "mr's narrow is not bcs's: " << used;
+    EXPECT_NE(std::string::npos,used.find("engine: speculative\n"));
+    EXPECT_NE(std::string::npos,used.find("extraJobs: [ocr]\n"));
+    EXPECT_NE(std::string::npos,used.find("  standaloneOutput: false\n")) << "its text put in the lines it writes";
+    auto bcs_rect=[](std::string const& yml){
+        auto at=yml.find("bcs:\n  default:\n    dialogRect: ");
+        if(at==std::string::npos)return std::optional<magia_timeline::Rect>();
+        at+=std::string("bcs:\n  default:\n    dialogRect: ").size();
+        return magia_timeline::ParseRect(yml.substr(at,yml.find('\n',at)-at));
+    };
+    auto rect=bcs_rect(used);
+    ASSERT_TRUE(rect) << used;
+    EXPECT_NEAR(0.1,rect->left,0.01);EXPECT_NEAR(0.9,rect->right,0.01);EXPECT_NEAR(0.7,rect->top,0.01);EXPECT_NEAR(1.0,rect->bottom,0.01);
+    EXPECT_NE(std::string::npos,used.find("]\n    featureThreshold: 0.5\n")) << used;
+    EXPECT_NE(std::string::npos,used.find("dtd:\n  default:\n    dialogRect: [0.00, 1.00, 0.75, 1.00]\n")) << "another strategy's untouched";
+    auto const& events=LiveRead(*c).Events;
+    ASSERT_EQ(before+2,events.size());
+    auto it=events.begin();std::advance(it,before);
+    EXPECT_EQ("",it->Text.get()) << "a name is not text";
+    ++it;
+    EXPECT_EQ("文字",it->Text.get()) << "the text it read";
+    auto kept=magia_timeline::ParseSaved(OPT_GET("Tool/MagiaTimeline/Settings")->GetString());
+    EXPECT_EQ("bcs",kept["strategy"]);
+    EXPECT_EQ("[ocr]",kept["extraJobs"]);
+    EXPECT_EQ(0u,kept.count("engine")) << "as its own: not kept";
+
+    // Next time it starts from the choice; its own settings brought back,
+    // and cancelled: not run, nothing kept
+    c->subsController->Undo();
+    {
+        MagiaDialog run([&](wxDialog* d) {
+            auto strategy=MagiaControl<FlatChoice>(d,"strategy");
+            auto ocr=MagiaControl<FlatCheck>(d,"ocr");
+            ASSERT_TRUE(strategy&&ocr);
+            EXPECT_EQ(2,strategy->GetSelection());
+            EXPECT_TRUE(ocr->GetValue());
+            auto restore=MagiaControl<FlatButton>(d,"restore");
+            ASSERT_NE(nullptr,restore);
+            restore->Press();
+            EXPECT_EQ(3,strategy->GetSelection());
+            EXPECT_FALSE(ocr->GetValue());
+        });
+        run.answer=wxID_CANCEL;
+        std::filesystem::remove(std::filesystem::path((folder/"used.yml").wstring()));
+        cmd::call("tool/magiatimeline",c.get());
+        EXPECT_EQ(1,run.shown);
+    }
+    EXPECT_FALSE(std::filesystem::exists(std::filesystem::path((folder/"used.yml").wstring()))) << "not run";
+    EXPECT_EQ(before,LiveRead(*c).Events.size());
+    EXPECT_EQ("bcs",magia_timeline::ParseSaved(OPT_GET("Tool/MagiaTimeline/Settings")->GetString())["strategy"]);
+
+    // 1.0: what it has not is not offered; its OCR read from its own file
+    WriteText(folder/"config.yml",Magia10Config());
+    OPT_SET("Tool/MagiaTimeline/Settings")->SetString("strategy=dtd\nmaxResWidth=1000\n");
+    {
+        MagiaDialog run([&](wxDialog* d) {
+            auto strategy=MagiaControl<FlatChoice>(d,"strategy");
+            ASSERT_NE(nullptr,strategy);
+            EXPECT_EQ(2u,strategy->GetItems().size());
+            EXPECT_EQ(0,strategy->GetSelection()) << "dtd it has not: its own bcs";
+            EXPECT_EQ(nullptr,MagiaControl<FlatFrame>(d,"maxResWidth"));
+            // Its black bars cut away first: the subtitles' rectangle is in
+            // shares of what is left
+            auto picker=MagiaControl<MagiaRectPicker>(d,"picker");
+            auto region=MagiaControl<FlatChoice>(d,"region");
+            ASSERT_TRUE(picker&&region);
+            ASSERT_EQ(2u,region->GetItems().size());
+            region->Choose(1);
+            EXPECT_EQ(_("Picture (without black bars)"),region->GetStringSelection());
+            auto area=picker->ImageArea();
+            auto at=[&](double x,double y){return wxPoint(area.x+int(std::lround(x*area.width)),area.y+int(std::lround(y*area.height)));};
+            picker->Press(at(0.5,0.0));
+            picker->Release(at(0.5,0.1));
+            picker->Press(at(0.5,1.0));
+            picker->Release(at(0.5,0.9));
+            region->Choose(0);
+            picker->Press(at(0.02,0.5));
+            picker->Release(at(0.98,0.9));
+            auto r=picker->GetRect();
+            EXPECT_NEAR(0.5,r.top,0.01) << "half way down what is left";
+            EXPECT_NEAR(1.0,r.bottom,0.01);
+            // A strategy without them: none of the sensitivity shown
+            auto threshold=MagiaControl<FlatFrame>(d,"featureThreshold");
+            ASSERT_NE(nullptr,threshold);
+            EXPECT_FALSE(threshold->IsShown()) << "1.0's bcs here has no featureThreshold";
+            auto engine=MagiaControl<FlatSwitch>(d,"ocrEngine");
+            ASSERT_NE(nullptr,engine) << "1.0 can use either";
+            MagiaControl<FlatCheck>(d,"ocr")->Toggle();
+            EXPECT_EQ(0,engine->GetSelection()) << "both on in 1.0: PaddleOCR shown";
+            auto language=MagiaControl<FlatFrame>(d,"ocrLanguage");
+            ASSERT_NE(nullptr,language);
+            EXPECT_TRUE(language->IsEnabled());
+            engine->Choose(1);
+            auto text=dynamic_cast<wxTextCtrl*>(language->GetContent());
+            ASSERT_NE(nullptr,text);
+            EXPECT_EQ("jpn",text->GetValue());
+            text->SetValue("chi_sim");
+        });
+        cmd::call("tool/magiatimeline",c.get());
+    }
+    used=ReadText(folder/"used.yml");
+    EXPECT_EQ(std::string::npos,used.find("maxResWidth"));
+    EXPECT_NE(std::string::npos,used.find("contentRect: [0.0, 1.0, 0.1, 0.9]\n")) << used;
+    rect=bcs_rect(used);
+    ASSERT_TRUE(rect) << used;
+    EXPECT_NEAR(0.02,rect->left,0.01);EXPECT_NEAR(0.98,rect->right,0.01);EXPECT_NEAR(0.5,rect->top,0.01);EXPECT_NEAR(1.0,rect->bottom,0.01);
+    EXPECT_NE(std::string::npos,used.find("extraJobs: [ocr]\n")) << used;
+    EXPECT_NE(std::string::npos,used.find("  doPaddle: false\n  paddleLang: \"japan\"\n  doTesseract: true\n  tesseractLang: \"chi_sim\"\n")) << used;
+    auto const& again=LiveRead(*c).Events;
+    ASSERT_EQ(before+2,again.size());
+    EXPECT_EQ("文字",again.back().Text.get()) << "read from 1.0's own file, by the name";
+    EXPECT_EQ("",std::next(again.begin(),before)->Text.get());
+
+    // OCR turned on and the engine left as shown: 1.0 has both on, which
+    // is shown as PaddleOCR and run so, Tesseract off
+    c->subsController->Undo();
+    OPT_SET("Tool/MagiaTimeline/Settings")->SetString("");
+    {
+        MagiaDialog run([&](wxDialog* d) {
+            auto engine=MagiaControl<FlatSwitch>(d,"ocrEngine");
+            ASSERT_NE(nullptr,engine);
+            MagiaControl<FlatCheck>(d,"ocr")->Toggle();
+            EXPECT_EQ(0,engine->GetSelection());
+        });
+        cmd::call("tool/magiatimeline",c.get());
+    }
+    used=ReadText(folder/"used.yml");
+    EXPECT_NE(std::string::npos,used.find("  doPaddle: true\n  paddleLang: \"japan\"\n  doTesseract: false\n")) << used;
+}
+#endif
+
+TEST(script_text, the_thumb_shows_how_much_is_on_the_screen_and_where) {
+    EXPECT_FALSE(script_text::ThumbFor(0,100,100,200,20)) << "it all fits";
+    EXPECT_FALSE(script_text::ThumbFor(0,0,0,200,20));
+    auto top=script_text::ThumbFor(0,100,400,200,20);
+    ASSERT_TRUE(top);
+    EXPECT_EQ(0,top->top);
+    EXPECT_EQ(50,top->height) << "a quarter on the screen, a quarter of the track";
+    auto bottom=script_text::ThumbFor(300,100,400,200,20);
+    EXPECT_EQ(150,bottom->top) << "at the end, at the bottom";
+    EXPECT_EQ(150,script_text::ThumbFor(9999,100,400,200,20)->top);
+    EXPECT_EQ(20,script_text::ThumbFor(0,10,100000,200,20)->height) << "never shorter than the least";
+    for (int pos : {0,37,150,300})
+        EXPECT_NEAR(pos,script_text::PosForThumb(script_text::ThumbFor(pos,100,400,200,20)->top,100,400,200,20),2) << "a pixel of the thumb is 2 of the text";
+    EXPECT_EQ(300,script_text::PosForThumb(500,100,400,200,20)) << "dragged past the end";
+    EXPECT_EQ(0,script_text::PosForThumb(-30,100,400,200,20));
+}
+
+TEST_F(ordinary_edit, script_panel_draws_its_own_thin_scroll_bar_on_the_field) {
+    OPT_SET("App/Style Panel/Show")->SetBool(true);
+    OPT_SET("App/Script Panel/Show")->SetBool(true);
+    auto frame=new wxFrame(nullptr,-1,"script bar");
+    BOOST_SCOPE_EXIT_ALL(&){ delete frame; OPT_SET("App/Script Panel/Show")->SetBool(false); };
+    auto script=new ScriptPanel(frame,c.get());
+    frame->SetClientSize(script->FromDIP(300),script->FromDIP(500));frame->Show();
+    script->SetSize(frame->GetClientSize());script->Layout();
+    for(int i=0;i<10;++i) wxYield();
+    script->TextBox()->ChangeValue("short");
+    for(int i=0;i<10;++i) wxYield();
+    EXPECT_FALSE(script->ScrollThumb()) << "the text fits: no bar";
+    wxString t; for(int i=0;i<200;++i) t+=wxString::Format("line %d of the script\n",i);
+    script->TextBox()->ChangeValue(t);
+    for(int i=0;i<20;++i){ wxYield(); wxMilliSleep(5); }
+    auto [pos,page,range]=script->ScrollState();
+#ifdef __WXGTK__
+    ASSERT_GT(range,page) << "longer than the box";
+    auto thumb=script->ScrollThumb();
+    ASSERT_TRUE(thumb);
+    wxRect box=script->TextBox()->GetScreenRect();
+    box.SetPosition(script->ScreenToClient(box.GetPosition()));
+    EXPECT_GT(thumb->x,box.GetRight()) << "right of the text, not over it";
+    EXPECT_LT(thumb->GetRight(),script->GetClientSize().x);
+    EXPECT_LE(thumb->width,script->FromDIP(6)) << "thin";
+    EXPECT_LT(thumb->height,box.height);
+    // Scrolled, by the thumb or the text's own keys, the thumb follows
+    int top=thumb->y;
+    EXPECT_EQ(0,pos);
+    script->ScrollTextTo(range);
+    EXPECT_EQ(range-page,std::get<0>(script->ScrollState()));
+    EXPECT_GT(script->ScrollThumb()->y,top);
+    EXPECT_EQ(box.GetBottom(),script->ScrollThumb()->GetBottom()) << "at the end, at the bottom";
+    script->ScrollTextTo(-50);
+    EXPECT_EQ(0,std::get<0>(script->ScrollState()));
+    EXPECT_EQ(box.y,script->ScrollThumb()->y) << "at the start, at the top";
+#else
+    (void)pos;(void)page;(void)range;
+#endif
+}
+
+TEST_F(ordinary_edit, keyboard_regions_go_round_with_f6_and_keep_tab_inside) {
+    auto frame=new wxFrame(nullptr,-1,"regions");
+    BOOST_SCOPE_EXIT_ALL(&){ regions::Clear(); delete frame; };
+    auto backdrop=new wxPanel(frame);
+    // One control on its own (as the grid is), a panel of two, one hidden,
+    // and one with a toolbar
+    auto grid=new wxTextCtrl(backdrop,-1,"grid");
+    auto edit=new wxPanel(backdrop);
+    auto a=new wxTextCtrl(edit,-1,"a"), b=new wxTextCtrl(edit,-1,"b");
+    { auto s=new wxBoxSizer(wxVERTICAL); s->Add(a); s->Add(b); edit->SetSizer(s); }
+    auto hidden=new wxPanel(backdrop);
+    new wxTextCtrl(hidden,-1,"h");
+    auto tools=new wxPanel(backdrop);
+    auto bar=new wxToolBar(tools,-1);
+    bar->AddTool(1,"t",wxBitmap(16,16));
+    bar->Realize();
+    // Beside the toolbar a text box, which takes the keyboard everywhere: a
+    // button does not on macOS unless Full Keyboard Access is on, as AppKit
+    // has it (canBecomeKeyView), and is not there a stop, as with Tab
+    auto field=new wxTextCtrl(tools,-1,"ok");
+    { auto s=new wxBoxSizer(wxVERTICAL); s->Add(bar); s->Add(field); tools->SetSizer(s); }
+    auto sizer=new wxBoxSizer(wxHORIZONTAL);
+    for (wxWindow *w : {static_cast<wxWindow*>(grid),static_cast<wxWindow*>(edit),static_cast<wxWindow*>(hidden),static_cast<wxWindow*>(tools)})
+        sizer->Add(w,0,wxALL,10);
+    backdrop->SetSizer(sizer);
+    hidden->Hide();
+    regions::Setup(backdrop,{{grid},{edit},{hidden},{tools}});
+    frame->SetSize(700,300);frame->Show();backdrop->SetSize(frame->GetClientSize());backdrop->Layout();
+    for(int i=0;i<10;++i) wxYield();
+
+    EXPECT_EQ(0,regions::RegionOf(grid));
+    EXPECT_EQ(1,regions::RegionOf(b));
+    EXPECT_EQ(3,regions::RegionOf(bar));
+    EXPECT_EQ(-1,regions::RegionOf(backdrop));
+    EXPECT_EQ((std::vector<wxWindow*>{a,b}),regions::Stops(1));
+    EXPECT_EQ((std::vector<wxWindow*>{field}),regions::Stops(3)) << "a toolbar's buttons have no keys";
+    EXPECT_EQ((std::vector<wxWindow*>{grid}),regions::Stops(0));
+    EXPECT_EQ(a,regions::TabTarget(b,true)) << "round to the first, not on to the next region";
+    EXPECT_EQ(b,regions::TabTarget(a,false));
+    EXPECT_EQ(grid,regions::TabTarget(grid,true));
+
+    a->SetFocus();
+    for(int i=0;i<5;++i) wxYield();
+    if(!wxWindow::FindFocus())
+        GTEST_SKIP() << "the toolkit tells of no focus here, as wxOSX does where the window is not the key window, "
+                        "the app not made active (CI's macOS runner), and this is all where the focus goes";
+    ASSERT_EQ(a,wxWindow::FindFocus());
+    EXPECT_EQ(1,regions::Current());
+    EXPECT_EQ(nullptr,regions::Outlined()) << "put there, not moved by keys: no line";
+
+    // F6 on, past the hidden one, and round
+    EXPECT_TRUE(regions::Next(true));
+    EXPECT_EQ(field,wxWindow::FindFocus());
+    EXPECT_EQ(tools,regions::Outlined());
+    EXPECT_TRUE(regions::Next(true));
+    EXPECT_EQ(grid,wxWindow::FindFocus());
+    EXPECT_TRUE(regions::Next(false));
+    EXPECT_EQ(field,wxWindow::FindFocus());
+    // The command F6 is bound to
+    cmd::call("app/region/previous",c.get());
+    EXPECT_EQ(a,wxWindow::FindFocus());
+    cmd::call("app/region/next",c.get());
+    EXPECT_EQ(field,wxWindow::FindFocus());
+
+    // The line is drawn in the gap round the block
+    regions::Next(false);
+    ASSERT_EQ(edit,regions::Outlined());
+    {
+        wxSize size=backdrop->GetClientSize();
+        wxBitmap bitmap(size);
+        wxMemoryDC dc(bitmap);
+        dc.SetBackground(*wxWHITE_BRUSH);dc.Clear();
+        regions::DrawOutline(backdrop,dc);
+        dc.SelectObject(wxNullBitmap);
+        auto image=bitmap.ConvertToImage();
+        wxRect r=edit->GetRect();
+        int y=r.y+r.height/2;
+        bool line=false;
+        for(int x=std::max(0,r.x-8);x<r.x;++x)
+            line|=image.GetRed(x,y)<200;
+        EXPECT_TRUE(line) << "left of the block";
+        EXPECT_EQ(255,image.GetRed(r.x+r.width/2,y)) << "nothing over the block";
+    }
+
+    // Tab and Shift+Tab in a window that takes every key
+    wxKeyEvent tab(wxEVT_CHAR_HOOK);
+    tab.m_keyCode=WXK_TAB;
+    EXPECT_TRUE(regions::HandleKey(a,tab));
+    EXPECT_EQ(b,wxWindow::FindFocus());
+    EXPECT_TRUE(regions::HandleKey(b,tab));
+    EXPECT_EQ(a,wxWindow::FindFocus());
+    tab.SetShiftDown(true);
+    EXPECT_TRUE(regions::HandleKey(a,tab));
+    EXPECT_EQ(b,wxWindow::FindFocus());
+    wxKeyEvent other(wxEVT_CHAR_HOOK);
+    other.m_keyCode='X';
+    EXPECT_FALSE(regions::HandleKey(b,other));
+
+    // A click hides the line
+    EXPECT_EQ(edit,regions::Outlined());
+    wxMouseEvent click(wxEVT_LEFT_DOWN);
+    click.SetEventObject(b);
+    b->ProcessWindowEvent(click);
+    EXPECT_EQ(nullptr,regions::Outlined());
+
+    // A toolbar's click leaves the keyboard where it was, or gives it to
+    // the window it is set to give it to
+    auto click_tool=[&]{
+        wxCommandEvent event(wxEVT_TOOL,1);
+        event.SetEventObject(bar);
+        bar->ProcessWindowEvent(event);
+        for(int i=0;i<5;++i) wxYield();
+    };
+    click_tool();
+    EXPECT_EQ(b,wxWindow::FindFocus());
+    regions::FocusAfterClicks(bar,grid);
+    click_tool();
+    EXPECT_EQ(grid,wxWindow::FindFocus());
+}
+
+TEST_F(ordinary_edit, region_line_runs_through_the_strip_under_a_block_resized_from_below) {
+    // The audio is such a block: its strip is the gap to the edit box, so
+    // the backdrop can't draw there and the block draws its piece itself
+    auto frame=new wxFrame(nullptr,-1,"regions");
+    BOOST_SCOPE_EXIT_ALL(&){ regions::Clear(); delete frame; };
+    auto backdrop=new wxPanel(frame);
+    auto sash=new wxSashWindow(backdrop,-1,wxDefaultPosition,wxSize(300,100));
+    sash->SetSashVisible(wxSASH_BOTTOM,true);
+    sash->SetDefaultBorderSize(8);
+    auto inner=new wxPanel(sash);
+    new wxTextCtrl(inner,-1,"in");
+    auto other=new wxTextCtrl(backdrop,-1,"other");
+    auto sizer=new wxBoxSizer(wxVERTICAL);
+    sizer->Add(sash,0,wxLEFT|wxRIGHT|wxTOP,10);
+    sizer->Add(other,0,wxALL,10);
+    backdrop->SetSizer(sizer);
+    regions::Setup(backdrop,{{sash},{other}});
+    frame->SetSize(400,300);frame->Show();backdrop->SetSize(frame->GetClientSize());backdrop->Layout();
+    for(int i=0;i<10;++i) wxYield();
+    other->SetFocus();
+    for(int i=0;i<5;++i) wxYield();
+    ASSERT_TRUE(regions::Next(true));
+    ASSERT_EQ(sash,regions::Outlined());
+
+    auto render=[](wxWindow *window){
+        wxBitmap bitmap(window->GetClientSize());
+        wxMemoryDC dc(bitmap);
+        dc.SetBackground(*wxWHITE_BRUSH);dc.Clear();
+        regions::DrawOutline(window,dc);
+        dc.SelectObject(wxNullBitmap);
+        return bitmap.ConvertToImage();
+    };
+    wxSize size=sash->GetClientSize();
+    auto in_sash=render(sash);
+    bool line=false;
+    for(int y=size.y-8;y<size.y;++y)
+        line|=in_sash.GetRed(size.x/2,y)<200;
+    EXPECT_TRUE(line) << "the bottom of the line, in the strip";
+    EXPECT_EQ(255,in_sash.GetRed(size.x/2,(size.y-8)/2)) << "nothing over the block";
+
+    auto on_backdrop=render(backdrop);
+    wxRect r=sash->GetRect();
+    bool below=false;
+    for(int y=r.GetBottom()+1;y<r.GetBottom()+10;++y)
+        below|=on_backdrop.GetRed(r.x+r.width/2,y)<200;
+    EXPECT_FALSE(below) << "not under the strip, in the next block";
+}
+
+TEST_F(selection_ui, ctrl_moves_the_keyboards_row_and_space_picks_rows_here_and_there) {
+    auto key=[&](wxEventType type,int code,bool ctrl,bool shift=false){
+        wxKeyEvent event(type);event.m_keyCode=code;event.SetControlDown(ctrl);event.SetShiftDown(shift);
+        event.SetEventObject(grid);grid->GetEventHandler()->ProcessEvent(event);
+    };
+    auto selected=[&]{ return c->selectionController->SelectedIDs(); };
+    EXPECT_EQ(0,grid->CursorRow()) << "on the active line";
+
+    // Ctrl and the arrows: the keyboard's row alone
+    key(wxEVT_KEY_DOWN,WXK_DOWN,true);key(wxEVT_KEY_DOWN,WXK_DOWN,true);
+    EXPECT_EQ(2,grid->CursorRow());
+    EXPECT_EQ(ids[0],c->selectionController->ActiveID());
+    EXPECT_EQ((std::set<int>{ids[0]}),selected());
+
+    // Ctrl+Space, through the grid's own hotkey (not the window's "focus
+    // the seek bar"): in the selection, as the active line
+    key(wxEVT_CHAR_HOOK,WXK_SPACE,true);
+    EXPECT_EQ((std::set<int>{ids[0],ids[2]}),selected());
+    EXPECT_EQ(ids[2],c->selectionController->ActiveID());
+    EXPECT_EQ(2,grid->CursorRow());
+
+    // Taken out again: the active line goes to the nearest selected row,
+    // the keyboard stays
+    key(wxEVT_KEY_DOWN,WXK_DOWN,true);
+    cmd::call("grid/select/toggle",c.get());
+    EXPECT_EQ((std::set<int>{ids[0],ids[2],ids[3]}),selected());
+    cmd::call("grid/select/toggle",c.get());
+    EXPECT_EQ((std::set<int>{ids[0],ids[2]}),selected());
+    EXPECT_EQ(ids[2],c->selectionController->ActiveID());
+    EXPECT_EQ(3,grid->CursorRow());
+    key(wxEVT_KEY_DOWN,WXK_UP,true);
+    cmd::call("grid/select/toggle",c.get());
+    EXPECT_EQ((std::set<int>{ids[0]}),selected());
+    EXPECT_EQ(ids[0],c->selectionController->ActiveID()) << "the only one left";
+    EXPECT_EQ(2,grid->CursorRow());
+    key(wxEVT_KEY_DOWN,WXK_HOME,true);
+    cmd::call("grid/select/toggle",c.get());
+    EXPECT_EQ((std::set<int>{ids[0]}),selected()) << "the last selected row stays";
+
+    // A plain arrow goes on from the keyboard's row
+    key(wxEVT_KEY_DOWN,WXK_DOWN,true);key(wxEVT_KEY_DOWN,WXK_DOWN,true);
+    key(wxEVT_KEY_DOWN,WXK_DOWN,false);
+    EXPECT_EQ((std::set<int>{ids[3]}),selected());
+    EXPECT_EQ(ids[3],c->selectionController->ActiveID());
+
+    // Shift+Space: from the row the selection extends from to the keyboard's
+    key(wxEVT_KEY_DOWN,WXK_UP,true);key(wxEVT_KEY_DOWN,WXK_UP,true);
+    key(wxEVT_CHAR_HOOK,WXK_SPACE,false,true);
+    EXPECT_EQ((std::set<int>{ids[1],ids[2],ids[3]}),selected());
+    EXPECT_EQ(ids[1],c->selectionController->ActiveID());
+    // Ctrl+Shift+Space adds to it
+    c->selectionController->SetSelectionAndActiveIDs({ids[3]},ids[3],false);
+    key(wxEVT_KEY_DOWN,WXK_UP,true);key(wxEVT_KEY_DOWN,WXK_UP,true);key(wxEVT_KEY_DOWN,WXK_UP,true);
+    cmd::call("grid/select/toggle",c.get());
+    EXPECT_EQ((std::set<int>{ids[0],ids[3]}),selected());
+    key(wxEVT_KEY_DOWN,WXK_DOWN,true);
+    key(wxEVT_CHAR_HOOK,WXK_SPACE,true,true);
+    EXPECT_EQ((std::set<int>{ids[0],ids[1],ids[3]}),selected()) << "from row 0, where it was extended from, added";
+
+    // A click puts the keyboard on the clicked row
+    Mouse(2);
+    EXPECT_EQ(2,grid->CursorRow());
+}
+
+TEST_F(ordinary_edit, video_and_audio_have_arrow_keys_and_space_of_their_own) {
+    // The command each key runs in each region, as a key press finds it
+    auto runs=[&](const char *context,int code,int modifiers){ return std::string(hotkey::inst->Scan(context,hotkey::keypress_to_str(code,modifiers),false)); };
+    EXPECT_EQ("grid/select/toggle",runs("Subtitle Grid",WXK_SPACE,wxMOD_CMD));
+    EXPECT_EQ("grid/select/range",runs("Subtitle Grid",WXK_SPACE,wxMOD_SHIFT));
+    EXPECT_EQ("grid/select/range/add",runs("Subtitle Grid",WXK_SPACE,wxMOD_CMD|wxMOD_SHIFT));
+    EXPECT_EQ("video/play",runs("Subtitle Grid",WXK_SPACE,0)) << "Space still plays the video in the grid";
+    EXPECT_EQ("video/focus_seek",runs("Subtitle Edit Box",WXK_SPACE,wxMOD_CMD)) << "Ctrl+Space elsewhere as it was";
+    EXPECT_EQ("video/line/prev",runs("Video",WXK_UP,0));
+    EXPECT_EQ("video/line/next",runs("Video",WXK_DOWN,0));
+    EXPECT_EQ("video/jump/start",runs("Video",WXK_HOME,0));
+    EXPECT_EQ("video/jump/end",runs("Video",WXK_END,0));
+    EXPECT_EQ("video/frame/next",runs("Video",WXK_RIGHT,0)) << "the arrows it had stay";
+    EXPECT_EQ("time/start/decrease",runs("Audio",WXK_LEFT,wxMOD_SHIFT));
+    EXPECT_EQ("time/start/increase",runs("Audio",WXK_RIGHT,wxMOD_SHIFT));
+    EXPECT_EQ("time/length/decrease",runs("Audio",WXK_LEFT,wxMOD_CMD));
+    EXPECT_EQ("time/length/increase",runs("Audio",WXK_RIGHT,wxMOD_CMD));
+    EXPECT_EQ("grid/line/prev",runs("Audio",WXK_UP,0));
+    EXPECT_EQ("grid/line/next",runs("Audio",WXK_DOWN,0));
+    EXPECT_EQ("audio/play/toggle",runs("Audio",WXK_SPACE,0));
+    EXPECT_EQ("time/next",runs("Audio",WXK_RIGHT,0));
+
+    // Up and Down in the video: the next line, the video at its start
+    c->project->LoadVideo("?dummy:25:250:640:480:64:64:64:");
+    ASSERT_NE(nullptr,c->project->VideoProvider());
+    PumpFirstFrame(c.get(),window);
+    int first=0,second=0;
+    {
+        auto write=c->subtitleAccess->TryWrite();
+        auto& row=LiveWriteForTest(*c).Events.front();row.Start=1000;row.End=2000;first=row.Id;
+        auto next=new AssDialogue;next->Start=4000;next->End=5000;
+        LiveWriteForTest(*c).Events.push_back(*next);second=next->Id;
+        LiveWriteForTest(*c).Commit("two lines",AssFile::COMMIT_DIAG_ADDREM|AssFile::COMMIT_DIAG_FULL);
+    }
+    c->selectionController->SetSelectionAndActiveIDs({first},first,false);
+    cmd::call("video/line/next",c.get());
+    EXPECT_EQ(second,c->selectionController->ActiveID());
+    EXPECT_EQ(c->videoController->FrameAtTime(4000,agi::vfr::START),c->videoController->GetFrameN());
+    cmd::call("video/line/prev",c.get());
+    EXPECT_EQ(first,c->selectionController->ActiveID());
+    EXPECT_EQ(c->videoController->FrameAtTime(1000,agi::vfr::START),c->videoController->GetFrameN());
 }

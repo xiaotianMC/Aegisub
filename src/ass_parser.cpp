@@ -84,6 +84,12 @@ public:
 			return true;
 		}
 
+		// Its line breaks and the characters the section uses are escaped
+		if (key == "Script Text") {
+			target->Properties.script_text = agi::ass::inline_string_decode(value);
+			return true;
+		}
+
 		if (key.starts_with("Automation Settings ")) {
 			target->Properties.automation_settings[key.substr(strlen("Automation Settings "))] = value;
 			return true;

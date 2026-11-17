@@ -12,6 +12,7 @@
 
 #include <wx/bmpbndl.h>
 #include <wx/popupwin.h>
+#include <wx/stattext.h>
 #include <wx/window.h>
 
 class wxMouseEvent;
@@ -40,10 +41,18 @@ bool Scrolling();
 /// the accent colour and a tick when on (@p state 1), a dash when mixed (2)
 void DrawCheck(wxDC &dc, wxWindow const *window, wxRect const& box, int state, Palette const& p);
 
+/// A rounded outline @p thick wide, all of it inside @p rect: drawn as a
+/// filled ring, so that no part of it falls half outside the window, as a
+/// pen's line along the edge does at some scales
+void DrawOutline(wxDC &dc, wxRect const& rect, double radius, int thick, wxColour const& colour);
+
 /// Where the keyboard goes when a field is left: the subtitle text
 void SetHome(wxWindow *home);
 /// A field being typed in that Enter or a click anywhere else leaves
 void AddField(wxWindow *field);
+/// Give the keyboard back to the subtitle text, from wherever it is in its
+/// window. @return Whether it went
+bool GoHome(wxWindow *from);
 /// Leave the field being typed in, if any: the keyboard goes home
 void LeaveField();
 /// A control the wheel changes: wheel turns over it go to it, even where
@@ -296,6 +305,9 @@ public:
 	bool Enable(bool enable = true) override;
 };
 
+/// Line icons a FlatButton can draw before its words, in the words' colour.
+enum class FlatGlyph { None, Up, Down, Undo, Redo, Swap, Filter };
+
 /// A drawn button with words on it, as the animation page's are: a rounded
 /// field, a shade darker under the pointer. Sends wxEVT_BUTTON as wxButton
 /// does; Space or Enter presses it when it has the keyboard. The accent kind
@@ -305,6 +317,7 @@ class FlatButton final : public wxWindow {
 	bool accent = false;
 	bool hover = false, pressed = false;
 	wxSize least;
+	FlatGlyph glyph = FlatGlyph::None;
 	agi::signal::Connection theme_changed;
 
 	void OnPaint(wxPaintEvent &);
@@ -318,6 +331,9 @@ public:
 	/// The size the button is at least, however short its label: unlike a
 	/// min size, a longer label set later still widens it
 	void SetLeastSize(wxSize size);
+	/// A line icon before the words, drawn in their colour so that it
+	/// follows the appearance and the accent fill
+	void SetGlyph(FlatGlyph new_glyph);
 
 	/// Send wxEVT_BUTTON, as a click does
 	void Press();

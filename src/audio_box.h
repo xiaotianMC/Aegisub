@@ -60,6 +60,8 @@ class AudioBox final : public wxSashWindow, private agi::signal::ConnectionScope
 	agi::Context *context;
 
 	agi::signal::Connection audio_open_connection;
+	/// Redraws the strip below when the region line moves
+	agi::signal::Connection outline_changed;
 
 
 	/// Panel containing the children
@@ -81,6 +83,8 @@ class AudioBox final : public wxSashWindow, private agi::signal::ConnectionScope
 	void OnVerticalLink(agi::OptionValue const& opt);
 
 public:
+	/// The waveform, where the keyboard goes in the audio
+	AudioDisplay *GetDisplay() const { return audioDisplay; }
 	/// Vertical zoom and volume positions, 1 to 100 (50 is neutral)
 	void SetVerticalZoom(int pos);
 	void SetVolume(int pos);

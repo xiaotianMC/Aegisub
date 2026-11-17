@@ -46,6 +46,7 @@
 #include "theme.h"
 #include "utils.h"
 #include "video_controller.h"
+#include "keyboard_regions.h"
 
 #include <libaegisub/ass/time.h>
 
@@ -211,7 +212,8 @@ void VideoSlider::OnMouse(wxMouseEvent &event) {
 }
 
 void VideoSlider::OnCharHook(wxKeyEvent &event) {
-	hotkey::check("Video", c, event);
+	if (hotkey::check("Video", c, event)) return;
+	if (!regions::HandleKey(this, event)) event.Skip();
 }
 
 void VideoSlider::OnKeyDown(wxKeyEvent &event) {

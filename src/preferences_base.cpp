@@ -33,6 +33,7 @@
 #include <cmath>
 #include <numbers>
 #include <memory>
+#include <type_traits>
 
 #include <wx/checkbox.h>
 #include <wx/dcclient.h>
@@ -483,13 +484,22 @@ OptionPage::Mark *OptionPage::Add(PageSection section, wxString const& label, T 
 	Mark *mark = nullptr;
 	if (!option.empty()) mark = AddMark(section, option);
 	else section.sizer->AddSpacer(0);
-	Label(section, new wxStaticText(section.box, -1, label), help);
+	auto name = Label(section, new wxStaticText(section.box, -1, label), help);
+	if constexpr (std::is_base_of_v<wxWindow, T>)
+		places[control] = {section.sizer, name};
+	else
+		for (auto item : control->GetChildren())
+			if (auto window = item->GetWindow()) places[window] = {section.sizer, name};
 	// In a column as wide on every page
 	auto column = new wxBoxSizer(wxHORIZONTAL);
 	column->SetMinSize(wxSize(FromDIP(control_width), -1));
 	column->Add(control, wxSizerFlags(1).Expand());
 	section.sizer->Add(column, wxSizerFlags().Expand().CentreVertical());
 	return mark;
+}
+
+void OptionPage::Row(PageSection section, wxString const& name, wxSizer *control, wxString const& help) {
+	Add(section, name, control, std::string(), help);
 }
 
 void OptionPage::CellSkip(PageSection) {
@@ -516,7 +526,7 @@ wxWindow *OptionPage::OptionAdd(PageSection section, const wxString &name, const
 			// The label is the check box's own: clicking it ticks
 			auto mark = AddMark(section, option);
 			auto cb = new FlatCheck(section.box, name);
-			Label(section, cb, kwargs.help);
+			places[cb] = {section.sizer, Label(section, cb, kwargs.help)};
 			section.sizer->AddSpacer(0);
 			cb->SetValue(opt->GetBool());
 			cb->Bind(wxEVT_CHECKBOX, BoolUpdater(opt_name, parent));
@@ -575,7 +585,7 @@ wxWindow *OptionPage::OptionAdd(PageSection section, const wxString &name, const
 	}
 }
 
-void OptionPage::OptionChoice(PageSection section, const wxString &name, const wxArrayString &choices, const char *opt_name, bool translate, wxString const& help) {
+void OptionPage::OptionChoice(PageSection section, const wxString &name, const wxArrayString &choices, const char *opt_name, bool translate, wxString const& help, std::vector<int> const& values) {
 	parent->AddChangeableOption(opt_name);
 	const auto opt = OPT_GET(opt_name);
 	std::string option = opt_name;
@@ -590,12 +600,18 @@ void OptionPage::OptionChoice(PageSection section, const wxString &name, const w
 	auto parent = this->parent;
 	switch (opt->GetType()) {
 		case agi::OptionType::Int: {
+			// The value at each place in the list
+			auto value_at = [=](int index) -> int64_t { return index < (int)values.size() ? values[index] : index; };
 			auto select = [=](int64_t val) {
-				if (!shown.empty()) list->SetStringSelection(shown[val >= 0 && val < (int64_t)shown.size() ? val : 0]);
+				if (shown.empty()) return;
+				int index = 0;
+				for (int i = 0; i < (int)shown.size(); ++i)
+					if (value_at(i) == val) index = i;
+				list->SetStringSelection(shown[index]);
 			};
 			select(opt->GetInt());
 			list->on_choose = [=](int index) {
-				parent->SetOption(std::make_unique<agi::OptionValueInt>(option, index));
+				parent->SetOption(std::make_unique<agi::OptionValueInt>(option, value_at(index)));
 			};
 			AddRow(option, mark3, list, [=](agi::OptionValue const& v) {
 				select(v.GetInt());
@@ -742,6 +758,65 @@ void OptionPage::DisableIfChecked(wxWindow *cbx, wxWindow *ctrl) {
 	if (!dynamic_cast<FlatCheck*>(cbx) && !dynamic_cast<wxCheckBox*>(cbx)) return;
 	ctrl->Enable(!Checked(cbx));
 	cbx->Bind(wxEVT_CHECKBOX, [=](wxCommandEvent& evt) { ctrl->Enable(!evt.GetInt()); evt.Skip(); });
+}
+
+void OptionPage::EnableWhen(std::string const& option, std::function<bool(agi::OptionValue const&)> test, std::vector<wxWindow*> controls) {
+	dependents.push_back({option, std::move(test), std::move(controls), false});
+	RefreshDependents();
+}
+
+void OptionPage::ShowWhen(std::string const& option, std::function<bool(agi::OptionValue const&)> test, std::vector<wxWindow*> controls) {
+	dependents.push_back({option, std::move(test), std::move(controls), true});
+	RefreshDependents();
+}
+
+bool OptionPage::ShowRow(wxWindow *control, bool show) {
+	auto place = places.find(control);
+	if (place == places.end()) {
+		if (control->IsShown() == show) return false;
+		control->Show(show);
+		return true;
+	}
+	// The row is three cells of its grid: the mark, the name and the control
+	auto grid = place->second.grid;
+	auto const& cells = grid->GetChildren();
+	size_t name = 0;
+	for (auto cell : cells) {
+		if (cell->GetSizer() == place->second.name) break;
+		++name;
+	}
+	if (name == 0 || name + 1 >= cells.size()) return false;
+	bool changed = false;
+	for (size_t i = name - 1; i <= name + 1; ++i)
+		if (grid->IsShown(i) != show) {
+			grid->Show(i, show);
+			changed = true;
+		}
+	return changed;
+}
+
+void OptionPage::RefreshDependents() {
+	bool moved = false;
+	for (auto const& d : dependents) {
+		auto pending = parent->Pending(d.option);
+		bool const on = d.test(pending ? *pending : *OPT_GET(d.option));
+		for (auto control : d.controls) {
+			if (d.hide) {
+				moved |= ShowRow(control, on);
+				continue;
+			}
+			if (control->IsThisEnabled() != on) control->Enable(on);
+			auto place = places.find(control);
+			if (place == places.end()) continue;
+			for (auto item : place->second.name->GetChildren())
+				if (auto window = item->GetWindow(); window && window->IsThisEnabled() != on) window->Enable(on);
+		}
+	}
+	if (moved) {
+		Layout();
+		FitInside();
+		Refresh();
+	}
 }
 
 bool OptionPage::IsModified(std::string const& option) const {

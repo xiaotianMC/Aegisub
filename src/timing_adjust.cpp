@@ -80,10 +80,14 @@ int CharactersPerSecond(std::string_view text, int duration_ms, bool ignore_whit
 	return static_cast<int>(agi::CharacterCount(text, ignore) * 1000 / duration_ms);
 }
 
-bool NearestSceneCut(std::vector<int> kf, int frame_count, agi::vfr::Framerate const& fps, int ms, bool end, SceneCut &cut) {
-	if (kf.empty() || !fps.IsLoaded()) return false;
+std::vector<int> SceneCutFrames(std::vector<int> kf, int frame_count) {
 	if (frame_count > 0) kf.push_back(frame_count - 1);
 	std::sort(kf.begin(), kf.end());
+	return kf;
+}
+
+bool NearestSceneCutIn(std::vector<int> const& kf, agi::vfr::Framerate const& fps, int ms, bool end, SceneCut &cut) {
+	if (kf.empty() || !fps.IsLoaded()) return false;
 	if (end) {
 		int const frame = fps.FrameAtTime(ms, agi::vfr::END);
 		cut.frame = ClosestKeyframe(kf, frame) - 1;
@@ -97,4 +101,9 @@ bool NearestSceneCut(std::vector<int> kf, int frame_count, agi::vfr::Framerate c
 		cut.frames = cut.frame - frame;
 	}
 	return true;
+}
+
+bool NearestSceneCut(std::vector<int> kf, int frame_count, agi::vfr::Framerate const& fps, int ms, bool end, SceneCut &cut) {
+	if (kf.empty()) return false;
+	return NearestSceneCutIn(SceneCutFrames(std::move(kf), frame_count), fps, ms, end, cut);
 }

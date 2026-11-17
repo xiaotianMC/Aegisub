@@ -29,9 +29,24 @@
 #include <libaegisub/exception.h>
 #include <libaegisub/util_osx.h>
 
-#include <atomic>
+#include <wx/app.h>
+#include <wx/dcclient.h>
+#include <wx/graphics.h>
+#include <wx/weakref.h>
 
-#include <wx/gauge.h>
+#ifdef __WXMSW__
+#include <dwmapi.h>
+#pragma comment(lib, "dwmapi.lib")
+#endif
+
+#include <algorithm>
+#include <atomic>
+#include <cmath>
+#include <memory>
+#include <vector>
+
+#include <wx/dcbuffer.h>
+#include <wx/dcgraph.h>
 #include <wx/sizer.h>
 #include <wx/stattext.h>
 #include <wx/textctrl.h>
@@ -43,6 +58,72 @@
 using agi::dispatch::Main;
 
 namespace {
+#ifdef __WXMSW__
+	/// The window the others belong to: the main one
+	wxWindow *MainOf(wxWindow *window) {
+		wxWindow *main = nullptr;
+		for (; window; window = window->GetParent()) main = window;
+		return main;
+	}
+
+	// Windows takes the windows the main one owns off the screen when it goes
+	// to the taskbar, by a click on its button, but not the windows those own
+	// in turn, such as the progress of a Whisper model downloaded from
+	// Preferences: while a task runs, every other window of the main one's
+	// is hidden with it, and shown again when it comes back
+	std::vector<wxWeakRef<wxWindow>> hidden_with_main;
+	int running = 0;
+
+	void FollowMain(wxIconizeEvent &event) {
+		event.Skip();
+		auto main = static_cast<wxWindow*>(event.GetEventObject());
+		if (event.IsIconized()) {
+			if (!running) return;
+			for (auto node = wxTopLevelWindows.GetFirst(); node; node = node->GetNext()) {
+				wxWindow *window = node->GetData();
+				if (window == main || MainOf(window) != main || !window->IsShown()) continue;
+				if (!::IsWindowVisible(window->GetHWND())) continue; // Windows' own
+				hidden_with_main.emplace_back(window);
+				::ShowWindow(window->GetHWND(), SW_HIDE);
+			}
+			return;
+		}
+		// Back in their order, the last, the one in front, in front again;
+		// not one ended while away
+		wxWindow *front = nullptr;
+		for (auto const& window : hidden_with_main)
+			if (window && window->IsShown()) {
+				::ShowWindow(window->GetHWND(), SW_SHOWNOACTIVATE);
+				front = window;
+			}
+		hidden_with_main.clear();
+		if (front) front->Raise();
+		if (!running) main->Unbind(wxEVT_ICONIZE, FollowMain);
+	}
+
+	/// The main window followed to the taskbar and back while a task runs
+	class FollowingMain {
+		wxWeakRef<wxWindow> main;
+		bool counted = false;
+	public:
+		explicit FollowingMain(wxWindow *window) : main(window) {
+			if (!window) return;
+			counted = true;
+			++running;
+			window->Unbind(wxEVT_ICONIZE, FollowMain);
+			window->Bind(wxEVT_ICONIZE, FollowMain);
+		}
+		~FollowingMain() {
+			if (!counted) return;
+			--running;
+			// On the taskbar still: what was hidden comes back with it
+			if (main && hidden_with_main.empty()) main->Unbind(wxEVT_ICONIZE, FollowMain);
+		}
+		FollowingMain(FollowingMain const&) = delete;
+		FollowingMain& operator=(FollowingMain const&) = delete;
+	};
+#endif
+
 	void set_taskbar_progress([[maybe_unused]] int progress) {
 #ifdef _MSC_VER
 		ITaskbarList3 *taskbar;
@@ -67,6 +148,110 @@ namespace {
 		taskbar->Release();
 #endif
 	}
+
+	/// About how long @p seconds is, as minutes and seconds
+	wxString Duration(int seconds) {
+		if (seconds < 60) return wxString::Format(_("%d s"), std::max(1, seconds));
+		return wxString::Format(_("%d min %d s"), seconds / 60, seconds % 60);
+	}
+
+	/// A sweep across the bar while not known how far
+	constexpr double sweep_seconds = 1.6;
+	/// How quickly the bar glides to a new value: most of the way in this
+	constexpr double glide_seconds = 0.18;
+}
+
+ProgressBar::ProgressBar(wxWindow *parent)
+: wxWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE)
+, timer(this)
+{
+	SetBackgroundStyle(wxBG_STYLE_PAINT);
+	SetMinSize(GetBestSize());
+	Bind(wxEVT_PAINT, &ProgressBar::OnPaint, this);
+	Bind(wxEVT_TIMER, &ProgressBar::OnTimer, this);
+	theme_changed = theme::AddChangeListener([this] { Refresh(); });
+}
+
+wxSize ProgressBar::DoGetBestClientSize() const {
+	return FromDIP(wxSize(360, 6));
+}
+
+void ProgressBar::SetValue(double share) {
+	share = std::clamp(share, 0.0, 1.0);
+	bool was_sweeping = indeterminate;
+	indeterminate = false;
+	if (share < target || was_sweeping) shown = share;
+	target = share;
+	Animate();
+	Refresh();
+}
+
+void ProgressBar::SetIndeterminate() {
+	if (indeterminate) return;
+	indeterminate = true;
+	sweep_start = std::chrono::steady_clock::now();
+	Animate();
+	Refresh();
+}
+
+void ProgressBar::Animate() {
+	bool moving = indeterminate || std::abs(target - shown) > 0.0005;
+	if (moving && !timer.IsRunning()) {
+		last_tick = std::chrono::steady_clock::now();
+		timer.Start(16);
+	}
+	else if (!moving)
+		timer.Stop();
+}
+
+void ProgressBar::OnTimer(wxTimerEvent &) {
+	auto now = std::chrono::steady_clock::now();
+	double dt = std::chrono::duration<double>(now - last_tick).count();
+	last_tick = now;
+	if (!indeterminate) {
+		shown += (target - shown) * (1 - std::exp(-dt / glide_seconds * 3));
+		if (std::abs(target - shown) <= 0.0005) shown = target;
+	}
+	Animate();
+	Refresh();
+}
+
+void ProgressBar::OnPaint(wxPaintEvent &) {
+	wxAutoBufferedPaintDC buffered(this);
+	wxGCDC dc(buffered);
+	auto p = flat::Colours(this);
+	wxSize size = GetClientSize();
+	dc.SetPen(*wxTRANSPARENT_PEN);
+	dc.SetBrush(wxBrush(p.surface));
+	dc.DrawRectangle(wxPoint(0, 0), size);
+
+	int h = std::min(size.y, FromDIP(6));
+	wxRect track(0, (size.y - h) / 2, size.x, h);
+	double radius = h / 2.0;
+	dc.SetBrush(wxBrush(theme::Mix(p.surface, p.text, theme::IsDark() ? 0.16 : 0.1)));
+	dc.DrawRoundedRectangle(track, radius);
+
+	dc.SetBrush(wxBrush(p.accent));
+	if (indeterminate) {
+		// A piece a third of the track long, easing in and out as it goes
+		// from wholly off its left end to wholly off its right
+		double t = std::chrono::duration<double>(std::chrono::steady_clock::now() - sweep_start).count();
+		double phase = std::fmod(t / sweep_seconds, 1.0);
+		double eased = phase < 0.5 ? 2 * phase * phase : 1 - 2 * (1 - phase) * (1 - phase);
+		int piece = track.width / 3;
+		int x = int(-piece + (track.width + piece) * eased);
+		int left = std::max(0, x), right = std::min(track.width, x + piece);
+		if (right - left > 0) {
+			dc.SetClippingRegion(track);
+			dc.DrawRoundedRectangle(wxRect(left, track.y, right - left, h), radius);
+			dc.DestroyClippingRegion();
+		}
+		return;
+	}
+	if (shown <= 0) return;
+	// Never narrower than its rounded ends
+	int width = std::max(h, int(std::lround(track.width * shown)));
+	dc.DrawRoundedRectangle(wxRect(track.x, track.y, width, h), radius);
 }
 
 class DialogProgressSink final : public agi::ProgressSink {
@@ -106,52 +291,99 @@ public:
 	}
 
 	void SetIndeterminate() override {
-		Main().Async([this]{ dialog->pulse_timer.Start(1000); });
+		// Whatever share comes next is shown, even the one shown before
+		progress = -1;
+		Main().Async([this]{ dialog->SetIndeterminate(); });
 	}
 };
 
 DialogProgress::DialogProgress(wxWindow *parent, wxString const& title_text, wxString const& message)
-: wxDialog(parent, -1, title_text, wxDefaultPosition, wxDefaultSize, theme::Border(wxBORDER_RAISED))
-, pulse_timer(GetEventHandler())
 {
-	title = new wxStaticText(this, -1, title_text, wxDefaultPosition, wxDefaultSize, wxALIGN_CENTRE | wxST_NO_AUTORESIZE);
-	gauge = new wxGauge(this, -1, 300, wxDefaultPosition, DipSize(300,20));
-	text = new wxStaticText(this, -1, message, wxDefaultPosition, wxDefaultSize, wxALIGN_CENTRE | wxST_NO_AUTORESIZE);
+	// A card with round corners: where the system composites windows, the
+	// window sees through about it and the card casts a shadow; elsewhere
+	// it is the window, with a thin line round it (and on Windows 11 the
+	// system's own round corners and shadow)
+	// Asked of a window made already: this one has to know before it is
+#ifdef __WXMSW__
+	// wxMSW says yes, but for a top-level window wxBG_STYLE_TRANSPARENT only
+	// leaves the background unerased: the room for the shadow would show
+	// whatever was on the screen when the window opened, inside the system's
+	// round border drawn about the whole window. The window is the card here.
+	see_through = false;
+#else
+	wxWindow *made = parent ? parent : wxTheApp ? wxTheApp->GetTopWindow() : nullptr;
+	see_through = made && made->IsTransparentBackgroundSupported();
+#endif
+	SetBackgroundStyle(see_through ? wxBG_STYLE_TRANSPARENT : wxBG_STYLE_PAINT);
+	Create(parent, -1, title_text, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+#ifdef __WXMSW__
+	// DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND: ignored before Windows 11
+	DWORD round = 2;
+	DwmSetWindowAttribute(GetHWND(), 33, &round, sizeof(round));
+#endif
+	if (see_through) shadow = FromDIP(18);
+	Bind(wxEVT_PAINT, &DialogProgress::OnPaint, this);
+
+	title = new wxStaticText(this, -1, title_text, wxDefaultPosition, wxDefaultSize, wxST_NO_AUTORESIZE | wxST_ELLIPSIZE_END);
+	text = new wxStaticText(this, -1, message, wxDefaultPosition, wxDefaultSize, wxST_NO_AUTORESIZE | wxST_ELLIPSIZE_MIDDLE);
+	bar = new ProgressBar(this);
+	percent = new wxStaticText(this, -1, "", wxDefaultPosition, wxDefaultSize, wxST_NO_AUTORESIZE);
+	remaining = new wxStaticText(this, -1, "", wxDefaultPosition, wxDefaultSize, wxALIGN_RIGHT | wxST_NO_AUTORESIZE);
 	cancel_button = new FlatButton(this, _("Cancel"), wxID_CANCEL);
-	cancel_button->SetLeastSize(wxSize(FromDIP(76), FromDIP(28)));
+	cancel_button->SetLeastSize(wxSize(FromDIP(84), FromDIP(30)));
 	log_output = new wxTextCtrl(this, -1, "", wxDefaultPosition, DipSize(600, 240), wxTE_MULTILINE | wxTE_READONLY);
 
-	// make the title a slightly larger font
+	// The title a little larger and bold; the rest smaller and dim
 	wxFont title_font = title->GetFont();
-	int fontsize = title_font.GetPointSize();
-	title_font.SetPointSize(fontsize * 1.375);
-	title_font.SetWeight(wxFONTWEIGHT_BOLD);
+	title_font.SetFractionalPointSize(title_font.GetFractionalPointSize() * 1.2);
+	title_font.SetWeight(wxFONTWEIGHT_SEMIBOLD);
 	title->SetFont(title_font);
+	wxFont progress_font = percent->GetFont();
+	progress_font.SetFractionalPointSize(progress_font.GetFractionalPointSize() * 0.92);
+	percent->SetFont(progress_font);
+	remaining->SetFont(progress_font);
 
 	theme::UseSurface(this);
-	text->SetForegroundColour(flat::Colours(this).dim);
-	int gap = FromDIP(10), row = FromDIP(6);
+	auto dim = flat::Colours(this).dim;
+	text->SetForegroundColour(dim);
+	percent->SetForegroundColour(dim);
+	remaining->SetForegroundColour(dim);
+	// Room for the longest that is written there
+	percent->SetMinSize(wxSize(GetTextExtent("100%").x + FromDIP(8), -1));
+	int pad = FromDIP(20);
 
-	wxSizer *sizer = new wxBoxSizer(wxVERTICAL);
-	sizer->Add(title, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxTOP, gap));
-	sizer->Add(gauge, wxSizerFlags(1).Expand().Border(wxLEFT | wxRIGHT | wxTOP, gap));
-	sizer->Add(text, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxTOP, row));
-	sizer->Add(cancel_button, wxSizerFlags().Center().Border(wxALL, gap));
-	sizer->Add(log_output, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxBOTTOM, gap));
+	auto numbers = new wxBoxSizer(wxHORIZONTAL);
+	numbers->Add(percent, wxSizerFlags().CenterVertical());
+	numbers->Add(remaining, wxSizerFlags(1).CenterVertical());
+
+	auto buttons = new wxBoxSizer(wxHORIZONTAL);
+	buttons->AddStretchSpacer();
+	buttons->Add(cancel_button);
+
+	wxSizer *sizer = content = new wxBoxSizer(wxVERTICAL);
+	sizer->Add(title, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxTOP, pad));
+	sizer->Add(text, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxTOP, FromDIP(4)).Border(wxLEFT | wxRIGHT, pad));
+	sizer->AddSpacer(FromDIP(16));
+	sizer->Add(bar, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT, pad));
+	sizer->AddSpacer(FromDIP(6));
+	sizer->Add(numbers, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT, pad));
+	sizer->Add(buttons, wxSizerFlags().Expand().Border(wxALL, pad));
+	sizer->Add(log_output, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT | wxBOTTOM, pad));
 	sizer->Hide(log_output);
 
-	SetSizerAndFit(sizer);
+	auto outer = new wxBoxSizer(wxVERTICAL);
+	outer->Add(sizer, wxSizerFlags(1).Expand().Border(wxALL, shadow));
+	SetSizerAndFit(outer);
 	CenterOnParent();
 
 	// Escape presses Cancel, as it did the system's button
 	flat::UseFlatButtonKeys(this);
-	Bind(wxEVT_SHOW, &DialogProgress::OnShow, this);
-	Bind(wxEVT_TIMER, [this](wxTimerEvent&) { gauge->Pulse(); });
 }
 
 void DialogProgress::Run(std::function<void(agi::ProgressSink*)> task) {
 	DialogProgressSink ps(this);
 	this->ps = &ps;
+	Begin();
 
 	auto current_title = from_wx(title->GetLabelText());
 	agi::dispatch::Background().Async([=, this]{
@@ -164,7 +396,6 @@ void DialogProgress::Run(std::function<void(agi::ProgressSink*)> task) {
 		}
 
 		Main().Async([this]{
-			pulse_timer.Stop();
 			Unbind(wxEVT_IDLE, &DialogProgress::OnIdle, this);
 
 			// Unbind the cancel handler so that the default behavior happens (i.e. the
@@ -183,60 +414,114 @@ void DialogProgress::Run(std::function<void(agi::ProgressSink*)> task) {
 					OnIdle(evt);
 				}
 				cancel_button->SetLabel(_("Close"));
-				gauge->SetValue(300);
+				bar->SetValue(1);
+				percent->SetLabelText("100%");
+				remaining->SetLabelText("");
 			}
 			set_taskbar_progress(0);
 		});
 	});
 
+#ifdef __WXMSW__
+	FollowingMain follow(GetParent() ? MainOf(GetParent()) : wxTheApp->GetTopWindow());
+#endif
 	if (!ShowModal())
 		throw agi::UserCancelException("Cancelled by user");
 }
 
-void DialogProgress::OnShow(wxShowEvent& evt) {
-	if (!evt.IsShown()) return;
+#ifdef __WXMSW__
+WXLRESULT DialogProgress::MSWWindowProc(WXUINT message, WXWPARAM wParam, WXLPARAM lParam) {
+	if (message == WM_SYSCOMMAND && (wParam & 0xfff0) == SC_MINIMIZE) {
+		auto main = GetParent() ? MainOf(GetParent()) : wxTheApp->GetTopWindow();
+		if (auto frame = dynamic_cast<wxTopLevelWindow*>(main)) {
+			frame->Iconize(true);
+			return 0;
+		}
+	}
+	return wxDialog::MSWWindowProc(message, wParam, lParam);
+}
+#endif
 
+void DialogProgress::Begin() {
 	// Restore the cancel button in case it was previously switched to a close
-	// button
+	// button; bound once however many runs
+	Unbind(wxEVT_BUTTON, &DialogProgress::OnCancel, this, wxID_CANCEL);
+	Unbind(wxEVT_IDLE, &DialogProgress::OnIdle, this);
 	Bind(wxEVT_BUTTON, &DialogProgress::OnCancel, this, wxID_CANCEL);
 	Bind(wxEVT_IDLE, &DialogProgress::OnIdle, this);
 	cancel_button->SetLabel(_("Cancel"));
 	cancel_button->Enable();
+	progress = 0;
+	progress_start = std::chrono::steady_clock::now();
+	bar->SetValue(0);
+	percent->SetLabelText("");
+	remaining->SetLabelText("");
 
-	wxSizer *sizer = GetSizer();
-	if (sizer->IsShown(log_output)) {
-		sizer->Hide(log_output);
-		Layout();
-		sizer->Fit(this);
+	if (content->IsShown(log_output)) {
+		content->Hide(log_output);
+		Refit();
 		log_output->Clear();
 	}
 }
 
-void DialogProgress::OnIdle(wxIdleEvent&) {
-	if (progress_current > progress_target) {
-		progress_current = progress_target;
-		gauge->SetValue(progress_current);
-		set_taskbar_progress(progress_current / 3);
+void DialogProgress::Refit() {
+	Layout();
+	GetSizer()->Fit(this);
+	Refresh();
+}
+
+void DialogProgress::OnPaint(wxPaintEvent&) {
+	wxPaintDC dc(this);
+	auto p = flat::Colours(this);
+	bool const dark = theme::IsDark();
+	wxColour const edge = theme::Mix(p.surface, p.text, dark ? 0.16 : 0.12);
+	wxRect card(GetClientSize());
+	card.Deflate(shadow);
+	int const thick = std::max(1, FromDIP(1));
+	std::unique_ptr<wxGraphicsContext> gc(wxGraphicsContext::Create(dc));
+	if (!gc) {
+		dc.SetPen(wxPen(edge, thick));
+		dc.SetBrush(wxBrush(p.surface));
+		dc.DrawRectangle(card);
+		return;
 	}
-	else if (progress_current < progress_target) {
-		using namespace std::chrono;
-		auto now = steady_clock::now();
-		int ms = mid<int>(0, duration_cast<milliseconds>(now - progress_anim_start_time).count(), progress_anim_duration);
-		int dist = (progress_target - progress_anim_start_value) * ms / progress_anim_duration;
-		if (dist) {
-			progress_current = progress_anim_start_value + dist;
-			gauge->SetValue(progress_current);
-			set_taskbar_progress(progress_current / 3);
+	gc->SetPen(wxNullGraphicsPen);
+	// Square where the window is the card: the system rounds it, if anything
+	double const radius = see_through ? FromDIP(12) : 0;
+
+	if (see_through) {
+		// Soft, and a little below the card: rings each adding a little
+		// dark, closer together near the card, so it is deepest there and
+		// fades out a long way
+		int const steps = 24;
+		double const drop = FromDIP(5);
+		int const alpha = std::max(1, static_cast<int>(std::lround(255 * (dark ? 0.45 : 0.13) / steps)));
+		gc->SetBrush(wxBrush(wxColour(0, 0, 0, alpha)));
+		for (int i = steps; i > 0; --i) {
+			double const t = static_cast<double>(i) / steps;
+			double const grow = shadow * std::pow(t, 1.7);
+			gc->DrawRoundedRectangle(card.x - grow, card.y - grow + drop * (1 - t) + FromDIP(2),
+				card.width + 2 * grow, card.height + 2 * grow, radius + grow);
 		}
 	}
 
+	gc->SetBrush(wxBrush(p.surface));
+	gc->DrawRoundedRectangle(card.x, card.y, card.width, card.height, radius);
+	// A hairline round it, all inside, so the card stands off a background
+	// of its own colour
+	auto ring = gc->CreatePath();
+	ring.AddRoundedRectangle(card.x, card.y, card.width, card.height, radius);
+	ring.AddRoundedRectangle(card.x + thick, card.y + thick, card.width - 2 * thick, card.height - 2 * thick, std::max(0., radius - thick));
+	gc->SetBrush(wxBrush(edge));
+	gc->FillPath(ring, wxODDEVEN_RULE);
+}
+
+void DialogProgress::OnIdle(wxIdleEvent&) {
 	if (!pending_log) return;
 
 	if (log_output->IsEmpty()) {
-		wxSizer *sizer = GetSizer();
-		sizer->Show(log_output);
-		Layout();
-		sizer->Fit(this);
+		content->Show(log_output);
+		Refit();
 		CenterOnParent();
 	}
 
@@ -252,17 +537,28 @@ void DialogProgress::OnCancel(wxCommandEvent &) {
 }
 
 void DialogProgress::SetProgress(int target) {
-	pulse_timer.Stop();
-
-	if (target == progress_target) return;
 	using namespace std::chrono;
-
-	progress_anim_start_value = progress_current;
 	auto now = steady_clock::now();
-	if (progress_target == 0)
-		progress_anim_duration = 1000;
+	// Starting over (a task's next stage): the time left is counted afresh
+	if (target < progress || bar->IsIndeterminate()) progress_start = now;
+	progress = target;
+	bar->SetValue(target / 300.0);
+	set_taskbar_progress(target / 3);
+	percent->SetLabelText(wxString::Format("%d%%", target / 3));
+
+	// How long the rest takes, at the pace so far, once there is enough of
+	// it to go by
+	double share = target / 300.0;
+	double seconds = duration<double>(now - progress_start).count();
+	if (share >= 0.03 && share < 1 && seconds >= 2)
+		remaining->SetLabelText(wxString::Format(_("About %s left"), Duration(int(std::lround(seconds * (1 - share) / share)))));
 	else
-		progress_anim_duration = std::max<int>(100, duration_cast<milliseconds>(now - progress_anim_start_time).count() * 11 / 10);
-	progress_anim_start_time = now;
-	progress_target = target;
+		remaining->SetLabelText("");
+}
+
+void DialogProgress::SetIndeterminate() {
+	bar->SetIndeterminate();
+	percent->SetLabelText("");
+	remaining->SetLabelText("");
+	set_taskbar_progress(-1);
 }

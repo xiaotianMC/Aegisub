@@ -43,6 +43,7 @@
 #include "project.h"
 #include "utils.h"
 #include "video_controller.h"
+#include "keyboard_regions.h"
 
 #include <libaegisub/ass/time.h>
 #include <libaegisub/audio/provider.h>
@@ -1420,7 +1421,10 @@ bool AudioDisplay::ForwardMouseEvent(wxMouseEvent &event) {
 
 void AudioDisplay::OnKeyDown(wxKeyEvent& event)
 {
-	hotkey::check("Audio", context, event);
+	if (hotkey::check("Audio", context, event)) return;
+	// Tab on in the audio's region, Esc to the subtitle text
+	if (event.GetEventType() == wxEVT_CHAR_HOOK && regions::HandleKey(this, event)) return;
+	event.Skip();
 }
 
 void AudioDisplay::OnSize(wxSizeEvent &)
