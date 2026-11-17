@@ -604,8 +604,15 @@ void ScriptPanel::UpdateParts() {
 }
 
 void ScriptPanel::Type(wxString const& value) {
-	// As typed: wxEVT_TEXT follows
-	text->SetValue(value);
+	// As typed: the box changed and told of it once. Not SetValue, after which
+	// wxMSW tells of it again when the handler has changed the box, as it does
+	// when the change is refused, so that the second time, the box as the file
+	// has it, the note saying why was taken away
+	text->ChangeValue(value);
+	wxCommandEvent changed(wxEVT_TEXT, text->GetId());
+	changed.SetEventObject(text);
+	changed.SetString(value);
+	text->GetEventHandler()->ProcessEvent(changed);
 }
 
 void ScriptPanel::Press(std::string const& name) {
