@@ -204,7 +204,7 @@ wxRect KeyToolBar::ToolRect(int id) const {
 	if (pos == wxNOT_FOUND) return {};
 #if defined(__WXMSW__)
 	RECT r;
-	if (!::SendMessage(GetHwnd(), TB_GETITEMRECT, pos, reinterpret_cast<LPARAM>(&r))) return {};
+	if (!::SendMessage(static_cast<HWND>(GetHWND()), TB_GETITEMRECT, pos, reinterpret_cast<LPARAM>(&r))) return {};
 	return wxRect(r.left, r.top, r.right - r.left, r.bottom - r.top);
 #elif defined(__WXGTK__)
 	GtkToolItem *item = gtk_toolbar_get_nth_item(GTKGetToolbar(), pos);
@@ -226,7 +226,7 @@ WXLRESULT KeyToolBar::MSWWindowProc(WXUINT message, WXWPARAM wParam, WXLPARAM lP
 	// Before painting validates what is to be painted: when any of the
 	// ring is, all of it is, as a smooth ring drawn again over itself grows
 	// at its soft edges; when none of it is, it is left as it is
-	HWND hwnd = GetHwnd();
+	HWND hwnd = static_cast<HWND>(GetHWND());
 	RECT area{ring.x - 1, ring.y - 1, ring.x + ring.width + 1, ring.y + ring.height + 1};
 	HRGN update = ::CreateRectRgn(0, 0, 0, 0);
 	bool draw = ::GetUpdateRgn(hwnd, update, FALSE) != ERROR && ::RectInRegion(update, &area);
