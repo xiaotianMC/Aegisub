@@ -32,6 +32,7 @@
 #include <wx/app.h>
 #include <wx/dcclient.h>
 #include <wx/graphics.h>
+#include <wx/weakref.h>
 
 #ifdef __WXMSW__
 #include <dwmapi.h>
@@ -42,6 +43,7 @@
 #include <atomic>
 #include <cmath>
 #include <memory>
+#include <vector>
 
 #include <wx/dcbuffer.h>
 #include <wx/dcgraph.h>
@@ -56,6 +58,72 @@
 using agi::dispatch::Main;
 
 namespace {
+#ifdef __WXMSW__
+	/// The window the others belong to: the main one
+	wxWindow *MainOf(wxWindow *window) {
+		wxWindow *main = nullptr;
+		for (; window; window = window->GetParent()) main = window;
+		return main;
+	}
+
+	// Windows takes the windows the main one owns off the screen when it goes
+	// to the taskbar, by a click on its button, but not the windows those own
+	// in turn, such as the progress of a Whisper model downloaded from
+	// Preferences: while a task runs, every other window of the main one's
+	// is hidden with it, and shown again when it comes back
+	std::vector<wxWeakRef<wxWindow>> hidden_with_main;
+	int running = 0;
+
+	void FollowMain(wxIconizeEvent &event) {
+		event.Skip();
+		auto main = static_cast<wxWindow*>(event.GetEventObject());
+		if (event.IsIconized()) {
+			if (!running) return;
+			for (auto node = wxTopLevelWindows.GetFirst(); node; node = node->GetNext()) {
+				wxWindow *window = node->GetData();
+				if (window == main || MainOf(window) != main || !window->IsShown()) continue;
+				if (!::IsWindowVisible(window->GetHWND())) continue; // Windows' own
+				hidden_with_main.emplace_back(window);
+				::ShowWindow(window->GetHWND(), SW_HIDE);
+			}
+			return;
+		}
+		// Back in their order, the last, the one in front, in front again;
+		// not one ended while away
+		wxWindow *front = nullptr;
+		for (auto const& window : hidden_with_main)
+			if (window && window->IsShown()) {
+				::ShowWindow(window->GetHWND(), SW_SHOWNOACTIVATE);
+				front = window;
+			}
+		hidden_with_main.clear();
+		if (front) front->Raise();
+		if (!running) main->Unbind(wxEVT_ICONIZE, FollowMain);
+	}
+
+	/// The main window followed to the taskbar and back while a task runs
+	class FollowingMain {
+		wxWeakRef<wxWindow> main;
+		bool counted = false;
+	public:
+		explicit FollowingMain(wxWindow *window) : main(window) {
+			if (!window) return;
+			counted = true;
+			++running;
+			window->Unbind(wxEVT_ICONIZE, FollowMain);
+			window->Bind(wxEVT_ICONIZE, FollowMain);
+		}
+		~FollowingMain() {
+			if (!counted) return;
+			--running;
+			// On the taskbar still: what was hidden comes back with it
+			if (main && hidden_with_main.empty()) main->Unbind(wxEVT_ICONIZE, FollowMain);
+		}
+		FollowingMain(FollowingMain const&) = delete;
+		FollowingMain& operator=(FollowingMain const&) = delete;
+	};
+#endif
+
 	void set_taskbar_progress([[maybe_unused]] int progress) {
 #ifdef _MSC_VER
 		ITaskbarList3 *taskbar;
@@ -310,12 +378,12 @@ DialogProgress::DialogProgress(wxWindow *parent, wxString const& title_text, wxS
 
 	// Escape presses Cancel, as it did the system's button
 	flat::UseFlatButtonKeys(this);
-	Bind(wxEVT_SHOW, &DialogProgress::OnShow, this);
 }
 
 void DialogProgress::Run(std::function<void(agi::ProgressSink*)> task) {
 	DialogProgressSink ps(this);
 	this->ps = &ps;
+	Begin();
 
 	auto current_title = from_wx(title->GetLabelText());
 	agi::dispatch::Background().Async([=, this]{
@@ -354,15 +422,31 @@ void DialogProgress::Run(std::function<void(agi::ProgressSink*)> task) {
 		});
 	});
 
+#ifdef __WXMSW__
+	FollowingMain follow(GetParent() ? MainOf(GetParent()) : wxTheApp->GetTopWindow());
+#endif
 	if (!ShowModal())
 		throw agi::UserCancelException("Cancelled by user");
 }
 
-void DialogProgress::OnShow(wxShowEvent& evt) {
-	if (!evt.IsShown()) return;
+#ifdef __WXMSW__
+WXLRESULT DialogProgress::MSWWindowProc(WXUINT message, WXWPARAM wParam, WXLPARAM lParam) {
+	if (message == WM_SYSCOMMAND && (wParam & 0xfff0) == SC_MINIMIZE) {
+		auto main = GetParent() ? MainOf(GetParent()) : wxTheApp->GetTopWindow();
+		if (auto frame = dynamic_cast<wxTopLevelWindow*>(main)) {
+			frame->Iconize(true);
+			return 0;
+		}
+	}
+	return wxDialog::MSWWindowProc(message, wParam, lParam);
+}
+#endif
 
+void DialogProgress::Begin() {
 	// Restore the cancel button in case it was previously switched to a close
-	// button
+	// button; bound once however many runs
+	Unbind(wxEVT_BUTTON, &DialogProgress::OnCancel, this, wxID_CANCEL);
+	Unbind(wxEVT_IDLE, &DialogProgress::OnIdle, this);
 	Bind(wxEVT_BUTTON, &DialogProgress::OnCancel, this, wxID_CANCEL);
 	Bind(wxEVT_IDLE, &DialogProgress::OnIdle, this);
 	cancel_button->SetLabel(_("Cancel"));

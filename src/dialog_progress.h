@@ -90,7 +90,10 @@ class DialogProgress final : public wxDialog, public agi::BackgroundRunner {
 	int progress = 0;
 	std::chrono::steady_clock::time_point progress_start;
 
-	void OnShow(wxShowEvent&);
+	/// Ready for a run: the bar empty, Cancel a cancel button again. Not on
+	/// being shown, as Windows shows the dialog again when Aegisub comes back
+	/// from the taskbar, in the middle of the run
+	void Begin();
 	void OnCancel(wxCommandEvent &);
 	void OnIdle(wxIdleEvent&);
 	void OnPaint(wxPaintEvent&);
@@ -109,4 +112,10 @@ public:
 
 	/// BackgroundWorker implementation
 	void Run(std::function<void(agi::ProgressSink *)> task) override;
+
+#ifdef __WXMSW__
+	/// Asked itself to go to the taskbar, as Windows may ask the window in
+	/// front: the main window goes, and this with it
+	WXLRESULT MSWWindowProc(WXUINT message, WXWPARAM wParam, WXLPARAM lParam) override;
+#endif
 };

@@ -167,6 +167,9 @@
 #include <wx/panel.h>
 #include <wx/sizer.h>
 #include <wx/slider.h>
+#ifdef __WXMSW__
+#include <wx/msw/wrapwin.h>
+#endif
 #include <filesystem>
 #ifdef __WXGTK__
 #include <gtk/gtk.h>
@@ -9375,6 +9378,73 @@ TEST_F(ordinary_edit, progress_cancels_with_a_flat_button_and_stays_for_its_log)
     }
     EXPECT_TRUE(ran);
 }
+TEST_F(ordinary_edit, progress_keeps_its_run_when_shown_again) {
+    // Hidden and shown again in the middle of a run, as Windows does when
+    // Aegisub goes to the taskbar and comes back: not started over
+    bool ran=false;
+    RunModal hook("Working",[&](wxDialog *dialog){
+        ProgressBar *bar=nullptr; for(auto child:descendants(dialog))if(auto b=dynamic_cast<ProgressBar*>(child))bar=b;
+        ASSERT_NE(nullptr,bar);
+        for(int i=0;i<400 && bar->GetValue()!=0.5;++i){wxYield();wxMilliSleep(5);}
+        ASSERT_DOUBLE_EQ(0.5,bar->GetValue());
+        for(bool show:{false,true}){wxShowEvent event(dialog->GetId(),show);event.SetEventObject(dialog);dialog->GetEventHandler()->ProcessEvent(event);}
+        EXPECT_DOUBLE_EQ(0.5,bar->GetValue()) << "the bar not emptied";
+        bool percent=false; for(auto child:descendants(dialog))if(auto t=dynamic_cast<wxStaticText*>(child))percent|=t->GetLabel()=="50%";
+        EXPECT_TRUE(percent);
+        // Cancel still cancels, once
+        auto cancel=dynamic_cast<FlatButton*>(dialog->FindWindow(wxID_CANCEL)); ASSERT_NE(nullptr,cancel);
+        EXPECT_EQ(_("Cancel"),cancel->GetLabel());
+        wxKeyEvent esc(wxEVT_CHAR_HOOK);esc.m_keyCode=WXK_ESCAPE;esc.SetEventObject(dialog);dialog->GetEventHandler()->ProcessEvent(esc);
+        EXPECT_EQ(_("Cancelling..."),cancel->GetLabel());
+        for(int i=0;i<400 && dialog->IsShown();++i){wxYield();wxMilliSleep(5);}
+        ran=true;
+    });
+    DialogProgress progress(window,"Working","Something long");
+    EXPECT_THROW(progress.Run([](agi::ProgressSink *ps){
+        ps->SetProgress(50,100);
+        while(!ps->IsCancelled())wxMilliSleep(5);
+    }),agi::UserCancelException);
+    EXPECT_TRUE(ran);
+}
+
+#ifdef __WXMSW__
+TEST_F(ordinary_edit, progress_goes_to_the_taskbar_with_the_main_window_and_back) {
+    // A dialog over the main window and the progress over that, as a Whisper
+    // model downloaded from Preferences has them: Windows hides the first
+    // with the main window, the progress is hidden with them
+    window->Show();
+    auto middle=new wxDialog(window,-1,"Middle");
+    middle->Show();
+    BOOST_SCOPE_EXIT_ALL(&){ middle->Destroy(); window->Iconize(false); window->Hide(); };
+    auto visible=[](wxWindow *w){ return ::IsWindowVisible(w->GetHWND()) != FALSE; };
+    bool ran=false;
+    RunModal hook("Working",[&](wxDialog *dialog){
+        window->Iconize(true);
+        for(int i=0;i<200 && visible(dialog);++i){wxYield();wxMilliSleep(5);}
+        EXPECT_FALSE(visible(dialog));
+        EXPECT_FALSE(visible(middle));
+        window->Iconize(false);
+        for(int i=0;i<200 && !visible(dialog);++i){wxYield();wxMilliSleep(5);}
+        EXPECT_TRUE(visible(dialog)) << "back with the main window";
+        EXPECT_TRUE(visible(middle));
+        EXPECT_TRUE(dialog->IsModal());
+        // Asked itself to go, it takes the main window with it
+        ::SendMessage(dialog->GetHWND(),WM_SYSCOMMAND,SC_MINIMIZE,0);
+        EXPECT_TRUE(window->IsIconized());
+        EXPECT_FALSE(dialog->IsIconized()) << "not a little window of its own";
+        window->Iconize(false);
+        for(int i=0;i<200 && !visible(dialog);++i){wxYield();wxMilliSleep(5);}
+        EXPECT_TRUE(visible(dialog));
+        wxKeyEvent esc(wxEVT_CHAR_HOOK);esc.m_keyCode=WXK_ESCAPE;esc.SetEventObject(dialog);dialog->GetEventHandler()->ProcessEvent(esc);
+        for(int i=0;i<400 && dialog->IsShown();++i){wxYield();wxMilliSleep(5);}
+        ran=true;
+    });
+    DialogProgress progress(middle,"Working","Something long");
+    EXPECT_THROW(progress.Run([](agi::ProgressSink *ps){ while(!ps->IsCancelled())wxMilliSleep(5); }),agi::UserCancelException);
+    EXPECT_TRUE(ran);
+}
+#endif
+
 TEST_F(ordinary_edit, color_picker_is_drawn_number_fields_a_mode_switch_and_code_fields) {
     OPT_SET("Tool/Colour Picker/Mode")->SetInt(0);
     bool ran=false;
