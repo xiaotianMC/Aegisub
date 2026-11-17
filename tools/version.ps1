@@ -32,9 +32,12 @@ $gitVersionHeaderPath = Join-Path $BuildRoot 'git_version.h'
 $version = @{}
 if (Test-Path $gitVersionHeaderPath) {
   Get-Content $gitVersionHeaderPath | %{$_.Trim()} | ?{$_} | %{
+    # break, as switch goes on to the clauses after one that matches, and
+    # a number matches the string's too
     switch -regex ($_) {
       $defineNumberMatch {
         $version[$Matches[1]] = [int]$Matches[2];
+        break
       }
       $defineStringMatch {
         $version[$Matches[1]] = $Matches[2];
@@ -68,18 +71,22 @@ if ($exactGitTag -match $semVerMatch) {
   $gitVersionString = $joinedVersion + @("-$($Matches[4])",'')[!$Matches[4]]
   $version['INSTALLER_VERSION'] = $joinedVersion
 } else {
+  $versionTagFound = $false
   foreach ($rev in (git -C $repositoryRootPath rev-list --tags 2>$null)) {
     $tag = git -C $repositoryRootPath describe --exact-match --tags $rev 2>$null
     if ($tag -match $semVerMatch) {#
       $version['TAGGED_RELEASE'] = $false
       $version['RESOURCE_BASE_VERSION'] = $Matches[1..3]
       $version['INSTALLER_VERSION'] = ($Matches[1..3] -join '.')
+      $versionTagFound = $true
       break;
     }
   }
   # No version tag to be found, as in a fork without the tags: the version
-  # meson.build gives, so that the resource still has one
-  if (-not $version.ContainsKey('RESOURCE_BASE_VERSION')) {
+  # meson.build gives, so that the resource still has one. Whether or not the
+  # header written before has one, as what is read back from it is a string,
+  # RESOURCE_BASE_VERSION's "3, 5, 1", which would be written back quoted
+  if (-not $versionTagFound) {
     $mesonBuild = Get-Content -Raw (Join-Path $repositoryRootPath 'meson.build')
     if ($mesonBuild -match "\bversion:\s*'(\d+)\.(\d+)\.(\d+)'") {
       $version['TAGGED_RELEASE'] = $false
