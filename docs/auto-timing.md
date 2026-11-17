@@ -72,7 +72,7 @@ whisperx ep01.wav --language ja --model large-v3 --diarize --hf_token <令牌> -
   - **显卡**：macOS 用 Metal，Windows 和 Linux 用 Vulkan，着色器都嵌在程序里（Vulkan 的约 42 MB，压缩后约 4 MB）。Vulkan 加载器在运行时才打开，不链接，没有 Vulkan 的电脑照样能启动 Aegisub，Whisper 改用处理器。用显卡加载模型失败时退回处理器重试。首选项里显示找到的显卡。CI 的 Windows 任务安装 Vulkan SDK（版本固定，校验 SHA-256），并且用 `-Dwhisper_gpu=enabled` 要求必须编进去；Linux 上装了 Vulkan 头文件、glslc 和 SPIRV-Headers 才会开（三样都要事先检查：ggml 的 CMake 失败的话，整个 Whisper 都会被去掉）。
   - **处理器**：ggml-cpu 按 Haswell 的指令集编译（SSE4.2、AVX、AVX2、FMA、F16C、BMI2），缺一个就会在运行时崩溃，而不是报错。所以先用 CPUID 检查（`ProcessorLacks`，AVX 还要确认系统保存了它的寄存器），在下载模型之前就说明缺了什么。`Gpu()` 也先做这个检查，因为一问 ggml 有哪些设备，就会启动它的处理器后端，而首选项页面打开时就会问。ggml-cpu 没有静态初始化代码，所以 Aegisub 启动时不会执行这些指令。
   - **进度**：进度窗口按目前的速度估算剩余时间（`TimeLeft`，向上取整到分钟）。没有可用的显卡、模型又大（超过 300 MB）、音频超过 10 分钟时，开始前先问一句，可以勾“不再询问”。
-  - **wrap 补丁**（`subprojects/packagefiles/`）：Meson 运行 CMake 的命令时不经过 shell，并且只用单配置的 Ninja。所以 Metal 着色器嵌入时的 `sed` 改为直接读文件，不用 `<` 重定向；`$<CONFIG>` 换成 `Release`；不交叉编译时，着色器生成器作为普通目标编译，不用 ExternalProject（它的 stamp 文件 Meson 找不到，会让每次编译都把着色器和之后的一切重做一遍）；Vulkan 加载器改为运行时加载，ggml 只通过它的 dispatcher 调 Vulkan。
+  - **wrap 补丁**（`subprojects/packagefiles/`）：Meson 运行 CMake 的命令时不经过 shell，并且只用单配置的 Ninja。Meson 把 `>>` 当成 `>`，还会去掉参数里的引号，所以 Metal 着色器嵌入的那串命令（`cat`、`sed`、`echo`）改为在 CMake 配置时原样写进脚本，再由 `sh` 执行；否则汇编文件只剩最后一行，链接时找不到 `_ggml_metallib_*` 符号，`sed` 的匹配条件也会落空；`$<CONFIG>` 换成 `Release`；不交叉编译时，着色器生成器作为普通目标编译，不用 ExternalProject（它的 stamp 文件 Meson 找不到，会让每次编译都把着色器和之后的一切重做一遍）；Vulkan 加载器改为运行时加载，ggml 只通过它的 dispatcher 调 Vulkan。
 
 纯逻辑部分（密钥优先级、列表拆分、关键词、表单字段、格式判断、错误说明、命令行拆分、找输出文件）都有测试，`TEST(transcribe, ...)`；网络和进程部分没有自动测试。Whisper 的测试见下面“测试”一节。
 
