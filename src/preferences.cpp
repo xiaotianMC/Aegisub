@@ -54,7 +54,9 @@
 #include <libaegisub/hotkey.h>
 #include <libaegisub/util.h>
 
+#include <algorithm>
 #include <cstdlib>
+#include <initializer_list>
 #include <unordered_set>
 
 #include <wx/textctrl.h>
@@ -269,30 +271,50 @@ void Audio(PreferencesBook *book, Preferences *parent) {
 	p->EnableWhen("Tool/Speech Import/Marks", [](agi::OptionValue const& v) { return v.GetBool(); }, {unsure});
 
 	auto transcribe = p->PageSizer(_("Transcription"));
-	// Whisper built in last, so the settings saved by a build with it mean
-	// the same in one without
-	const wxString backend_arr[] = { _("ElevenLabs Scribe, over the net"), _("A program of your own, run here"), _("Whisper, built in, on this computer") };
-	wxArrayString choice_backend(transcribe::CanRunLocal() ? 3 : 2, backend_arr);
+	// Listed ElevenLabs, Whisper, a program of one's own; kept as 0, 2 and 1,
+	// Whisper having come last, so that the settings saved by a build with it
+	// mean the same in one without
+	enum { elevenlabs = 0, program = 1, whisper = 2 };
+	wxArrayString choice_backend;
+	std::vector<int> backend_values;
+	choice_backend.Add(_("ElevenLabs Scribe, over the net"));
+	backend_values.push_back(elevenlabs);
+	if (transcribe::CanRunLocal()) {
+		choice_backend.Add(_("Whisper, built in, on this computer"));
+		backend_values.push_back(whisper);
+	}
+	choice_backend.Add(_("A program of your own, run here"));
+	backend_values.push_back(program);
 	p->OptionChoice(transcribe, _("Heard by"), choice_backend, "Tool/Transcribe/Backend", false,
 		transcribe::CanRunLocal()
-			? _("Transcribe the Audio sends the audio to ElevenLabs, which charges by its length; runs the command below and reads the JSON it writes; or hears it here with Whisper, free, given a model file")
-			: _("Transcribe the Audio sends the audio to ElevenLabs, which charges by its length, or runs the command below and reads the JSON it writes"));
+			? _("Transcribe the Audio sends the audio to ElevenLabs, which charges by its length; hears it here with Whisper, free, given a model file; or runs a program of your own and reads the JSON it writes. Only what the one chosen uses is shown below")
+			: _("Transcribe the Audio sends the audio to ElevenLabs, which charges by its length, or runs a program of your own and reads the JSON it writes. Only what the one chosen uses is shown below"),
+		backend_values);
+	// The rows each way of hearing uses: shown only while it is chosen, as
+	// the choice is in the dialog
+	auto heard_by = [](std::initializer_list<int> ways) {
+		return [ways = std::vector<int>(ways)](agi::OptionValue const& v) {
+			return std::find(ways.begin(), ways.end(), v.GetInt()) != ways.end();
+		};
+	};
 	p->OptionAdd(transcribe, _("Language"), "Tool/Transcribe/Language",
 		{.help = _("The code of what is spoken: ja, zh, en...; empty to have it detected")});
-	p->OptionAdd(transcribe, _("Other languages among it"), "Tool/Transcribe/Secondary Languages",
+	auto secondary = p->OptionAdd(transcribe, _("Other languages among it"), "Tool/Transcribe/Secondary Languages",
 		{.help = _("Codes, separated by commas, of languages mixed into the speech, such as English words in Japanese (ElevenLabs)")});
 	auto diarize = p->OptionAdd(transcribe, _("Tell the speakers apart"), "Tool/Transcribe/Diarize",
 		{.help = _("Each line's speaker goes in its Actor field (ElevenLabs)")});
-	p->OptionAdd(transcribe, _("Give the names in the Actor fields as terms to recognise"), "Tool/Transcribe/Keyterms From Actors",
-		{.help = _("Names the recogniser is told of are heard right more often (ElevenLabs)")});
-	p->OptionAdd(transcribe, _("Other terms to recognise"), "Tool/Transcribe/Keyterms",
-		{.help = _("Names and words easily misheard, separated by commas; 100 terms at most in all (ElevenLabs)")});
-	p->OptionAdd(transcribe, _("ElevenLabs model"), "Tool/Transcribe/ElevenLabs/Model",
+	auto actor_terms = p->OptionAdd(transcribe, _("Give the names in the Actor fields as terms to recognise"), "Tool/Transcribe/Keyterms From Actors",
+		{.help = _("Names the recogniser is told of are heard right more often")});
+	auto terms = p->OptionAdd(transcribe, _("Other terms to recognise"), "Tool/Transcribe/Keyterms",
+		{.help = _("Names and words easily misheard, separated by commas; ElevenLabs takes 100 terms at most in all, Whisper as many as fit in what it is told came before")});
+	auto elevenlabs_model = p->OptionAdd(transcribe, _("ElevenLabs model"), "Tool/Transcribe/ElevenLabs/Model",
 		{.help = _("scribe_v3; or scribe_v2, the one before")});
+	wxWindow *key_status;
 	{
 		// The key: where it is, and setting or forgetting it. Not a setting
 		// of the file's: the keychain keeps it where there is one.
 		auto status = new wxStaticText(transcribe.box, -1, "");
+		key_status = status;
 		auto set = new FlatButton(transcribe.box, _("Set..."));
 		auto forget = new FlatButton(transcribe.box, _("Forget"));
 		auto const service = transcribe::key_service;
@@ -330,9 +352,9 @@ void Audio(PreferencesBook *book, Preferences *parent) {
 			_("Asked for when the audio is first sent, if not set here. The ELEVENLABS_API_KEY environment variable, when set, is used over anything kept"));
 		refresh();
 	}
-	p->OptionAdd(transcribe, _("Ask before sending audio"), "Tool/Transcribe/Ask",
+	auto ask = p->OptionAdd(transcribe, _("Ask before sending audio"), "Tool/Transcribe/Ask",
 		{.help = _("Say how long the audio is and that it leaves this computer, and ask, each time before sending it to ElevenLabs")});
-	p->OptionAdd(transcribe, _("Command"), "Tool/Transcribe/Command",
+	auto command = p->OptionAdd(transcribe, _("Command"), "Tool/Transcribe/Command",
 		{.help = _("Run with {media} the audio or video file, {out} an empty folder to write a JSON file with each word's times to, and {language} the language above; a part in [brackets] is left out when its value is empty")});
 
 	if (transcribe::CanRunLocal()) {
@@ -360,13 +382,13 @@ void Audio(PreferencesBook *book, Preferences *parent) {
 			                     : agi::wxformat(_("Much faster where it can; found: %s"), gpu)});
 		auto threads = p->OptionAdd(transcribe, _("Whisper threads"), "Tool/Transcribe/Local/Threads", {.min = 0, .max = 64,
 			.help = _("0 for as many as the processor has, up to 8")});
-		// Whisper's settings only while it is chosen to hear the audio, as the
-		// choice is in the dialog; and no speakers told apart by it, as it
-		// does not tell them
-		auto whisper = [](agi::OptionValue const& v) { return v.GetInt() == 2; };
-		p->EnableWhen("Tool/Transcribe/Backend", whisper, {model, choose, use_gpu, threads});
-		p->EnableWhen("Tool/Transcribe/Backend", [=](agi::OptionValue const& v) { return !whisper(v); }, {diarize});
+		p->ShowWhen("Tool/Transcribe/Backend", heard_by({whisper}), {model, choose, use_gpu, threads});
 	}
+	// Whisper is told the terms as what came before; a program of one's own
+	// is given only the language
+	p->ShowWhen("Tool/Transcribe/Backend", heard_by({elevenlabs}), {secondary, diarize, elevenlabs_model, key_status, ask});
+	p->ShowWhen("Tool/Transcribe/Backend", heard_by({elevenlabs, whisper}), {actor_terms, terms});
+	p->ShowWhen("Tool/Transcribe/Backend", heard_by({program}), {command});
 
 	auto snapping = p->PageSizer(_("Snapping"));
 	p->OptionAdd(snapping, _("Snap markers by default"), "Audio/Snap/Enable");
@@ -920,7 +942,7 @@ void Preferences::SetOption(std::unique_ptr<agi::OptionValue> new_value) {
 	for (size_t page = 0; book && page < book->GetPageCount(); ++page)
 		if (auto options = dynamic_cast<OptionPage*>(book->GetPage(page))) {
 			options->RefreshMarks();
-			options->RefreshEnabled();
+			options->RefreshDependents();
 		}
 }
 
@@ -1093,7 +1115,8 @@ void Preferences::Search(wxString const& query) {
 	search_query = wanted;
 	matching_pages.clear();
 	for (auto& entry : search_entries) {
-		entry.matched = !wanted.empty() && std::any_of(entry.texts.begin(), entry.texts.end(),
+		// Not in a row hidden for now, such as Whisper's while it is not chosen
+		entry.matched = !wanted.empty() && (!entry.window || entry.window->IsShown()) && std::any_of(entry.texts.begin(), entry.texts.end(),
 			[&](std::wstring const& text) { return text.find(wanted) != text.npos; });
 		if (entry.matched && (matching_pages.empty() || matching_pages.back() != entry.page))
 			matching_pages.push_back(entry.page);

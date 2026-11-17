@@ -53,7 +53,18 @@ whisperx ep01.wav --language ja --model large-v3 --diarize --hf_token <令牌> -
 
 ## 听写音频
 
-`autotiming/transcribe`，`src/speech_transcribe.{h,cpp}`。不用自己先跑识别再导入：直接把编辑器里打开的音频交给识别器，结果走和“导入语音识别结果”完全相同的 `speech::ReadJson` → `speech::Import`（内置 Whisper 直接给出 `speech::Transcript`，不经过 JSON）。识别器在首选项“音频”页“听写”一节选：
+`autotiming/transcribe`，`src/speech_transcribe.{h,cpp}`。不用自己先跑识别再导入：直接把编辑器里打开的音频交给识别器，结果走和“导入语音识别结果”完全相同的 `speech::ReadJson` → `speech::Import`（内置 Whisper 直接给出 `speech::Transcript`，不经过 JSON）。识别器在首选项“音频”页“听写”一节选。列表顺序是 ElevenLabs、Whisper、自己的程序；设置里存的编号仍是 0、2、1（Whisper 是后加的），所以不带 Whisper 的版本照样读得懂，那里列表只有 ElevenLabs 和自己的程序。下面只显示所选方式用得到的设置，在对话框里一切换就跟着变：
+
+| 设置 | ElevenLabs | Whisper | 自己的程序 |
+| --- | --- | --- | --- |
+| 语言 | ✓ | ✓ | ✓（命令里的 `{language}`） |
+| 夹杂的其他语言、区分说话人 | ✓ | | |
+| 两项识别关键词 | ✓ | ✓（作为提示词） | |
+| ElevenLabs 模型、API 密钥、发送音频前询问 | ✓ | | |
+| 命令 | | | ✓ |
+| Whisper 模型文件、下载或选择、使用显卡、线程数 | | ✓ | |
+
+藏起来的行搜索时也不算匹配。三种方式：
 
 - **ElevenLabs Scribe**（联网，按音频时长收费）。用 libcurl 把文件以 multipart 表单 POST 到 `https://api.elevenlabs.io/v1/speech-to-text`，请求头 `xi-api-key`。字段：`model_id`（默认 `scribe_v3`）、`timestamps_granularity=word`、`diarize`、`tag_audio_events=true`，有设置时再加 `language_code`、`secondary_language_codes`（重复字段）、`keyterms`（重复字段，最多 100 个）。关键词默认取字幕 Actor 栏里的名字（去重，`SPEAKER_00` 这类识别器自己起的名字不算），再加设置里手填的。文件直接上传源文件（它收 mp3/wav/flac/ogg/m4a/aac/opus 和 mp4/mkv/mov/avi/webm 等视频）；不在列表里的格式（mka、ts）先用 `agi::SaveAudioClip` 写成 WAV 再传。上传进度显示在进度窗口里，传完等待时改成来回扫的条；取消就中断连接。
   - **密钥**（`src/secret.{h,cpp}`，`transcribe::FindKey`）：按顺序找环境变量 `ELEVENLABS_API_KEY`、系统钥匙串、本次运行里记住的。都没有就弹密码框问一次：有钥匙串就存进钥匙串（`wxSecretStore`：Windows 凭据管理器、macOS Keychain、Linux Secret Service），没有就只在本次运行里记住，弹窗会说明是哪种。**绝不写进设置文件**：`config.json` 谁都能读，还会跟着设置被拷贝、同步、贴出来。服务器回 401 时钥匙串和本次记住的都清掉，下次再问。首选项里这一行不是文本框，只显示密钥在哪里，带“设置…”和“忘掉”两个按钮。
@@ -87,7 +98,7 @@ whisperx ep01.wav --language ja --model large-v3 --diarize --hf_token <令牌> -
 
 ## Effect 栏的标记
 
-自动打轴可以在原文行的 Effect 栏里给译者留记号，用空格分开。默认不写，Effect 栏留空；在首选项“语音识别”页勾选“在 Effect 栏给译者留标记”才写，“标记置信度低于此值的词”也只在勾选时可调：
+自动打轴可以在原文行的 Effect 栏里给译者留记号，用空格分开。默认不写，Effect 栏留空；在首选项“音频”页“语音识别”一节勾选“在 Effect 栏给译者留标记”才写，“标记置信度低于此值的词”也只在勾选时可调：
 
 | 记号 | 意思 |
 | --- | --- |

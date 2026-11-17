@@ -111,15 +111,24 @@ private:
 		std::function<void(agi::OptionValue const&)> show;
 	};
 	std::vector<Row> rows;
-	/// The name and explanation of the row each control is in
-	std::map<wxWindow*, wxSizer*> labels;
-	/// Controls enabled only while a setting is as a test wants it
+	/// Where the row each control is in is: the grid of its section, and
+	/// the name and explanation the row has there
+	struct Place {
+		wxSizer *grid;
+		wxSizer *name;
+	};
+	std::map<wxWindow*, Place> places;
+	/// Controls enabled or shown only while a setting is as a test wants it
 	struct Dependent {
 		std::string option;
 		std::function<bool(agi::OptionValue const&)> test;
 		std::vector<wxWindow*> controls;
+		/// The rows hidden, not greyed, when the test fails
+		bool hide;
 	};
 	std::vector<Dependent> dependents;
+	/// Show or hide the whole row of @p control. @return Whether it changed
+	bool ShowRow(wxWindow *control, bool show);
 	/// The row's mark, before its name
 	Mark *AddMark(PageSection section, std::string const& option);
 	void AddRow(std::string const& option, Mark *mark, wxWindow *control, std::function<void(agi::OptionValue const&)> show);
@@ -145,7 +154,9 @@ public:
 	/// A row for the option @p opt_name: a check box for a yes or no, a
 	/// field for a number or text, a button for a colour. @return Its control
 	wxWindow *OptionAdd(PageSection section, const wxString &name, const char *opt_name, OptionAddArgs kwargs = {});
-	void OptionChoice(PageSection section, const wxString &name, const wxArrayString &choices, const char *opt_name, bool translate = false, wxString const& help = {});
+	/// A list for the option @p opt_name. A number's value is its choice's
+	/// place in the list, or with @p values given, the value it has there
+	void OptionChoice(PageSection section, const wxString &name, const wxArrayString &choices, const char *opt_name, bool translate = false, wxString const& help = {}, std::vector<int> const& values = {});
 	void OptionBrowse(PageSection section, const wxString &name, const char *opt_name, wxWindow *enabler = nullptr, bool do_enable = false);
 	void OptionFont(PageSection section, std::string opt_prefix);
 
@@ -156,8 +167,12 @@ public:
 	/// Enable @p controls, and the names and explanations of their rows, only
 	/// while @p option, as the dialog has it before OK, passes @p test
 	void EnableWhen(std::string const& option, std::function<bool(agi::OptionValue const&)> test, std::vector<wxWindow*> controls);
-	/// Enable or disable what EnableWhen ties to a setting, after a change
-	void RefreshEnabled();
+	/// Show the rows of @p controls only while @p option, as the dialog has
+	/// it before OK, passes @p test
+	void ShowWhen(std::string const& option, std::function<bool(agi::OptionValue const&)> test, std::vector<wxWindow*> controls);
+	/// Enable or show what EnableWhen and ShowWhen tie to a setting, after a
+	/// change
+	void RefreshDependents();
 
 	/// Whether @p option will have a value other than its default: changed
 	/// before, or in the dialog

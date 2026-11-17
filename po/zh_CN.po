@@ -11334,8 +11334,8 @@ msgstr "自己的程序（在本机运行）"
 msgid "Heard by"
 msgstr "听写方式"
 
-msgid "Transcribe the Audio sends the audio to ElevenLabs, which charges by its length, or runs the command below and reads the JSON it writes"
-msgstr "“听写音频”会把音频发给 ElevenLabs（按时长计费），或者运行下面的命令并读取它写出的 JSON"
+msgid "Transcribe the Audio sends the audio to ElevenLabs, which charges by its length, or runs a program of your own and reads the JSON it writes. Only what the one chosen uses is shown below"
+msgstr "“听写音频”会把音频发给 ElevenLabs（按时长计费），或者运行你自己的程序并读取它写出的 JSON。下面只显示所选方式用得到的设置"
 
 msgid "The code of what is spoken: ja, zh, en...; empty to have it detected"
 msgstr "所说语言的代码：ja、zh、en……；留空则自动检测"
@@ -11355,14 +11355,14 @@ msgstr "每行的说话人写入其“说话人”栏（ElevenLabs）"
 msgid "Give the names in the Actor fields as terms to recognise"
 msgstr "把“说话人”栏里的名字作为识别关键词"
 
-msgid "Names the recogniser is told of are heard right more often (ElevenLabs)"
-msgstr "事先告知识别器的名字更容易被听对（ElevenLabs）"
+msgid "Names the recogniser is told of are heard right more often"
+msgstr "事先告知识别器的名字更容易被听对"
 
 msgid "Other terms to recognise"
 msgstr "其他识别关键词"
 
-msgid "Names and words easily misheard, separated by commas; 100 terms at most in all (ElevenLabs)"
-msgstr "容易听错的名字和词语，用逗号分隔；总共最多 100 个（ElevenLabs）"
+msgid "Names and words easily misheard, separated by commas; ElevenLabs takes 100 terms at most in all, Whisper as many as fit in what it is told came before"
+msgstr "容易听错的名字和词语，用逗号分隔；ElevenLabs 总共最多 100 个，Whisper 只取提示词里放得下的那些"
 
 msgid "ElevenLabs model"
 msgstr "ElevenLabs 模型"
@@ -11556,8 +11556,8 @@ msgstr "此版本的 Aegisub 没有 libcurl，无法下载任何内容。"
 msgid "Whisper, built in, on this computer"
 msgstr "Whisper（内置，在本机运行）"
 
-msgid "Transcribe the Audio sends the audio to ElevenLabs, which charges by its length; runs the command below and reads the JSON it writes; or hears it here with Whisper, free, given a model file"
-msgstr "“听写音频”会把音频发给 ElevenLabs（按时长计费）；或者运行下面的命令并读取它写出的 JSON；或者用 Whisper 在本机免费听写（需要模型文件）"
+msgid "Transcribe the Audio sends the audio to ElevenLabs, which charges by its length; hears it here with Whisper, free, given a model file; or runs a program of your own and reads the JSON it writes. Only what the one chosen uses is shown below"
+msgstr "“听写音频”会把音频发给 ElevenLabs（按时长计费）；或者用 Whisper 在本机免费听写（需要模型文件）；或者运行你自己的程序并读取它写出的 JSON。下面只显示所选方式用得到的设置"
 
 msgid "Whisper model file"
 msgstr "Whisper 模型文件"

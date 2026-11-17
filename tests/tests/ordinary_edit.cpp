@@ -1458,8 +1458,7 @@ TEST_F(ordinary_edit, preferences_rows_are_drawn_controls_that_set_their_options
     EXPECT_TRUE(enable->GetValue() == pending("App/Auto/Save")->GetBool());
 }
 
-TEST_F(ordinary_edit, preferences_whisper_settings_only_while_whisper_hears_the_audio) {
-    if (!transcribe::CanRunLocal()) GTEST_SKIP() << "built without Whisper";
+TEST_F(ordinary_edit, preferences_transcription_shows_what_the_way_chosen_uses) {
     auto backend = OPT_GET("Tool/Transcribe/Backend")->GetInt();
     Preferences prefs(window);
     auto book = prefs.Book();
@@ -1469,23 +1468,48 @@ TEST_F(ordinary_edit, preferences_whisper_settings_only_while_whisper_hears_the_
     ASSERT_TRUE(page);
     auto list = dynamic_cast<FlatChoice*>(page->ControlOf("Tool/Transcribe/Backend"));
     ASSERT_TRUE(list);
-    std::vector<wxWindow*> whisper{page->ControlOf("Tool/Transcribe/Local/Model"),
-        page->ControlOf("Tool/Transcribe/Local/Use GPU"), page->ControlOf("Tool/Transcribe/Local/Threads")};
-    for (auto w : whisper) ASSERT_TRUE(w);
-    auto diarize = page->ControlOf("Tool/Transcribe/Diarize");
-    ASSERT_TRUE(diarize);
-    // As the list is changed, before OK: Whisper's settings greyed but while
-    // it is chosen, and telling speakers apart, which it does not, while it is
-    for (int choice : {0, 2, 1, 2}) {
-        list->Choose(choice);
-        bool const local = choice == 2;
-        for (auto w : whisper) EXPECT_EQ(local, w->IsThisEnabled()) << choice;
-        EXPECT_EQ(!local, diarize->IsThisEnabled()) << choice;
+    // Whisper listed before a program of one's own, each kept as it was:
+    // ElevenLabs 0, a program 1, Whisper 2
+    bool const local = transcribe::CanRunLocal();
+    std::vector<int> const values = local ? std::vector<int>{0, 2, 1} : std::vector<int>{0, 1};
+    ASSERT_EQ(values.size(), list->GetItems().size());
+    EXPECT_EQ(_("ElevenLabs Scribe, over the net"), list->GetItems().front());
+    EXPECT_EQ(_("A program of your own, run here"), list->GetItems().back());
+    if (local) EXPECT_EQ(_("Whisper, built in, on this computer"), list->GetItems()[1]);
+
+    auto shown = [&](const char *option) {
+        auto control = page->ControlOf(option);
+        EXPECT_TRUE(control) << option;
+        return control && control->IsShown();
+    };
+    std::vector<const char*> const whisper_rows{"Tool/Transcribe/Local/Model", "Tool/Transcribe/Local/Use GPU", "Tool/Transcribe/Local/Threads"};
+    std::vector<const char*> const elevenlabs_rows{"Tool/Transcribe/Secondary Languages", "Tool/Transcribe/Diarize",
+        "Tool/Transcribe/ElevenLabs/Model", "Tool/Transcribe/Ask"};
+    std::vector<const char*> const term_rows{"Tool/Transcribe/Keyterms From Actors", "Tool/Transcribe/Keyterms"};
+    // As the list is changed, before OK: only what the way chosen uses
+    for (int index : local ? std::vector<int>{1, 2, 0, 1} : std::vector<int>{1, 0}) {
+        list->Choose(index);
+        int const way = values[index];
+        auto pending = prefs.Pending("Tool/Transcribe/Backend");
+        ASSERT_TRUE(pending);
+        EXPECT_EQ(way, pending->GetInt()) << index;
+        EXPECT_TRUE(shown("Tool/Transcribe/Language")) << "every way's: " << way;
+        if (local) for (auto option : whisper_rows) EXPECT_EQ(way == 2, shown(option)) << option << " " << way;
+        for (auto option : elevenlabs_rows) EXPECT_EQ(way == 0, shown(option)) << option << " " << way;
+        for (auto option : term_rows) EXPECT_EQ(way != 1, shown(option)) << "ElevenLabs' and Whisper's: " << option << " " << way;
+        EXPECT_EQ(way == 1, shown("Tool/Transcribe/Command")) << way;
     }
+    // A row hidden for now is not found by searching
+    prefs.Search("ElevenLabs model");
+    EXPECT_TRUE(prefs.MatchingPages().empty()) << "a program of one's own chosen";
     // The ↺ back to the default, ElevenLabs, as well
     page->Reset("Tool/Transcribe/Backend");
-    for (auto w : whisper) EXPECT_FALSE(w->IsThisEnabled());
-    EXPECT_TRUE(diarize->IsThisEnabled());
+    EXPECT_TRUE(shown("Tool/Transcribe/ElevenLabs/Model"));
+    EXPECT_FALSE(shown("Tool/Transcribe/Command"));
+    if (local) EXPECT_FALSE(shown(whisper_rows.front()));
+    prefs.Search("ElevenLabs model");
+    EXPECT_FALSE(prefs.MatchingPages().empty());
+    prefs.Search("");
     EXPECT_EQ(backend, OPT_GET("Tool/Transcribe/Backend")->GetInt()) << "only once OK is pressed";
 }
 
