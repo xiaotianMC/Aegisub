@@ -35,7 +35,7 @@ int main(int argc, char** argv) {
     auto native_root = std::filesystem::current_path() / "ordinary-user";
     std::filesystem::create_directories(native_root);
     auto root = agi::fs::path(native_root.wstring());
-    paths.SetToken("?user", root); paths.SetToken("?local", root); paths.SetToken("?data", root);
+    paths.SetToken("?user", root); paths.SetToken("?local", root); paths.SetToken("?state", root); paths.SetToken("?cache", root); paths.SetToken("?data", root);
     config::path = &paths;
     agi::Options options{"", GET_DEFAULT_CONFIG(default_config), agi::Options::FLUSH_SKIP};
     config::opt = &options;

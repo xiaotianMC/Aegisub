@@ -8986,7 +8986,7 @@ TEST_F(ordinary_edit, autosave_lists_files_then_their_versions) {
 TEST_F(ordinary_edit, autosave_with_nothing_to_open_says_so) {
     make_autosaves({});
     // Files other tests recovered set aside while this one looks
-    auto recovered=config::path->Decode("?user/recovered"), aside=recovered.parent_path()/"recovered.aside";
+    auto recovered=config::path->Decode("?state/recovered"), aside=recovered.parent_path()/"recovered.aside";
     bool moved=std::filesystem::exists(recovered);
     if(moved)std::filesystem::rename(recovered,aside);
     bool ran=false;

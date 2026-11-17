@@ -146,7 +146,7 @@ static wxString get_history_string(json::Object &obj) {
 DialogShiftTimes::DialogShiftTimes(agi::Context *context)
 : wxDialog(context->parent, -1, _("Shift Times"))
 , context(context)
-, history_filename(config::path->Decode("?user/shift_history.json"))
+, history_filename(config::path->Decode("?state/shift_history.json"))
 , timecodes_loaded_slot(context->project->AddTimecodesListener(&DialogShiftTimes::OnTimecodesLoaded, this))
 , selected_set_changed_slot(context->selectionController->AddSelectionListener("dialog_shift_times.AddSelectionListener", [this](SubtitleModelRebindTicket ticket) { OnSelectedSetChanged(); if (ticket.Current()) ticket.Acknowledge(ticket.Revision()); }, std::weak_ptr<void const>(model_observer_lifetime)))
 {
@@ -322,6 +322,7 @@ void DialogShiftTimes::SaveHistory(json::Array shifted_blocks) {
 	ShowHistory();
 
 	try {
+		agi::fs::CreateDirectory(history_filename.parent_path());
 		agi::JsonWriter::Write(history, agi::io::Save(history_filename).Get());
 	}
 	catch (agi::fs::FileSystemError const& e) {
