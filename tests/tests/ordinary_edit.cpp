@@ -10577,8 +10577,11 @@ TEST_F(ordinary_edit, keyboard_regions_go_round_with_f6_and_keep_tab_inside) {
     auto bar=new wxToolBar(tools,-1);
     bar->AddTool(1,"t",wxBitmap(16,16));
     bar->Realize();
-    auto button=new wxButton(tools,-1,"ok");
-    { auto s=new wxBoxSizer(wxVERTICAL); s->Add(bar); s->Add(button); tools->SetSizer(s); }
+    // Beside the toolbar a text box, which takes the keyboard everywhere: a
+    // button does not on macOS unless Full Keyboard Access is on, as AppKit
+    // has it (canBecomeKeyView), and is not there a stop, as with Tab
+    auto field=new wxTextCtrl(tools,-1,"ok");
+    { auto s=new wxBoxSizer(wxVERTICAL); s->Add(bar); s->Add(field); tools->SetSizer(s); }
     auto sizer=new wxBoxSizer(wxHORIZONTAL);
     for (wxWindow *w : {static_cast<wxWindow*>(grid),static_cast<wxWindow*>(edit),static_cast<wxWindow*>(hidden),static_cast<wxWindow*>(tools)})
         sizer->Add(w,0,wxALL,10);
@@ -10593,7 +10596,7 @@ TEST_F(ordinary_edit, keyboard_regions_go_round_with_f6_and_keep_tab_inside) {
     EXPECT_EQ(3,regions::RegionOf(bar));
     EXPECT_EQ(-1,regions::RegionOf(backdrop));
     EXPECT_EQ((std::vector<wxWindow*>{a,b}),regions::Stops(1));
-    EXPECT_EQ((std::vector<wxWindow*>{button}),regions::Stops(3)) << "a toolbar's buttons have no keys";
+    EXPECT_EQ((std::vector<wxWindow*>{field}),regions::Stops(3)) << "a toolbar's buttons have no keys";
     EXPECT_EQ((std::vector<wxWindow*>{grid}),regions::Stops(0));
     EXPECT_EQ(a,regions::TabTarget(b,true)) << "round to the first, not on to the next region";
     EXPECT_EQ(b,regions::TabTarget(a,false));
@@ -10610,17 +10613,17 @@ TEST_F(ordinary_edit, keyboard_regions_go_round_with_f6_and_keep_tab_inside) {
 
     // F6 on, past the hidden one, and round
     EXPECT_TRUE(regions::Next(true));
-    EXPECT_EQ(button,wxWindow::FindFocus());
+    EXPECT_EQ(field,wxWindow::FindFocus());
     EXPECT_EQ(tools,regions::Outlined());
     EXPECT_TRUE(regions::Next(true));
     EXPECT_EQ(grid,wxWindow::FindFocus());
     EXPECT_TRUE(regions::Next(false));
-    EXPECT_EQ(button,wxWindow::FindFocus());
+    EXPECT_EQ(field,wxWindow::FindFocus());
     // The command F6 is bound to
     cmd::call("app/region/previous",c.get());
     EXPECT_EQ(a,wxWindow::FindFocus());
     cmd::call("app/region/next",c.get());
-    EXPECT_EQ(button,wxWindow::FindFocus());
+    EXPECT_EQ(field,wxWindow::FindFocus());
 
     // The line is drawn in the gap round the block
     regions::Next(false);
