@@ -995,6 +995,12 @@ bool TabOn(wxWindow *window, wxKeyEvent &event) {
 	window->Navigate(event.ShiftDown() ? wxNavigationKeyEvent::IsBackward : wxNavigationKeyEvent::IsForward);
 	return true;
 }
+
+/// Space or Enter on a tick box
+bool TogglesBox(wxKeyEvent const& event) {
+	int key = event.GetKeyCode();
+	return !event.HasAnyModifiers() && (key == WXK_SPACE || key == WXK_RETURN || key == WXK_NUMPAD_ENTER);
+}
 }
 
 // FlatCheck
@@ -1011,13 +1017,13 @@ FlatCheck::FlatCheck(wxWindow *parent, wxString const& label)
 	Bind(wxEVT_LEFT_DOWN, click);
 	Bind(wxEVT_LEFT_DCLICK, click);
 	Bind(wxEVT_KEY_DOWN, [this](wxKeyEvent &event) {
-		if (event.GetKeyCode() == WXK_SPACE && !event.HasAnyModifiers()) Toggle();
+		if (TogglesBox(event)) Toggle();
 		else if (!TabOn(this, event)) event.Skip();
 	});
 	// Before a window above takes Space for a hotkey: the edit box's
 	// plays the video (docs/main-window.md)
 	Bind(wxEVT_CHAR_HOOK, [this](wxKeyEvent &event) {
-		if (HasFocus() && event.GetKeyCode() == WXK_SPACE && !event.HasAnyModifiers()) {
+		if (HasFocus() && TogglesBox(event)) {
 			if (IsEnabled()) Toggle();
 		}
 		else event.Skip();

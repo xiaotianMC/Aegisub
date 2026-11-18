@@ -74,7 +74,7 @@
 ### 编辑框
 
 - **Alt+I / Alt+R**（`edit/time_unit/time`、`edit/time_unit/frame`）：时间|帧切换选“时间” / “帧”，就是它还是单选按钮时的助记键。没有视频也没有时间码时“帧”不可用。
-- 注释、对照原文勾选框上按空格切换，自绘按钮上按空格或 Enter 按下：这些键在它们自己的 `wxEVT_CHAR_HOOK` 里处理，先于编辑框的快捷键。以前空格先被编辑框拿去播放视频、Enter 拿去转到下一行，勾选框上的空格从来没起作用。样式这类自绘下拉框打开列表的空格、Enter、F4、Alt+↓ 同样先给它自己。
+- 注释、对照原文勾选框上按空格或 Enter 切换，自绘按钮上按空格或 Enter 按下，Tab / Shift+Tab 从它们移到下一个、上一个（Windows 上这类收下所有键的窗口不会自己往下走）：这些键在它们自己的 `wxEVT_CHAR_HOOK` 里处理，先于编辑框的快捷键。以前空格先被编辑框拿去播放视频、Enter 拿去转到下一行，勾选框上的空格从来没起作用。样式这类自绘下拉框打开列表的空格、Enter、F4、Alt+↓ 同样先给它自己。
 
 ## 自绘控件
 
@@ -130,4 +130,4 @@ Ctrl+Shift+方向键挪 1 个脚本像素，Alt+Shift+方向键挪 10 个（`Vis
 - `visual_edit.nudges_move_the_points_by_script_pixels_and_quick_ones_are_one_undo_step`：拖动工具挪 `\pos`、其他标签和文字不变；连续微调一步撤销；拖动之后的微调是新的一步；拖动中不挪；十字工具挪所选行的位置、换工具后是新的一步。
 - `ordinary_edit.toolbars_take_the_keyboard_along_their_buttons`：工具栏的停靠（键盘工具栏停一次，普通的和主窗口的不停）；跳过分隔符和灰掉的按钮；落在一组里选中的那个、强调色框在那个按钮里；方向键、Home/End、不转回；空格、Enter 按下单选和复选按钮、标记为键盘按下、键盘留在工具栏上；F4、Alt+↓ 打开菜单；别的键交给区域；Tab / Shift+Tab 进出并记住按钮；竖的工具栏用 ↑/↓。
 - `ordinary_edit.video_block_tabs_through_the_readout_zoom_and_toolbars_and_keys_work_them`：视频里 Tab 的顺序（画面、进度条、时间读数、播放、选项、缩放、可视化工具，相对读数不停）；缩放控件的 ←/→、−/+、Shift 只配符号键、别的键归视频；视频的缩放命令；时间读数 Enter 打开、Esc 后键盘回到读数、敲数字打开并带着它、确认后跳帧、别的键归视频；Tab 到播放按钮、← → 在按钮间移动而不是逐帧。
-- `ordinary_edit.flat_check_boxes_and_buttons_keep_space_and_enter_from_hotkeys_above_them`：上层窗口把所有键都当快捷键时，勾选框仍然收到空格、按钮收到空格和 Enter，别的键照常往上传，没有键盘时空格不归勾选框。
+- `ordinary_edit.flat_check_boxes_and_buttons_keep_space_and_enter_from_hotkeys_above_them`：上层窗口把所有键都当快捷键时，勾选框和按钮都收到空格和 Enter，别的键照常往上传，没有键盘时空格不归勾选框；Tab 从勾选框走到按钮，Shift+Tab 走回来。
