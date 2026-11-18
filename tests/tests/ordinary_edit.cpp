@@ -11513,4 +11513,18 @@ TEST_F(ordinary_edit, flat_check_boxes_and_buttons_keep_space_and_enter_from_hot
     // Without the keyboard, Space is not the box's
     key(check,WXK_SPACE);
     EXPECT_EQ(1,toggled);
+    // Tab goes on from them: Windows gives a window wanting every key the
+    // Tab too, and moves on from it by itself no more
+    auto down=[&](wxWindow *w,int code,bool shift=false){
+        wxKeyEvent e(wxEVT_KEY_DOWN);e.m_keyCode=code;e.SetShiftDown(shift);e.SetEventObject(w);w->GetEventHandler()->ProcessEvent(e);
+        for(int i=0;i<5;++i) wxYield();
+    };
+    check->SetFocus();
+    for(int i=0;i<5;++i) wxYield();
+    down(check,WXK_TAB);
+    EXPECT_EQ(button,wxWindow::FindFocus()) << "on from the box";
+    down(button,WXK_TAB,true);
+    EXPECT_EQ(check,wxWindow::FindFocus()) << "back from the button";
+    down(check,WXK_SPACE);
+    EXPECT_EQ(2,toggled) << "Space on it still ticks it";
 }

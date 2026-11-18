@@ -987,6 +987,16 @@ void FlatBadge::OnPaint(wxPaintEvent &) {
 	dc.DrawText(text, (GetClientSize().x - extent.x) / 2, (GetClientSize().y - extent.y) / 2);
 }
 
+namespace {
+/// Tab and Shift+Tab on to the next field: a window wanting every key
+/// gets them, and Windows then moves on from it by itself no more
+bool TabOn(wxWindow *window, wxKeyEvent &event) {
+	if (event.GetKeyCode() != WXK_TAB || event.ControlDown() || event.AltDown()) return false;
+	window->Navigate(event.ShiftDown() ? wxNavigationKeyEvent::IsBackward : wxNavigationKeyEvent::IsForward);
+	return true;
+}
+}
+
 // FlatCheck
 
 FlatCheck::FlatCheck(wxWindow *parent, wxString const& label)
@@ -1002,7 +1012,7 @@ FlatCheck::FlatCheck(wxWindow *parent, wxString const& label)
 	Bind(wxEVT_LEFT_DCLICK, click);
 	Bind(wxEVT_KEY_DOWN, [this](wxKeyEvent &event) {
 		if (event.GetKeyCode() == WXK_SPACE && !event.HasAnyModifiers()) Toggle();
-		else event.Skip();
+		else if (!TabOn(this, event)) event.Skip();
 	});
 	// Before a window above takes Space for a hotkey: the edit box's
 	// plays the video (docs/main-window.md)
@@ -1101,7 +1111,7 @@ FlatButton::FlatButton(wxWindow *parent, wxString const& label, int id, bool acc
 	Bind(wxEVT_KEY_DOWN, [this](wxKeyEvent &event) {
 		int key = event.GetKeyCode();
 		if ((key == WXK_SPACE || key == WXK_RETURN || key == WXK_NUMPAD_ENTER) && !event.HasAnyModifiers()) Press();
-		else event.Skip();
+		else if (!TabOn(this, event)) event.Skip();
 	});
 	// Before a window above takes them for a hotkey: in the edit box Space
 	// plays the video and Enter goes to the next line
