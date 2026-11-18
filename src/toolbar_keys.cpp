@@ -220,6 +220,12 @@ wxRect KeyToolBar::ToolRect(int id) const {
 
 #ifdef __WXMSW__
 WXLRESULT KeyToolBar::MSWWindowProc(WXUINT message, WXWPARAM wParam, WXLPARAM lParam) {
+	// The keyboard given to the bar: told to wx, not to the native bar,
+	// which doesn't keep it and would light a button of its own
+	if (message == WM_SETFOCUS && keyboard) {
+		HandleSetFocus(reinterpret_cast<WXHWND>(wParam));
+		return 0;
+	}
 	if (message != WM_PAINT) return wxToolBar::MSWWindowProc(message, wParam, lParam);
 	wxRect ring = RingRect();
 	if (ring.IsEmpty()) return wxToolBar::MSWWindowProc(message, wParam, lParam);

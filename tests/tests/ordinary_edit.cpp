@@ -11241,6 +11241,13 @@ TEST_F(visual_edit, nudges_move_the_points_by_script_pixels_and_quick_ones_are_o
     EXPECT_EQ(before,Text()) << "another tool's nudge: a step of its own";
 }
 
+/// The window with the keyboard, told when it is not the one expected
+static std::string FocusName() {
+    wxWindow *focus=wxWindow::FindFocus();
+    if(!focus) return "none";
+    return wxString(focus->GetClassInfo()->GetClassName()).utf8_string()+" \""+focus->GetName().utf8_string()+"\"";
+}
+
 TEST_F(ordinary_edit, toolbars_take_the_keyboard_along_their_buttons) {
     auto frame=new wxFrame(nullptr,-1,"toolbar keys");
     BOOST_SCOPE_EXIT_ALL(&){ regions::Clear(); delete frame; };
@@ -11292,11 +11299,15 @@ TEST_F(ordinary_edit, toolbars_take_the_keyboard_along_their_buttons) {
     EXPECT_EQ(12,vertical->KeyTool()) << "not round";
     EXPECT_FALSE(vertical->Key(WXK_RIGHT,wxMOD_NONE)) << "across it: the region's";
 
+    // Whether the bar was told it had the keyboard and lost it again
+    auto told=std::make_shared<std::pair<int,int>>();
+    bar->Bind(wxEVT_SET_FOCUS,[told](wxFocusEvent &e){++told->first;e.Skip();});
+    bar->Bind(wxEVT_KILL_FOCUS,[told](wxFocusEvent &e){++told->second;e.Skip();});
     bar->SetFocus();
     for(int i=0;i<5;++i) wxYield();
     if(!wxWindow::FindFocus())
         GTEST_SKIP() << "the toolkit tells of no focus here, as wxOSX does where the window is not the key window";
-    ASSERT_EQ(bar,wxWindow::FindFocus());
+    ASSERT_EQ(bar,wxWindow::FindFocus()) << "with " << FocusName() << "; the bar told it had it " << told->first << " times, lost it " << told->second;
     EXPECT_EQ(3,bar->KeyTool()) << "on the chosen one of a group";
 #if defined(__WXMSW__) || defined(__WXGTK__)
     {wxRect ring=bar->RingRect(), tool=bar->ToolRect(3);
@@ -11455,7 +11466,7 @@ TEST_F(ordinary_edit, video_block_tabs_through_the_readout_zoom_and_toolbars_and
     // The play bar: Tab on, the arrows along it
     key(position,WXK_TAB);
     for(int i=0;i<5;++i) wxYield();
-    ASSERT_EQ(play_bar,wxWindow::FindFocus());
+    ASSERT_EQ(play_bar,wxWindow::FindFocus()) << "with " << FocusName();
     auto keyed=static_cast<KeyToolBar*>(play_bar);
     EXPECT_EQ(play_bar->GetToolByPos(0)->GetId(),keyed->KeyTool());
     key(play_bar,WXK_RIGHT);
