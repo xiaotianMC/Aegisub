@@ -53,6 +53,7 @@ public:
 	bool AcceptsFocusFromKeyboard() const override;
 
 #ifdef __WXMSW__
+	void SetFocus() override;
 	WXLRESULT MSWWindowProc(WXUINT message, WXWPARAM wParam, WXLPARAM lParam) override;
 #endif
 

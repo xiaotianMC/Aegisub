@@ -219,6 +219,11 @@ wxRect KeyToolBar::ToolRect(int id) const {
 }
 
 #ifdef __WXMSW__
+void KeyToolBar::SetFocus() {
+	// wxMSW's toolbar overrides SetFocus with a no-op. Only keyboard bars opt in.
+	if (keyboard) wxWindow::SetFocus();
+}
+
 WXLRESULT KeyToolBar::MSWWindowProc(WXUINT message, WXWPARAM wParam, WXLPARAM lParam) {
 	// The keyboard given to the bar: told to wx, not to the native bar,
 	// which doesn't keep it and would light a button of its own
