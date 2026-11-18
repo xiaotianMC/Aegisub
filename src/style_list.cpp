@@ -57,6 +57,10 @@ StyleList::StyleList(wxWindow *parent, wxString const& empty)
 , empty_text(empty)
 {
 	SetBackgroundStyle(wxBG_STYLE_PAINT);
+	// The rounded field and its edge stay put as the rows scroll: moving the
+	// drawn pixels and painting only the strip scrolled in, as wx does by
+	// default, would carry the edge along and leave pieces of it mid-list
+	EnablePhysicalScrolling(false);
 	Bind(wxEVT_PAINT, &StyleList::OnPaint, this);
 	Bind(wxEVT_LEFT_DOWN, &StyleList::OnLeftDown, this);
 	Bind(wxEVT_LEFT_DCLICK, [this](wxMouseEvent &event) {

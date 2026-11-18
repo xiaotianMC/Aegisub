@@ -29,6 +29,10 @@ FlatList::FlatList(wxWindow *parent, bool multiple, bool checkable, wxString con
 , empty_text(empty)
 {
 	SetBackgroundStyle(wxBG_STYLE_PAINT);
+	// The rounded field and its edge stay put as the rows scroll: moving the
+	// drawn pixels and painting only the strip scrolled in, as wx does by
+	// default, would carry the edge along and leave pieces of it mid-list
+	EnablePhysicalScrolling(false);
 	Bind(wxEVT_PAINT, &FlatList::OnPaint, this);
 	Bind(wxEVT_LEFT_DOWN, &FlatList::OnLeftDown, this);
 	Bind(wxEVT_LEFT_DCLICK, [this](wxMouseEvent &event) {
