@@ -345,7 +345,9 @@ public:
 
 	wxSize DoGetBestClientSize() const override;
 	bool AcceptsFocus() const override { return false; }
-	bool AcceptsFocusFromKeyboard() const override { return IsEnabled(); }
+	/// Unless DisableFocusFromKeyboard() was called, as for buttons only the
+	/// mouse and their Alt key reach
+	bool AcceptsFocusFromKeyboard() const override { return IsEnabled() && !m_disableFocusFromKbd; }
 	bool Enable(bool enable = true) override;
 };
 

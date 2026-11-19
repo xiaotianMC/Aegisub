@@ -7357,34 +7357,40 @@ TEST_F(ordinary_edit, compare_window_decides_detail_fields_by_keyboard) {
     EXPECT_EQ("current", LiveRead(*c).Events.front().Text.get());
     EXPECT_EQ("baseline actor", LiveRead(*c).Events.front().Actor.get());
 }
-TEST_F(ordinary_edit, compare_window_decides_from_the_current_line_bar_and_checks_from_the_gutter) {
+TEST_F(ordinary_edit, compare_window_decides_from_the_card_and_checks_from_the_gutter) {
     Input("current");
     auto path = WriteBaseline(*c, "compare-bar.ass", [](AssFile& f) {
         f.Events.front().Text = "baseline text";
         auto line = new AssDialogue; line->Text = "added"; line->Start = 9000; line->End = 9500; f.Events.push_back(*line);
     });
-    bool found_bar = false, found_check = false;
-    wxString after_bar, checked;
+    bool found_bar = false, found_check = false, reset_at_first = true, reset_after = false, toolbar_free = false;
+    wxString after_bar, after_reset, checked;
     CompareHook hook([&](wxWindow* dialog) {
-        auto pane = dialog->FindWindow("compare-right"); ASSERT_NE(nullptr, pane);
+        auto left = dialog->FindWindow("compare-left"); ASSERT_NE(nullptr, left);
+        auto right = dialog->FindWindow("compare-right"); ASSERT_NE(nullptr, right);
         auto gutter = dialog->FindWindow("compare-gutter"); ASSERT_NE(nullptr, gutter);
         auto hint = Named<wxStaticText>(dialog, "compare-hint"); ASSERT_NE(nullptr, hint);
         auto mouse = [](wxWindow* w, wxEventType type, int x, int y) {
             wxMouseEvent event(type); event.SetPosition({x, y}); event.SetEventObject(w);
             w->GetEventHandler()->ProcessEvent(event);
         };
-        // The current difference carries a bar at the pane's right edge;
-        // the other lines have no buttons.
-        auto size = pane->GetClientSize();
-        for (int y = 0; y < size.GetHeight() && !found_bar; y += 2)
-            for (int x = size.GetWidth() - 1; x > size.GetWidth() / 2 && !found_bar; x -= 3) {
-                mouse(pane, wxEVT_MOTION, x, y);
-                if (hint->GetLabelText().StartsWith("Use Left:")) {
-                    found_bar = true;
-                    mouse(pane, wxEVT_LEFT_DOWN, x, y);
-                    after_bar = Label(dialog, "compare-stats");
-                }
-            }
+        // The current difference opens into a card whose foot holds its
+        // buttons, in view, under its line: the left side in the left pane,
+        // the right side and the reset in the right one; not on the toolbar.
+        auto reject = Named<FlatButton>(dialog, "compare-reject-current"); ASSERT_NE(nullptr, reject);
+        auto accept = Named<FlatButton>(dialog, "compare-accept-current"); ASSERT_NE(nullptr, accept);
+        auto reset = Named<FlatButton>(dialog, "compare-reset-current"); ASSERT_NE(nullptr, reset);
+        toolbar_free = reject->GetParent() == left && accept->GetParent() == right && reset->GetParent() == right;
+        found_bar = reject->IsShown() && accept->IsShown() && reset->IsShown()
+            && reject->GetPosition().y > 0 && reject->GetRect().GetBottom() < left->GetClientSize().GetHeight()
+            && accept->GetPosition().y == reject->GetPosition().y;
+        reset_at_first = reset->IsEnabled();
+        reject->Press();
+        after_bar = Label(dialog, "compare-stats");
+        reset_after = reset->IsEnabled();
+        reset->Press();
+        after_reset = Label(dialog, "compare-stats");
+        reject->Press();
         // The right line number turns into a check box under the pointer.
         auto gsize = gutter->GetClientSize();
         for (int y = 0; y < gsize.GetHeight() && !found_check; y += 2)
@@ -7398,8 +7404,12 @@ TEST_F(ordinary_edit, compare_window_decides_from_the_current_line_bar_and_check
             }
     });
     EXPECT_FALSE(RunCompare(c.get(), path));
+    EXPECT_TRUE(toolbar_free);
     EXPECT_TRUE(found_bar);
+    EXPECT_FALSE(reset_at_first) << "nothing to reset while pending";
     EXPECT_EQ(wxString::FromUTF8("1 pending · 1 left · 0 right · 0 partial"), after_bar);
+    EXPECT_TRUE(reset_after);
+    EXPECT_EQ(wxString::FromUTF8("2 pending · 0 left · 0 right · 0 partial"), after_reset);
     EXPECT_TRUE(found_check);
     EXPECT_EQ("1 selected", checked);
 }
@@ -7445,8 +7455,9 @@ TEST_F(ordinary_edit, compare_window_moves_a_line_cursor_by_keyboard) {
         auto bar = RowsBar(right); ASSERT_NE(nullptr, bar);
         start_counter = Counter(dialog);
         folded = bar->GetRange();
-        // From the first difference, down past its three lines of context to the fold.
-        for (int i = 0; i < 4; ++i) Key(right, wxEVT_KEY_DOWN, WXK_DOWN);
+        // From the first difference, down its card's field (not its foot, which
+        // only holds buttons) and its three lines of context to the fold.
+        for (int i = 0; i < 5; ++i) Key(right, wxEVT_KEY_DOWN, WXK_DOWN);
         right->SetFocus();
         wxTheApp->ProcessPendingEvents();
         // Whether the toolkit tells of the focus: wxOSX tells of none where the
@@ -7479,13 +7490,13 @@ TEST_F(ordinary_edit, compare_window_moves_a_line_cursor_by_keyboard) {
             EXPECT_FALSE(dialog->FindWindow(name)->AcceptsFocusFromKeyboard()) << name;
         for (auto pane : {left, right})
             for (auto child : pane->GetChildren())
-                EXPECT_FALSE(child->AcceptsFocusFromKeyboard()) << "a pane's scroll bar";
+                EXPECT_FALSE(child->AcceptsFocusFromKeyboard()) << "a pane's scroll bar or card button: " << child->GetName();
         EXPECT_TRUE(right->AcceptsFocusFromKeyboard());
     });
     EXPECT_FALSE(RunCompare(c.get(), path));
     EXPECT_EQ("1 / 2 | Difference 1 of 2", start_counter);
-    EXPECT_EQ(9, folded) << "a difference, three lines, the fold, three lines, a difference";
-    EXPECT_EQ(15, unfolded);
+    EXPECT_EQ(11, folded) << "a difference with its card's field and foot, three lines, the fold, three lines, a difference";
+    EXPECT_EQ(17, unfolded);
     if (!help_on_fold.empty()) EXPECT_TRUE(help_on_fold.StartsWith("Enter shows the hidden lines")) << help_on_fold;
     EXPECT_EQ("2 / 2 | Difference 2 of 2", after_enter);
     EXPECT_EQ("1 selected", after_space);
