@@ -7220,7 +7220,8 @@ TEST_F(ordinary_edit, compare_window_writes_decisions_as_one_undo_step) {
         writer_blocked = !c->subtitleAccess->TryWrite();
         counter = Counter(dialog);
         finish_first = dialog->FindWindow(wxID_OK)->GetLabel();
-        EXPECT_NE(wxNOT_FOUND, Label(dialog, "compare-right-title").Find("target project"));
+        EXPECT_TRUE(Named(dialog, "compare-right-target")->IsShown());
+        EXPECT_FALSE(Named(dialog, "compare-left-target")->IsShown());
         Press(dialog, "compare-reject-current");          // restore the file's text
         Press(dialog, "compare-next");
         EXPECT_EQ("2 / 2 | Difference 2 of 2", Counter(dialog));
@@ -7686,7 +7687,8 @@ TEST_F(ordinary_edit, compare_window_with_the_project_on_the_left_accepts_the_fi
     });
     CompareHook hook([&](wxWindow* dialog) {
         Press(dialog, "compare-swap");
-        EXPECT_NE(wxNOT_FOUND, Label(dialog, "compare-left-title").Find("target project"));
+        EXPECT_TRUE(Named(dialog, "compare-left-target")->IsShown());
+        EXPECT_FALSE(Named(dialog, "compare-right-target")->IsShown());
         auto all = Named<FlatCheck>(dialog, "compare-check-all"); ASSERT_NE(nullptr, all);
         all->Toggle();
         EXPECT_EQ("2 selected", Label(dialog, "compare-checked-count"));
