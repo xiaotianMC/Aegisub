@@ -7535,16 +7535,12 @@ TEST_F(ordinary_edit, compare_window_scrolls_by_the_wheel_wherever_it_is_over_th
         fine = bar->GetThumbPosition() - top;
         left_top = left_bar->GetThumbPosition() - top;           // in sync
         Wheel(right, 120); back = bar->GetThumbPosition() - top;
-        auto hbar = [](wxWindow* pane) -> wxScrollBar* {
+        // Long lines wrap: nothing scrolls sideways, and no bar for it.
+        across = true;
+        for (auto pane : {right, dialog->FindWindow("compare-left")})
             for (auto child : pane->GetChildren())
-                if (auto b = dynamic_cast<wxScrollBar*>(child); b && !b->IsVertical()) return b;
-            return nullptr;
-        }(right);
-        ASSERT_NE(nullptr, hbar);
-        int x = hbar->GetThumbPosition();
-        Wheel(right, 120, true);
-        Wheel(right, -120, true);
-        across = hbar->GetRange() <= hbar->GetThumbSize() || hbar->GetThumbPosition() != x || x == 0;
+                if (auto b = dynamic_cast<wxScrollBar*>(child); b && !b->IsVertical()) across = false;
+
     });
     RunCompare(c.get(), path);
     EXPECT_EQ(3, over_bar);
@@ -7554,6 +7550,71 @@ TEST_F(ordinary_edit, compare_window_scrolls_by_the_wheel_wherever_it_is_over_th
     EXPECT_EQ(12, left_top);
     EXPECT_EQ(9, back);
     EXPECT_TRUE(across);
+}
+TEST_F(ordinary_edit, compare_window_wraps_a_long_line_into_a_taller_row_rather_than_scrolling_sideways) {
+    // Eighty lines, the last one long: wrapped, its row takes several lines,
+    // so fewer rows fit with it in the last view and the bar's thumb (the
+    // rows in that view) is smaller, its range still the rows.
+    std::string lines;
+    for (int i = 1; i <= 80; ++i) lines += (i > 1 ? "\n" : "") + std::string("line ") + std::to_string(i);
+    cmd::PasteSubtitleLines(c.get(), lines);
+    auto thumb_of = [&](char const* name) {
+        auto path = WriteBaseline(*c, name, [](AssFile& f) { f.Events.front().Text = "changed"; });
+        int thumb = -1, range = -1;
+        CompareHook hook([&](wxWindow* dialog) {
+            Named<FlatSwitch>(dialog, "compare-view")->Choose(1);  // every line
+            auto bar = RowsBar(dialog->FindWindow("compare-right"));
+            ASSERT_NE(nullptr, bar);
+            thumb = bar->GetThumbSize(); range = bar->GetRange();
+        });
+        RunCompare(c.get(), path);
+        return std::make_pair(thumb, range);
+    };
+    auto [short_thumb, short_range] = thumb_of("compare-short.ass");
+    std::string long_line;
+    for (int i = 0; i < 30; ++i) long_line += "wrapping ";
+    auto& last = LiveRead(*c).Events.back();
+    c->selectionController->SetSelectionAndActiveIDs({last.Id}, last.Id);
+    Input(long_line);
+    auto [long_thumb, long_range] = thumb_of("compare-long.ass");
+    EXPECT_EQ(short_range, long_range);
+    EXPECT_LT(long_thumb, short_thumb);
+    EXPECT_GT(long_thumb, 1);
+}
+TEST_F(ordinary_edit, compare_window_text_size_is_set_from_its_view_panel_and_the_keyboard) {
+    Input("current");
+    auto path = WriteBaseline(*c, "compare-size.ass", [](AssFile& f) { f.Events.front().Text = "base"; });
+    int page_size = -1, larger = -1, smaller = -1, reset = -1, keyed = -1, keyed_back = -1;
+    wxString label;
+    CompareHook hook([&](wxWindow* dialog) {
+        auto right = dialog->FindWindow("compare-right");
+        ASSERT_NE(nullptr, right);
+        page_size = right->GetFont().GetPointSize();
+        Press(dialog, "compare-more");
+        Press(dialog, "compare-font-larger");
+        Press(dialog, "compare-font-larger");
+        larger = right->GetFont().GetPointSize();
+        label = Label(dialog, "compare-font-size");
+        Press(dialog, "compare-font-smaller");
+        smaller = right->GetFont().GetPointSize();
+        Press(dialog, "compare-font-reset");
+        reset = (int)OPT_GET("Subtitle/Compare/Font Size")->GetInt();
+        wxKeyEvent key(wxEVT_CHAR_HOOK);
+        key.m_keyCode = '='; key.SetControlDown(true); key.SetEventObject(right);
+        right->GetEventHandler()->ProcessEvent(key);
+        keyed = right->GetFont().GetPointSize();
+        key.m_keyCode = '0';
+        right->GetEventHandler()->ProcessEvent(key);
+        keyed_back = right->GetFont().GetPointSize();
+    });
+    RunCompare(c.get(), path);
+    EXPECT_EQ(page_size + 2, larger);
+    EXPECT_EQ(wxString::Format("%d pt", page_size + 2), label);
+    EXPECT_EQ(page_size + 1, smaller);
+    EXPECT_EQ(0, reset);
+    EXPECT_EQ(page_size + 1, keyed);
+    EXPECT_EQ(page_size, keyed_back);
+    OPT_SET("Subtitle/Compare/Font Size")->SetInt(0);
 }
 TEST_F(ordinary_edit, compare_window_simplifies_override_tags_as_the_grid_does) {
     OPT_SET("Subtitle/Grid/Hide Overrides")->SetInt(0);
@@ -11561,5 +11622,6 @@ TEST_F(ordinary_edit, flat_check_boxes_and_buttons_keep_space_and_enter_from_hot
     down(check,WXK_SPACE);
     EXPECT_EQ(4,toggled) << "Space on it still ticks it";
 }
+
 
 

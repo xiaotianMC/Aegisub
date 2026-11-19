@@ -34,7 +34,7 @@ struct Document {
     Fields fields = All;
 };
 enum class Kind { Unchanged, Added, Deleted, Modified };
-enum class MatchReason { None, EqualSequence, ExactFields, UniqueTime, UniqueText, UniqueTimeAndStyle };
+enum class MatchReason { None, EqualSequence, ExactFields, UniqueTime, UniqueText, UniqueTimeAndStyle, TimeAndStyleInOrder };
 enum class Ambiguity { None, Duplicate, Crossing, ConflictingEvidence, NoReliableMatch };
 struct Item {
     std::optional<size_t> baseline, current;

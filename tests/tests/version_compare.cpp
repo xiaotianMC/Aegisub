@@ -115,11 +115,28 @@ TEST(version_compare, lines_shown_together_are_told_apart_by_their_style) {
     EXPECT_EQ(3u, count(r, Kind::Modified)); EXPECT_EQ(0u, count(r, Kind::Added)); EXPECT_EQ(0u, count(r, Kind::Deleted));
     for (auto const& i : r)
         if (i.kind == Kind::Modified) { EXPECT_EQ(MatchReason::UniqueTimeAndStyle, i.reason); EXPECT_EQ(Text, i.changed); EXPECT_EQ(i.baseline, i.current); }
-    // Two of one style at that time stay unmatched: nothing tells them apart.
+    // Two of one style at that time, as many on each side: paired in their order.
     b.rows[2].style = "Pink"; c.rows[2].style = "Pink";
     r = Compare(b, c); invariants(b, c, r);
+    EXPECT_EQ(3u, count(r, Kind::Modified)); EXPECT_EQ(0u, count(r, Kind::Added));
+    for (auto const& i : r)
+        if (i.kind == Kind::Modified && i.baseline != 3u) { EXPECT_EQ(MatchReason::TimeAndStyleInOrder, i.reason); EXPECT_EQ(i.baseline, i.current); }
+    // Not as many on each side: nothing tells which goes with which.
+    c.rows.insert(c.rows.begin() + 2, styled("又一行", "Pink"));
+    r = Compare(b, c); invariants(b, c, r);
     EXPECT_EQ(1u, count(r, Kind::Modified)) << "only the caption";
-    EXPECT_EQ(2u, count(r, Kind::Added));
+}
+TEST(version_compare, shapes_drawn_over_each_other_pair_in_order_after_a_line_added_before) {
+    // Two shapes of one sign at one time in one style, their tags rewritten,
+    // with a credit added at the top of the current file.
+    auto shape = [](std::string text) { Row r = row(std::move(text), 5690); r.style = "Shape"; return r; };
+    auto b = document({row("hello", 0), shape("{\\1c&H283252&\\pos(203,771)}m 0 0 l 370 0"), shape("{\\1c&HF9F9F9&\\pos(259,883)}m 0 0 l 1400 0"), row("after", 20000)});
+    auto c = document({row("credits", 0), row("hello", 0), shape("{\\pos(203,771)\\c&H273553&}m 0 0 l 370 0"), shape("{\\pos(259,883)\\c&HFFFFFF&}m 0 0 l 1400 0"), row("after", 20000)});
+    c.rows[0].end_ms = 6000;
+    auto r = Compare(b, c); invariants(b, c, r);
+    EXPECT_EQ(2u, count(r, Kind::Modified)); EXPECT_EQ(1u, count(r, Kind::Added) + count(r, Kind::Deleted));
+    for (auto const& i : r)
+        if (i.kind == Kind::Modified) { EXPECT_EQ(MatchReason::TimeAndStyleInOrder, i.reason); EXPECT_EQ(*i.baseline + 1, *i.current); }
 }
 TEST(version_compare, crossing_matches_and_reordering_are_additions_and_deletions) {
     auto c = document({row("a", 0), row("b", 1000), row("c", 2000)});

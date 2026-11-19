@@ -80,13 +80,15 @@ std::vector<Item> Compare(Document const& baseline, Document const& current, Can
         CheckCancelled(cancel); --be; --ce;
         pairs.push_back({be, ce, MatchReason::EqualSequence});
     }
-    // Four matching passes plus an equal-run cleanup. Each scans disjoint gaps; no n*m matrix
+    // Five matching passes plus an equal-run cleanup. Each scans disjoint gaps; no n*m matrix
     // and no recursive rescanning of progressively smaller intervals. The fourth
     // tells apart lines shown together (a title, its caption, a speaker's line
     // over the same time) whose texts all changed: their time is shared, but
-    // not with the same style.
-    for (int pass = 0; pass < 5; ++pass) {
-        Fields match_fields = pass == 1 ? Start | End : pass == 2 ? Text : pass == 3 ? Start | End | Style : fields;
+    // not with the same style. The fifth pairs, in their order, the lines of
+    // one time and style that are as many on each side of a gap (two shapes
+    // of one sign drawn over each other, their tags rewritten).
+    for (int pass = 0; pass < 6; ++pass) {
+        Fields match_fields = pass == 1 ? Start | End : pass == 2 ? Text : pass == 3 || pass == 4 ? Start | End | Style : fields;
         if ((fields & match_fields) != match_fields) continue;
         std::sort(pairs.begin(), pairs.end(), [](Pair a, Pair b) { return a.b < b.b; });
         auto anchors = pairs;
@@ -103,7 +105,40 @@ std::vector<Item> Compare(Document const& baseline, Document const& current, Can
                 CheckCancelled(cancel);
                 pairs.push_back({--b_end, --c_end, MatchReason::EqualSequence});
             }
-            if (pass == 4) { b0 = anchor.b + 1; c0 = anchor.c + 1; continue; }
+            if (pass == 5) { b0 = anchor.b + 1; c0 = anchor.c + 1; continue; }
+            if (pass == 4) {
+                // Each time and style's lines in this gap, in order on each side.
+                std::unordered_map<std::string, std::pair<std::vector<size_t>, std::vector<size_t>>> groups;
+                for (size_t b = b0; b < b_end; ++b) groups[key(B[b], match_fields)].first.push_back(b);
+                for (size_t c = c0; c < c_end; ++c) groups[key(C[c], match_fields)].second.push_back(c);
+                std::vector<Pair> candidates;
+                for (auto const& [k, g] : groups) {
+                    CheckCancelled(cancel);
+                    if (g.first.size() < 2 || g.first.size() != g.second.size()) continue;
+                    bool blocked = false;
+                    for (size_t i = 0; i < g.first.size(); ++i)
+                        blocked |= why_b[g.first[i]] == Ambiguity::Crossing || why_b[g.first[i]] == Ambiguity::ConflictingEvidence
+                            || why_c[g.second[i]] == Ambiguity::Crossing || why_c[g.second[i]] == Ambiguity::ConflictingEvidence;
+                    if (blocked) continue;
+                    for (size_t i = 0; i < g.first.size(); ++i) candidates.push_back({g.first[i], g.second[i], MatchReason::TimeAndStyleInOrder});
+                }
+                std::sort(candidates.begin(), candidates.end(), [](Pair a, Pair b) { return a.b < b.b; });
+                // A group whose lines would cross another's is left as it is, whole.
+                std::vector<size_t> suffix(candidates.size(), C.size());
+                for (size_t i = candidates.size(); i > 1; --i)
+                    suffix[i-2] = std::min(suffix[i-1], candidates[i-1].c);
+                std::unordered_map<std::string, bool> group_crossed;
+                size_t max_c = 0;
+                for (size_t i = 0; i < candidates.size(); ++i) {
+                    auto p = candidates[i];
+                    if ((i && max_c > p.c) || suffix[i] < p.c) group_crossed[key(B[p.b], match_fields)] = true;
+                    max_c = i ? std::max(max_c, p.c) : p.c;
+                }
+                for (auto p : candidates)
+                    if (!group_crossed.count(key(B[p.b], match_fields))) pairs.push_back(p);
+                b0 = anchor.b + 1; c0 = anchor.c + 1;
+                continue;
+            }
             Index bi, ci, bt, ct, btime, ctime;
             auto build = [&](auto const& rows, size_t begin, size_t end, Index& index, Fields f) {
                 for (size_t i = begin; i < end; ++i) {

@@ -456,6 +456,9 @@
 			"Font Face" : "",
 			"Font Size" : 10
 		},
+		"Compare" : {
+			"Font Size" : 0
+		},
 		"Grid" : {
 			"Alternate Rows" : true,
 			"Column" : [

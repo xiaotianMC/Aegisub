@@ -45,6 +45,7 @@
 #include <wx/wrapsizer.h>
 
 #include <algorithm>
+#include <functional>
 #include <map>
 #include <optional>
 #include <span>
@@ -242,7 +243,9 @@ class ComparePanel;
 class DiffPane final : public wxWindow {
     ComparePanel& ed;
     Side side;
-    wxScrollBar *vbar, *hbar;
+    wxScrollBar *vbar;
+    /// The first row in view. Long lines wrap rather than scroll sideways,
+    /// so nothing does: xoff stays 0.
     int top = 0, xoff = 0;
     Part hover_part = Part::None;
     int tip_row = -1;
@@ -250,15 +253,14 @@ class DiffPane final : public wxWindow {
     bool dragging_overview = false;
     int drag_offset = 0; // where in the thumb the drag took hold
     const tag_summary::Piece* tip_block = nullptr;
-    int wheel_rest[2] = {0, 0}; // what the wheel turned short of a step, down and across
+    int wheel_rest = 0, zoom_rest = 0; // what the wheel turned short of a step, scrolling and with Ctrl
 
     struct Geometry {
-        int width, height;       // the rows' area (without the track and the sideways bar)
+        int width, height;       // the rows' area (without the track)
         int content_x, content_right;
         int overview_x;          // the track, in row coordinates: after the rows on the right, before them on the left
     };
     Geometry Geo() const;
-    int RowAt(int y) const;
     Part PartAt(int row, wxPoint pt) const;
 
     void OnPaint(wxPaintEvent&);
@@ -268,7 +270,7 @@ class DiffPane final : public wxWindow {
     void OnScroll(wxScrollEvent&);
     void DrawRow(wxDC& dc, Geometry const& g, int row, int y);
     /// The frame round the keyboard's line, while either pane has the focus.
-    void DrawCursor(wxDC& dc, Geometry const& g, int y);
+    void DrawCursor(wxDC& dc, Geometry const& g, int row, int y);
     /// Draw @p entry's line on this side; returns the x where what it drew ends.
     int DrawLine(wxDC& dc, Geometry const& g, size_t entry, int y);
     /// The current difference's card where it crosses @p row: the page round
@@ -286,6 +288,7 @@ class DiffPane final : public wxWindow {
         size_t begin = 0, end = 0;  // bytes of the text
         int left = 0, right = 0;    // x
         bool changed = false;       // touches a changed token
+        int line = 0;               // of the row's wrapped lines, from 0
         const tag_summary::Piece* block = nullptr;
         wxString label;
         /// A changed chip: the values of the tags in it that changed, written after its icons
@@ -297,13 +300,34 @@ class DiffPane final : public wxWindow {
     /// that differ ("640,60"), or empty when the blocks do not pair up.
     wxString ChangedValues(size_t entry, tag_summary::Piece const& block) const;
     /// Lay the text of @p entry on this side out from @p x, as the tag mode
-    /// shows it (@p full: tags as written whatever the mode).
-    std::vector<TextPiece> LayText(wxDC& dc, size_t entry, int x, bool highlight, bool full) const;
+    /// shows it (@p full: tags as written whatever the mode), wrapping onto
+    /// further lines from @p x where it reaches @p wrap_right (0: never),
+    /// and after each \N.
+    std::vector<TextPiece> LayText(wxDC& dc, size_t entry, int x, bool highlight, bool full, int wrap_right = 0) const;
     /// The text of @p entry on this side from @p x, changed tokens highlighted
-    /// if @p highlight. Returns the x after it.
-    int DrawText(wxDC& dc, size_t entry, int x, int y, bool highlight, bool lost, bool full = false);
-    /// Where the text column starts, in row coordinates.
+    /// if @p highlight, struck through if @p lost, wrapped as LayText does.
+    /// Returns the x after it, and in @p end_line the line it ends on.
+    int DrawText(wxDC& dc, size_t entry, int x, int y, bool highlight, bool lost, bool full = false, int wrap_right = 0, int* end_line = nullptr);
+    /// Where the text column starts, in row coordinates, and where its lines wrap.
     int TextX(Geometry const& g) const;
+    int TextRight(Geometry const& g) const;
+    /// Where a detail row's value starts, after the field's name.
+    int DetailX(Geometry const& g) const;
+public:
+    /// The style and actor columns' widths in this pane: narrowed (their
+    /// values cut short) where they would leave the text less than about
+    /// half of the pane to wrap in.
+    std::pair<int, int> LabelColumns() const;
+private:
+    /// The quiet chips after a line's text: its other changed fields, and
+    /// whether it is a comment.
+    struct Trail { wxString label; bool quiet, struck; };
+    std::vector<Trail> Trailing(size_t entry) const;
+    /// Where the chips after a text ending at @p x on @p line go: on that
+    /// line while they fit, else from @p left on the next. Calls @p place
+    /// with each chip's x and line, and returns the last line.
+    int PlaceTrailing(wxDC& dc, std::vector<Trail> const& chips, int x, int line, int left, int right,
+        std::function<void(Trail const&, int x, int line, int w)> const& place) const;
     /// The tag block under @p pt on @p row, when tags are simplified.
     const tag_summary::Piece* BlockAt(int row, wxPoint pt);
     void DrawDelta(wxDC& dc, size_t entry, model::Field f, int x, int y);
@@ -327,14 +351,22 @@ public:
     /// Height of the row area (without the horizontal scroll bar).
     int ViewHeight() const { return Geo().height; }
     int XOffset() const { return xoff; }
+    /// The row at @p y in the rows' area, or -1.
+    int RowAt(int y) const;
+    /// How many rows from the top start within the view (the last perhaps in part).
     int VisibleRows() const;
+    /// The last row that can be the top one, the view then reaching the end.
+    int LastTop() const;
+    /// How many lines @p row takes on this side once its text wraps.
+    int RowLines(wxDC& dc, int row) const;
     /// Clamp and apply a scroll position; @p notify tells the editor (for sync).
     void SetView(int new_top, int new_x, bool notify = false);
     /// Scroll so that rows @p first to @p last are visible, if they were not.
     void Reveal(int first, int last = -1);
     void UpdateBars();
     /// Scroll by what the wheel turned, keeping what falls short of a step
-    /// (fine wheels and touchpads turn a fraction of one at a time).
+    /// (fine wheels and touchpads turn a fraction of one at a time); with
+    /// Ctrl, make the text larger or smaller.
     void Wheel(wxMouseEvent& event);
 };
 
@@ -580,6 +612,13 @@ class ComparePanel final : public ComparisonPage {
     bool show_all = false, sync = true;
     std::set<size_t> expanded;
     std::vector<Row> layout;
+    /// Where each row starts, from the first, and after the last: a row is
+    /// as tall as the more lines its text wraps onto on either side.
+    std::vector<int> row_y;
+    /// The wrapped lines of each entry's row, left and right, while the
+    /// panes' widths and what is shown in them stay as they were.
+    std::unordered_map<size_t, std::pair<int, int>> lines_cache;
+    wxString lines_key;
     std::vector<int> row_of;            // entry -> its row (the fold row for hidden entries)
     std::optional<size_t> current;      // the current difference (an entry)
     int hot = -1;                       // row under the pointer, in any pane or the gutter
@@ -599,14 +638,21 @@ class ComparePanel final : public ComparisonPage {
     /// The columns left out because every line has the same value there,
     /// said once at the end of the column names ("Style: Default").
     wxString same_note;
-    int row_h = 22, char_w = 7, number_w = 40, band_w = 28, time_w = 80, style_w = 80, actor_w = 0;
+    /// A row of one line, and how much each line more of wrapped text adds.
+    int row_h = 22, line_pitch = 20;
+    int char_w = 7, number_w = 40, band_w = 28, time_w = 80, style_w = 80, actor_w = 0;
     int overview_w = 14 /* each pane's track */, content_w = 400, label_w = 80, delta_w = 0;
     /// How far the card stands in from a pane's outer edge, and its corners.
     int card_inset = 4, card_radius = 7;
-    wxFont small_font, bold_font, small_bold_font;
+    /// The lines' font, its size set by Subtitle/Compare/Font Size (0: the page's).
+    wxFont pane_font, small_font, bold_font, small_bold_font;
+    agi::signal::Connection font_size_changed;
+    wxStaticText* font_size_label = nullptr;
+    FlatButton *font_smaller = nullptr, *font_larger = nullptr, *font_reset = nullptr;
 
     DiffPane *left, *right;
     DiffGutter *gutter;
+    DiffHeader *left_header, *right_header;
     wxStaticText *left_title, *right_title, *counter, *checked_count;
     DecisionMeter *stats;
     FlatButton *prev, *next, *undo, *redo;
@@ -636,6 +682,9 @@ class ComparePanel final : public ComparisonPage {
     std::vector<model::Field> DetailFields() const;
 
     void Measure();
+    /// Set the lines' font from the option, and measure again (and lay the
+    /// rows out again unless @p starting).
+    void ApplyFontSize(bool starting = false);
     /// Rebuild the rows (after the filter, folds or the current difference
     /// changed), keeping @p anchor (default: the top row's entry) where it is.
     void Relayout(std::optional<size_t> anchor = std::nullopt);
@@ -717,6 +766,13 @@ public:
     /// What the card's foot says is decided ("Partial: Text →, Actor ←").
     wxString CardStatus() const;
     void RefreshGutter() { gutter->Refresh(false); }
+    /// Where @p row starts, from the first row, and how tall it is.
+    int RowY(int row) const { return row >= 0 && row < (int)row_y.size() ? row_y[row] : row * row_h; }
+    int RowH(int row) const { return row >= 0 && row + 1 < (int)row_y.size() ? row_y[row + 1] - row_y[row] : row_h; }
+    /// Find how tall each row is (after the rows, the panes' widths or the font changed).
+    void MeasureRows();
+    /// Make the lines' text @p steps points larger (smaller if negative); 0 back to the page's size.
+    void Zoom(int steps);
     /// What clicking @p part of @p row does, for its tooltip (empty for plain content); @p in_gutter for the arrows.
     wxString Help(Part part, bool in_gutter, int row) const;
 };
@@ -735,22 +791,18 @@ DiffPane::DiffPane(wxWindow* parent, ComparePanel& ed, Side side)
     // the record of the position.
     vbar = new wxScrollBar(this, -1, wxDefaultPosition, wxDefaultSize, wxSB_VERTICAL);
     vbar->Hide();
-    hbar = new wxScrollBar(this, -1, wxDefaultPosition, wxDefaultSize, wxSB_HORIZONTAL);
     Bind(wxEVT_PAINT, &DiffPane::OnPaint, this);
     Bind(wxEVT_SIZE, &DiffPane::OnSize, this);
     for (auto type : {wxEVT_LEFT_DOWN, wxEVT_LEFT_UP, wxEVT_LEFT_DCLICK, wxEVT_RIGHT_DOWN, wxEVT_MOTION, wxEVT_LEAVE_WINDOW, wxEVT_MOUSEWHEEL})
         Bind(type, &DiffPane::OnMouse, this);
     Bind(wxEVT_KEY_DOWN, &DiffPane::OnKey, this);
-    for (auto bar : {vbar, hbar})
-        for (auto type : {wxEVT_SCROLL_TOP, wxEVT_SCROLL_BOTTOM, wxEVT_SCROLL_LINEUP, wxEVT_SCROLL_LINEDOWN,
-                wxEVT_SCROLL_PAGEUP, wxEVT_SCROLL_PAGEDOWN, wxEVT_SCROLL_THUMBTRACK, wxEVT_SCROLL_THUMBRELEASE, wxEVT_SCROLL_CHANGED})
-            bar->Bind(type, &DiffPane::OnScroll, this);
-    for (auto bar : {vbar, hbar}) {
-        // The wheel over a bar scrolls as over the rows (once: not the bar's own way too).
-        bar->Bind(wxEVT_MOUSEWHEEL, [this](wxMouseEvent& e) { Wheel(e); });
-        // Tab goes from pane to pane, not into their bars.
-        bar->DisableFocusFromKeyboard();
-    }
+    for (auto type : {wxEVT_SCROLL_TOP, wxEVT_SCROLL_BOTTOM, wxEVT_SCROLL_LINEUP, wxEVT_SCROLL_LINEDOWN,
+            wxEVT_SCROLL_PAGEUP, wxEVT_SCROLL_PAGEDOWN, wxEVT_SCROLL_THUMBTRACK, wxEVT_SCROLL_THUMBRELEASE, wxEVT_SCROLL_CHANGED})
+        vbar->Bind(type, &DiffPane::OnScroll, this);
+    // The wheel over the bar scrolls as over the rows (once: not the bar's own way too).
+    vbar->Bind(wxEVT_MOUSEWHEEL, [this](wxMouseEvent& e) { Wheel(e); });
+    // Tab goes from pane to pane, not into its bar.
+    vbar->DisableFocusFromKeyboard();
     // The keyboard's line shows in both panes while either has the focus.
     auto focus_changed = [this](wxFocusEvent& e) {
         Refresh(false);
@@ -767,7 +819,7 @@ DiffPane::Geometry DiffPane::Geo() const {
     Geometry g;
     auto size = GetClientSize();
     g.width = std::max(0, size.GetWidth() - ed.overview_w);
-    g.height = std::max(0, size.GetHeight() - hbar->GetSize().GetHeight());
+    g.height = std::max(0, size.GetHeight());
     // Both sides show their lines alike, each with its track on its outer edge.
     g.content_x = 0;
     g.content_right = g.width;
@@ -775,21 +827,33 @@ DiffPane::Geometry DiffPane::Geo() const {
     return g;
 }
 
-int DiffPane::VisibleRows() const { return std::max(1, Geo().height / ed.row_h); }
+int DiffPane::VisibleRows() const {
+    int rows = (int)ed.layout.size(), h = Geo().height, base = ed.RowY(top), n = 0;
+    for (int r = top; r < rows && ed.RowY(r) - base < h; ++r) ++n;
+    return std::max(1, n);
+}
+
+int DiffPane::LastTop() const {
+    int rows = (int)ed.layout.size();
+    if (rows <= 0 || (int)ed.row_y.size() != rows + 1) return 0;
+    // the first row from which the rest fits
+    auto it = std::lower_bound(ed.row_y.begin(), ed.row_y.begin() + rows, ed.row_y[rows] - Geo().height);
+    return std::clamp(int(it - ed.row_y.begin()), 0, rows - 1);
+}
 
 void DiffPane::UpdateBars() {
-    auto g = Geo();
-    int rows = (int)ed.layout.size(), vis = std::max(1, g.height / ed.row_h);
-    top = std::max(0, std::min(top, rows - vis));
-    vbar->SetScrollbar(top, vis, std::max(rows, 1), std::max(1, vis - 1));
-    int view_w = std::max(1, g.content_right - g.content_x);
-    xoff = std::max(0, std::min(xoff, ed.content_w - view_w));
-    hbar->SetScrollbar(xoff, view_w, std::max(ed.content_w, view_w), view_w);
+    int rows = (int)ed.layout.size(), last = LastTop();
+    top = std::clamp(top, 0, last);
+    xoff = 0;
+    // The bar's range is the rows, its thumb what is left once the last can be the top.
+    int thumb = std::max(1, rows - last);
+    vbar->SetScrollbar(top, thumb, std::max(rows, 1), std::max(1, VisibleRows() - 1));
 }
 
 void DiffPane::SetView(int new_top, int new_x, bool notify) {
     int old_top = top, old_x = xoff;
     top = new_top; xoff = new_x;
+    (void)old_x;
     UpdateBars();
     if (top != old_top || xoff != old_x) {
         Redraw();
@@ -798,20 +862,23 @@ void DiffPane::SetView(int new_top, int new_x, bool notify) {
 }
 
 void DiffPane::Reveal(int first, int last) {
-    if (first < 0) return;
-    if (last < first) last = first;
-    int vis = VisibleRows();
-    if (first >= top && last < top + vis) return;
-    if (last - first + 1 >= vis) SetView(first, xoff);
-    else SetView(std::min(first - vis / 3, last - vis + 1 + vis / 3), xoff);
+    int rows = (int)ed.layout.size();
+    if (first < 0 || first >= rows) return;
+    last = std::clamp(last, first, rows - 1);
+    int h = Geo().height;
+    auto fits = [&](int t) { return t <= first && ed.RowY(last + 1) - ed.RowY(t) <= h; };
+    if (fits(top)) return;
+    if (ed.RowY(last + 1) - ed.RowY(first) >= h) { SetView(first, xoff); return; }
+    // A third of the view above it where there is room.
+    int t = first;
+    while (t > 0 && ed.RowY(first) - ed.RowY(t - 1) <= h / 3) --t;
+    while (!fits(t)) ++t;
+    SetView(t, xoff);
 }
 
 void DiffPane::OnSize(wxSizeEvent&) {
-    auto size = GetClientSize();
-    int tw = ed.overview_w, hh = hbar->GetBestSize().GetHeight();
-    // The left pane's track is on its outer edge, so the rows run on into the gutter.
-    bool r = side == Side::Right;
-    hbar->SetSize(r ? 0 : tw, size.GetHeight() - hh, std::max(0, size.GetWidth() - tw), hh);
+    // Wrapped lines take as many lines as the new width leaves them.
+    ed.MeasureRows();
     UpdateBars();
     Redraw();
 }
@@ -824,29 +891,32 @@ void DiffPane::Redraw() {
 }
 
 void DiffPane::Wheel(wxMouseEvent& event) {
-    int across = event.GetWheelAxis() == wxMOUSE_WHEEL_HORIZONTAL || event.ShiftDown() ? 1 : 0;
+    // Lines wrap: nothing to scroll sideways.
+    if (event.GetWheelAxis() == wxMOUSE_WHEEL_HORIZONTAL) return;
+    bool zoom = event.ControlDown();
     int turned = event.GetWheelRotation();
-    int& rest = wheel_rest[across];
+    int& rest = zoom ? zoom_rest : wheel_rest;
     if (rest && (rest > 0) != (turned > 0)) rest = 0; // turned back: start afresh
     rest += turned;
     int delta = std::max(1, event.GetWheelDelta());
     int steps = rest / delta;
     if (!steps) return;
     rest -= steps * delta;
+    if (zoom) { ed.Zoom(steps); return; }
     int lines = steps * std::max(1, event.GetLinesPerAction());
-    if (across) SetView(top, xoff + lines * ed.char_w * 4, true);
-    else SetView(top - lines, xoff, true);
+    SetView(top - lines, xoff, true);
 }
 
-void DiffPane::OnScroll(wxScrollEvent& event) {
-    if (event.GetEventObject() == vbar) SetView(vbar->GetThumbPosition(), xoff, true);
-    else SetView(top, hbar->GetThumbPosition(), true);
+void DiffPane::OnScroll(wxScrollEvent&) {
+    SetView(vbar->GetThumbPosition(), xoff, true);
 }
 
 int DiffPane::RowAt(int y) const {
-    if (y < 0 || y >= Geo().height) return -1;
-    int row = top + y / ed.row_h;
-    return row < (int)ed.layout.size() ? row : -1;
+    int rows = (int)ed.layout.size();
+    if (y < 0 || y >= Geo().height || (int)ed.row_y.size() != rows + 1) return -1;
+    auto it = std::upper_bound(ed.row_y.begin(), ed.row_y.end(), ed.RowY(top) + y);
+    int row = int(it - ed.row_y.begin()) - 1;
+    return row >= 0 && row < rows ? row : -1;
 }
 
 Part DiffPane::PartAt(int row, wxPoint pt) const {
@@ -957,8 +1027,6 @@ void DiffPane::OnKey(wxKeyEvent& event) {
         case WXK_PAGEDOWN: ed.MoveCursor(vis, side); break;
         case WXK_HOME: ed.PlaceCursor(0, side); break;
         case WXK_END: ed.PlaceCursor((int)ed.layout.size() - 1, side); break;
-        case WXK_LEFT: SetView(top, xoff - ed.char_w * 4, true); break;
-        case WXK_RIGHT: SetView(top, xoff + ed.char_w * 4, true); break;
         case WXK_RETURN:
         case WXK_NUMPAD_ENTER: ed.ActivateCursor(side); break;
         case WXK_SPACE: ed.CheckCursor(); break;
@@ -979,9 +1047,9 @@ void DiffPane::OnPaint(wxPaintEvent&) {
         // Rows stop where the scroll bar starts: one that floats over the
         // pane (GTK's overlay bars) must not cover a row's text.
         wxDCClipper rows_clip(dc, wxRect(0, 0, g.width, g.height));
-        for (int row = top, y = 0; row < rows && y < g.height; ++row, y += ed.row_h) {
+        for (int row = top, y = 0; row < rows && y < g.height; y += ed.RowH(row), ++row) {
             DrawRow(dc, g, row, y);
-            if (row == ed.cursor_row) DrawCursor(dc, g, y);
+            if (row == ed.cursor_row) DrawCursor(dc, g, row, y);
         }
     }
     DrawOverview(dc, g);
@@ -994,18 +1062,19 @@ void DiffPane::OnPaint(wxPaintEvent&) {
     }
 }
 
-void DiffPane::DrawCursor(wxDC& dc, Geometry const& g, int y) {
+void DiffPane::DrawCursor(wxDC& dc, Geometry const& g, int row, int y) {
     // The keyboard's line, in the focused pane only: one frame on the page.
     if (!HasFocus()) return;
     dc.SetPen(wxPen(ed.pal.accent));
     dc.SetBrush(*wxTRANSPARENT_BRUSH);
-    dc.DrawRectangle(g.content_x + 1, y, std::max(0, g.content_right - g.content_x - 2), ed.row_h);
+    dc.DrawRectangle(g.content_x + 1, y, std::max(0, g.content_right - g.content_x - 2), ed.RowH(row));
 }
 
 void DiffPane::DrawRow(wxDC& dc, Geometry const& g, int row, int y) {
     auto const& p = ed.pal;
     auto const& lr = ed.layout[row];
-    wxDCClipper clip(dc, wxRect(0, y, g.width, ed.row_h));
+    int rh = ed.RowH(row);
+    wxDCClipper clip(dc, wxRect(0, y, g.width, rh));
     bool hot = row == ed.hot;
     if (lr.IsFold()) {
         dc.SetPen(*wxTRANSPARENT_PEN);
@@ -1032,7 +1101,7 @@ void DiffPane::DrawRow(wxDC& dc, Geometry const& g, int row, int y) {
         if (diff && hot) bg = mix(bg, p.text, 0.04);
         dc.SetPen(*wxTRANSPARENT_PEN);
         dc.SetBrush(wxBrush(bg));
-        dc.DrawRectangle(0, y, g.width, ed.row_h);
+        dc.DrawRectangle(0, y, g.width, rh);
     }
     if (!line) {
         // within the card's face on the current one
@@ -1041,7 +1110,7 @@ void DiffPane::DrawRow(wxDC& dc, Geometry const& g, int row, int y) {
         int y0 = is_current ? y + 3 : y;
         dc.SetPen(*wxTRANSPARENT_PEN);
         dc.SetBrush(wxBrush(p.hatch, wxBRUSHSTYLE_BDIAGONAL_HATCH));
-        dc.DrawRectangle(x0, y0, x1 - x0, y + ed.row_h - y0);
+        dc.DrawRectangle(x0, y0, x1 - x0, y + rh - y0);
     }
     if (line) DrawLine(dc, g, entry, y);
     // edges of each run of added or removed lines, carried on by the gutter's
@@ -1049,11 +1118,19 @@ void DiffPane::DrawRow(wxDC& dc, Geometry const& g, int row, int y) {
     if (diff && !is_current && ed.state.Entries()[entry].change != Change::Modified) {
         dc.SetPen(wxPen(ed.EdgeColour(entry)));
         if (ed.ChunkStart(row)) dc.DrawLine(0, y, g.width, y);
-        if (ed.ChunkEnd(row)) dc.DrawLine(0, y + ed.row_h - 1, g.width, y + ed.row_h - 1);
+        if (ed.ChunkEnd(row)) dc.DrawLine(0, y + rh - 1, g.width, y + rh - 1);
     }
 }
 
-std::vector<DiffPane::TextPiece> DiffPane::LayText(wxDC& dc, size_t entry, int x, bool highlight, bool full) const {
+namespace {
+/// Bytes in the UTF-8 sequence that starts with @p lead.
+size_t utf8_length(unsigned char lead) {
+    return lead < 0x80 ? 1 : (lead >> 5) == 6 ? 2 : (lead >> 4) == 14 ? 3 : (lead >> 3) == 30 ? 4 : 1;
+}
+bool word_char(char c) { return (unsigned char)c < 0x80 && std::isalnum((unsigned char)c); }
+}
+
+std::vector<DiffPane::TextPiece> DiffPane::LayText(wxDC& dc, size_t entry, int x, bool highlight, bool full, int wrap_right) const {
     auto const& e = ed.state.Entries()[entry];
     auto const& text = e.Get(side)->Value(model::Text);
     auto const& spans = side == Side::Left ? e.text.left : e.text.right;
@@ -1064,20 +1141,83 @@ std::vector<DiffPane::TextPiece> DiffPane::LayText(wxDC& dc, size_t entry, int x
             if (span.begin < b && span.end > a) return true;
         return false;
     };
-    auto run_width = [&](size_t a, size_t b) {
+    auto shown = [&](size_t a, size_t b) {
         auto part = to_wx(text.substr(a, b - a));
         part.Replace("\n", " ");
-        return dc.GetTextExtent(part).GetWidth();
+        return part;
     };
+    auto run_width = [&](size_t a, size_t b) { return dc.GetTextExtent(shown(a, b)).GetWidth(); };
     std::vector<TextPiece> out;
+    // Wrapping: the next line starts where the text does. Too narrow a
+    // column is not wrapped at all (its end is cut, as before).
+    int line_left = x, line = 0;
+    bool wrap = wrap_right > line_left + ed.char_w * 4, break_next = false;
+    auto new_line = [&] { ++line; x = line_left; break_next = false; };
+    // Onto the next line if @p w after @p lead goes past the end, or after a \N.
+    auto fit = [&](int lead, int w) {
+        if (!wrap || x <= line_left) { break_next = false; return; }
+        if (break_next || x + lead + w > wrap_right) new_line();
+    };
+    // A run of the text, broken where it reaches the end (after the last
+    // space when that is inside a word; anywhere between CJK characters),
+    // and after each \N.
+    auto add_run = [&](size_t a, size_t b) {
+        while (a < b) {
+            if (wrap && break_next && x > line_left) new_line();
+            break_next = false;
+            size_t end = b;
+            if (wrap) {
+                auto hard = text.find("\\N", a);
+                if (hard != std::string::npos && hard + 2 <= b) end = hard + 2;
+                auto part = shown(a, end);
+                wxArrayInt widths;
+                dc.GetPartialTextExtents(part, widths);
+                int avail = wrap_right - x;
+                if (!widths.empty() && widths.Last() > avail) {
+                    size_t fit_end = a, unit = 0;
+                    for (size_t i = a; i < end;) {
+                        size_t n = utf8_length(text[i]);
+                        // a wxString unit each, two for one past the BMP where wchar_t is 16 bits
+                        size_t units = sizeof(wchar_t) == 2 && n == 4 ? 2 : 1;
+                        if (unit + units > widths.size() || widths[unit + units - 1] > avail) break;
+                        unit += units; i += n; fit_end = i;
+                    }
+                    if (fit_end == a) {
+                        if (x > line_left) { new_line(); continue; }
+                        fit_end = std::min(end, a + utf8_length(text[a])); // not even one fits: it goes alone
+                    }
+                    else if (fit_end < end && word_char(text[fit_end]) && word_char(text[fit_end - 1])) {
+                        auto space = text.rfind(' ', fit_end - 1);
+                        if (space != std::string::npos && space >= a) fit_end = space + 1;
+                        else if (x > line_left) { new_line(); continue; } // the word from the next line
+                    }
+                    end = fit_end;
+                }
+            }
+            TextPiece tp;
+            tp.begin = a; tp.end = end;
+            tp.left = x; tp.right = x + run_width(a, end);
+            tp.changed = touched(a, end);
+            tp.line = line;
+            out.push_back(tp);
+            x = tp.right;
+            bool hard_break = end >= a + 2 && text.compare(end - 2, 2, "\\N") == 0;
+            a = end;
+            if (wrap && a < b && !hard_break) new_line();
+            else if (wrap && hard_break) break_next = true;
+        }
+    };
     int mode = full ? 0 : ed.TagMode();
     if (mode == 0) {
-        TextPiece run;
-        run.end = limit;
-        run.left = x;
-        run.right = x + run_width(0, limit);
-        run.changed = touched(0, limit);
-        out.push_back(run);
+        if (wrap) add_run(0, limit);
+        else {
+            TextPiece run;
+            run.end = limit;
+            run.left = x;
+            run.right = x + run_width(0, limit);
+            run.changed = touched(0, limit);
+            out.push_back(run);
+        }
         return out;
     }
     tag_chips::Metrics m(dc);
@@ -1093,38 +1233,49 @@ std::vector<DiffPane::TextPiece> DiffPane::LayText(wxDC& dc, size_t entry, int x
             if (mode == 2) {
                 // Hidden, but a changed block keeps a mark where it was.
                 tp.kind = TextPiece::Gap;
+                int w = tp.changed ? 4 : 0;
+                if (w) fit(0, w);
                 tp.left = x;
-                tp.right = x + (tp.changed ? 4 : 0);
+                tp.right = x + w;
             }
             else {
                 tp.kind = TextPiece::Chip;
-                tp.left = x + m.spacing / 2;
-                tp.right = tp.left + ed.chips_painter.Width(dc, m, piece);
-                tp.right = std::max(tp.right, tp.left + 1);
+                int icons = std::max(1, ed.chips_painter.Width(dc, m, piece));
                 // A changed block says what changed in it after its icons.
                 if (tp.changed) tp.values = ChangedValues(entry, piece);
+                int values = 0;
                 if (!tp.values.empty()) {
-                    tp.values_left = tp.right + 4;
                     dc.SetFont(ed.small_font);
-                    tp.right = tp.values_left + dc.GetTextExtent(tp.values).GetWidth() + 4;
+                    values = 4 + dc.GetTextExtent(tp.values).GetWidth() + 4;
                     dc.SetFont(GetFont());
                 }
+                fit(m.spacing / 2, icons + values + m.spacing / 2);
+                tp.left = x + m.spacing / 2;
+                tp.right = tp.left + icons;
+                if (values) { tp.values_left = tp.right + 4; tp.right += values; }
             }
+            tp.line = line;
             x = tp.right + (tp.kind == TextPiece::Chip ? m.spacing / 2 : 0);
+            out.push_back(std::move(tp));
         }
         else if (piece.drawing_points >= 0) {
             tp.kind = TextPiece::Label;
             tp.label = tag_summary::PlainText(piece);
+            int w = dc.GetTextExtent(tp.label).GetWidth();
+            fit(0, w);
             tp.left = x;
-            tp.right = x + dc.GetTextExtent(tp.label).GetWidth();
+            tp.right = x + w;
+            tp.line = line;
             x = tp.right;
+            out.push_back(std::move(tp));
         }
+        else if (wrap) add_run(tp.begin, tp.end);
         else {
             tp.left = x;
             tp.right = x + run_width(tp.begin, tp.end);
             x = tp.right;
+            out.push_back(std::move(tp));
         }
-        out.push_back(std::move(tp));
     }
     return out;
 }
@@ -1178,16 +1329,24 @@ wxString DiffPane::ChangedValues(size_t entry, tag_summary::Piece const& block) 
     return out;
 }
 
-int DiffPane::DrawText(wxDC& dc, size_t entry, int x, int y, bool highlight, bool lost, bool full) {
+int DiffPane::DrawText(wxDC& dc, size_t entry, int x, int y0, bool highlight, bool lost, bool full, int wrap_right, int* end_line) {
     auto const& p = ed.pal;
     auto const& e = ed.state.Entries()[entry];
     auto const& text = e.Get(side)->Value(model::Text);
     auto const& spans = side == Side::Left ? e.text.left : e.text.right;
     wxColour hl = side == Side::Right ? p.ins_char : p.del_char;
     wxColour mark_bg = lost ? mix(hl, p.bg, 0.5) : hl;
-    int text_y = y + (ed.row_h - dc.GetCharHeight()) / 2;
-    auto pieces = LayText(dc, entry, x, highlight, full);
+    auto pieces = LayText(dc, entry, x, highlight, full, wrap_right);
+    int rh = ed.row_h;
     for (auto const& tp : pieces) {
+        // each wrapped line as tall as a row of one line, a pitch apart
+        int y = y0 + tp.line * ed.line_pitch;
+        int text_y = y + (rh - dc.GetCharHeight()) / 2;
+        auto strike = [&](int x0, int x1) {
+            if (!lost || x1 <= x0) return;
+            dc.SetPen(wxPen(p.dim));
+            dc.DrawLine(x0, y + rh / 2, x1, y + rh / 2);
+        };
         if (tp.kind == TextPiece::Run) {
             // The text itself, its changed tokens on the highlight colour.
             int px = tp.left;
@@ -1199,7 +1358,7 @@ int DiffPane::DrawText(wxDC& dc, size_t entry, int x, int y, bool highlight, boo
                 if (mark) {
                     dc.SetPen(*wxTRANSPARENT_PEN);
                     dc.SetBrush(wxBrush(mark_bg));
-                    dc.DrawRectangle(px, y + 3, std::max(w, 3), ed.row_h - 6);
+                    dc.DrawRectangle(px, y + 3, std::max(w, 3), rh - 6);
                 }
                 dc.SetTextForeground(lost ? p.dim : p.text);
                 dc.wxDC::DrawText(part, px, text_y);
@@ -1216,6 +1375,7 @@ int DiffPane::DrawText(wxDC& dc, size_t entry, int x, int y, bool highlight, boo
                 }
             }
             draw(pos, tp.end, false);
+            strike(tp.left, tp.right);
             continue;
         }
         if (tp.changed && !tp.values.empty()) {
@@ -1224,18 +1384,18 @@ int DiffPane::DrawText(wxDC& dc, size_t entry, int x, int y, bool highlight, boo
             // this side's highlight.
             tag_chips::Metrics m(dc);
             wxColour back = ed.RowColour(entry, side);
-            int chip_y = y + (ed.row_h - m.height) / 2 - 1;
+            int chip_y = y + (rh - m.height) / 2 - 1;
             int icons_right = tp.values_left - 4;
             dc.SetTextForeground(lost ? p.dim : p.text);
             ed.chips_painter.Draw(dc, *tp.block, tp.left, icons_right, chip_y, m, back);
-            flat::DrawOutline(dc, wxRect(tp.left - 2, y + 3, tp.right - tp.left + 4, ed.row_h - 6), 3, 1, mix(p.mod_mark, back, lost ? 0.6 : 0.2));
+            flat::DrawOutline(dc, wxRect(tp.left - 2, y + 3, tp.right - tp.left + 4, rh - 6), 3, 1, mix(p.mod_mark, back, lost ? 0.6 : 0.2));
             dc.SetFont(ed.small_font);
             int vw = dc.GetTextExtent(tp.values).GetWidth();
             dc.SetPen(*wxTRANSPARENT_PEN);
             dc.SetBrush(wxBrush(mark_bg));
-            dc.DrawRoundedRectangle(tp.values_left - 2, y + 6, vw + 4, ed.row_h - 12, 2);
+            dc.DrawRoundedRectangle(tp.values_left - 2, y + 6, vw + 4, rh - 12, 2);
             dc.SetTextForeground(lost ? p.dim : p.text);
-            dc.wxDC::DrawText(tp.values, tp.values_left, y + (ed.row_h - dc.GetCharHeight()) / 2);
+            dc.wxDC::DrawText(tp.values, tp.values_left, y + (rh - dc.GetCharHeight()) / 2);
             dc.SetFont(GetFont());
             continue;
         }
@@ -1243,26 +1403,110 @@ int DiffPane::DrawText(wxDC& dc, size_t entry, int x, int y, bool highlight, boo
             // A changed block (or drawing) is marked as a whole.
             dc.SetPen(*wxTRANSPARENT_PEN);
             dc.SetBrush(wxBrush(mark_bg));
-            if (tp.kind == TextPiece::Gap) dc.DrawRectangle(tp.left + 1, y + 3, 3, ed.row_h - 6);
-            else dc.DrawRoundedRectangle(tp.left - 2, y + 3, tp.right - tp.left + 4, ed.row_h - 6, 3);
+            if (tp.kind == TextPiece::Gap) dc.DrawRectangle(tp.left + 1, y + 3, 3, rh - 6);
+            else dc.DrawRoundedRectangle(tp.left - 2, y + 3, tp.right - tp.left + 4, rh - 6, 3);
         }
         if (tp.kind == TextPiece::Label) {
             dc.SetTextForeground(lost ? p.dim : mix(p.text, p.bg, 0.4));
             dc.wxDC::DrawText(tp.label, tp.left, text_y);
+            strike(tp.left, tp.right);
         }
         else if (tp.kind == TextPiece::Chip) {
             tag_chips::Metrics m(dc);
             wxColour back = tp.changed ? mark_bg : ed.ShownDiff(entry) ? ed.RowColour(entry, side) : p.bg;
             dc.SetTextForeground(lost ? p.dim : p.text);
-            ed.chips_painter.Draw(dc, *tp.block, tp.left, tp.right, y + (ed.row_h - m.height) / 2 - 1, m, back);
+            ed.chips_painter.Draw(dc, *tp.block, tp.left, tp.right, y + (rh - m.height) / 2 - 1, m, back);
         }
     }
+    if (end_line) *end_line = pieces.empty() ? 0 : pieces.back().line;
     return pieces.empty() ? x : pieces.back().right;
 }
 
 int DiffPane::TextX(Geometry const& g) const {
     int time_w = ed.time_w + (side == Side::Right ? ed.delta_w : 0);
-    return g.content_x + 6 - xoff + time_w * 2 + ed.style_w + ed.actor_w;
+    auto [style_w, actor_w] = LabelColumns();
+    return g.content_x + 6 - xoff + time_w * 2 + style_w + actor_w;
+}
+
+std::pair<int, int> DiffPane::LabelColumns() const {
+    auto g = Geo();
+    int time_w = ed.time_w + (side == Side::Right ? ed.delta_w : 0);
+    int room = g.content_right - g.content_x - 6 - time_w * 2;
+    int text_min = std::max(ed.char_w * 16, room * 45 / 100);
+    int style_w = ed.style_w, actor_w = ed.actor_w, over = style_w + actor_w - (room - text_min);
+    if (over <= 0 || style_w + actor_w == 0) return {style_w, actor_w};
+    // shared between the two as they are wide, each kept to a few characters
+    int least = ed.char_w * 6 + 16;
+    int cut_s = style_w ? std::min(style_w - std::min(style_w, least), over * style_w / (style_w + actor_w)) : 0;
+    int cut_a = actor_w ? std::min(actor_w - std::min(actor_w, least), over - cut_s) : 0;
+    return {style_w - cut_s, actor_w - cut_a};
+}
+
+int DiffPane::TextRight(Geometry const& g) const {
+    // short of the pane's end, and of the current difference's card there
+    return g.content_right - (side == Side::Right ? ed.card_inset : 0) - 8;
+}
+
+int DiffPane::DetailX(Geometry const& g) const { return g.content_x + 6 - xoff + ed.label_w; }
+
+std::vector<DiffPane::Trail> DiffPane::Trailing(size_t entry) const {
+    // The other changed fields as one quiet chip: the field and its value when
+    // it is the only one, otherwise how many (the tooltip and the detail rows
+    // list them).
+    std::vector<Trail> out;
+    auto const& e = ed.state.Entries()[entry];
+    auto const& line = *e.Get(side);
+    model::Fields shown = ed.ShownFields(entry);
+    bool diff = ed.ShownDiff(entry);
+    auto lost = [&](model::Field f) {
+        if (!diff) return false;
+        auto winner = ed.state.Winner(entry, f);
+        return winner && *winner != side && (e.change != Change::Modified || (shown & f));
+    };
+    std::vector<model::Field> others;
+    for (auto f : view::FieldOrder())
+        if (!is_column(f) && (shown & f)) others.push_back(f);
+    bool all_lost = !others.empty() && std::all_of(others.begin(), others.end(), lost);
+    if (others.size() == 1) {
+        auto f = others[0];
+        wxString label = f == model::Comment ? (line.comment ? _("Comment") : _("Not a comment"))
+            : field_label(f) + ": " + one_line(line.Value(f), 60);
+        out.push_back({label, all_lost, all_lost});
+    }
+    else if (others.size() > 1) out.push_back({fmt_tl("+%d fields", (int)others.size()), all_lost, all_lost});
+    if (line.comment && !(shown & model::Comment)) out.push_back({_("Comment"), true, false});
+    return out;
+}
+
+int DiffPane::PlaceTrailing(wxDC& dc, std::vector<Trail> const& chips, int x, int line, int left, int right,
+    std::function<void(Trail const&, int, int, int)> const& place) const
+{
+    dc.SetFont(ed.small_font);
+    bool wrap = right > left + ed.char_w * 4;
+    for (auto const& chip : chips) {
+        int w = dc.GetTextExtent(chip.label).GetWidth() + 10;
+        x += 8;
+        if (wrap && x > left + 8 && x + w > right) { ++line; x = left; }
+        if (place) place(chip, x, line, w);
+        x += w;
+    }
+    dc.SetFont(GetFont());
+    return line;
+}
+
+int DiffPane::RowLines(wxDC& dc, int row) const {
+    auto const& lr = ed.layout[row];
+    if (lr.IsFold() || lr.IsFoot() || !ed.state.Entries()[lr.entry].Get(side)) return 1;
+    auto g = Geo();
+    if (lr.IsDetail()) {
+        if (*lr.field != model::Text) return 1;
+        auto pieces = LayText(dc, lr.entry, DetailX(g), true, true, TextRight(g));
+        return pieces.empty() ? 1 : pieces.back().line + 1;
+    }
+    int text_x = TextX(g), right = TextRight(g);
+    auto pieces = LayText(dc, lr.entry, text_x, ed.ShownFields(lr.entry) & model::Text, false, right);
+    int x = pieces.empty() ? text_x : pieces.back().right, line = pieces.empty() ? 0 : pieces.back().line;
+    return PlaceTrailing(dc, Trailing(lr.entry), x, line, text_x, right, nullptr) + 1;
 }
 
 const tag_summary::Piece* DiffPane::BlockAt(int row, wxPoint pt) {
@@ -1298,7 +1542,8 @@ int DiffPane::DrawLine(wxDC& dc, Geometry const& g, size_t entry, int y) {
     auto const& p = ed.pal;
     auto const& e = ed.state.Entries()[entry];
     auto const& line = *e.Get(side);
-    wxDCClipper clip(dc, wxRect(g.content_x, y, std::max(0, g.content_right - g.content_x), ed.row_h));
+    int row_h_all = ed.RowH(ed.row_of[entry]);
+    wxDCClipper clip(dc, wxRect(g.content_x, y, std::max(0, g.content_right - g.content_x), row_h_all));
     int x = g.content_x + 6 - xoff;
     int text_y = y + (ed.row_h - dc.GetCharHeight()) / 2;
     model::Fields shown = ed.ShownFields(entry);
@@ -1323,6 +1568,8 @@ int DiffPane::DrawLine(wxDC& dc, Geometry const& g, size_t entry, int y) {
         {
             wxDCClipper inner(dc, wxRect(x, y, std::max(0, width - 4), ed.row_h));
             dc.SetFont(changed ? ed.bold_font : GetFont());
+            // a style or an actor cut short where its column is narrowed
+            if (f == model::Style || f == model::Actor) value = wxControl::Ellipsize(value, dc, wxELLIPSIZE_END, std::max(0, width - 10));
             dc.SetTextForeground(lost(f) ? p.dim : changed ? p.text : p.gutter_text);
             dc.wxDC::DrawText(value, x, text_y);
             int w = std::min(width - 8, dc.GetTextExtent(value).GetWidth());
@@ -1340,43 +1587,29 @@ int DiffPane::DrawLine(wxDC& dc, Geometry const& g, size_t entry, int y) {
     int time_w = ed.time_w + (side == Side::Right ? ed.delta_w : 0);
     cell(model::Start, time_w);
     cell(model::End, time_w);
-    if (ed.style_w) cell(model::Style, ed.style_w);
-    if (ed.actor_w) cell(model::Actor, ed.actor_w);
+    auto [style_w, actor_w] = LabelColumns();
+    if (style_w) cell(model::Style, style_w);
+    if (actor_w) cell(model::Actor, actor_w);
 
-    int text_x = x;
-    x = DrawText(dc, entry, x, y, shown & model::Text, lost(model::Text));
-    if (lost(model::Text) && x > text_x) strike(text_x, x);
+    // The text, wrapping onto lines of its own under it.
+    int text_x = x, right = TextRight(g), text_line = 0;
+    x = DrawText(dc, entry, x, y, shown & model::Text, lost(model::Text), false, right, &text_line);
 
-    // The other changed fields as one quiet chip: the field and its value when
-    // it is the only one, otherwise how many (the tooltip and the detail rows
-    // list them).
-    dc.SetFont(ed.small_font);
-    int chip_y = y + 4, chip_h = ed.row_h - 8;
-    auto chip = [&](wxString const& label, wxColour const& fore, bool struck) {
-        auto w = dc.GetTextExtent(label).GetWidth() + 10;
-        x += 8;
+    // Then its other changed fields and its being a comment, as quiet chips.
+    int end = x;
+    PlaceTrailing(dc, Trailing(entry), x, text_line, text_x, right, [&](Trail const& t, int cx, int line_no, int w) {
+        int chip_y = y + line_no * ed.line_pitch + 4, chip_h = ed.row_h - 8;
+        dc.SetFont(ed.small_font);
         dc.SetPen(wxPen(p.border));
         dc.SetBrush(wxBrush(p.gutter));
-        dc.DrawRoundedRectangle(x, chip_y, w, chip_h, 3);
-        dc.SetTextForeground(fore);
-        dc.wxDC::DrawText(label, x + 5, chip_y + (chip_h - dc.GetCharHeight()) / 2);
-        if (struck) strike(x + 3, x + w - 3);
-        x += w;
-    };
-    std::vector<model::Field> others;
-    for (auto f : view::FieldOrder())
-        if (!is_column(f) && (shown & f)) others.push_back(f);
-    bool all_lost = !others.empty() && std::all_of(others.begin(), others.end(), lost);
-    if (others.size() == 1) {
-        auto f = others[0];
-        wxString label = f == model::Comment ? (line.comment ? _("Comment") : _("Not a comment"))
-            : field_label(f) + ": " + one_line(line.Value(f), 60);
-        chip(label, all_lost ? p.dim : p.text, all_lost);
-    }
-    else if (others.size() > 1) chip(fmt_tl("+%d fields", (int)others.size()), all_lost ? p.dim : p.text, all_lost);
-    if (line.comment && !(shown & model::Comment)) chip(_("Comment"), p.gutter_text, false);
+        dc.DrawRoundedRectangle(cx, chip_y, w, chip_h, 3);
+        dc.SetTextForeground(t.struck ? p.dim : t.quiet && !t.struck ? p.gutter_text : p.text);
+        dc.wxDC::DrawText(t.label, cx + 5, chip_y + (chip_h - dc.GetCharHeight()) / 2);
+        if (t.struck) { dc.SetPen(wxPen(p.dim)); dc.DrawLine(cx + 3, chip_y + chip_h / 2, cx + w - 3, chip_y + chip_h / 2); }
+        end = cx + w;
+    });
     dc.SetFont(GetFont());
-    return x;
+    return end;
 }
 
 void DiffPane::DrawCard(wxDC& dc, Geometry const& g, int row, int y) {
@@ -1384,8 +1617,8 @@ void DiffPane::DrawCard(wxDC& dc, Geometry const& g, int row, int y) {
     // edge and on over its inner one into the gutter, which carries it on.
     auto const& p = ed.pal;
     auto [first, last] = ed.CardRows();
-    int rh = ed.row_h, r = ed.card_radius;
-    int y0 = y - (row - first) * rh + 2, y1 = y + (last - row + 1) * rh - 2;
+    int rh = ed.RowH(row), r = ed.card_radius;
+    int y0 = y - (ed.RowY(row) - ed.RowY(first)) + 2, y1 = y + (ed.RowY(last + 1) - ed.RowY(row)) - 2;
     int over = r + 4; // past the inner edge, so no corner shows there
     wxRect card = side == Side::Left ? wxRect(ed.card_inset, y0, g.width - ed.card_inset + over, y1 - y0)
         : wxRect(-over, y0, g.width - ed.card_inset + over, y1 - y0);
@@ -1422,7 +1655,7 @@ void DiffPane::DrawDetail(wxDC& dc, Geometry const& g, int row, int y) {
     {
         int inner = side == Side::Left ? ed.card_inset + 1 : 0;
         int inner_right = side == Side::Right ? g.width - ed.card_inset - 1 : g.width;
-        wxDCClipper clip(dc, wxRect(inner, y, std::max(0, inner_right - inner), ed.row_h));
+        wxDCClipper clip(dc, wxRect(inner, y, std::max(0, inner_right - inner), ed.RowH(row)));
         int x = g.content_x + 6 - xoff;
         int text_y = y + (ed.row_h - dc.GetCharHeight()) / 2;
         dc.SetFont(ed.small_font);
@@ -1433,8 +1666,7 @@ void DiffPane::DrawDetail(wxDC& dc, Geometry const& g, int row, int y) {
         x += ed.label_w;
         if (f == model::Text) {
             // In full: the tags themselves are what is told apart here.
-            int end = DrawText(dc, entry, x, y, true, lost, true);
-            if (lost && end > x) { dc.SetPen(wxPen(p.dim)); dc.DrawLine(x, y + ed.row_h / 2, end, y + ed.row_h / 2); }
+            DrawText(dc, entry, x, y, true, lost, true, TextRight(g));
         }
         else {
             wxString value = f == model::Comment ? (line.comment ? _("Comment") : _("Not a comment")) : one_line(line.Value(f), 400);
@@ -1456,7 +1688,7 @@ void DiffPane::DrawDetail(wxDC& dc, Geometry const& g, int row, int y) {
         int x1 = side == Side::Right ? g.width - ed.card_inset - 3 : g.width - 2;
         dc.SetPen(wxPen(p.accent, 2));
         dc.SetBrush(*wxTRANSPARENT_BRUSH);
-        dc.DrawRoundedRectangle(x0, y + 2, x1 - x0, ed.row_h - 4, 3);
+        dc.DrawRoundedRectangle(x0, y + 2, x1 - x0, ed.RowH(row) - 4, 3);
     }
 }
 
@@ -1552,8 +1784,9 @@ void DiffHeader::OnPaint(wxPaintEvent&) {
     auto column = [&](model::Field f, int width) { dc.DrawText(field_label(f), x, y); x += width; };
     column(model::Start, time_w);
     column(model::End, time_w);
-    if (ed.style_w) column(model::Style, ed.style_w);
-    if (ed.actor_w) column(model::Actor, ed.actor_w);
+    auto [style_w, actor_w] = pane->LabelColumns();
+    if (style_w) column(model::Style, style_w);
+    if (actor_w) column(model::Actor, actor_w);
     column(model::Text, 0);
     // The columns left out, at the end of the names, where the text column
     // leaves room for it.
@@ -1596,11 +1829,7 @@ int DiffGutter::Offset(Side side) const {
 }
 
 int DiffGutter::RowAt(Side side, int y) const {
-    auto pane = ed.PaneFor(side);
-    y -= Offset(side);
-    if (y < 0 || y >= pane->ViewHeight()) return -1;
-    int row = pane->Top() + y / ed.row_h;
-    return row < (int)ed.layout.size() ? row : -1;
+    return ed.PaneFor(side)->RowAt(y - Offset(side));
 }
 
 namespace {
@@ -1626,12 +1855,12 @@ void DiffGutter::OnPaint(wxPaintEvent&) {
     if (!rows) return;
     auto pane_rows = [&](Side s) {
         auto pane = ed.PaneFor(s);
-        return std::make_pair(pane->Top(), std::min(rows, pane->Top() + pane->ViewHeight() / rh + 2));
+        return std::make_pair(pane->Top(), std::min(rows, pane->Top() + pane->VisibleRows() + 1));
     };
     auto [left_first, left_last] = pane_rows(Side::Left);
     auto [right_first, right_last] = pane_rows(Side::Right);
     int off_l = Offset(Side::Left), off_r = Offset(Side::Right);
-    auto y_of = [&](Side s, int row) { return (s == Side::Left ? off_l : off_r) + (row - ed.PaneFor(s)->Top()) * rh; };
+    auto y_of = [&](Side s, int row) { return (s == Side::Left ? off_l : off_r) + ed.RowY(row) - ed.RowY(ed.PaneFor(s)->Top()); };
 
     // The lane between the numbers: the colour of added and removed runs
     // and of the current difference, carried from one side to the other,
@@ -1655,6 +1884,7 @@ void DiffGutter::OnPaint(wxPaintEvent&) {
             bool diff = !lr.IsFold() && ed.ShownDiff(lr.entry);
             if (!diff && !lr.IsFold()) continue;
             int yl = y_of(Side::Left, row), yr = y_of(Side::Right, row);
+            rh = ed.RowH(row);
             if (in_card) {
                 // The card goes on across the lane, its edges and shadow too.
                 int top_in = row == card_first ? 2 : 0, bottom_in = row == card_last ? 2 : 0;
@@ -1728,7 +1958,8 @@ void DiffGutter::DrawMark(wxDC& dc, int row, int y) {
     // sides to choose from, the chosen one filled.
     auto const& p = ed.pal;
     auto c = Cols();
-    int rh = ed.row_h;
+    // the choices on the first line of a wrapped row, the stroke down all of it
+    int rh = ed.row_h, full_h = ed.RowH(row);
     auto const& lr = ed.layout[row];
     if (lr.IsFold() || lr.IsFoot() || !ed.ShownDiff(lr.entry)) return;
     auto const& e = ed.state.Entries()[lr.entry];
@@ -1770,7 +2001,7 @@ void DiffGutter::DrawMark(wxDC& dc, int row, int y) {
         wxColour c_mark = e.change == Change::Modified ? p.mod_mark : e.change == Change::Inserted ? p.ins_mark : p.del_mark;
         dc.SetPen(*wxTRANSPARENT_PEN);
         dc.SetBrush(wxBrush(c_mark));
-        dc.DrawRoundedRectangle(mid - 2, y + 4, 4, rh - 8, 2);
+        dc.DrawRoundedRectangle(mid - 2, y + 4, 4, full_h - 8, 2);
     }
     else if (d == Decision::Partial) {
         int r = std::max(4, arrow / 2 + 1);
@@ -1799,7 +2030,8 @@ void DiffGutter::DrawStrip(wxDC& dc, Side side, int row, int y) {
     // box where it is pointed at, checked, or while a selection is made.
     auto const& p = ed.pal;
     auto c = Cols();
-    int rh = ed.row_h;
+    // filled down the whole row, the number on its first line
+    int rh = ed.RowH(row), line_h = ed.row_h;
     bool left = side == Side::Left;
     int x0 = left ? c.left_number : c.right_number, w = ed.number_w;
     auto const& lr = ed.layout[row];
@@ -1844,11 +2076,11 @@ void DiffGutter::DrawStrip(wxDC& dc, Side side, int row, int y) {
         dc.SetBrush(wxBrush(p.hover));
         dc.DrawRectangle(x0, y, w, rh);
     }
-    int text_y = y + (rh - dc.GetCharHeight()) / 2;
+    int text_y = y + (line_h - dc.GetCharHeight()) / 2;
     bool hovering_check = row == hover_row && hover_part == Part::Check;
     if (!left && diff && !detail && (ed.state.Checked(lr.entry) || ed.Selecting() || hovering_check)) {
-        int s = std::min(FromDIP(14), rh - 8);
-        flat::DrawCheck(dc, this, wxRect(x0 + (w - s) / 2, y + (rh - s) / 2, s, s),
+        int s = std::min(FromDIP(14), line_h - 8);
+        flat::DrawCheck(dc, this, wxRect(x0 + (w - s) / 2, y + (line_h - s) / 2, s, s),
             ed.state.Checked(lr.entry) ? 1 : 0, flat::Colours(this));
     }
     else if (!detail && e.Get(side)) {
@@ -1987,7 +2219,7 @@ ComparePanel::ComparePanel(wxWindow* parent, agi::Context *c, SubtitleComparison
     bar->Add(stats, wxSizerFlags().Center().Border(wxLEFT | wxRIGHT, 3 * gap));
     undo = add(ID_UNDO, {}, _("Undo the last decision (Ctrl+Z)"), "compare-undo", FlatGlyph::Undo);
     redo = add(ID_REDO, {}, _("Redo (Ctrl+Y)"), "compare-redo", FlatGlyph::Redo);
-    more_button = make(wxID_ANY, wxString::FromUTF8("⋯"), _("How the lines are shown: override tags, scrolling"), "compare-more");
+    more_button = make(wxID_ANY, wxString::FromUTF8("⋯"), _("How the lines are shown: override tags, scrolling, text size"), "compare-more");
     bar->Add(more_button, wxSizerFlags().Center());
 
     // The filters' panel, dropped from its button: one kind of difference at
@@ -2050,6 +2282,30 @@ ComparePanel::ComparePanel(wxWindow* parent, agi::Context *c, SubtitleComparison
     sync_box->SetName("compare-sync"); sync_box->SetValue(true);
     sync_box->SetToolTip(_("Scroll both sides together. When off, each side scrolls on its own and selecting a line locates it on the other side."));
     view_popup->items->Add(sync_box, wxSizerFlags().Border(wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(8)));
+    // The lines' text size (Ctrl with the wheel, +, - or 0 too).
+    view_popup->Heading(_("Text size"));
+    auto size_row = new wxBoxSizer(wxHORIZONTAL);
+    auto size_button = [&](wxString const& label, wxString const& tip, char const* name) {
+        auto b = new FlatButton(vp, label);
+        b->SetToolTip(tip);
+        b->SetName(name);
+        b->SetLeastSize(wxSize(FromDIP(28), FromDIP(26)));
+        return b;
+    };
+    font_smaller = size_button(wxString::FromUTF8("−"), _("Smaller text (Ctrl+-)"), "compare-font-smaller");
+    font_larger = size_button("+", _("Larger text (Ctrl+=)"), "compare-font-larger");
+    font_reset = size_button(_("Reset"), _("The page's own text size (Ctrl+0)"), "compare-font-reset");
+    font_size_label = new wxStaticText(vp, -1, "", wxDefaultPosition, wxDefaultSize, wxALIGN_CENTRE_HORIZONTAL | wxST_NO_AUTORESIZE);
+    font_size_label->SetName("compare-font-size");
+    font_size_label->SetMinSize(wxSize(font_size_label->GetTextExtent(fmt_tl("%d pt (default)", 88)).GetWidth() + FromDIP(8), -1));
+    size_row->Add(font_smaller, wxSizerFlags().Center());
+    size_row->Add(font_size_label, wxSizerFlags().Center().Border(wxLEFT | wxRIGHT, FromDIP(4)));
+    size_row->Add(font_larger, wxSizerFlags().Center().Border(wxRIGHT, FromDIP(8)));
+    size_row->Add(font_reset, wxSizerFlags().Center());
+    view_popup->items->Add(size_row, wxSizerFlags().Border(wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(8)));
+    font_smaller->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { Zoom(-1); });
+    font_larger->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { Zoom(1); });
+    font_reset->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { Zoom(0); });
     more_button->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { view_popup->Toggle(); });
 
     // The sheet: each side's role and file, the swap between them, the
@@ -2100,8 +2356,8 @@ ComparePanel::ComparePanel(wxWindow* parent, agi::Context *c, SubtitleComparison
     hint->SetBackgroundColour(pal.bg);
     hint->Hide();
     hint->Bind(wxEVT_MOUSEWHEEL, [this](wxMouseEvent& e) { right->Wheel(e); });
-    auto left_header = new DiffHeader(sheet, *this, left);
-    auto right_header = new DiffHeader(sheet, *this, right);
+    left_header = new DiffHeader(sheet, *this, left);
+    right_header = new DiffHeader(sheet, *this, right);
     left->SetHeader(left_header);
     right->SetHeader(right_header);
     int title_h = swap->GetBestSize().GetHeight() + 2 * gap;
@@ -2202,7 +2458,9 @@ ComparePanel::ComparePanel(wxWindow* parent, agi::Context *c, SubtitleComparison
     SetName("compare-page");
     SetSizer(main_sizer);
 
-    Measure();
+    pane_font = GetFont();
+    ApplyFontSize(true);
+    font_size_changed = OPT_SUB("Subtitle/Compare/Font Size", [this](agi::OptionValue const&) { ApplyFontSize(); });
     // The right pane also holds the overview ruler and room for how far
     // times moved: it gets that much more width than the left one.
     left->SetMinSize(DipSize(320, 200));
@@ -2289,6 +2547,7 @@ ComparePanel::ComparePanel(wxWindow* parent, agi::Context *c, SubtitleComparison
     tag_mode_changed = OPT_SUB("Subtitle/Grid/Hide Overrides", [this](agi::OptionValue const& opt) {
         tags_switch->SetSelection(std::clamp<int>((int)opt.GetInt(), 0, 2));
         Measure();
+        MeasureRows();
         left->UpdateBars(); right->UpdateBars();
         left->Refresh(false); right->Refresh(false);
     });
@@ -2314,6 +2573,12 @@ bool ComparePanel::OnKey(wxKeyEvent& event) {
     if (key == WXK_ESCAPE && mods == wxMOD_NONE && field_cursor) { SetFieldCursor(std::nullopt); return true; }
     if ((key == WXK_F7 && mods == wxMOD_NONE) || (key == WXK_DOWN && mods == wxMOD_ALT)) { Go(1); return true; }
     if ((key == WXK_F7 && mods == wxMOD_SHIFT) || (key == WXK_UP && mods == wxMOD_ALT)) { Go(-1); return true; }
+    // Ctrl with +, - and 0: the lines' text larger, smaller, as the page's.
+    if (mods == wxMOD_CONTROL || mods == (wxMOD_CONTROL | wxMOD_SHIFT)) {
+        if (key == '=' || key == '+' || key == WXK_NUMPAD_ADD) { Zoom(1); return true; }
+        if (key == '-' || key == WXK_NUMPAD_SUBTRACT) { Zoom(-1); return true; }
+        if (key == '0' || key == WXK_NUMPAD0) { Zoom(0); return true; }
+    }
     // Alt+L and Alt+R decide the current difference wherever its card is.
     if (mods == wxMOD_ALT && (key == 'L' || key == 'R')) {
         if (auto e = CurrentEntry()) Decide(*e, key == 'R' ? Decision::Accepted : Decision::Rejected);
@@ -2348,13 +2613,15 @@ void ComparePanel::Started() {
 }
 
 void ComparePanel::Measure() {
+    if (!pane_font.IsOk()) pane_font = GetFont();
     wxClientDC dc(this);
-    dc.SetFont(GetFont());
+    dc.SetFont(pane_font);
     char_w = std::max(1, dc.GetCharWidth());
     int char_h = dc.GetCharHeight();
     row_h = std::max(28, char_h + 12);
-    small_font = GetFont().Smaller();
-    bold_font = GetFont().Bold();
+    line_pitch = char_h + 6;
+    small_font = pane_font.Smaller();
+    bold_font = pane_font.Bold();
     small_bold_font = small_font.Bold();
     size_t max_number = 1;
     int style = dc.GetTextExtent(_("Style")).GetWidth(), actor = 0, text = 0;
@@ -2417,6 +2684,61 @@ void ComparePanel::Measure() {
     label_w = 0;
     for (auto f : view::FieldOrder()) label_w = std::max(label_w, dc.GetTextExtent(field_label(f)).GetWidth());
     label_w += 14;
+    lines_key.clear();
+}
+
+void ComparePanel::MeasureRows() {
+    // Each row as tall as the more lines its text wraps onto on either side;
+    // a fold and the card's foot are one line.
+    wxClientDC dl(left), dr(right);
+    dl.SetFont(left->GetFont()); dr.SetFont(right->GetFont());
+    auto key = wxString::Format("%d %d %d %d %d %llu %d", left->GetClientSize().x, right->GetClientSize().x, TagMode(), row_h,
+        pane_font.GetPointSize(), (unsigned long long)filter.ignored, (int)state.ProjectSide());
+    if (key != lines_key) { lines_key = key; lines_cache.clear(); }
+    row_y.assign(layout.size() + 1, 0);
+    for (size_t r = 0; r < layout.size(); ++r) {
+        auto const& lr = layout[r];
+        int lines = 1;
+        if (lr.IsDetail()) lines = std::max(left->RowLines(dl, (int)r), right->RowLines(dr, (int)r));
+        else if (!lr.IsFold() && !lr.IsFoot()) {
+            auto it = lines_cache.find(lr.entry);
+            if (it == lines_cache.end())
+                it = lines_cache.emplace(lr.entry, std::make_pair(left->RowLines(dl, (int)r), right->RowLines(dr, (int)r))).first;
+            lines = std::max(it->second.first, it->second.second);
+        }
+        row_y[r + 1] = row_y[r] + row_h + (lines - 1) * line_pitch;
+    }
+}
+
+void ComparePanel::ApplyFontSize(bool starting) {
+    pane_font = GetFont();
+    int size = (int)OPT_GET("Subtitle/Compare/Font Size")->GetInt();
+    if (size > 0) pane_font.SetPointSize(size);
+    for (wxWindow* w : {static_cast<wxWindow*>(left), static_cast<wxWindow*>(right), static_cast<wxWindow*>(gutter),
+            static_cast<wxWindow*>(left_header), static_cast<wxWindow*>(right_header)}) {
+        w->SetFont(pane_font);
+        w->InvalidateBestSize();
+    }
+    Measure();
+    if (font_size_label) {
+        font_size_label->SetLabel(size > 0 ? fmt_tl("%d pt", size) : fmt_tl("%d pt (default)", GetFont().GetPointSize()));
+        font_smaller->Enable(pane_font.GetPointSize() > 6);
+        font_larger->Enable(pane_font.GetPointSize() < 32);
+        font_reset->Enable(size > 0);
+        view_popup->Refit();
+    }
+    if (starting) return;
+    gutter->SetMinSize(wxSize(gutter->Width(), 200));
+    sheet->Layout();
+    Relayout();
+    Changed();
+}
+
+void ComparePanel::Zoom(int steps) {
+    auto opt = OPT_SET("Subtitle/Compare/Font Size");
+    if (!steps) { opt->SetInt(0); return; }
+    int now = pane_font.IsOk() ? pane_font.GetPointSize() : GetFont().GetPointSize();
+    opt->SetInt(std::clamp(now + steps, 6, 32));
 }
 
 void ComparePanel::Relayout(std::optional<size_t> anchor) {
@@ -2458,6 +2780,7 @@ void ComparePanel::Relayout(std::optional<size_t> anchor) {
                 if (layout[r].entry == at_cursor->entry && layout[r].field == at_cursor->field) cursor_row = r;
     }
     if (cursor_row >= (int)layout.size()) cursor_row = (int)layout.size() - 1;
+    MeasureRows();
     int top_r = anchor ? row_of[*anchor] - off_r : 0;
     int top_l = anchor ? row_of[*anchor] - off_l : 0;
     right->SetView(top_r, right->XOffset());
@@ -2480,8 +2803,8 @@ std::pair<int, int> ComparePanel::CardRows() const {
 void ComparePanel::PlaceCard() {
     auto [first, foot] = CardRows();
     auto place = [&](DiffPane* pane, std::initializer_list<FlatButton*> buttons, bool from_right) {
-        int y = (foot - pane->Top()) * row_h;
-        bool shown = foot >= 0 && y >= 0 && y + row_h <= pane->ViewHeight();
+        int y = RowY(foot) - RowY(pane->Top());
+        bool shown = foot >= 0 && foot >= pane->Top() && y + row_h <= pane->ViewHeight();
         int h = row_h - 8;
         // from the gutter outwards
         int x = from_right ? pane->ColumnsRight() - 8 : pane->RowsX() + 8;
@@ -2499,7 +2822,7 @@ void ComparePanel::PlaceCard() {
     // the keys, after the reset to the pane's end
     int x = reset_current->GetRect().GetRight() + 1 + FromDIP(12);
     int w = right->ColumnsRight() - FromDIP(10) - x;
-    int y = (foot - right->Top()) * row_h;
+    int y = RowY(foot) - RowY(right->Top());
     bool shown = reset_current->IsShown() && w > FromDIP(40);
     if (shown) {
         int h = hint->GetBestSize().GetHeight();
@@ -2942,9 +3265,13 @@ std::vector<tag_summary::Piece> const& ComparePanel::Summary(std::string const& 
 }
 
 void ComparePanel::Scrolled(Side from) {
-    if (!sync) return;
-    auto src = PaneFor(from);
-    PaneFor(view::Other(from))->SetView(src->Top(), src->XOffset());
+    if (sync) {
+        auto src = PaneFor(from);
+        PaneFor(view::Other(from))->SetView(src->Top(), src->XOffset());
+    }
+    // Painted now, both sides and the gutter together, rather than each
+    // when the toolkit gets to it: in sync they would show apart a moment.
+    left->Update(); gutter->Update(); right->Update();
 }
 
 bool ComparePanel::ConfirmBatch(std::vector<size_t> const& entries, Decision d, bool all) {
