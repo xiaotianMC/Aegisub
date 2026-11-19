@@ -321,6 +321,8 @@ class FlatButton final : public wxWindow {
 	bool hover = false, pressed = false;
 	wxSize least;
 	FlatGlyph glyph = FlatGlyph::None;
+	bool menu_item = false;
+	wxString trailing;
 	agi::signal::Connection theme_changed;
 
 	void OnPaint(wxPaintEvent &);
@@ -337,6 +339,13 @@ public:
 	/// A line icon before the words, drawn in their colour so that it
 	/// follows the appearance and the accent fill
 	void SetGlyph(FlatGlyph new_glyph);
+	/// A row of a drop-down panel rather than a button: no field until
+	/// pointed at, the words at the left; the accent kind is the chosen row,
+	/// its words in the accent colour on a tint of it
+	void SetMenuItem(bool item);
+	/// Dim words at the right end, as a count after a choice
+	void SetTrailing(wxString const& text);
+	wxString GetTrailing() const { return trailing; }
 
 	/// Send wxEVT_BUTTON, as a click does
 	void Press();

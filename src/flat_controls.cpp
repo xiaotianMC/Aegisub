@@ -1150,6 +1150,20 @@ void FlatButton::SetLeastSize(wxSize size) {
 	InvalidateBestSize();
 }
 
+void FlatButton::SetMenuItem(bool item) {
+	if (menu_item == item) return;
+	menu_item = item;
+	InvalidateBestSize();
+	Refresh(false);
+}
+
+void FlatButton::SetTrailing(wxString const& text) {
+	if (trailing == text) return;
+	trailing = text;
+	InvalidateBestSize();
+	Refresh(false);
+}
+
 void FlatButton::SetLabel(wxString const& new_label) {
 	if (label == new_label) return;
 	label = new_label;
@@ -1225,6 +1239,7 @@ wxSize FlatButton::DoGetBestClientSize() const {
 	wxSize extent = shown.empty() ? wxSize(0, GetCharHeight()) : GetTextExtent(shown);
 	int icon = glyph_width(this, glyph, !shown.empty());
 	int pad = shown.empty() ? FromDIP(12) : FromDIP(20);
+	if (!trailing.empty()) pad += GetTextExtent(trailing).x + FromDIP(16);
 	return wxSize(std::max(least.x, extent.x + icon + pad), std::max({least.y, FromDIP(24), extent.y + FromDIP(8)}));
 }
 
@@ -1251,6 +1266,15 @@ void FlatButton::OnPaint(wxPaintEvent &) {
 		dc.SetBrush(wxBrush(lit ? theme::Mix(p.field, p.text, pressed ? 0.1 : 0.05) : p.field));
 		dc.SetPen(wxPen(HasFocus() ? p.accent : p.line, std::max(1, FromDIP(1))));
 	}
+	if (menu_item) {
+		// Nothing round it until pointed at or chosen; the chosen one tinted
+		wxColour under = GetParent()->GetBackgroundColour();
+		wxColour fill = accent ? theme::Mix(under, p.accent, 0.14) : under;
+		if (lit) fill = theme::Mix(fill, p.text, pressed ? 0.1 : 0.06);
+		dc.SetBrush(wxBrush(fill));
+		dc.SetPen(HasFocus() ? wxPen(p.accent, std::max(1, FromDIP(1))) : wxPen(fill));
+		ink = !IsEnabled() ? p.dim : accent ? p.accent : p.text;
+	}
 	dc.DrawRoundedRectangle(wxRect(wxPoint(0, 0), size), FromDIP(5));
 
 	dc.SetFont(GetFont());
@@ -1258,7 +1282,14 @@ void FlatButton::OnPaint(wxPaintEvent &) {
 	wxString shown = wxStripMenuCodes(label, wxStrip_Menu);
 	wxSize extent = shown.empty() ? wxSize(0, 0) : dc.GetTextExtent(shown);
 	int icon = glyph_width(this, glyph, !shown.empty());
-	int x = (size.x - extent.x - icon) / 2;
+	int x = menu_item ? FromDIP(10) : (size.x - extent.x - icon) / 2;
+	if (!trailing.empty()) {
+		wxSize t = dc.GetTextExtent(trailing);
+		dc.SetTextForeground(accent && menu_item ? ink : p.dim);
+		dc.DrawText(trailing, size.x - t.x - FromDIP(10), (size.y - t.y) / 2);
+		dc.SetTextForeground(ink);
+		if (!menu_item) x = (size.x - extent.x - icon - t.x - FromDIP(16)) / 2;
+	}
 	if (icon) {
 		double s = FromDIP(14);
 		draw_glyph(dc.GetGraphicsContext(), glyph, {double(x), (size.y - s) / 2}, s, ink);

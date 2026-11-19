@@ -54,6 +54,7 @@
 #include "preferences_base.h"
 #include "style_list.h"
 #include "status_info.h"
+#include <wx/popupwin.h>
 #include <wx/sashwin.h>
 #include <wx/checkbox.h>
 #include "include/aegisub/toolbar.h"
@@ -7167,8 +7168,18 @@ public:
     }
     void Exit(wxDialog*) override { }
 };
+// Found in the page or in a panel dropped from it (the filters, "⋯", Batch),
+// which wx counts as top-level and FindWindow leaves out.
+wxWindow* FindNamed(wxWindow* in, wxString const& name) {
+    if (auto w = in->FindWindow(name)) return w;
+    for (auto child : in->GetChildren()) {
+        if (child->IsTopLevel() && !dynamic_cast<wxPopupWindow*>(child)) continue;
+        if (auto w = FindNamed(child, name)) return w;
+    }
+    return nullptr;
+}
 template<class T = wxWindow> T* Named(wxWindow* dialog, char const* name) {
-    auto window = dynamic_cast<T*>(dialog->FindWindow(name));
+    auto window = dynamic_cast<T*>(FindNamed(dialog, name));
     EXPECT_NE(nullptr, window) << name;
     return window;
 }
@@ -7290,7 +7301,6 @@ TEST_F(ordinary_edit, compare_window_takes_only_the_chosen_fields) {
         // The current difference changed two fields: each gets a detail row
         // under it, with its own two sides to choose in the gutter's lane.
         auto gutter = dialog->FindWindow("compare-gutter"); ASSERT_NE(nullptr, gutter);
-        auto hint = Named<wxStaticText>(dialog, "compare-hint"); ASSERT_NE(nullptr, hint);
         auto mouse = [&](wxEventType type, int x, int y) {
             wxMouseEvent event(type); event.SetPosition({x, y}); event.SetEventObject(gutter);
             gutter->GetEventHandler()->ProcessEvent(event);
@@ -7299,7 +7309,7 @@ TEST_F(ordinary_edit, compare_window_takes_only_the_chosen_fields) {
         for (int y = 0; y < size.GetHeight(); y += 2)
             for (int x = 0; x < size.GetWidth() / 2; x += 2) {
                 mouse(wxEVT_MOTION, x, y);
-                auto h = hint->GetLabelText();
+                auto h = gutter->GetToolTipText(); // what the arrow under the pointer does
                 if (actor_y < 0 && h.Contains("Actor: take the left side")) { actor_x = x; actor_y = y; actor_tip = h; }
                 if (text_y < 0 && h.Contains("Text: take the left side")) text_y = y;
             }
@@ -7345,7 +7355,7 @@ TEST_F(ordinary_edit, compare_window_decides_detail_fields_by_keyboard) {
         button(dialog->FindWindow(wxID_OK), wxID_OK);
     });
     EXPECT_TRUE(RunCompare(c.get(), path));
-    EXPECT_NE(wxNOT_FOUND, resting.Find("Ctrl+Up/Down")) << resting;
+    EXPECT_TRUE(resting.StartsWith(wxString::FromUTF8("Ctrl+↑↓ picks a field"))) << resting;
     EXPECT_TRUE(first.StartsWith("Text: Ctrl+Left")) << first;
     EXPECT_TRUE(second.StartsWith("Actor: Ctrl+Left")) << second;
     EXPECT_EQ(second, clamped);
@@ -7363,13 +7373,16 @@ TEST_F(ordinary_edit, compare_window_decides_from_the_card_and_checks_from_the_g
         f.Events.front().Text = "baseline text";
         auto line = new AssDialogue; line->Text = "added"; line->Start = 9000; line->End = 9500; f.Events.push_back(*line);
     });
-    bool found_bar = false, found_check = false, reset_at_first = true, reset_after = false, toolbar_free = false;
+    bool found_bar = false, found_check = false, reset_at_first = true, reset_after = false, toolbar_free = false, keys_on_card = false;
     wxString after_bar, after_reset, checked;
     CompareHook hook([&](wxWindow* dialog) {
         auto left = dialog->FindWindow("compare-left"); ASSERT_NE(nullptr, left);
         auto right = dialog->FindWindow("compare-right"); ASSERT_NE(nullptr, right);
         auto gutter = dialog->FindWindow("compare-gutter"); ASSERT_NE(nullptr, gutter);
         auto hint = Named<wxStaticText>(dialog, "compare-hint"); ASSERT_NE(nullptr, hint);
+        // the keys on the card's foot, after its buttons
+        keys_on_card = hint->GetParent() == right && hint->IsShown() && hint->GetPosition().y > 0
+            && hint->GetLabelText().StartsWith("Ctrl+");
         auto mouse = [](wxWindow* w, wxEventType type, int x, int y) {
             wxMouseEvent event(type); event.SetPosition({x, y}); event.SetEventObject(w);
             w->GetEventHandler()->ProcessEvent(event);
@@ -7396,7 +7409,7 @@ TEST_F(ordinary_edit, compare_window_decides_from_the_card_and_checks_from_the_g
         for (int y = 0; y < gsize.GetHeight() && !found_check; y += 2)
             for (int x = gsize.GetWidth() / 2; x < gsize.GetWidth() && !found_check; x += 2) {
                 mouse(gutter, wxEVT_MOTION, x, y);
-                if (hint->GetLabelText().StartsWith("Select this difference")) {
+                if (gutter->GetToolTipText().StartsWith("Select this difference")) {
                     found_check = true;
                     mouse(gutter, wxEVT_LEFT_DOWN, x, y);
                     checked = Label(dialog, "compare-checked-count");
@@ -7406,6 +7419,7 @@ TEST_F(ordinary_edit, compare_window_decides_from_the_card_and_checks_from_the_g
     EXPECT_FALSE(RunCompare(c.get(), path));
     EXPECT_TRUE(toolbar_free);
     EXPECT_TRUE(found_bar);
+    EXPECT_TRUE(keys_on_card);
     EXPECT_FALSE(reset_at_first) << "nothing to reset while pending";
     EXPECT_EQ(wxString::FromUTF8("1 pending · 1 left · 0 right · 0 partial"), after_bar);
     EXPECT_TRUE(reset_after);
@@ -7445,13 +7459,12 @@ TEST_F(ordinary_edit, compare_window_moves_a_line_cursor_by_keyboard) {
         f.Events.back().Text = "last changed";
     });
     int folded = 0, unfolded = 0;
-    wxString start_counter, after_enter, after_space, after_home_space, help_on_fold;
+    wxString start_counter, after_enter, after_space, after_home_space;
     wxWindow *focus_f6 = nullptr, *focus_back = nullptr;
     bool focus_seen = false;
     CompareHook hook([&](wxWindow* dialog) {
         auto right = dialog->FindWindow("compare-right"); ASSERT_NE(nullptr, right);
         auto left = dialog->FindWindow("compare-left"); ASSERT_NE(nullptr, left);
-        auto hint = Named<wxStaticText>(dialog, "compare-hint"); ASSERT_NE(nullptr, hint);
         auto bar = RowsBar(right); ASSERT_NE(nullptr, bar);
         start_counter = Counter(dialog);
         folded = bar->GetRange();
@@ -7464,7 +7477,6 @@ TEST_F(ordinary_edit, compare_window_moves_a_line_cursor_by_keyboard) {
         // window is not the key window, as where the app cannot be made active
         // (CI's macOS runner)
         focus_seen = wxWindow::FindFocus() == right;
-        help_on_fold = hint->IsShown() ? hint->GetLabelText() : wxString();
         Key(right, wxEVT_KEY_DOWN, WXK_RETURN);              // opens it in place
         unfolded = bar->GetRange();
         Key(right, wxEVT_KEY_DOWN, WXK_END);                 // the last line: the second difference
@@ -7497,7 +7509,6 @@ TEST_F(ordinary_edit, compare_window_moves_a_line_cursor_by_keyboard) {
     EXPECT_EQ("1 / 2 | Difference 1 of 2", start_counter);
     EXPECT_EQ(11, folded) << "a difference with its card's field and foot, three lines, the fold, three lines, a difference";
     EXPECT_EQ(17, unfolded);
-    if (!help_on_fold.empty()) EXPECT_TRUE(help_on_fold.StartsWith("Enter shows the hidden lines")) << help_on_fold;
     EXPECT_EQ("2 / 2 | Difference 2 of 2", after_enter);
     EXPECT_EQ("1 selected", after_space);
     EXPECT_EQ("2 selected", after_home_space);
@@ -7551,7 +7562,8 @@ TEST_F(ordinary_edit, compare_window_simplifies_override_tags_as_the_grid_does) 
     int simplified = -1, hidden = -1, full = -1;
     wxString tip, counter_hidden;
     CompareHook hook([&](wxWindow* dialog) {
-        Press(dialog, "compare-filter");
+        Press(dialog, "compare-more");                  // the view's panel
+        EXPECT_TRUE(Named<FlatButton>(dialog, "compare-more")->IsAccent()) << "open";
         auto tags = Named<FlatSwitch>(dialog, "compare-tags"); ASSERT_NE(nullptr, tags);
         EXPECT_EQ(0, tags->GetSelection());
         tags->Choose(1);
@@ -7628,9 +7640,11 @@ TEST_F(ordinary_edit, compare_window_filters_by_category_and_leaves_ignored_fiel
             auto b = Named<FlatCheck>(dialog, name); ASSERT_NE(nullptr, b);
             if (b->GetValue() != value) b->Toggle();
         };
-        Press(dialog, "compare-filter");                 // the filters' row
+        Press(dialog, "compare-filter");                 // the filters' panel
+        EXPECT_TRUE(Named<FlatButton>(dialog, "compare-filter")->IsAccent()) << "open";
         all_counter = Counter(dialog);
-        EXPECT_EQ("Time only 1", Named<FlatButton>(dialog, "compare-category-Time")->GetLabel());
+        EXPECT_EQ("Time only", Named<FlatButton>(dialog, "compare-category-Time")->GetLabel());
+        EXPECT_EQ("1", Named<FlatButton>(dialog, "compare-category-Time")->GetTrailing());
         EXPECT_FALSE(Named<FlatButton>(dialog, "compare-category-Text")->IsShown()); // nothing of that kind
         // Only the time change: Reject All covers just what is shown.
         toggle("compare-category-Time");
@@ -7705,6 +7719,8 @@ TEST_F(ordinary_edit, compare_window_with_the_project_on_the_left_accepts_the_fi
         auto all = Named<FlatCheck>(dialog, "compare-check-all"); ASSERT_NE(nullptr, all);
         all->Toggle();
         EXPECT_EQ("2 selected", Label(dialog, "compare-checked-count"));
+        EXPECT_FALSE(Named(dialog, "compare-batch")->IsShown()) << "the selection's buttons in its place";
+        EXPECT_TRUE(Named(dialog, "compare-clear-checked")->IsShown());
         Press(dialog, "compare-accept-checked");
         button(dialog->FindWindow(wxID_OK), wxID_OK);
     });
@@ -11545,4 +11561,5 @@ TEST_F(ordinary_edit, flat_check_boxes_and_buttons_keep_space_and_enter_from_hot
     down(check,WXK_SPACE);
     EXPECT_EQ(4,toggled) << "Space on it still ticks it";
 }
+
 
