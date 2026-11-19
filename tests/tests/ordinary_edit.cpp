@@ -7285,25 +7285,27 @@ TEST_F(ordinary_edit, compare_window_takes_only_the_chosen_fields) {
         f.Events.front().Text = "baseline text"; f.Events.front().Actor = "baseline actor";
     });
     wxString stats, actor_tip;
-    int actor_y = -1, text_y = -1;
+    int actor_x = -1, actor_y = -1, text_y = -1;
     CompareHook hook([&](wxWindow* dialog) {
         // The current difference changed two fields: each gets a detail row
-        // under it, with its own arrows in the gutter.
+        // under it, with its own two sides to choose in the gutter's lane.
         auto gutter = dialog->FindWindow("compare-gutter"); ASSERT_NE(nullptr, gutter);
         auto hint = Named<wxStaticText>(dialog, "compare-hint"); ASSERT_NE(nullptr, hint);
         auto mouse = [&](wxEventType type, int x, int y) {
             wxMouseEvent event(type); event.SetPosition({x, y}); event.SetEventObject(gutter);
             gutter->GetEventHandler()->ProcessEvent(event);
         };
-        for (int y = 0; y < gutter->GetClientSize().GetHeight(); y += 2) {
-            mouse(wxEVT_MOTION, 4, y);
-            auto h = hint->GetLabelText();
-            if (actor_y < 0 && h.Contains("Actor: take the left side")) { actor_y = y; actor_tip = h; }
-            if (text_y < 0 && h.Contains("Text: take the left side")) text_y = y;
-        }
+        auto size = gutter->GetClientSize();
+        for (int y = 0; y < size.GetHeight(); y += 2)
+            for (int x = 0; x < size.GetWidth() / 2; x += 2) {
+                mouse(wxEVT_MOTION, x, y);
+                auto h = hint->GetLabelText();
+                if (actor_y < 0 && h.Contains("Actor: take the left side")) { actor_x = x; actor_y = y; actor_tip = h; }
+                if (text_y < 0 && h.Contains("Text: take the left side")) text_y = y;
+            }
         ASSERT_GE(actor_y, 0); ASSERT_GE(text_y, 0);
-        // » on the Actor row: keep the left (file) side of that field only.
-        mouse(wxEVT_LEFT_DOWN, 4, actor_y);
+        // ← on the Actor row: keep the left (file) side of that field only.
+        mouse(wxEVT_LEFT_DOWN, actor_x, actor_y);
         stats = Label(dialog, "compare-stats");
         button(dialog->FindWindow(wxID_OK), wxID_OK);
     });
@@ -11532,3 +11534,4 @@ TEST_F(ordinary_edit, flat_check_boxes_and_buttons_keep_space_and_enter_from_hot
     down(check,WXK_SPACE);
     EXPECT_EQ(4,toggled) << "Space on it still ticks it";
 }
+
