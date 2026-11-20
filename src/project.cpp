@@ -39,6 +39,8 @@
 #include "utils.h"
 #include "video_controller.h"
 #include "workspace_tabs.h"
+#include "main.h"
+#include "frame_main.h"
 #include "video_display.h"
 #include "video_provider_manager.h"
 
@@ -113,7 +115,7 @@ void Project::ShowError(std::string const& message) {
 bool Project::ReportRecoveryBlocked(wxString const& title) {
 	if (context->subsController->InstallationStatus() != SubtitleModelInstallation::State::RecoveryBlocked)
 		return false;
-	wxMessageBox(_("The new subtitles were installed, but some parts of the interface could not switch to them.\n\nEditing, saving and opening files are disabled to protect the document. Close Aegisub to recover."),
+	wxMessageBox(_("The new subtitles were installed, but some parts of the interface could not switch to them.\n\nEditing, saving and opening files are disabled. Use File > Retry Subtitle Recovery to continue."),
 		title, wxOK | wxICON_ERROR | wxCENTER, context->parent);
 	return true;
 }
@@ -175,7 +177,7 @@ void Project::SetPath(agi::fs::path& var, const char *token, const char *mru, ag
 	UpdateRelativePaths();
 }
 
-bool Project::DoLoadSubtitles(agi::fs::path const& path, std::string encoding, ProjectProperties &properties) {
+bool Project::DoLoadSubtitles(agi::fs::path const& path, std::string encoding, ProjectProperties &properties, bool load_linked) {
 	try {
 		if (encoding.empty())
 			encoding = CharSetDetect::GetEncoding(path);
@@ -203,8 +205,11 @@ bool Project::DoLoadSubtitles(agi::fs::path const& path, std::string encoding, P
 	}
 	catch (...) {
 		// Published but unconfirmed: neither a successful load nor "unchanged".
-		if (ReportRecoveryBlocked(_("Error loading file")))
+		if (context->subsController->InstallationStatus() == SubtitleModelInstallation::State::RecoveryBlocked) {
+			recovery_followup = load_linked ? RecoveryFollowup::LoadLinked : RecoveryFollowup::KeepMedia;
+			ReportRecoveryBlocked(_("Error loading file"));
 			return false;
+		}
 		// Every other failure happened before publication; the open document,
 		// its history, metadata and path are unchanged.
 		try { throw; }
@@ -228,8 +233,9 @@ bool Project::DoLoadSubtitles(agi::fs::path const& path, std::string encoding, P
 }
 
 void Project::LoadSubtitles(agi::fs::path path, std::string encoding, bool load_linked) {
+	if (!BeginMediaChange(_("Error loading file"))) return;
 	ProjectProperties properties;
-	if (!DoLoadSubtitles(path, encoding, properties))
+	if (!DoLoadSubtitles(path, encoding, properties, load_linked))
 		return;
 
 	if (load_linked)
@@ -244,18 +250,40 @@ void Project::SetSubtitlesFilename(agi::fs::path path) {
 	UpdateRelativePaths();
 }
 
-void Project::CloseSubtitles() {
+bool Project::CloseSubtitles(bool return_home) {
+	auto epoch = context->subtitleEditGate.Revision().document_epoch;
 	try {
 		context->subsController->Close();
 	}
 	catch (...) {
+		if (context->subtitleEditGate.Revision().document_epoch != epoch)
+			recovery_followup = return_home ? RecoveryFollowup::CloseToHome : RecoveryFollowup::LoadLinked;
 		if (!ReportRecoveryBlocked(_("Error closing subtitles")))
 			wxMessageBox(current_exception_message(), _("Error closing subtitles"), wxOK | wxICON_ERROR | wxCENTER, context->parent);
-		return;
+		return false;
 	}
 	// The installation already cleared ?script and selected the blank line.
 	ReportPeripheralErrors(_("The subtitles were closed, but some follow-up steps failed:"));
 	LoadUnloadFiles(context->subtitleAccess->Read().Properties);
+	return true;
+}
+
+void Project::RetrySubtitleRecovery() {
+	if (context->subsController->InstallationStatus() != SubtitleModelInstallation::State::RecoveryBlocked) return;
+	if (context->frame) context->frame->ShowEditor();
+	auto epoch = context->subtitleEditGate.Revision().document_epoch;
+	auto action = recovery_followup;
+	if (!context->subsController->RetryModelInstallation()) {
+		ReportRecoveryBlocked(_("Subtitle Recovery"));
+		return;
+	}
+	if (context->subtitleEditGate.Revision().document_epoch != epoch) return;
+	recovery_followup = RecoveryFollowup::None;
+	ReportPeripheralErrors(_("The subtitles were recovered, but some follow-up steps failed:"));
+	if (action == RecoveryFollowup::LoadLinked || action == RecoveryFollowup::CloseToHome)
+		LoadUnloadFiles(context->subtitleAccess->Read().Properties);
+	else if (action == RecoveryFollowup::KeepMedia) UpdateRelativePaths();
+	if (action == RecoveryFollowup::CloseToHome && context->frame) context->frame->ShowHome();
 }
 
 void Project::LoadUnloadFiles(ProjectProperties properties) {
@@ -436,8 +464,10 @@ void Project::LoadAudio(agi::fs::path path) {
 }
 
 void Project::CloseAudio() {
-	auto media = BeginMediaChange(_("Error closing audio"));
-	if (!media) return;
+	// Host destruction releases providers even for a recovery-blocked document.
+	// UpdateRelativePaths already avoids all metadata writes in that state.
+	auto media = host_lifetime == HostLifetime::Open ? BeginMediaChange(_("Error closing audio")) : std::nullopt;
+	if (host_lifetime == HostLifetime::Open && !media) return;
 	AnnounceAudioProviderModified(nullptr);
 	audio_provider.reset();
 	SetPath(audio_file, "?audio", "", "");
@@ -504,8 +534,8 @@ void Project::LoadVideo(agi::fs::path path) {
 }
 
 void Project::CloseVideo() {
-	auto media = BeginMediaChange(_("Error closing video"));
-	if (!media) return;
+	auto media = host_lifetime == HostLifetime::Open ? BeginMediaChange(_("Error closing video")) : std::nullopt;
+	if (host_lifetime == HostLifetime::Open && !media) return;
 	AnnounceVideoProviderModified(nullptr);
 	video_provider.reset();
 	SetPath(video_file, "?video", "", "");
@@ -585,7 +615,6 @@ void Project::LoadList(std::vector<agi::fs::path> const& files, bool from_drop) 
 	// Check only: the list may contain subtitles, whose installation needs an
 	// exclusive borrow that a held registration would refuse. Each media step
 	// below takes its own registration.
-	if (!BeginMediaChange(_("Error loading file"))) return;
 	// Keep these lists sorted
 
 	// Subtitle formats
@@ -601,34 +630,6 @@ void Project::LoadList(std::vector<agi::fs::path> const& files, bool from_drop) 
 			[](const char *a, const char *b) { return strcmp(a, b) < 0; });
 	};
 
-	// Ask before loading any media or changing the current document. Use the
-	// first subtitle, just as ordinary list loading does, including TXT imports.
-	if (from_drop && (context->subsController->HasFile() || context->subsController->IsModified())) {
-		for (auto file : files) {
-			if (file.is_relative()) file = agi::fs::Absolute(file);
-			if (!agi::fs::FileExists(file)) continue;
-			auto ext = boost::to_lower_copy(file.extension().string());
-			if (ext == ".txt") {
-				// These probes do not install timecodes/keyframes or change MRU.
-				try { agi::vfr::Framerate probe(file); continue; } catch (...) { }
-				try { agi::keyframe::Load(file); continue; } catch (...) { }
-			}
-			else if (!is_subtitle(ext)) continue;
-			wxMessageDialog prompt(context->parent,
-				fmt_tl("Compare %s with the subtitles currently open?\nComparison keeps the current document open. Choose Open Normally to replace it.", file.filename()),
-				_("Compare Dropped Subtitles"), wxYES_NO | wxCANCEL | wxYES_DEFAULT | wxICON_QUESTION);
-			prompt.SetYesNoLabels(_("Compare"), _("Open Normally"));
-			auto choice = prompt.ShowModal();
-			if (choice == wxID_YES) {
-				context->videoController->Stop();
-				OpenCompareTab(context, file);
-				return;
-			}
-			if (choice != wxID_NO || context->subsController->TryToClose() == wxCANCEL) return;
-			break;
-		}
-	}
-
 	auto video_formats = VideoProviderFactory::GetFileExtensions();
 	auto audio_formats = GetAudioProviderFileExtensions();
 	auto search = [](auto const& formats, std::string const& str) {
@@ -638,28 +639,28 @@ void Project::LoadList(std::vector<agi::fs::path> const& files, bool from_drop) 
 	agi::fs::path audio, video, subs, timecodes, keyframes;
 	for (auto file : files) {
 		if (file.is_relative()) file = agi::fs::Absolute(file);
-		if (!agi::fs::FileExists(file)) continue;
-
 		auto ext = file.extension().string();
 		boost::to_lower(ext);
+		if (!agi::fs::FileExists(file)) {
+			if (is_subtitle(ext)) {
+				ShowError(fmt_tl("%s not found.", file.string()));
+				return;
+			}
+			continue;
+		}
 
-		// Could be subtitles, keyframes or timecodes, so try loading as each
+		// Classify without installing media before the subtitle decision.
 		if (ext == ".txt" || ext == ".log") {
-			if (timecodes.empty()) {
-				try {
-					DoLoadTimecodes(file);
-					timecodes = file;
-					continue;
-				} catch (...) { }
-			}
-
-			if (keyframes.empty()) {
-				try {
-					DoLoadKeyframes(file);
-					keyframes = file;
-					continue;
-				} catch (...) { }
-			}
+			try {
+				agi::vfr::Framerate probe(file);
+				if (timecodes.empty()) timecodes = file;
+				continue;
+			} catch (...) { }
+			try {
+				agi::keyframe::Load(file);
+				if (keyframes.empty()) keyframes = file;
+				continue;
+			} catch (...) { }
 
 			if (subs.empty() && ext != ".log")
 				subs = file;
@@ -674,10 +675,36 @@ void Project::LoadList(std::vector<agi::fs::path> const& files, bool from_drop) 
 			audio = file;
 	}
 
+	if (from_drop && !subs.empty() && (context->subsController->HasFile() || context->subsController->IsModified())) {
+		if (!BeginMediaChange(_("Error loading file"))) return;
+		wxMessageDialog prompt(context->parent,
+			fmt_tl("Compare %s with the subtitles currently open?\nComparison keeps the current document open. Choose Open Normally to replace it.", subs.filename()),
+			_("Compare Dropped Subtitles"), wxYES_NO | wxCANCEL | wxYES_DEFAULT | wxICON_QUESTION);
+		prompt.SetYesNoLabels(_("Compare"), _("Open Normally"));
+		auto choice = prompt.ShowModal();
+		if (choice == wxID_YES) {
+			context->videoController->Stop();
+			OpenCompareTab(context, subs);
+			return;
+		}
+		if (choice != wxID_NO) return;
+	}
 	ProjectProperties properties;
-	if (!subs.empty()) {
-		if (!DoLoadSubtitles(subs, "", properties))
+	bool opened_subtitles = false;
+	if (!subs.empty() && context->frame) {
+		if (auto owner = wxGetApp().ActivateOpenSubtitle(subs)) {
+			if (owner != context) {
+				owner->project->LoadList(files);
+				return;
+			}
 			subs.clear();
+		}
+	}
+	if (!BeginMediaChange(_("Error loading file"))) return;
+	if (subs.empty() && video.empty() && audio.empty() && timecodes.empty() && keyframes.empty()) return;
+	if (!subs.empty()) {
+		if (context->subsController->TryToClose() == wxCANCEL || !DoLoadSubtitles(subs, "", properties, false)) return;
+		opened_subtitles = true;
 	}
 
 	if (!video.empty() && DoLoadVideo(video)) {
@@ -687,21 +714,15 @@ void Project::LoadList(std::vector<agi::fs::path> const& files, bool from_drop) 
 		else
 			context->videoController->SetAspectRatio(AspectRatio::Default);
 		context->videoController->JumpToFrame(0);
-
-		// We loaded these earlier, but loading video unloaded them
-		// Non-Do version of Load in case they've vanished or changed between
-		// then and now
-		if (!timecodes.empty())
-			LoadTimecodes(timecodes);
-		if (!keyframes.empty())
-			LoadKeyframes(keyframes);
 	}
+	if (!timecodes.empty()) LoadTimecodes(timecodes);
+	if (!keyframes.empty()) LoadKeyframes(keyframes);
 
 	if (!audio.empty())
 		DoLoadAudio(audio, false);
 	else if (OPT_GET("Video/Open Audio")->GetBool() && audio_file != video_file)
 		DoLoadAudio(video_file, true);
 
-	if (!subs.empty())
+	if (opened_subtitles)
 		LoadUnloadFiles(properties);
 }

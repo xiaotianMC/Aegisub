@@ -37,7 +37,8 @@ class TextFileWriter {
 
 public:
 	TextFileWriter(agi::fs::path const& filename, std::string encoding="");
-	~TextFileWriter() noexcept(false);	// ~Save() is noexcept(false)
+	~TextFileWriter();
 
 	void WriteLineToFile(std::string_view line, bool addLineBreak=true);
+	void Commit() { file.Commit(); }
 };

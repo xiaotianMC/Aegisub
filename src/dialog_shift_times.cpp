@@ -323,7 +323,9 @@ void DialogShiftTimes::SaveHistory(json::Array shifted_blocks) {
 
 	try {
 		agi::fs::CreateDirectory(history_filename.parent_path());
-		agi::JsonWriter::Write(history, agi::io::Save(history_filename).Get());
+		agi::io::Save file(history_filename);
+		agi::JsonWriter::Write(history, file.Get());
+		file.Commit();
 	}
 	catch (agi::fs::FileSystemError const& e) {
 		LOG_E("dialog_shift_times/save_history") << "Cannot save shift times history: " << e.GetMessage();

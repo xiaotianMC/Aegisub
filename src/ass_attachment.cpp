@@ -63,7 +63,9 @@ void AssAttachment::Extract(agi::fs::path const& filename) const {
 	auto const& data = entry_data.get();
 	auto header_end = data.find('\n');
 	auto decoded = agi::ass::UUDecode(data.c_str() + header_end + 1, &data.back() + 1);
-	agi::io::Save(filename, true).Get().write(decoded.data(), decoded.size());
+	agi::io::Save file(filename, true);
+	file.Get().write(decoded.data(), decoded.size());
+	file.Commit();
 }
 
 std::string AssAttachment::GetFileName(bool raw) const {

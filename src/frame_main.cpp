@@ -65,15 +65,18 @@
 #include "video_box.h"
 #include "theme.h"
 #include "workspace_tabs.h"
+#include "workbench_home.h"
 #include "video_controller.h"
 #include "video_display.h"
 #include "selection_controller.h"
 
-#include <libaegisub/dispatch.h>
 #include <libaegisub/log.h>
 
 #include <wx/dnd.h>
+#include <wx/button.h>
 #include <wx/msgdlg.h>
+#include <wx/simplebook.h>
+#include <wx/stattext.h>
 #include <wx/sizer.h>
 #include <wx/statline.h>
 #include <wx/statusbr.h>
@@ -96,15 +99,21 @@ class AegisubFileDropTarget final : public wxFileDropTarget {
 public:
 	AegisubFileDropTarget(agi::Context *context) : context(context) { }
 	bool OnDropFiles(wxCoord, wxCoord, wxArrayString const& filenames) override {
+		auto frame = context->frame;
+		if (frame->IsHome()) return false;
 		std::vector<agi::fs::path> files;
 		for (wxString const& fn : filenames)
 			files.push_back(from_wx(fn));
-		agi::dispatch::Main().Async([=, this] { context->project->LoadList(files, true); });
+		auto revision = context->subtitleEditGate.Capture();
+		frame->CallAfter([c = context, frame, revision, files = std::move(files)] {
+			if (revision.Current() && !frame->IsClosing() && !frame->IsHome())
+				c->project->LoadList(files, true);
+		});
 		return true;
 	}
 };
 
-FrameMain::FrameMain()
+FrameMain::FrameMain(FrameMode mode)
 : wxFrame(nullptr, -1, "")
 , context(std::make_unique<agi::Context>())
 {
@@ -162,7 +171,7 @@ FrameMain::FrameMain()
 #endif
 
 	StartupLog("Create views and inner main window controls");
-	InitContents();
+	InitContents(mode);
 	BindConnection(OPT_SUB("Video/Detached/Enabled", &FrameMain::OnVideoDetach, this));
 
 	StartupLog("Set up drag/drop target");
@@ -176,12 +185,14 @@ FrameMain::FrameMain()
 	AddFullScreenButton(this);
 	Show();
 	SetDisplayMode(1, 1);
+	if (workbench) ShowHome();
 
 	StartupLog("Leaving FrameMain constructor");
 }
 
 FrameMain::~FrameMain () {
     context->project->BeginHostShutdown();
+	if (context->workspaceTabs) context->workspaceTabs->CloseComparison(false);
 	context->project->CloseAudio();
 	context->project->CloseVideo();
 
@@ -192,7 +203,12 @@ bool FrameMain::Destroy() {
         context->subsController->CancelModelInstallation();
         return false; // Also cover direct deferred Destroy, not just close events.
     }
+    context->project->BeginHostShutdown();
     return wxFrame::Destroy();
+}
+
+bool FrameMain::IsClosing() const {
+	return IsBeingDeleted() || context->project->host_lifetime == Project::HostLifetime::Closing;
 }
 
 void FrameMain::EnableToolBar(agi::OptionValue const& opt) {
@@ -200,6 +216,7 @@ void FrameMain::EnableToolBar(agi::OptionValue const& opt) {
 		if (!GetToolBar()) {
 			toolbar::AttachToolbar(this, "main", context.get(), "Default");
 			GetToolBar()->Realize();
+			GetToolBar()->Show(!IsHome());
 		}
 	}
 	else if (wxToolBar *old_tb = GetToolBar()) {
@@ -209,11 +226,16 @@ void FrameMain::EnableToolBar(agi::OptionValue const& opt) {
 	}
 }
 
-void FrameMain::InitContents() {
+void FrameMain::InitContents(FrameMode mode) {
 	StartupLog("Create background panel");
-	// The editor is the first tab; a comparison opens beside it.
-	auto tabs = new WorkspaceTabs(this, context.get());
+	if (mode == FrameMode::Workbench) {
+		workbench = new wxSimplebook(this, wxID_ANY);
+		home = CreateWorkbenchHome(workbench, context.get(), resume_editor);
+		workbench->AddPage(home, _("Workbench"));
+	}
+	auto tabs = new WorkspaceTabs(workbench ? static_cast<wxWindow*>(workbench) : this, context.get());
 	context->workspaceTabs = tabs;
+	if (workbench) workbench->AddPage(tabs, _("Subtitles"));
 	auto Panel = new wxPanel(tabs->Book(), -1, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL | wxCLIP_CHILDREN);
 
 	StartupLog("Create subtitles grid");
@@ -270,6 +292,49 @@ void FrameMain::InitContents() {
 	StartupLog("Leaving InitContents");
 }
 
+bool FrameMain::IsHome() const {
+	return workbench && home && workbench->GetCurrentPage() == home;
+}
+
+void FrameMain::RefreshPage() {
+	context->workspaceTabs->SetWorkspaceVisible(!IsHome());
+	if (GetToolBar()) GetToolBar()->Show(!IsHome());
+	if (GetStatusBar()) SetStatusText("", 1);
+	UpdateTitle();
+	Layout();
+}
+
+void FrameMain::ShowHome() {
+	if (!workbench) return;
+	if (auto focus = FindFocus(); focus && context->workspaceTabs->IsDescendant(focus))
+		last_editor_focus = focus;
+	context->videoController->Stop();
+	context->audioController->Stop();
+	if (auto detached = context->dialog->Get<DialogDetachedVideo>(); detached && detached->IsShown()) {
+		suspended_video = detached;
+		detached->Hide();
+	}
+	workbench->ChangeSelection(workbench->FindPage(home));
+	RefreshPage();
+	if (resume_editor->IsShownOnScreen()) resume_editor->SetFocus();
+	else home->SetFocus();
+}
+
+void FrameMain::ShowEditor() {
+	if (!IsHome()) return;
+	auto tabs = context->workspaceTabs;
+	workbench->ChangeSelection(workbench->FindPage(tabs));
+	RefreshPage();
+	if (suspended_video) {
+		suspended_video->Show();
+		suspended_video = nullptr;
+	}
+	if (last_editor_focus && last_editor_focus->IsShownOnScreen() && last_editor_focus->IsEnabled())
+		last_editor_focus->SetFocus();
+	else if (tabs->ComparisonInFront()) tabs->Comparison()->SetFocus();
+	else context->subsGrid->SetFocus();
+}
+
 void FrameMain::SetDisplayMode(int video, int audio) {
 	if (!IsShownOnScreen()) return;
 
@@ -303,15 +368,18 @@ void FrameMain::SetDisplayMode(int video, int audio) {
 
 void FrameMain::UpdateStatus() {
 	if (!GetStatusBar() || GetStatusBar()->GetFieldsCount() < 4) return;
-	SetStatusText(status_info::Line(context.get()), 2);
-	SetStatusText(status_info::File(context.get()), 3);
+	SetStatusText(IsHome() ? wxString() : status_info::Line(context.get()), 2);
+	SetStatusText(IsHome() ? wxString() : status_info::File(context.get()), 3);
 }
 
 void FrameMain::UpdateTitle() {
 	UpdateStatus();
 	wxString newTitle;
-	if (context->subsController->IsModified()) newTitle << "* ";
-	newTitle << context->subsController->Filename().filename().wstring();
+	if (IsHome()) newTitle = _("Workbench");
+	else {
+		if (context->subsController->IsModified()) newTitle << "* ";
+		newTitle << context->subsController->Filename().filename().wstring();
+	}
 
 #ifndef __WXMAC__
 	newTitle << " - Aegisub " << GetAegisubLongVersionString();
@@ -331,6 +399,7 @@ void FrameMain::OnVideoOpen(AsyncVideoProvider *provider) {
 		return;
 	}
 
+	ShowEditor();
 	Freeze();
 	int vidx = provider->GetWidth(), vidy = provider->GetHeight();
 
@@ -372,27 +441,67 @@ END_EVENT_TABLE()
 void FrameMain::OnCloseWindow(wxCloseEvent &event) {
     if (context->subsController->DeferHostClose(event)) return;
 	wxEventBlocker blocker(this, wxEVT_CLOSE_WINDOW);
+	if (wxGetApp().closing_all) {
+		if (event.CanVeto()) event.Veto();
+		return;
+	}
+	if (workbench) {
+		if (!wxGetApp().CloseAll(event.CanVeto()) && event.CanVeto()) event.Veto();
+		return;
+	}
+	auto decision = PrepareClose(event.CanVeto());
+	if (decision && StillCurrent(*decision)) FinishClose();
+	else if (event.CanVeto()) event.Veto();
+}
 
+FrameMain::CloseDecision FrameMain::CurrentDecision() const {
+	return {context->subtitleEditGate.Revision(), context->subtitleAccess->MetadataRevision(),
+	        context->workspaceTabs->ComparisonRevision()};
+}
+
+bool FrameMain::StillCurrent(CloseDecision const& decision) const {
+	auto current = CurrentDecision();
+	return !IsClosing() && !context->subsController->IsInstalling()
+	    && current.document == decision.document && current.metadata == decision.metadata
+	    && current.comparison == decision.comparison;
+}
+
+std::optional<FrameMain::CloseDecision> FrameMain::PrepareClose(bool allow_cancel) {
+	if (IsClosing() || context->subsController->IsInstalling()) return {};
+	auto before = CurrentDecision();
+	auto answer = context->subsController->TryToClose(allow_cancel);
+	if (answer == wxCANCEL) return {};
+	auto after = CurrentDecision();
+	// An explicitly requested save can update path metadata. A changed document
+	// or comparison always needs its own decision, even inside a modal loop.
+	if (before.document != after.document || before.comparison != after.comparison
+	    || (answer != wxYES && before.metadata != after.metadata)) return {};
+	if (auto comparison = context->workspaceTabs->Comparison(); comparison && allow_cancel) {
+		ShowEditor();
+		context->workspaceTabs->ShowComparison();
+		if (!comparison->ConfirmClose()) return {};
+	}
+	return StillCurrent(after) ? std::optional(after) : std::nullopt;
+}
+
+void FrameMain::CloseSubtitles() {
+	if (!workbench) {
+		Close();
+		return;
+	}
+	if (IsHome() || wxGetApp().closing_all) return;
+	auto decision = PrepareClose(true);
+	if (!decision || !StillCurrent(*decision)) return;
+	context->workspaceTabs->CloseComparison(false);
+	if (context->project->CloseSubtitles(true)) ShowHome();
+}
+
+void FrameMain::FinishClose() {
 	context->videoController->Stop();
 	context->audioController->Stop();
-
-	// An open comparison ends first: it holds the subtitles.
-	if (context->workspaceTabs && !context->workspaceTabs->CloseComparison(event.CanVeto())) {
-		event.Veto();
-		return;
-	}
-
-	// Ask user if he wants to save first
-	if (context->subsController->TryToClose(event.CanVeto()) == wxCANCEL) {
-		event.Veto();
-		return;
-	}
-
+	context->workspaceTabs->CloseComparison(false);
 	context->dialog.reset();
-
-	// Store maximization state
 	OPT_SET("App/Maximized")->SetBool(IsMaximized());
-
 	Destroy();
 }
 
@@ -401,13 +510,16 @@ void FrameMain::OnStatusClear(wxTimerEvent &) {
 }
 
 void FrameMain::OnAudioOpen(agi::AudioProvider *provider) {
-	if (provider)
+	if (provider) {
+		ShowEditor();
 		SetDisplayMode(-1, 1);
+	}
 	else
 		SetDisplayMode(-1, 0);
 }
 
 void FrameMain::OnSubtitlesOpen() {
+	if (context->subsController->HasFile()) ShowEditor();
 	UpdateTitle();
 	SetDisplayMode(1, 1);
 }

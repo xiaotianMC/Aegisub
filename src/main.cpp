@@ -33,6 +33,7 @@
 ///
 
 #include "main.h"
+#include <boost/scope_exit.hpp>
 #include "theme.h"
 
 #include "command/command.h"
@@ -73,6 +74,8 @@
 
 #include <boost/interprocess/streams/bufferstream.hpp>
 #include <wx/clipbrd.h>
+#include <wx/imagjpeg.h>
+#include <wx/imagpng.h>
 #include <wx/msgdlg.h>
 #include <wx/stackwalk.h>
 #include <wx/utils.h>
@@ -301,12 +304,15 @@ bool AegisubApp::OnInit() {
 		AssExportFilterChain::Register(std::make_unique<AssFixStylesFilter>());
 		AssExportFilterChain::Register(std::make_unique<AssTransformFramerateFilter>());
 
-		StartupLog("Install PNG handler");
-		wxImage::AddHandler(new wxPNGHandler);
+		StartupLog("Install image handlers");
+		if (!wxImage::FindHandler(wxBITMAP_TYPE_PNG)) wxImage::AddHandler(new wxPNGHandler);
+#if wxUSE_LIBJPEG
+		if (!wxImage::FindHandler(wxBITMAP_TYPE_JPEG)) wxImage::AddHandler(new wxJPEGHandler);
+#endif
 
 		// Open main frame
 		StartupLog("Create main window");
-		NewProjectContext();
+		NewWorkbenchContext();
 
 		// Version checker
 		StartupLog("Possibly perform automatic updates check");
@@ -366,9 +372,11 @@ bool AegisubApp::OnInit() {
 }
 
 int AegisubApp::OnExit() {
-	for (auto frame : frames)
+	while (!frames.empty()) {
+		auto frame = frames.back();
+		frames.pop_back(); // The destroy event also removes the frame from this collection.
 		delete frame;
-	frames.clear();
+	}
 
 	if (wxTheClipboard->Open()) {
 		wxTheClipboard->Flush();
@@ -398,7 +406,17 @@ int AegisubApp::OnExit() {
 }
 
 agi::Context& AegisubApp::NewProjectContext() {
-	auto frame = new FrameMain;
+	return CreateFrame(FrameMode::EditorOnly);
+}
+
+agi::Context& AegisubApp::NewWorkbenchContext() {
+	for (auto frame : frames)
+		if (frame->HasWorkbench() && !frame->IsClosing()) return *frame->context;
+	return CreateFrame(FrameMode::Workbench);
+}
+
+agi::Context& AegisubApp::CreateFrame(FrameMode mode) {
+	auto frame = new FrameMain(mode);
 	frame->Bind(wxEVT_DESTROY, [=, this](wxWindowDestroyEvent& evt) {
 		if (evt.GetWindow() != frame) {
 			evt.Skip();
@@ -414,11 +432,53 @@ agi::Context& AegisubApp::NewProjectContext() {
 	return *frame->context;
 }
 
-void AegisubApp::CloseAll() {
+agi::Context *AegisubApp::ActivateOpenSubtitle(agi::fs::path const& file) {
 	for (auto frame : frames) {
-		if (!frame->Close())
-			break;
+		auto controller = frame->context->subsController.get();
+		if (frame->IsClosing() || !controller->HasFile()) continue;
+		std::error_code error;
+		if (!std::filesystem::equivalent(file, controller->Filename(), error)) continue;
+		frame->ShowEditor();
+		if (frame->IsIconized()) frame->Iconize(false);
+		frame->Raise();
+		return frame->context.get();
 	}
+	return nullptr;
+}
+
+void AegisubApp::OpenSubtitle(agi::Context *from, agi::fs::path const& file, std::string const& encoding) {
+	if (auto existing = ActivateOpenSubtitle(file)) {
+		if (encoding.empty()) return;
+		from = existing; // Explicitly reopening with a different encoding.
+	}
+#ifdef __APPLE__
+	else if (from->frame && !from->frame->HasWorkbench()) {
+		NewProjectContext().project->LoadSubtitles(file, encoding);
+		return;
+	}
+#endif
+	if (from->subsController->TryToClose() != wxCANCEL)
+		from->project->LoadSubtitles(file, encoding);
+}
+
+bool AegisubApp::CloseAll(bool allow_cancel) {
+	if (closing_all) return false;
+	closing_all = true;
+	BOOST_SCOPE_EXIT_ALL(this) { closing_all = false; };
+	auto snapshot = frames;
+	std::vector<std::pair<FrameMain *, FrameMain::CloseDecision>> decisions;
+	for (auto frame : snapshot) {
+		if (frames != snapshot) return false;
+		if (frame->IsClosing()) continue;
+		auto decision = frame->PrepareClose(allow_cancel);
+		if (!decision) return false;
+		decisions.emplace_back(frame, *decision);
+	}
+	if (frames != snapshot) return false;
+	for (auto const& [frame, decision] : decisions)
+		if (!frame->StillCurrent(decision)) return false;
+	for (auto const& item : decisions) item.first->FinishClose();
+	return true;
 }
 
 void AegisubApp::UnhandledException([[maybe_unused]] bool stackWalk) {
@@ -518,7 +578,7 @@ void AegisubApp::OpenFiles(wxArrayStringsAdapter filenames) {
 	for (size_t i = 0; i < filenames.GetCount(); ++i)
 		files.push_back(from_wx(filenames[i]));
 	if (!files.empty()) {
-		if (frames.empty()) NewProjectContext();
-		frames[0]->context->project->LoadList(files);
+		if (files.size() == 1 && ActivateOpenSubtitle(files.front())) return;
+		NewWorkbenchContext().project->LoadList(files);
 	}
 }

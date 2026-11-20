@@ -82,3 +82,7 @@ src/visual_tool.cpp
 src/visual_tool_cross.cpp
 src/visual_tool_drag.cpp
 src/visual_tool_vector_clip.cpp
+src/workbench_home.cpp
+src/workbench_activity.cpp
+src/workbench_metadata.cpp
+src/workbench_series.cpp

@@ -30,6 +30,7 @@
 #include "command/command.h"
 #include "format.h"
 #include "frame_main.h"
+#include "workspace_tabs.h"
 #include "include/aegisub/context.h"
 #include "options.h"
 #include "project.h"
@@ -513,14 +514,24 @@ int SubsController::TryToClose(bool allow_cancel) const {
 	if (!IsModified())
 		return wxYES;
 
+	auto document = context->subtitleEditGate.Capture();
+	auto metadata = context->subtitleAccess->MetadataRevision();
 	int flags = wxYES_NO;
 	if (allow_cancel)
 		flags |= wxCANCEL;
 	int result = wxMessageBox(fmt_tl("Do you want to save changes to %s?", Filename()), _("Unsaved changes"), flags, context->parent);
+	if (!document.Current() || metadata != context->subtitleAccess->MetadataRevision()) return wxCANCEL;
 	if (result == wxYES) {
+		if (context->frame) context->frame->ShowEditor();
+		if (context->workspaceTabs && context->workspaceTabs->Comparison()) {
+			context->workspaceTabs->ShowComparison();
+			wxMessageBox(_("Finish the comparison before saving the subtitles."), _("Unsaved changes"),
+			             wxOK | wxICON_INFORMATION, context->parent);
+			return wxCANCEL;
+		}
 		cmd::call("subtitle/save", context);
 		// If it fails saving, return cancel anyway
-		return IsModified() ? wxCANCEL : wxYES;
+		return !document.Current() || IsModified() ? wxCANCEL : wxYES;
 	}
 	return result;
 }

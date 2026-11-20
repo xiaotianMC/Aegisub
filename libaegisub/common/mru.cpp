@@ -123,7 +123,9 @@ void MRUManager::Flush() {
 	}
 
 	agi::fs::CreateDirectory(config_name.parent_path());
-	agi::JsonWriter::Write(out, io::Save(config_name).Get());
+	io::Save file(config_name);
+	agi::JsonWriter::Write(out, file.Get());
+	file.Commit();
 }
 
 void MRUManager::Prune(std::string_view key, MRUListMap& map) const {

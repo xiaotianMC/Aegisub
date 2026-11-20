@@ -11,6 +11,7 @@
 
 #include <wx/panel.h>
 
+#include <cstdint>
 #include <string_view>
 
 #include <functional>
@@ -50,6 +51,8 @@ public:
 class ComparisonPage : public wxPanel {
 public:
     using wxPanel::wxPanel;
+    /// Ask about pending decisions without dropping the session or its edit lock.
+    virtual bool ConfirmClose() = 0;
     /// End the comparison without writing, first confirming the decisions it
     /// would discard when @p ask. False if the user kept it open.
     virtual bool TryClose(bool ask) = 0;
@@ -70,6 +73,8 @@ class WorkspaceTabs final : public wxPanel {
     ComparisonPage *page = nullptr;
     wxString name;
     bool last_applied = false;
+    bool workspace_visible = true;
+    uint64_t comparison_revision = 0;
     agi::signal::Connection theme_changed;
     agi::signal::Signal<> changed;
 
@@ -93,6 +98,9 @@ public:
     void ComparisonEnded(bool applied);
     /// End the open comparison, asking first when @p ask. True if none is open afterwards.
     bool CloseComparison(bool ask = true);
+    uint64_t ComparisonRevision() const { return comparison_revision; }
+    void ComparisonChanged() { ++comparison_revision; }
+    void SetWorkspaceVisible(bool visible);
 
     ComparisonPage *Comparison() const { return page; }
     /// File name shown on the comparison tab, empty when none is open.

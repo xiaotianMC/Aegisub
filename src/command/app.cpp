@@ -175,7 +175,7 @@ struct app_language final : public Command {
 	STR_DISP("Language")
 	STR_HELP("Select Aegisub interface language")
 
-	void operator()(agi::Context *c) override {
+	void operator()(agi::Context *) override {
 		// Get language
 		auto new_language = wxGetApp().locale.PickLanguage();
 		if (new_language.empty()) return;
@@ -186,7 +186,7 @@ struct app_language final : public Command {
 		int result = wxMessageBox(_("Aegisub needs to be restarted so that the new language can be applied. Restart now?"), _("Restart Aegisub?"), wxYES_NO | wxICON_QUESTION |  wxCENTER);
 		if (result == wxYES) {
 			// Restart Aegisub
-			if (c->frame->Close()) {
+			if (wxGetApp().CloseAll()) {
 				RestartAegisub();
 			}
 		}
@@ -217,6 +217,19 @@ struct app_new_window final : public Command {
 	}
 };
 
+struct app_workbench final : public Command {
+	CMD_NAME("app/workbench")
+	STR_MENU("Workbench Home")
+	STR_DISP("Workbench Home")
+	STR_HELP("Return to the workbench and keep the editor open")
+	CMD_TYPE(COMMAND_VALIDATE)
+
+	bool Validate(agi::Context const *c) override {
+		return c->frame && c->frame->HasWorkbench() && !c->frame->IsHome();
+	}
+	void operator()(agi::Context *c) override { c->frame->ShowHome(); }
+};
+
 struct app_options final : public Command {
 	CMD_NAME("app/options")
 	CMD_ICON(options_button)
@@ -235,7 +248,7 @@ struct app_options final : public Command {
 				asked_for = theme_mode;
 				int result = wxMessageBox(_("Windows switches its own controls (text boxes, lists, scroll bars) between light and dark only when Aegisub starts. Restart Aegisub now to use the new theme everywhere?"),
 					_("Restart Aegisub?"), wxYES_NO | wxICON_QUESTION | wxCENTER);
-				if (result == wxYES && c->frame->Close())
+				if (result == wxYES && wxGetApp().CloseAll())
 					RestartAegisub();
 			}
 		} catch (agi::Exception& e) {
@@ -457,6 +470,7 @@ namespace cmd {
 		reg(std::make_unique<app_language>());
 		reg(std::make_unique<app_log>());
 		reg(std::make_unique<app_new_window>());
+		reg(std::make_unique<app_workbench>());
 		reg(std::make_unique<app_options>());
 		reg(std::make_unique<app_toggle_global_hotkeys>());
 		reg(std::make_unique<app_toggle_toolbar>());

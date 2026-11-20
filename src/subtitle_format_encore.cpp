@@ -52,7 +52,7 @@ std::vector<std::string> EncoreSubtitleFormat::GetWriteWildcards() const {
 
 void EncoreSubtitleFormat::WriteFile(const AssFile *src, agi::fs::path const& filename, agi::vfr::Framerate const& video_fps, const char *) const {
 	agi::vfr::Framerate fps = AskForFPS(false, true, video_fps);
-	if (!fps.IsLoaded()) return;
+	if (!fps.IsLoaded()) throw agi::UserCancelException("Cancelled FPS selection");
 
 	// Convert to encore
 	AssFile copy(*src);
@@ -72,4 +72,5 @@ void EncoreSubtitleFormat::WriteFile(const AssFile *src, agi::fs::path const& fi
 	TextFileWriter file(filename, "UTF-8");
 	for (auto const& current : copy.Events)
 		file.WriteLineToFile(agi::format("%i %s %s %s", ++i, ft.ToSMPTE(current.Start), ft.ToSMPTE(current.End), current.Text));
+	file.Commit();
 }

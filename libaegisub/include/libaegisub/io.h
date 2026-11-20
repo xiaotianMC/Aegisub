@@ -28,14 +28,16 @@ DEFINE_EXCEPTION(IOFatal, IOError);
 std::unique_ptr<std::istream> Open(agi::fs::path const& file, bool binary = false);
 
 class Save {
-	std::unique_ptr<std::ostream> fp;
-	const agi::fs::path file_name;
-	const agi::fs::path tmp_name;
+	class Output;
+	std::unique_ptr<Output> output;
 
 public:
 	Save(agi::fs::path const& file, bool binary = false);
-	~Save() noexcept(false);
-	std::ostream& Get() { return *fp; }
+	~Save();
+
+	std::ostream& Get();
+	/// Publish the completed file. Destroying an uncommitted save discards it.
+	void Commit();
 };
 
 } // namespace agi::io

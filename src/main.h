@@ -40,8 +40,10 @@
 #endif
 
 class FrameMain;
+enum class FrameMode;
 namespace agi {
 	struct Context;
+	namespace fs { class path; }
 }
 
 class AegisubApp : public wxApp {
@@ -62,12 +64,17 @@ class AegisubApp : public wxApp {
 	void OpenFiles(wxArrayStringsAdapter filenames);
 
 	std::vector<FrameMain *> frames;
+	agi::Context& CreateFrame(FrameMode mode);
+	bool closing_all = false;
 public:
 	AegisubApp();
 	AegisubLocale locale;
 
 	agi::Context& NewProjectContext();
-	void CloseAll();
+	agi::Context& NewWorkbenchContext();
+	agi::Context *ActivateOpenSubtitle(agi::fs::path const& file);
+	void OpenSubtitle(agi::Context *from, agi::fs::path const& file, std::string const& encoding = {});
+	bool CloseAll(bool allow_cancel = true);
 
 	// Apple events
 	void MacOpenFiles(wxArrayString const& filenames)

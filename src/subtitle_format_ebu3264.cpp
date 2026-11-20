@@ -642,4 +642,5 @@ void Ebu3264SubtitleFormat::WriteFile(const AssFile *src, agi::fs::path const& f
 	f.Get().write((const char *)&gsi, sizeof(gsi));
 	for (auto const& block : tti)
 		f.Get().write((const char *)&block, sizeof(block));
+	f.Commit();
 }

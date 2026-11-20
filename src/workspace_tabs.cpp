@@ -129,6 +129,7 @@ void WorkspaceTabs::MoveStripTo(wxStatusBar *bar) {
 }
 
 void WorkspaceTabs::OpenComparison(ComparisonPage *p, wxString const& file) {
+    ComparisonChanged();
     page = p;
     name = file;
     last_applied = false;
@@ -139,6 +140,7 @@ void WorkspaceTabs::OpenComparison(ComparisonPage *p, wxString const& file) {
 
 void WorkspaceTabs::ComparisonEnded(bool applied) {
     if (!page) return;
+    ComparisonChanged();
     last_applied = applied;
     auto old = page;
     page = nullptr;
@@ -190,7 +192,7 @@ void WorkspaceTabs::Update() {
     banner->Refresh();
     if (status_bar) {
         PlaceStrip(status_bar, strip);
-        strip->Show(open);
+        strip->Show(open && workspace_visible);
         strip->Raise();
     }
     else
@@ -200,12 +202,24 @@ void WorkspaceTabs::Update() {
     changed();
 }
 
+void WorkspaceTabs::SetWorkspaceVisible(bool visible) {
+    workspace_visible = visible;
+    Update();
+}
+
 bool WorkspaceTabs::Permits(std::string_view command) const {
-    return !ComparisonInFront() || command.starts_with("app/") || command.starts_with("help/");
+    if (!workspace_visible)
+        return command == "subtitle/open" || command == "subtitle/new" || command == "subtitle/recover" || command.starts_with("recent/subtitle/")
+            || command == "app/workbench" || command == "app/new_window" || command == "app/exit"
+            || command == "app/options" || command == "app/language" || command == "app/about"
+            || command == "app/log" || command.starts_with("help/") || command.starts_with("app/hide")
+            || command == "app/show_all";
+    return !ComparisonInFront() || command == "subtitle/close" || command.starts_with("app/") || command.starts_with("help/");
 }
 
 bool WorkspaceTabs::AllowsCommand(std::string_view command) {
     if (Permits(command)) return true;
+    if (!workspace_visible) return false;
     notice->SetLabel(_("This command is not available in the comparison tab. Switch to the Subtitles tab to use it."));
     strip->Layout();
     return false;

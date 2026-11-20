@@ -73,6 +73,8 @@ void convert(std::string const& path) {
 	}
 
 	idx_out.Get() << entry_count << '\n' << idx_out_buffer.str();
+	dat_out.Commit();
+	idx_out.Commit();
 }
 
 }

@@ -183,8 +183,10 @@ Options::Options(agi::fs::path const& file, std::string_view default_config, Opt
 }
 
 Options::~Options() {
-	if ((setting & FLUSH_SKIP) != FLUSH_SKIP)
-		Flush();
+	if ((setting & FLUSH_SKIP) == FLUSH_SKIP) return;
+	try { Flush(); }
+	catch (agi::Exception const& e) { LOG_E("option/save") << e.GetMessage(); }
+	catch (std::exception const& e) { LOG_E("option/save") << e.what(); }
 }
 
 void Options::ConfigUser() {
@@ -306,7 +308,9 @@ void Options::Flush() const {
 	}
 
 	agi::fs::CreateDirectory(config_file.parent_path());
-	agi::JsonWriter::Write(obj_out, io::Save(config_file).Get());
+	io::Save file(config_file);
+	agi::JsonWriter::Write(obj_out, file.Get());
+	file.Commit();
 }
 
 } // namespace agi

@@ -105,6 +105,7 @@ void HunspellSpellChecker::WriteUserDictionary() {
 		agi::io::Save writer(userDicPath);
 		writer.Get() << customWords.size() << "\n";
 		copy(customWords.begin(), customWords.end(), std::ostream_iterator<std::string>(writer.Get(), "\n"));
+		writer.Commit();
 	}
 
 	// Announce a language change so that any other spellcheckers reload the

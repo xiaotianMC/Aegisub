@@ -433,6 +433,7 @@ void SRTSubtitleFormat::WriteFile(const AssFile *src, agi::fs::path const& filen
 		file.WriteLineToFile(ConvertTags(&current));
 		file.WriteLineToFile("");
 	}
+	file.Commit();
 }
 
 bool SRTSubtitleFormat::CanSave(const AssFile *file) const {

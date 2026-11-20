@@ -653,6 +653,14 @@ endif
 
 subdir('automation')
 subdir('libaegisub')
+sqlite_dep = dependency('sqlite3', version: '>=3.24', fallback: ['sqlite3', 'sqlite3_dep'])
+workbench_deps = [sqlite_dep]
+if host_machine.system() == 'windows'
+    # SHGetKnownFolderPath, FOLDERID_LocalAppData and CoTaskMemFree.
+    workbench_deps += [cc.find_library('shell32'), cc.find_library('uuid'), cc.find_library('ole32')]
+endif
+workbench_store = static_library('workbench-store', 'src/workbench_store.cpp', 'src/workbench_database.cpp', 'src/workbench_files.cpp',
+    include_directories: libaegisub_inc, dependencies: workbench_deps)
 subdir('packages')
 subdir('po')
 subdir('src')
@@ -675,7 +683,7 @@ endif
 aegisub = executable('aegisub', aegisub_src, files('src/main_entry.cpp'), version_h, libresrc_headers, aegisub_order_dep,
                      c_args: aegisub_defines,
                      cpp_args: aegisub_defines,
-                     link_with: [libresrc, libaegisub],
+                     link_with: [libresrc, workbench_store, libaegisub],
                      link_args: link_args,
                      link_depends: link_depends,
                      include_directories: [libaegisub_inc, libresrc_inc, version_inc, include_directories('src')],
@@ -698,10 +706,10 @@ if get_option('tests')
     endif
     ordinary_runner = executable('ordinary-edit-tests',
         'tests/support/ordinary_main.cpp', 'tests/tests/ordinary_edit.cpp',
-        'tests/tests/lua_isolation.cpp',
+        'tests/tests/lua_isolation.cpp', 'tests/tests/workbench.cpp',
         objects: ordinary_objects,
         include_directories: [libaegisub_inc, libresrc_inc, version_inc, include_directories('src')],
-        dependencies: [tests_deps, deps], link_with: [libresrc, libaegisub],
+        dependencies: [tests_deps, deps, sqlite_dep], link_with: [libresrc, workbench_store, libaegisub],
         # The feature flags as Aegisub has them: given as arguments where it
         # has no precompiled header, else read from acconf.h by it, which
         # these tests do not use

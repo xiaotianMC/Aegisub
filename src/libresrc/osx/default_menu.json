@@ -14,6 +14,7 @@
         { "submenu" : "main/help",     "tlcontext": "Menu bar", "text" : "&Help", "special" : "help" }
     ],
     "main/file" : [
+        { "command" : "app/workbench" },
         { "command" : "subtitle/new", "text" : "New" },
         { "command" : "subtitle/open", "text" : "Open..." },
         { "command" : "subtitle/open/charset" },
@@ -22,6 +23,7 @@
         { "recent" : "Subtitle", "text" : "Open Recent" },
         {},
         { "command" : "subtitle/close" },
+        { "command" : "subtitle/recover" },
         { "command" : "subtitle/save", "text" : "Save" },
         { "command" : "subtitle/save/as", "text" : "Save As..." },
         { "command" : "tool/export", "text" : "Export As..." },

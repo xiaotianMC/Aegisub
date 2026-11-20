@@ -126,7 +126,7 @@ void MicroDVDSubtitleFormat::ReadFile(AssFile *target, agi::fs::path const& file
 
 void MicroDVDSubtitleFormat::WriteFile(const AssFile *src, agi::fs::path const& filename, agi::vfr::Framerate const& vfps, const char *encoding) const {
 	agi::vfr::Framerate fps = AskForFPS(true, false, vfps);
-	if (!fps.IsLoaded()) return;
+	if (!fps.IsLoaded()) throw agi::UserCancelException("Cancelled FPS selection");
 
 	AssFile copy(*src);
 	copy.Sort();
@@ -149,4 +149,5 @@ void MicroDVDSubtitleFormat::WriteFile(const AssFile *src, agi::fs::path const& 
 
 		file.WriteLineToFile(agi::format("{%i}{%i}%s", start, end, boost::replace_all_copy(current.Text.get(), "\\N", "|")));
 	}
+	file.Commit();
 }

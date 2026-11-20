@@ -36,6 +36,8 @@ class Project : private agi::signal::ConnectionScope {
     friend class FrameMain;
     enum class HostLifetime { Open, Closing };
     HostLifetime host_lifetime = HostLifetime::Open;
+	enum class RecoveryFollowup { None, LoadLinked, KeepMedia, CloseToHome };
+	RecoveryFollowup recovery_followup = RecoveryFollowup::None;
     void BeginHostShutdown() noexcept { host_lifetime=HostLifetime::Closing; }
 	std::unique_ptr<agi::AudioProvider> audio_provider;
 	std::unique_ptr<AsyncVideoProvider> video_provider;
@@ -72,7 +74,7 @@ class Project : private agi::signal::ConnectionScope {
 	std::optional<agi::SubtitleEditGate::ProjectWriteLease> BeginMediaChange(wxString const& title);
 	agi::SubtitleEditGate::ProjectWriteLease RequireMediaChange() const;
 
-	bool DoLoadSubtitles(agi::fs::path const& path, std::string encoding, ProjectProperties &properties);
+	bool DoLoadSubtitles(agi::fs::path const& path, std::string encoding, ProjectProperties &properties, bool load_linked);
 	void DoLoadAudio(agi::fs::path const& path, bool quiet);
 	bool DoLoadVideo(agi::fs::path const& path);
 	void DoLoadTimecodes(agi::fs::path const& path);
@@ -92,7 +94,9 @@ public:
 	void LoadSubtitles(agi::fs::path path, std::string encoding="", bool load_linked=true);
 	void SetSubtitlesFilename(agi::fs::path path);
     ProjectProperties PropertiesForSave(agi::fs::path const& path) const;
-	void CloseSubtitles();
+	/// True once a blank document has been installed and confirmed.
+	bool CloseSubtitles(bool return_home = false);
+	void RetrySubtitleRecovery();
 	bool CanLoadSubtitlesFromVideo() const { return video_has_subtitles; }
 
 	void LoadAudio(agi::fs::path path);

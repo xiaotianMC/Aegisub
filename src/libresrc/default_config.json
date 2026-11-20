@@ -361,6 +361,7 @@
 	},
 
 	"Path" : {
+		"Workbench Templates" : "",
 		"Auto" : {
 			"Backup" : "?state/autoback",
 			"Save" : "?state/autosave"

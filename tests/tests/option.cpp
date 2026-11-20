@@ -54,6 +54,19 @@ TEST_F(lagi_option, nonexistent_file) {
 	EXPECT_NO_THROW(agi::Options("", default_opt, agi::Options::FLUSH_SKIP));
 }
 
+TEST_F(lagi_option, an_explicit_save_reports_an_unwritable_path_and_teardown_can_finish) {
+	agi::fs::path blocker = "data/options/file-instead-of-folder";
+	{ std::ofstream file(blocker); file << "keep"; }
+	{
+		agi::Options options(blocker / "config.json", default_opt);
+		EXPECT_ANY_THROW(options.Flush());
+	}
+	std::ifstream input(blocker);
+	std::string contents;
+	input >> contents;
+	EXPECT_EQ("keep", contents);
+}
+
 TEST_F(lagi_option, ass_completion_setting_survives_reload) {
 	const char defaults[] = R"({"Subtitle":{"Edit Box":{"Auto Completion":true}}})";
 	const char path[] = "data/options/ass-completion.json";

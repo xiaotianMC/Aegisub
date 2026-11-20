@@ -466,6 +466,7 @@ void SaveMeasures(agi::fs::path const& file, Measures const& m) {
 		row[per_frame * i + 5] = at(m.unmatched, i, 1);
 	}
 	out.write(reinterpret_cast<char const*>(row.data()), static_cast<std::streamsize>(row.size() * sizeof(float)));
+	save.Commit();
 }
 
 Measures LoadMeasures(agi::fs::path const& file) {

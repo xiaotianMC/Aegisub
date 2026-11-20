@@ -155,7 +155,9 @@ struct tool_magiatimeline final : public Command {
 			agi::fs::CreateDirectory(work);
 			if (agi::fs::FileExists(output)) agi::fs::Remove(output);
 			if (ocr_output && agi::fs::FileExists(*ocr_output)) agi::fs::Remove(*ocr_output);
-			agi::io::Save(config_file).Get() << *written;
+			agi::io::Save config(config_file);
+			config.Get() << *written;
+			config.Commit();
 		}
 		catch (agi::Exception const& e) {
 			Fail(c, to_wx(e.GetMessage()));

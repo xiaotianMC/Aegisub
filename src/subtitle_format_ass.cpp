@@ -165,6 +165,7 @@ void AssSubtitleFormat::WriteFile(const AssFile *src, agi::fs::path const& filen
 	writer.Write(src->Attachments);
 	writer.Write(src->Events);
 	writer.WriteExtradata(src->Extradata);
+	writer.file.Commit();
 }
 
 void AssSubtitleFormat::ExportFile(const AssFile *src, agi::fs::path const& filename, agi::vfr::Framerate const&, const char *encoding) const {
@@ -173,4 +174,5 @@ void AssSubtitleFormat::ExportFile(const AssFile *src, agi::fs::path const& file
 	writer.Write(src->Styles);
 	writer.Write(src->Attachments);
 	writer.Write(src->Events);
+	writer.file.Commit();
 }

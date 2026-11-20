@@ -158,4 +158,5 @@ void TXTSubtitleFormat::WriteFile(const AssFile *src, agi::fs::path const& filen
 		if (!out_text.empty())
 			file.WriteLineToFile(out_line);
 	}
+	file.Commit();
 }

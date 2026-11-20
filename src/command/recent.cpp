@@ -74,13 +74,9 @@ struct recent_subtitle_entry : public Command {
 	STR_DISP("Recent")
 	STR_HELP("Open recent subtitles")
 
-	void operator()([[maybe_unused]] agi::Context *c, int id) {
-#ifdef __APPLE__
-		wxGetApp().NewProjectContext().project->LoadSubtitles(config::mru->GetEntry("Subtitle", id));
-#else
-		if (c->subsController->TryToClose() == wxCANCEL) return;
-		c->project->LoadSubtitles(config::mru->GetEntry("Subtitle", id));
-#endif
+	void operator()(agi::Context *c, int id) {
+		auto file = config::mru->GetEntry("Subtitle", id);
+		wxGetApp().OpenSubtitle(c, file);
 	}
 };
 

@@ -30,10 +30,12 @@
 #pragma once
 
 #include <libaegisub/signal.h>
+#include <libaegisub/subtitle_edit_gate.h>
 
 #include <memory>
 #include <wx/frame.h>
 #include <wx/timer.h>
+#include <wx/weakref.h>
 
 class AegisubApp;
 class AsyncVideoProvider;
@@ -43,6 +45,8 @@ class StylePanel;
 class StylePanelEdge;
 class SubsEditBox;
 class VideoBox;
+class wxSimplebook;
+enum class FrameMode { Workbench, EditorOnly };
 namespace agi { class AudioProvider; }
 namespace agi { struct Context; class OptionValue; }
 
@@ -54,6 +58,21 @@ private:
 	friend class AegisubApp;
 
 	std::unique_ptr<agi::Context> context;
+	wxSimplebook *workbench = nullptr;
+	wxWindow *home = nullptr;
+	wxWindow *resume_editor = nullptr;
+	wxWeakRef<wxWindow> last_editor_focus;
+	wxWeakRef<wxWindow> suspended_video;
+
+	struct CloseDecision {
+		agi::SubtitleRevision document;
+		uint64_t metadata;
+		uint64_t comparison;
+	};
+	CloseDecision CurrentDecision() const;
+	bool StillCurrent(CloseDecision const& decision) const;
+	std::optional<CloseDecision> PrepareClose(bool allow_cancel);
+	void FinishClose();
 
     // XXX: Make Freeze()/Thaw() noops on GTK, this seems to be buggy
 #ifdef __WXGTK__
@@ -65,7 +84,8 @@ private:
 	bool showAudio = true; ///< Is the audio display shown?
 	wxTimer StatusClear;   ///< Status bar timeout timer
 
-	void InitContents();
+	void InitContents(FrameMode mode);
+	void RefreshPage();
 
 	void UpdateTitle();
 	/// Refresh the line and file fields of the status bar.
@@ -111,9 +131,15 @@ public:
 	StylePanelEdge *GetPanelEdge() const { return panelEdge; }
 	/// The edit box below the audio
 	SubsEditBox *GetEditBox() const { return editBox; }
-	FrameMain();
+	explicit FrameMain(FrameMode mode);
 	~FrameMain();
     bool Destroy() override;
+	bool IsClosing() const;
+	bool HasWorkbench() const { return workbench != nullptr; }
+	bool IsHome() const;
+	void ShowHome();
+	void ShowEditor();
+	void CloseSubtitles();
 
 	/// Set the status bar text
 	/// @param text New status bar text

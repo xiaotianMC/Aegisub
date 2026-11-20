@@ -707,6 +707,7 @@ class ComparePanel final : public ComparisonPage {
     void End(bool applied);
 public:
     ComparePanel(wxWindow* parent, agi::Context *c, SubtitleComparison&& session, wxString const& name);
+    bool ConfirmClose() override;
     bool TryClose(bool ask) override;
     void Started() override;
 
@@ -3037,6 +3038,8 @@ void ComparePanel::UpdateFilterBar() {
 }
 
 void ComparePanel::Changed() {
+    if (c->workspaceTabs && c->workspaceTabs->Comparison() == this)
+        c->workspaceTabs->ComparisonChanged();
     // Showing only what is pending, decisions and moving on change what is shown.
     if (filter.pending_only) {
         filter.keep = current;
@@ -3398,11 +3401,15 @@ void ComparePanel::End(bool applied) {
     if (c->workspaceTabs) c->workspaceTabs->ComparisonEnded(applied);
 }
 
+bool ComparePanel::ConfirmClose() {
+    auto decisions = state.Choices().size();
+    if (!decisions) return true;
+    auto message = fmt_tl("Close the comparison and discard %d decisions that would change the open subtitles?", (int)decisions);
+    return wxMessageBox(message, _("Compare Subtitles"), wxOK | wxCANCEL | wxICON_QUESTION, this) == wxOK;
+}
+
 bool ComparePanel::TryClose(bool ask) {
-    if (ask && !state.Choices().empty()) {
-        auto message = fmt_tl("Close the comparison and discard %d decisions that would change the open subtitles?", (int)state.Choices().size());
-        if (wxMessageBox(message, _("Compare Subtitles"), wxOK | wxCANCEL | wxICON_QUESTION, this) != wxOK) return false;
-    }
+    if (ask && !ConfirmClose()) return false;
     End(false);
     return true;
 }

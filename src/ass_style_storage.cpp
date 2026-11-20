@@ -55,6 +55,7 @@ void AssStyleStorage::Save() const {
 
 	for (auto const& cur : style)
 		out.Get() << cur->GetEntryData() << "\n";
+	out.Commit();
 }
 
 void AssStyleStorage::Load(agi::fs::path const& filename) {

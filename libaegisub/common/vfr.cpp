@@ -231,6 +231,7 @@ void Framerate::Save(agi::fs::path const& filename, int length) const {
 	boost::copy(timecodes, std::ostream_iterator<int>(out, "\n"));
 	for (int written = (int)timecodes.size(); written < length; ++written)
 		out << TimeAtFrame(written) << std::endl;
+	file.Commit();
 }
 
 int Framerate::FrameAtTime(int ms, Time type) const {

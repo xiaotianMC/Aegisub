@@ -7305,3 +7305,410 @@ msgstr "音訊對時"
 #~ "When selected, display an opaque box behind the subtitles instead of an "
 #~ "outline around the text"
 #~ msgstr "選中時，則使用不透明背景取代字幕的邊框"
+
+#: src/frame_main.cpp
+msgid "Workbench"
+msgstr "工作臺"
+
+#: src/frame_main.cpp
+msgid "Open Editor"
+msgstr "開啟字幕編輯器"
+
+#: src/frame_main.cpp
+msgid "Open Subtitles..."
+msgstr "開啟字幕…"
+
+#: src/command/app.cpp
+msgid "Workbench Home"
+msgstr "工作臺首頁"
+
+#: src/command/app.cpp
+msgid "Return to the workbench and keep the editor open"
+msgstr "返回工作臺並保留目前的編輯工作階段"
+
+#: src/command/subtitle.cpp
+msgid "Close Subtitles"
+msgstr "關閉字幕"
+
+#: src/command/subtitle.cpp
+msgid "Close the current subtitles"
+msgstr "關閉目前的字幕"
+
+#: src/subs_controller.cpp
+msgid "Finish the comparison before saving the subtitles."
+msgstr "請先結束比較，再儲存字幕。"
+
+#: src/project.cpp
+msgid "The new subtitles were installed, but some parts of the interface could not switch to them.\n\nEditing, saving and opening files are disabled. Use File > Retry Subtitle Recovery to continue."
+msgstr "新字幕已載入，但部分介面未能切換。\n\n編輯、儲存與開啟檔案已暫停。請從「檔案」選擇「重試字幕復原」以繼續。"
+
+#: src/command/subtitle.cpp
+msgid "Retry Subtitle Recovery"
+msgstr "重試字幕復原"
+
+#: src/command/subtitle.cpp
+msgid "Retry the editor updates for the installed subtitles"
+msgstr "重新連接編輯器與已載入的字幕"
+
+#: src/project.cpp
+msgid "Subtitle Recovery"
+msgstr "字幕復原"
+
+#: src/project.cpp
+msgid "The subtitles were recovered, but some follow-up steps failed:"
+msgstr "字幕已復原，以下後續步驟失敗："
+
+#: src/workbench_home.cpp
+msgid "New Project"
+msgstr "新增專案"
+
+#: src/workbench_home.cpp
+msgid "New Series"
+msgstr "新增系列"
+
+#: src/workbench_home.cpp
+msgid "Open Project or Series"
+msgstr "開啟專案或系列"
+
+#: src/workbench_home.cpp
+msgid "Directory Templates"
+msgstr "目錄範本"
+
+#: src/workbench_home.cpp
+msgid "Choose Template Library Folder"
+msgstr "選擇範本庫目錄"
+
+#: src/workbench_home.cpp
+msgid "Register Existing Folder"
+msgstr "登錄現有資料夾"
+
+#: src/workbench_home.cpp
+msgid "Add project metadata to this folder. Existing files stay in place."
+msgstr "將在此資料夾中加入專案中繼資料。現有檔案保留原位。"
+
+#: src/workbench_home.cpp
+msgid "Project display name"
+msgstr "專案顯示名稱"
+
+#: src/workbench_home.cpp
+msgid "Choose the parent directory"
+msgstr "選擇上層目錄"
+
+#: src/workbench_home.cpp
+msgid "Name of the new folder"
+msgstr "新資料夾名稱"
+
+#: src/workbench_home.cpp
+msgid "Choose a directory template"
+msgstr "選擇目錄範本"
+
+#: src/workbench_home.cpp
+msgid "Project"
+msgstr "專案"
+
+#: src/workbench_home.cpp
+msgid "Series"
+msgstr "系列"
+
+#: src/workbench_home.cpp
+msgid "Previous"
+msgstr "上一頁"
+
+#: src/workbench_home.cpp
+msgid "Next"
+msgstr "下一頁"
+
+#: src/workbench_home.cpp
+msgid "Refresh"
+msgstr "重新整理"
+
+#: src/workbench_home.cpp
+msgid "Rename Project or Series"
+msgstr "變更專案或系列名稱"
+
+#: src/workbench_home.cpp
+msgid "Display name"
+msgstr "顯示名稱"
+
+#: src/workbench_home.cpp
+msgid "Import Editor Preferences"
+msgstr "匯入編輯器偏好設定"
+
+#: src/workbench_home.cpp
+msgid "Choose an older Aegisub configuration"
+msgstr "選擇舊版 Aegisub 設定檔"
+
+#: src/workbench_home.cpp
+msgid "This file has no different supported editor preferences."
+msgstr "此檔可匯入的編輯器設定與目前設定相同，或未包含可匯入項目。"
+
+#: src/workbench_home.cpp
+msgid "Select the editor preferences to import."
+msgstr "勾選要匯入的編輯器設定。"
+
+#: src/workbench_home.cpp
+msgid "Selected preferences imported."
+msgstr "已匯入所選設定。"
+
+#: src/workbench_home.cpp
+msgid "Previous configuration saved to"
+msgstr "原設定已備份至"
+
+#: src/workbench_home.cpp
+msgid "Enabled"
+msgstr "啟用"
+
+#: src/workbench_home.cpp
+msgid "Disabled"
+msgstr "停用"
+
+#: src/workbench_home.cpp
+msgid "Import Template…"
+msgstr "匯入範本…"
+
+#: src/workbench_home.cpp
+msgid "Export Template…"
+msgstr "匯出範本…"
+
+#: src/workbench_home.cpp
+msgid "Translations"
+msgstr "翻譯稿"
+
+#: src/workbench_home.cpp
+msgid "Exports"
+msgstr "匯出成品"
+
+#: src/workbench_home.cpp
+msgid "Episodes"
+msgstr "分集"
+
+#: src/workbench_home.cpp
+msgid "Subtitles"
+msgstr "字幕"
+
+#: src/workbench_activity.cpp
+msgid "Queued"
+msgstr "佇列中"
+
+#: src/workbench_activity.cpp
+msgid "Registering"
+msgstr "登錄中"
+
+#: src/workbench_activity.cpp
+msgid "Interrupted"
+msgstr "已中斷"
+
+#: src/workbench_activity.cpp
+msgid "Needs attention"
+msgstr "需要處理"
+
+#: src/workbench_activity.cpp
+msgid "Cancelled"
+msgstr "已取消"
+
+#: src/workbench_activity.cpp
+msgid "Completed"
+msgstr "已完成"
+
+#: src/workbench_activity.cpp
+msgid "Awaiting verification"
+msgstr "等待驗證"
+
+#: src/workbench_activity.cpp
+msgid "Verified in project"
+msgstr "已驗證專案內檔案"
+
+#: src/workbench_activity.cpp
+msgid "Registered"
+msgstr "已登錄"
+
+#: src/workbench_activity.cpp
+msgid "Operation stopped."
+msgstr "操作已停止。"
+
+#: src/workbench_activity.cpp
+msgid "Choose a project on the home page to view its files."
+msgstr "在首頁選擇專案即可查看檔案。"
+
+#: src/workbench_activity.cpp
+msgid "This project has not been scanned yet."
+msgstr "此專案尚未掃描。"
+
+#: src/workbench_activity.cpp
+#, c-format
+msgid "%lld indexed files"
+msgstr "已建立 %lld 個檔案的索引"
+
+#: src/workbench_activity.cpp
+msgid "Rebuild File Index"
+msgstr "重建檔案索引"
+
+#: src/workbench_activity.cpp
+msgid "Scanning project files…"
+msgstr "正在掃描專案檔案…"
+
+#: src/workbench_activity.cpp
+msgid "Queue Selected Files for Registration"
+msgstr "將所選檔案加入登錄佇列"
+
+#: src/workbench_activity.cpp
+msgid "Verifying selected files…"
+msgstr "正在驗證所選檔案…"
+
+#: src/workbench_activity.cpp
+msgid "Run or Check Registration"
+msgstr "執行或核查登錄"
+
+#: src/workbench_activity.cpp
+msgid "Checking registration…"
+msgstr "正在核查登錄…"
+
+#: src/workbench_activity.cpp
+msgid "Cancel Task"
+msgstr "取消工作"
+
+#: src/workbench_activity.cpp
+msgid "Previous Files"
+msgstr "上一頁檔案"
+
+#: src/workbench_activity.cpp
+msgid "Next Files"
+msgstr "下一頁檔案"
+
+#: src/workbench_activity.cpp
+msgid "Project Files and Registration"
+msgstr "專案檔案與素材登錄"
+
+#: src/workbench_activity.cpp src/workbench_home.cpp
+msgid "Registration Tasks"
+msgstr "素材登錄工作"
+
+#: src/workbench_activity.cpp src/workbench_home.cpp
+msgid "Project Files"
+msgstr "專案檔案"
+
+#: src/workbench_activity.cpp
+msgid "Stop Current Operation"
+msgstr "停止目前操作"
+
+#: src/workbench_home.cpp
+#, c-format
+msgid "Registration Tasks (%lld unfinished)"
+msgstr "素材登錄工作（%lld 項未完成）"
+
+#: src/workbench_home.cpp
+msgid "Choose Cover…"
+msgstr "選擇封面…"
+
+#: src/workbench_home.cpp
+msgid "Choose a cover image"
+msgstr "選擇封面圖片"
+
+#: src/workbench_home.cpp
+msgid "PNG and JPEG images"
+msgstr "PNG 與 JPEG 圖片"
+
+#: src/workbench_home.cpp
+msgid "PNG images"
+msgstr "PNG 圖片"
+
+#: src/workbench_metadata.cpp src/workbench_home.cpp
+msgid "Project Details"
+msgstr "專案資料"
+
+#: src/workbench_metadata.cpp
+msgid "Not started"
+msgstr "待開始"
+
+#: src/workbench_metadata.cpp
+msgid "In progress"
+msgstr "進行中"
+
+#: src/workbench_metadata.cpp
+msgid "Ready for review"
+msgstr "待校對"
+
+#: src/workbench_metadata.cpp
+msgid "Paused"
+msgstr "已暫停"
+
+#: src/workbench_metadata.cpp
+msgid "Source URL or video ID"
+msgstr "來源網址或影片 ID"
+
+#: src/workbench_metadata.cpp
+msgid "Source language"
+msgstr "原始語言"
+
+#: src/workbench_metadata.cpp
+msgid "Target language"
+msgstr "目標語言"
+
+#: src/workbench_metadata.cpp
+msgid "Project owner"
+msgstr "負責人"
+
+#: src/workbench_metadata.cpp
+msgid "Tags (one per line)"
+msgstr "標籤（每行一個）"
+
+#: src/workbench_metadata.cpp
+msgid "Production status"
+msgstr "製作狀態"
+
+#: src/workbench_series.cpp src/workbench_home.cpp
+msgid "Series Episodes"
+msgstr "系列分集"
+
+#: src/workbench_home.cpp
+msgid "Back to Series"
+msgstr "返回系列"
+
+#: src/workbench_series.cpp
+msgid "New Episode"
+msgstr "新增分集"
+
+#: src/workbench_series.cpp
+msgid "Add Existing Episode"
+msgstr "加入現有分集"
+
+#: src/workbench_series.cpp
+msgid "Open Episode"
+msgstr "開啟分集"
+
+#: src/workbench_series.cpp
+msgid "Status unknown"
+msgstr "狀態未知"
+
+#: src/workbench_series.cpp
+#, c-format
+msgid "%u of %u episodes completed, %u unknown"
+msgstr "已完成 %u 集，共 %u 集，其中 %u 集狀態未知"
+
+#: src/workbench_series.cpp
+msgid "Reading series episodes…"
+msgstr "正在讀取分集…"
+
+#: src/workbench_series.cpp
+msgid "Name of the new project folder"
+msgstr "新分集的專案資料夾名稱"
+
+#: src/workbench_series.cpp
+msgid "Choose a project inside this series"
+msgstr "選擇此系列資料夾內的子專案"
+
+#: src/workbench_series.cpp
+msgid "Episode number or label"
+msgstr "集數或標籤"
+
+#: src/workbench_series.cpp
+msgid "Enter an episode number or label."
+msgstr "請輸入集數或標籤。"
+
+#: src/workbench_series.cpp
+msgid "Refresh to check series progress."
+msgstr "重新整理以再次查看系列進度。"
+
+#: src/workbench_series.cpp
+msgid "Back to Workbench"
+msgstr "返回工作台"

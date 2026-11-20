@@ -28,6 +28,7 @@
 #include "libresrc/libresrc.h"
 #include "options.h"
 #include "utils.h"
+#include "workspace_tabs.h"
 
 #include <libaegisub/cajun/reader.h>
 #include <libaegisub/hotkey.h>
@@ -85,7 +86,7 @@ public:
 		Resize(items.size());
 	}
 
-	void Update() {
+	void Update(WorkspaceTabs *tabs) {
 		const auto mru = config::mru->Get(type.c_str());
 
 		Resize(mru->size());
@@ -105,7 +106,7 @@ public:
 			items[i]->SetItemLabel(fmt_wx("%s%d %s",
 				i <= 9 ? "&" : "", i + 1,
 				name));
-			items[i]->Enable(true);
+			items[i]->Enable(!tabs || tabs->Permits((*cmds)[items[i]->GetId() - id_base]));
 		}
 	}
 };
@@ -139,10 +140,10 @@ class CommandManager {
 	void UpdateItem(std::pair<std::string, wxMenuItem*> const& item) {
 		cmd::Command *c = cmd::get(item.first);
 		int flags = c->Type();
-		if (flags & cmd::COMMAND_VALIDATE) {
-			item.second->Enable(c->Validate(context));
-			flags = c->Type();
-		}
+		bool permitted = !context->workspaceTabs || context->workspaceTabs->Permits(item.first);
+		item.second->Enable(permitted && (!(flags & cmd::COMMAND_VALIDATE) || c->Validate(context)));
+		if (!permitted) return;
+		flags = c->Type();
 		if (flags & cmd::COMMAND_DYNAMIC_NAME)
 			UpdateItemName(item);
 		if (flags & cmd::COMMAND_DYNAMIC_HELP)
@@ -239,7 +240,9 @@ public:
 		if (!context)
 			return;
 		for (auto const& item : dynamic_items) UpdateItem(item);
-		for (auto item : mru) item->Update();
+		for (auto const& item : static_items)
+			item.second->Enable(!context->workspaceTabs || context->workspaceTabs->Permits(item.first));
+		for (auto item : mru) item->Update(context->workspaceTabs);
 	}
 
 	void OnMenuClick(wxCommandEvent &evt) {

@@ -64,6 +64,8 @@
 #include <wx/bmpbuttn.h>
 #include <wx/menu.h>
 #include "workspace_tabs.h"
+#include "frame_main.h"
+#include "main.h"
 #include "dialog_manager.h"
 #include "compat.h"
 #include "utils.h"
@@ -224,6 +226,7 @@ void button(wxWindow* window, int id) {
 }
 struct testing_comparison_page final : ComparisonPage {
     using ComparisonPage::ComparisonPage;
+    bool ConfirmClose() override { return true; }
     bool TryClose(bool) override { return true; }
     void Started() override {}
 };
@@ -5925,6 +5928,36 @@ TEST_F(ordinary_edit, failed_save_leaves_filename_paths_dirty_state_model_and_hi
     EXPECT_EQ("unsaved",LiveRead(*c).Events.front().Text.get());EXPECT_EQ(revision,c->subtitleEditGate.Revision());EXPECT_EQ(undo,c->subsController->GetUndoDescription());
 }
 
+TEST_F(ordinary_edit, failed_format_initialization_preserves_the_file_and_unsaved_edits) {
+    Input("pending changes");
+    auto filename = c->subsController->Filename();
+    auto undo = c->subsController->GetUndoDescription();
+    agi::fs::path target(std::filesystem::current_path() / "existing-subtitle.ass");
+    std::ofstream(target, std::ios::binary) << "original subtitle bytes";
+
+    EXPECT_ANY_THROW(c->subsController->Save(target, "not-a-real-encoding"));
+
+    std::ifstream original(target, std::ios::binary);
+    EXPECT_EQ("original subtitle bytes", std::string(std::istreambuf_iterator<char>(original), {}));
+    EXPECT_EQ(filename, c->subsController->Filename());
+    EXPECT_TRUE(c->subsController->IsModified());
+    EXPECT_EQ(undo, c->subsController->GetUndoDescription());
+    EXPECT_EQ("pending changes", LiveRead(*c).Events.front().Text.get());
+}
+
+TEST_F(ordinary_edit, ttxt_export_publishes_xml_that_the_reader_can_reopen) {
+    Input("round trip 中文 & XML");
+    auto file = agi::fs::Absolute("atomic-xml.ttxt");
+    auto snapshot = c->subtitleAccess->Snapshot();
+    snapshot->Events.front().Start = 1000;
+    snapshot->Events.front().End = 2000;
+    SubtitleFormat::GetWriter(file)->WriteFile(snapshot.get(), file, agi::vfr::Framerate(), "utf-8");
+    AssFile reopened;
+    SubtitleFormat::GetReader(file, "utf-8")->ReadFile(&reopened, file, agi::vfr::Framerate(), "utf-8");
+    ASSERT_FALSE(reopened.Events.empty());
+    EXPECT_EQ("round trip 中文 & XML", reopened.Events.front().Text.get());
+}
+
 TEST_F(ordinary_edit, autosave_owns_complete_input_and_queued_completion_survives_controller_destruction) {
     auto directory=std::filesystem::current_path()/"autosave-snapshot";
     std::filesystem::remove_all(directory); // left by an earlier run
@@ -6356,10 +6389,15 @@ TEST_F(document_lifecycle, project_entries_distinguish_parse_failure_recovery_bl
     auto path=Candidate("project-recovery");bool fail=true;
     agi::signal::Connection throwing=LiveRead(*c).AddCommitListener([&](int,AssDialogue const*,Ticket t){if(fail)throw std::runtime_error("observer failure");Ack(t);});
     c->project->LoadSubtitles(path,"utf-8");ASSERT_EQ(3u,messages.messages.size());
-    EXPECT_TRUE(messages.messages.back().Contains("Close Aegisub to recover"));EXPECT_EQ(State::RecoveryBlocked,c->subsController->InstallationStatus());
+    EXPECT_TRUE(messages.messages.back().Contains("Retry Subtitle Recovery"));EXPECT_EQ(State::RecoveryBlocked,c->subsController->InstallationStatus());
     EXPECT_NO_THROW(c->project->CloseSubtitles());ASSERT_EQ(4u,messages.messages.size());
-    EXPECT_TRUE(messages.messages.back().Contains("Close Aegisub to recover"));EXPECT_EQ(State::RecoveryBlocked,c->subsController->InstallationStatus());
-    fail=false;EXPECT_TRUE(c->subsController->RetryModelInstallation());throwing.Disconnect();
+    EXPECT_TRUE(messages.messages.back().Contains("Retry Subtitle Recovery"));EXPECT_EQ(State::RecoveryBlocked,c->subsController->InstallationStatus());
+    EXPECT_TRUE(cmd::get("subtitle/recover")->Validate(c.get()));
+    fail=false;
+    cmd::call("subtitle/recover", c.get());
+    EXPECT_FALSE(cmd::get("subtitle/recover")->Validate(c.get()));
+    EXPECT_EQ(State::Committed, c->subsController->InstallationStatus());
+    throwing.Disconnect();
     agi::signal::Connection failing=c->subsController->AddFileOpenListener([&](agi::fs::path const&){throw std::runtime_error("listener failure");});
     auto second=Candidate("project-warning");c->project->LoadSubtitles(second,"utf-8");ASSERT_EQ(5u,messages.messages.size());
     EXPECT_TRUE(messages.messages.back().StartsWith("The subtitles were opened"));EXPECT_TRUE(messages.messages.back().Contains("listener failure"));
@@ -6575,7 +6613,7 @@ TEST_F(document_lifecycle, media_changes_are_refused_without_side_effects_while_
     EXPECT_NO_THROW(c->project->LoadList({}));
     EXPECT_EQ(0,announced);EXPECT_EQ(metadata,c->subtitleAccess->MetadataRevision());
     ASSERT_EQ(6u,messages.messages.size());
-    for(auto const& m:messages.messages)EXPECT_TRUE(m.Contains("Close Aegisub to recover"));
+    for(auto const& m:messages.messages)EXPECT_TRUE(m.Contains("Retry Subtitle Recovery"));
     fail=false;EXPECT_TRUE(c->subsController->RetryModelInstallation());throwing.Disconnect();
     c->project->CloseAudio();EXPECT_EQ(1,announced);EXPECT_FALSE(c->project->AudioProvider());
 }
@@ -8759,6 +8797,24 @@ TEST_F(ordinary_edit, empty_workspace_and_non_drop_opens_do_not_prompt_for_compa
     c->project->LoadList({other});
     EXPECT_EQ(0, hook.drop_prompts); EXPECT_EQ(other, c->subsController->Filename());
 }
+TEST_F(ordinary_edit, mixed_open_with_invalid_subtitles_keeps_timecodes_and_the_dirty_document) {
+    Input("keep the document");
+    auto times = agi::fs::Absolute("unapplied-timecodes.txt");
+    auto invalid = agi::fs::Absolute("broken-subtitles.srt");
+    std::ofstream(times) << "# timecode format v2\n0\n40\n80\n";
+    std::ofstream(invalid) << "invalid subtitle index\n";
+    auto revision = c->subtitleEditGate.Revision();
+    CompareHook hook(nullptr);
+    hook.save_choice = wxID_NO;
+    c->project->LoadList({times, invalid});
+    EXPECT_EQ(1, hook.save_prompts);
+    EXPECT_FALSE(hook.messages.empty());
+    EXPECT_FALSE(c->project->CanCloseTimecodes());
+    EXPECT_EQ(revision, c->subtitleEditGate.Revision());
+    EXPECT_TRUE(c->subsController->IsModified());
+    EXPECT_EQ("keep the document", LiveRead(*c).Events.front().Text.get());
+}
+
 TEST_F(ordinary_edit, timecode_only_and_busy_subtitle_drops_do_not_offer_comparison) {
     Input("keep");
     agi::fs::path timecodes((std::filesystem::current_path() / "drop-only-timecodes.txt").wstring());
@@ -9269,6 +9325,233 @@ struct AutomationScripts {
     }
     ~AutomationScripts() { wxTheApp->ProcessIdle(); delete config::global_scripts; config::global_scripts=nullptr; }
 };
+
+class workbench_window : public testing::Test {
+protected:
+    AutomationScripts scripts;
+    std::vector<wxWeakRef<FrameMain>> frames;
+
+    agi::Context& Open(bool main) {
+        auto& session = main ? wxGetApp().NewWorkbenchContext() : wxGetApp().NewProjectContext();
+        frames.emplace_back(session.frame);
+        return session;
+    }
+    void TearDown() override {
+        for (auto& frame : frames) {
+            if (!frame || frame->IsClosing()) continue;
+            auto tabs = dynamic_cast<WorkspaceTabs*>(frame->FindWindow("workspace-tabs"));
+            if (tabs) tabs->CloseComparison(false);
+            frame->Destroy();
+        }
+        wxTheApp->ProcessPendingEvents();
+        wxTheApp->ProcessIdle();
+    }
+};
+
+TEST_F(workbench_window, closing_subtitles_uses_the_role_and_keeps_unsaved_changes_on_cancel) {
+    auto& main = Open(true);
+    auto& separate = Open(false);
+    ASSERT_TRUE(main.frame->IsHome());
+    EXPECT_FALSE(separate.frame->HasWorkbench());
+    main.frame->ShowEditor();
+    main.subtitleAccess->SetAutomationSetting("project", "unsaved");
+    separate.subtitleAccess->SetAutomationSetting("other", "unsaved");
+    auto revision = main.subtitleEditGate.Revision();
+    CompareHook dialogs(nullptr);
+    dialogs.save_choice = wxID_CANCEL;
+    cmd::call("subtitle/close", &main);
+    cmd::call("subtitle/close", &separate);
+    EXPECT_EQ(2, dialogs.save_prompts);
+    EXPECT_FALSE(main.frame->IsHome());
+    EXPECT_TRUE(main.subsController->IsModified());
+    EXPECT_EQ(revision, main.subtitleEditGate.Revision());
+    EXPECT_FALSE(separate.frame->IsClosing());
+    EXPECT_TRUE(separate.subsController->IsModified());
+
+    dialogs.save_choice = wxID_NO;
+    cmd::call("subtitle/close", &main);
+    EXPECT_TRUE(main.frame->IsHome());
+    EXPECT_FALSE(main.subsController->IsModified());
+    EXPECT_FALSE(main.workspaceTabs->Permits("subtitle/save"));
+    cmd::call("subtitle/close", &separate);
+    EXPECT_TRUE(separate.frame->IsClosing());
+    EXPECT_FALSE(main.frame->IsClosing());
+}
+
+TEST_F(workbench_window, failed_save_during_close_keeps_the_session_and_its_original_file) {
+    auto& main = Open(true);
+    main.frame->ShowEditor();
+    auto root = agi::fs::Absolute("workbench-save-error");
+    auto moved = agi::fs::Absolute("workbench-save-original");
+    agi::fs::CreateDirectory(root);
+    auto file = root / "subtitles.ass";
+    main.subsController->Save(file, "utf-8");
+    main.subtitleAccess->SetAutomationSetting("note", "pending");
+    agi::fs::Rename(root, moved);
+    std::ofstream(root) << "blocks the old directory";
+    CompareHook dialogs(nullptr);
+    dialogs.save_choice = wxID_YES;
+    cmd::call("subtitle/close", &main);
+    EXPECT_EQ(1, dialogs.save_prompts);
+    EXPECT_FALSE(dialogs.messages.empty());
+    EXPECT_FALSE(main.frame->IsHome());
+    EXPECT_TRUE(main.subsController->IsModified());
+    EXPECT_EQ(file, main.subsController->Filename());
+    EXPECT_TRUE(agi::fs::FileExists(moved / "subtitles.ass"));
+    agi::fs::Remove(root);
+    agi::fs::Rename(moved, root);
+}
+
+TEST_F(workbench_window, home_and_a_cancelled_global_exit_preserve_actual_comparison_decisions) {
+    auto& main = Open(true);
+    auto& separate = Open(false);
+    main.frame->ShowEditor();
+    auto path = WriteBaseline(main, "workbench-other.ass", [](AssFile& f) { f.Events.front().Text = "baseline"; });
+    CompareHook dialogs(nullptr);
+    ASSERT_TRUE(OpenCompareTab(&main, path));
+    auto page = main.workspaceTabs->Comparison();
+    Press(page, "compare-reject-current");
+    auto revision = main.subtitleEditGate.Revision();
+    auto video = main.videoDisplay;
+    auto strip = main.frame->FindWindow("workspace-strip");
+    ASSERT_NE(nullptr, strip);
+    cmd::call("app/workbench", &main);
+    EXPECT_TRUE(main.frame->IsHome());
+    EXPECT_FALSE(strip->IsShown());
+    EXPECT_FALSE(main.subtitleAccess->TryWrite());
+    EXPECT_FALSE(main.workspaceTabs->Permits("edit/undo"));
+    main.frame->ShowEditor();
+    EXPECT_TRUE(strip->IsShown());
+    EXPECT_TRUE(main.workspaceTabs->ComparisonInFront());
+    EXPECT_EQ(video, main.videoDisplay);
+
+    separate.subtitleAccess->SetAutomationSetting("note", "keep");
+    dialogs.save_choice = wxID_CANCEL;
+    EXPECT_FALSE(wxGetApp().CloseAll());
+    ASSERT_EQ(1, dialogs.save_prompts);
+    ASSERT_FALSE(dialogs.messages.empty());
+    EXPECT_TRUE(dialogs.messages.front().Contains("discard 1 decisions"));
+    EXPECT_EQ(page, main.workspaceTabs->Comparison());
+    EXPECT_FALSE(main.subtitleAccess->TryWrite());
+    EXPECT_EQ(revision, main.subtitleEditGate.Revision());
+    EXPECT_FALSE(main.frame->IsClosing());
+    EXPECT_FALSE(separate.frame->IsClosing());
+    EXPECT_TRUE(separate.subsController->IsModified());
+    dialogs.save_choice = wxID_NO;
+    EXPECT_TRUE(wxGetApp().CloseAll());
+}
+
+TEST_F(workbench_window, an_already_open_file_activates_its_owner_without_replacing_the_other_window) {
+    auto& main = Open(true);
+    auto& separate = Open(false);
+    auto path = WriteBaseline(main, "workbench-existing.ass", [](AssFile& f) { f.Events.front().Text = "same session"; });
+    wxGetApp().OpenSubtitle(&main, path);
+    ASSERT_FALSE(main.frame->IsHome());
+    auto revision = main.subtitleEditGate.Revision();
+    main.frame->ShowHome();
+    separate.subtitleAccess->SetAutomationSetting("note", "keep");
+    CompareHook dialogs(nullptr);
+    wxGetApp().OpenSubtitle(&separate, path);
+    EXPECT_FALSE(main.frame->IsHome());
+    EXPECT_EQ(revision, main.subtitleEditGate.Revision());
+    EXPECT_EQ(0, dialogs.save_prompts);
+    EXPECT_TRUE(separate.subsController->IsModified());
+    EXPECT_FALSE(separate.subsController->HasFile());
+}
+
+TEST_F(workbench_window, page_switches_preserve_the_video_canvas_provider_and_frame) {
+    auto& main = Open(true);
+    CompareHook dialogs(nullptr);
+    main.project->LoadVideo("?dummy:25:100:160:90:64:64:64:");
+    ASSERT_FALSE(main.frame->IsHome());
+    auto provider = main.project->VideoProvider();
+    auto display = main.videoDisplay;
+    ASSERT_NE(nullptr, provider);
+    ASSERT_NE(nullptr, display);
+    PumpFirstFrame(&main, main.frame);
+    wxYield();
+    ASSERT_TRUE(display->IsShownOnScreen());
+    main.videoController->JumpToFrame(12);
+    display->Render();
+    main.frame->ShowHome();
+    EXPECT_FALSE(display->IsShownOnScreen());
+    main.frame->ShowEditor();
+    wxYield(); // GTK maps a GL child during the next native event cycle.
+    EXPECT_EQ(provider, main.project->VideoProvider());
+    EXPECT_EQ(display, main.videoDisplay);
+    EXPECT_TRUE(display->IsShownOnScreen());
+    EXPECT_EQ(12, main.videoController->GetFrameN());
+    display->Render();
+    main.project->CloseVideo();
+}
+
+TEST_F(workbench_window, edits_in_the_first_window_invalidate_its_earlier_exit_decision) {
+    auto& main = Open(true);
+    auto& separate = Open(false);
+    main.subtitleAccess->SetAutomationSetting("first", "initial");
+    separate.subtitleAccess->SetAutomationSetting("second", "initial");
+    struct Discard : wxModalDialogHook {
+        agi::Context& first;
+        int prompts = 0;
+        explicit Discard(agi::Context& c) : first(c) { Register(); }
+        int Enter(wxDialog *dialog) override {
+            if (dialog->GetTitle() != "Unsaved changes") return wxID_NONE;
+            if (++prompts == 2) first.subtitleAccess->SetAutomationSetting("first", "changed during preflight");
+            return wxID_NO;
+        }
+    } answers(main);
+    EXPECT_FALSE(wxGetApp().CloseAll());
+    EXPECT_EQ(2, answers.prompts);
+    EXPECT_FALSE(main.frame->IsClosing());
+    EXPECT_FALSE(separate.frame->IsClosing());
+    EXPECT_TRUE(main.subsController->IsModified());
+    EXPECT_TRUE(separate.subsController->IsModified());
+}
+
+TEST_F(workbench_window, a_blocked_close_returns_home_only_after_explicit_recovery) {
+    auto& main = Open(true);
+    main.frame->ShowEditor();
+    CompareHook dialogs(nullptr);
+    bool fail = true;
+    agi::signal::Connection observer = main.subtitleAccess->Read().AddCommitListener(
+        [&](int, AssDialogue const*, SubtitleModelRebindTicket ticket) {
+            if (fail) throw std::runtime_error("window did not rebind");
+            if (ticket.Current()) ticket.Acknowledge(ticket.Revision());
+        });
+    cmd::call("subtitle/close", &main);
+    ASSERT_FALSE(main.frame->IsHome());
+    ASSERT_TRUE(cmd::get("subtitle/recover")->Validate(&main));
+    cmd::call("subtitle/recover", &main);
+    EXPECT_FALSE(main.frame->IsHome());
+    fail = false;
+    cmd::call("subtitle/recover", &main);
+    EXPECT_TRUE(main.frame->IsHome());
+    EXPECT_FALSE(cmd::get("subtitle/recover")->Validate(&main));
+}
+
+TEST_F(workbench_window, subtitle_input_reaches_the_document_after_returning_from_home) {
+    auto& main = Open(true);
+    main.frame->ShowEditor();
+    SubsTextEditCtrl *editor = nullptr;
+    for (auto child : main.frame->GetEditBox()->GetChildren())
+        if (auto text = dynamic_cast<SubsTextEditCtrl*>(child)) editor = text;
+    ASSERT_NE(nullptr, editor);
+    std::vector<double> times;
+    for (int i = 0; i <= 100; ++i) {
+        auto value = "caption " + std::to_string(i);
+        auto begin = std::chrono::steady_clock::now();
+        editor->SetTextRaw(value.c_str());
+        wxStyledTextEvent event(wxEVT_STC_MODIFIED, editor->GetId());
+        event.SetModificationType(wxSTC_MOD_INSERTTEXT | wxSTC_STARTACTION);
+        event.SetEventObject(editor);
+        editor->GetEventHandler()->ProcessEvent(event);
+        auto elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin);
+        ASSERT_EQ(value, main.subtitleAccess->Read().Events.front().Text.get());
+        if (i) times.push_back(elapsed.count());
+    }
+    std::sort(times.begin(), times.end());
+    std::printf("Workbench subtitle input: n=100, synchronous p95=%.3f ms\n", times[94]);
+}
 TEST_F(ordinary_edit, automation_manager_lists_scripts_with_their_state) {
     AcceptMessages messages;
     AutomationScripts scripts;
@@ -9921,7 +10204,11 @@ TEST(scene_detect, measures_are_kept_and_read_back) {
     EXPECT_EQ(m.far_difference,back.far_difference);EXPECT_EQ(m.blend,back.blend);EXPECT_EQ(m.moved,back.moved);EXPECT_EQ(m.unmatched,back.unmatched);
     EXPECT_EQ(m.area,back.area);
     EXPECT_EQ((std::vector<int>{0}),scene_detect::Cuts(back,scene_detect::Params{})) << "frames too near the start";
-    {agi::io::Save junk(file);junk.Get()<<"not measures";}
+    {
+        agi::io::Save junk(file);
+        junk.Get() << "not measures";
+        junk.Commit();
+    }
     EXPECT_TRUE(scene_detect::LoadMeasures(file).empty());
     EXPECT_TRUE(scene_detect::LoadMeasures(agi::fs::path("no-such.measures")).empty());
 

@@ -88,6 +88,7 @@ class writer {
 
 public:
 	writer(agi::fs::path const& filename) : outfile(filename, true), out(outfile.Get()) { }
+	void Commit() { outfile.Commit(); }
 
 	template<int N>
 	void write(const char(&str)[N]) {
@@ -149,5 +150,6 @@ void SaveAudioClip(AudioProvider const& provider, fs::path const& path, int star
 		}
 		out.write(buf);
 	}
+	out.Commit();
 }
 }

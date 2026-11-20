@@ -49,7 +49,7 @@ std::vector<std::string> TranStationSubtitleFormat::GetWriteWildcards() const {
 
 void TranStationSubtitleFormat::WriteFile(const AssFile *src, agi::fs::path const& filename, agi::vfr::Framerate const& vfps, const char *encoding) const {
 	auto fps = AskForFPS(false, true, vfps);
-	if (!fps.IsLoaded()) return;
+	if (!fps.IsLoaded()) throw agi::UserCancelException("Cancelled FPS selection");
 
 	// Convert to TranStation
 	AssFile copy(*src);
@@ -78,6 +78,7 @@ void TranStationSubtitleFormat::WriteFile(const AssFile *src, agi::fs::path cons
 
 	// Every file must end with this line
 	file.WriteLineToFile("SUB[");
+	file.Commit();
 }
 
 std::string TranStationSubtitleFormat::ConvertLine(AssFile *file, const AssDialogue *current, agi::vfr::Framerate const& fps, agi::SmpteFormatter const& ft, int nextl_start) const {

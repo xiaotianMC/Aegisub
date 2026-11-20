@@ -42,11 +42,17 @@ void Touch(path const& file) {
 
 void Copy(fs::path const& from, fs::path const& to) {
 	acs::CheckFileRead(from);
-	CreateDirectory(to.parent_path());
-	acs::CheckDirWrite(to.parent_path());
+	auto parent = to.parent_path();
+	if (!parent.empty()) CreateDirectory(parent);
+	acs::CheckDirWrite(parent.empty() ? fs::path(".") : parent);
 
 	auto in = io::Open(from, true);
-	io::Save(to).Get() << in->rdbuf();
+	io::Save copy(to, true);
+	char buffer[64 * 1024];
+	while (in->read(buffer, sizeof buffer) || in->gcount())
+		copy.Get().write(buffer, in->gcount());
+	if (in->bad() || !in->eof()) throw ReadDenied(from);
+	copy.Commit();
 }
 
 struct DirectoryIterator::PrivData {

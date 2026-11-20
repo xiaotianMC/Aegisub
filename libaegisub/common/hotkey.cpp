@@ -191,6 +191,7 @@ void Hotkey::Flush() {
 	agi::fs::CreateDirectory(config_file.parent_path());
 	io::Save file(config_file);
 	JsonWriter::Write(root, file.Get());
+	file.Commit();
 }
 
 void Hotkey::UpdateStrMap() {

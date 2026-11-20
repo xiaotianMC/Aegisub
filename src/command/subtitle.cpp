@@ -230,22 +230,6 @@ struct subtitle_insert_before_videotime final : public validate_nonempty_selecti
 	}
 };
 
-bool is_okay_to_close_subtitles([[maybe_unused]] agi::Context *c) {
-#ifdef __APPLE__
-	return true;
-#else
-	return c->subsController->TryToClose() != wxCANCEL;
-#endif
-}
-
-void load_subtitles([[maybe_unused]] agi::Context *c, agi::fs::path const& path, std::string const& encoding="") {
-#ifdef __APPLE__
-	wxGetApp().NewProjectContext().project->LoadSubtitles(path, encoding);
-#else
-	c->project->LoadSubtitles(path, encoding);
-#endif
-}
-
 struct subtitle_new final : public Command {
 	CMD_NAME("subtitle/new")
 	CMD_ICON(new_toolbutton)
@@ -253,26 +237,44 @@ struct subtitle_new final : public Command {
 	STR_DISP("New Subtitles")
 	STR_HELP("New subtitles")
 
-	void operator()([[maybe_unused]] agi::Context *c) override {
+	void operator()(agi::Context *c) override {
 #ifdef __APPLE__
-		wxGetApp().NewProjectContext();
-#else
-		if (is_okay_to_close_subtitles(c))
-			c->project->CloseSubtitles();
+		if (c->frame && !c->frame->HasWorkbench()) {
+			wxGetApp().NewProjectContext();
+			return;
+		}
 #endif
+		if (c->subsController->TryToClose() != wxCANCEL && c->project->CloseSubtitles() && c->frame)
+			c->frame->ShowEditor();
 	}
 };
 
 struct subtitle_close final : public Command {
 	CMD_NAME("subtitle/close")
 	CMD_ICON(new_toolbutton)
-	STR_MENU("Close")
-	STR_DISP("Close")
-	STR_HELP("Close")
+	STR_MENU("Close Subtitles")
+	STR_DISP("Close Subtitles")
+	STR_HELP("Close the current subtitles")
+	CMD_TYPE(COMMAND_VALIDATE)
+
+	bool Validate(agi::Context const *c) override { return c->frame && !c->frame->IsHome(); }
 
 	void operator()(agi::Context *c) override {
-		c->frame->Close();
+		c->frame->CloseSubtitles();
 	}
+};
+
+struct subtitle_recover final : public Command {
+	CMD_NAME("subtitle/recover")
+	STR_MENU("Retry Subtitle Recovery")
+	STR_DISP("Retry Subtitle Recovery")
+	STR_HELP("Retry the editor updates for the installed subtitles")
+	CMD_TYPE(COMMAND_VALIDATE)
+
+	bool Validate(agi::Context const *c) override {
+		return c->subsController->InstallationStatus() == SubtitleModelInstallation::State::RecoveryBlocked;
+	}
+	void operator()(agi::Context *c) override { c->project->RetrySubtitleRecovery(); }
 };
 
 struct subtitle_open final : public Command {
@@ -283,11 +285,9 @@ struct subtitle_open final : public Command {
 	STR_HELP("Open a subtitles file")
 
 	void operator()(agi::Context *c) override {
-		if (!is_okay_to_close_subtitles(c)) return;
-
 		auto filename = OpenFileSelector(c, _("Open Subtitles File"), "Path/Last/Subtitles", "","", SubtitleFormat::GetWildcards(0), c->parent);
 		if (!filename.empty())
-			load_subtitles(c, filename);
+			wxGetApp().OpenSubtitle(c, filename);
 	}
 };
 
@@ -324,10 +324,9 @@ struct subtitle_open_autosave final : public Command {
 	STR_HELP("Open a previous version of a file which was autosaved by Aegisub")
 
 	void operator()(agi::Context *c) override {
-		if (!is_okay_to_close_subtitles(c)) return;
 		auto filename = PickAutosaveFile(c->parent);
 		if (!filename.empty())
-			load_subtitles(c, filename);
+			wxGetApp().OpenSubtitle(c, filename);
 	}
 };
 
@@ -339,15 +338,13 @@ struct subtitle_open_charset final : public Command {
 	STR_HELP("Open a subtitles file with a specific file encoding")
 
 	void operator()(agi::Context *c) override {
-		if (!is_okay_to_close_subtitles(c)) return;
-
 		auto filename = OpenFileSelector(c, _("Open Subtitles File"), "Path/Last/Subtitles", "","", SubtitleFormat::GetWildcards(0), c->parent);
 		if (filename.empty()) return;
 
 		wxString charset = wxGetSingleChoice(_("Choose charset code:"), _("Charset"), agi::charset::GetEncodingsList<wxArrayString>(), c->parent, -1, -1, true, 250, 200);
 		if (charset.empty()) return;
 
-		load_subtitles(c, filename, from_wx(charset));
+		wxGetApp().OpenSubtitle(c, filename, from_wx(charset));
 	}
 };
 
@@ -393,6 +390,7 @@ static void save_subtitles(agi::Context *c, agi::fs::path filename) {
 	try {
 		c->subsController->Save(filename);
 	}
+	catch (agi::UserCancelException const&) { }
 	catch (const agi::Exception& err) {
 		wxMessageBox(to_wx(err.GetMessage()), _("Error"), wxOK | wxICON_ERROR | wxCENTER, c->parent);
 	}
@@ -500,6 +498,7 @@ namespace cmd {
 		reg(std::make_unique<subtitle_insert_before_videotime>());
 		reg(std::make_unique<subtitle_new>());
 		reg(std::make_unique<subtitle_close>());
+		reg(std::make_unique<subtitle_recover>());
 		reg(std::make_unique<subtitle_open>());
 		reg(std::make_unique<subtitle_compare>());
 		reg(std::make_unique<subtitle_open_autosave>());

@@ -40,10 +40,27 @@
 #include "options.h"
 
 #include <libaegisub/ass/time.h>
+#include <libaegisub/io.h>
 
+#include <ostream>
+#include <wx/stream.h>
 #include <wx/xml/xml.h>
 
 DEFINE_EXCEPTION(TTXTParseError, SubtitleFormatParseError);
+
+namespace {
+class XmlOutput final : public wxOutputStream {
+	std::ostream& destination;
+	size_t OnSysWrite(void const *data, size_t size) override {
+		destination.write(static_cast<char const*>(data), size);
+		if (destination) return size;
+		m_lasterror = wxSTREAM_WRITE_ERROR;
+		return 0;
+	}
+public:
+	explicit XmlOutput(std::ostream& destination) : destination(destination) { }
+};
+}
 
 TTXTSubtitleFormat::TTXTSubtitleFormat()
 : SubtitleFormat("MPEG-4 Streaming Text")
@@ -178,7 +195,11 @@ void TTXTSubtitleFormat::WriteFile(const AssFile *src, agi::fs::path const& file
 	}
 
 	// Save XML
-	doc.Save(filename.wstring());
+	agi::io::Save file(filename, true);
+	XmlOutput output(file.Get());
+	if (!doc.Save(output) || !output.IsOk())
+		throw agi::io::IOError("Failed to write XML to " + filename.string());
+	file.Commit();
 }
 
 void TTXTSubtitleFormat::WriteHeader(wxXmlNode *root) const {

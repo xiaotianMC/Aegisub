@@ -13,6 +13,7 @@
         { "submenu" : "main/help",     "tlcontext" : "Menu bar", "text" : "&Help", "special" : "help" }
     ],
     "main/file" : [
+        { "command" : "app/workbench" },
         { "command" : "subtitle/new" },
         { "command" : "subtitle/open" },
         { "command" : "subtitle/open/charset" },
@@ -21,6 +22,8 @@
         { "command" : "subtitle/compare" },
         { "command" : "subtitle/save" },
         { "command" : "subtitle/save/as" },
+        { "command" : "subtitle/close" },
+        { "command" : "subtitle/recover" },
         { "command" : "tool/export" },
         { "recent" : "Subtitle" },
         {},

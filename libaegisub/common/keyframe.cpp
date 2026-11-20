@@ -96,6 +96,7 @@ void Save(agi::fs::path const& filename, std::vector<int> const& keyframes) {
 	of << "# keyframe format v1" << std::endl;
 	of << "fps " << 0 << std::endl;
 	boost::copy(keyframes, std::ostream_iterator<int>(of, "\n"));
+	file.Commit();
 }
 
 std::vector<int> Load(agi::fs::path const& filename) {

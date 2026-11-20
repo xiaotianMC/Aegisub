@@ -15,15 +15,139 @@
 // Aegisub Project http://www.aegisub.org/
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdint>
+#include <fstream>
+#include <iterator>
 #include <limits>
+#include <memory>
+#include <stdexcept>
 #include <main.h>
 #include <util.h>
 
+#ifdef _WIN32
+#include <share.h>
+#elif GTEST_HAS_DEATH_TEST
+#include <csignal>
+#include <cstdlib>
+#include <sys/resource.h>
+#endif
+
 #include <libaegisub/file_mapping.h>
 #include <libaegisub/fs.h>
+#include <libaegisub/io.h>
 
 using namespace agi::fs;
+
+TEST(lagi_fs, failed_serializer_preserves_existing_file) {
+	path target = "data/interrupted-save.ass";
+	std::ofstream(target, std::ios::binary) << "complete original";
+	EXPECT_THROW({
+		agi::io::Save file(target, true);
+		file.Get() << "partial replacement";
+		throw std::runtime_error("serialization failed");
+	}, std::runtime_error);
+	std::ifstream original(target, std::ios::binary);
+	EXPECT_EQ("complete original", std::string(std::istreambuf_iterator<char>(original), {}));
+}
+
+TEST(lagi_fs, failed_stream_discards_the_private_temporary_file) {
+	path folder = "data/save-failure";
+	CreateDirectory(folder);
+	path target = folder / "existing.ass";
+	std::ofstream(target) << "old";
+	agi::io::Save file(target);
+	file.Get() << "new";
+	file.Get().setstate(std::ios::badbit);
+	EXPECT_THROW(file.Commit(), FileSystemError);
+	std::ifstream original(target);
+	std::string content;
+	original >> content;
+	EXPECT_EQ("old", content);
+	std::vector<std::string> files;
+	DirectoryIterator(folder, "").GetAll(files);
+	EXPECT_EQ(std::vector<std::string>{"existing.ass"}, files);
+}
+
+#if !defined(_WIN32) && GTEST_HAS_DEATH_TEST
+TEST(lagi_fs, system_write_limit_leaves_the_original_and_removes_partial_output) {
+	::testing::FLAGS_gtest_death_test_style = "threadsafe";
+	path folder = "data/limited-save";
+	CreateDirectory(folder);
+	path target = folder / "document.ass";
+	std::ofstream(target) << "complete";
+	// Restrict only the child. Buffered output can fail on write or on flush.
+	EXPECT_EXIT({
+		struct rlimit limit;
+		if (getrlimit(RLIMIT_FSIZE, &limit) != 0) std::_Exit(2);
+		limit.rlim_cur = 1024;
+		if (setrlimit(RLIMIT_FSIZE, &limit) != 0 || std::signal(SIGXFSZ, SIG_IGN) == SIG_ERR)
+			std::_Exit(2);
+		try {
+			agi::io::Save output(target, true);
+			output.Get() << std::string(8192, 'x');
+			output.Commit();
+		}
+		catch (FileSystemError const&) { std::_Exit(0); }
+		std::_Exit(1);
+	}, ::testing::ExitedWithCode(0), "");
+	std::ifstream original(target);
+	EXPECT_EQ("complete", std::string(std::istreambuf_iterator<char>(original), {}));
+	std::vector<std::string> files;
+	DirectoryIterator(folder, "").GetAll(files);
+	EXPECT_EQ(std::vector<std::string>{"document.ass"}, files);
+}
+#endif
+
+#ifdef _WIN32
+TEST(lagi_fs, a_windows_sharing_violation_keeps_the_original_and_removes_the_temporary_file) {
+	path folder = "data/locked-save";
+	CreateDirectory(folder);
+	path target = folder / "document.ass";
+	std::ofstream(target) << "original";
+	std::unique_ptr<std::FILE, decltype(&std::fclose)> lock(
+		_wfsopen(target.c_str(), L"rb", _SH_DENYRW), &std::fclose);
+	ASSERT_NE(nullptr, lock);
+	agi::io::Save replacement(target, true);
+	replacement.Get() << "replacement";
+	EXPECT_THROW(replacement.Commit(), FileSystemError);
+	lock.reset();
+	std::ifstream original(target);
+	EXPECT_EQ("original", std::string(std::istreambuf_iterator<char>(original), {}));
+	std::vector<std::string> files;
+	DirectoryIterator(folder, "").GetAll(files);
+	EXPECT_EQ(std::vector<std::string>{"document.ass"}, files);
+}
+#endif
+
+TEST(lagi_fs, overlapping_saves_own_their_temporary_files) {
+	path target = "data/concurrent.ass";
+	path sibling = "data/concurrent.tmp.ass";
+	std::ofstream(sibling) << "user file";
+	agi::io::Save first(target, true);
+	agi::io::Save second(target, true);
+	first.Get() << "first";
+	second.Get() << "second";
+	first.Commit();
+	{
+		std::ifstream result(target);
+		EXPECT_EQ("first", std::string(std::istreambuf_iterator<char>(result), {}));
+	}
+	EXPECT_EQ(std::streampos(6), second.Get().tellp());
+	second.Get().seekp(0);
+	second.Get().put('S');
+	second.Commit();
+	std::ifstream result(target), user_file(sibling);
+	EXPECT_EQ("Second", std::string(std::istreambuf_iterator<char>(result), {}));
+	EXPECT_EQ("user file", std::string(std::istreambuf_iterator<char>(user_file), {}));
+}
+
+TEST(lagi_fs, copy_can_publish_an_empty_file) {
+	std::ofstream("data/empty-source", std::ios::binary).close();
+	std::ofstream("data/empty-destination", std::ios::binary) << "old";
+	ASSERT_NO_THROW(Copy("data/empty-source", "data/empty-destination"));
+	EXPECT_EQ(0u, Size("data/empty-destination"));
+}
 
 TEST(lagi_fs, exists) {
 	EXPECT_TRUE(Exists("data/file"));
