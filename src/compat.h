@@ -1,5 +1,6 @@
 #pragma once
 
+#include <filesystem>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -14,6 +15,7 @@ wxColour to_wx(agi::Color color);
 wxString to_wx(std::string_view str);
 wxString to_wx(std::string const& str);
 wxString to_wx(const char *str);
+wxString to_wx(std::filesystem::path const& path);
 wxArrayString to_wx(std::span<const std::string> vec);
 wxArrayString to_wx(std::span<const std::string_view> vec);
 template<typename T> wxArrayString to_wx(std::vector<T> const& vec) { return to_wx(std::span(vec)); }

@@ -37,6 +37,8 @@
 #include <libaegisub/fs.h>
 #include <libaegisub/io.h>
 
+#undef CreateDirectory
+
 using namespace agi::fs;
 
 TEST(lagi_fs, failed_serializer_preserves_existing_file) {

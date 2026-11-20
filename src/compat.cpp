@@ -45,6 +45,10 @@ wxString to_wx(const char *str) {
 	return wxString(str, wxConvUTF8);
 }
 
+wxString to_wx(std::filesystem::path const& path) {
+	return to_wx(agi::fs::path(path).string());
+}
+
 agi::Color from_wx(wxColour color) {
 	return agi::Color(color.Red(), color.Green(), color.Blue(), 255 - color.Alpha());
 }

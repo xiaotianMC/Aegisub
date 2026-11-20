@@ -24,6 +24,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <shlobj.h>
+#undef GetMessage
 #else
 #include <fcntl.h>
 #include <sys/file.h>

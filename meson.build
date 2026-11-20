@@ -654,7 +654,7 @@ endif
 subdir('automation')
 subdir('libaegisub')
 sqlite_dep = dependency('sqlite3', version: '>=3.24', fallback: ['sqlite3', 'sqlite3_dep'])
-workbench_deps = [sqlite_dep]
+workbench_deps = [sqlite_dep, boost_dep]
 if host_machine.system() == 'windows'
     # SHGetKnownFolderPath, FOLDERID_LocalAppData and CoTaskMemFree.
     workbench_deps += [cc.find_library('shell32'), cc.find_library('uuid'), cc.find_library('ole32')]

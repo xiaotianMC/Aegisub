@@ -173,6 +173,7 @@
 #include <wx/slider.h>
 #ifdef __WXMSW__
 #include <wx/msw/wrapwin.h>
+#undef CreateDirectory
 #endif
 #include <filesystem>
 #ifdef __WXGTK__
