@@ -9922,6 +9922,18 @@ msgstr "检测画面切换(&D)..."
 msgid "Detect Scene Changes"
 msgstr "检测画面切换"
 
+#: ../src/command/keyframe.cpp
+msgid "Regenerate"
+msgstr "重新生成"
+
+#: ../src/command/keyframe.cpp
+msgid "Scan every frame again and regenerate the timeline? This will update the scene changes and replace all subtitle lines, including text and comments, with one blank line per shot."
+msgstr "要重新逐帧扫描视频并生成时间轴吗？画面切换点将更新，所有现有字幕行（含文字和注释）都将被替换，每个镜头生成一行空字幕。"
+
+#: ../src/command/keyframe.cpp
+msgid "Regenerate the timeline from the detected scene changes? All subtitle lines, including text and comments, will be replaced with one blank line per shot."
+msgstr "要按已检测到的画面切换重新生成时间轴吗？所有现有字幕行（含文字和注释）都将被替换，每个镜头生成一行空字幕。"
+
 #: ../src/command/keyframe.cpp ../src/dialog_timing_processor.cpp
 msgid "Find the frames where the picture cuts to another shot and use them as the keyframes, to snap the lines' times to"
 msgstr "找出画面切到另一个镜头的帧，用作关键帧，供字幕时间吸附"

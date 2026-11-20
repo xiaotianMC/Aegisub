@@ -222,7 +222,10 @@ DialogTimingProcessor::DialogTimingProcessor(agi::Context *c)
 	auto keys_note = flat::DimLabel(parent, _("The video's own keyframes are not always scene changes"));
 	keys_note->Show(c->project->VideoProvider() && !c->project->CanCloseKeyframes());
 	detect->Bind(wxEVT_BUTTON, [this, c, keys_note](wxCommandEvent &) {
+		bool loaded = false;
+		agi::signal::Connection listener = c->project->AddKeyframesListener([&loaded](std::vector<int> const&) { loaded = true; });
 		cmd::call("keyframe/detect", c);
+		if (!loaded) return;
 		bool available = !c->project->Keyframes().empty() && c->project->Timecodes().IsLoaded();
 		if (available && !keysEnable->IsEnabled()) {
 			keysEnable->Enable();

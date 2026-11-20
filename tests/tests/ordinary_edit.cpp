@@ -8495,7 +8495,8 @@ TEST_F(ordinary_edit, timing_page_edits_times_snaps_to_scene_changes_and_adds_le
     c->subsController->Undo();
     EXPECT_EQ(std::make_pair(1600,5600),times(0));
 
-    // Without the detected scene changes, a way to find them
+    // Detection is available both with loaded keyframes and without them.
+    EXPECT_EQ(1u,shown().count("scene.detect"));
     c->project->CloseKeyframes();
     EXPECT_EQ(1u,shown().count("scene.detect"));
 
@@ -10262,7 +10263,16 @@ TEST_F(ordinary_edit, detect_scene_changes_loads_them_as_keyframes_and_keeps_the
     BOOST_SCOPE_EXIT_ALL(&){ c->project->CloseKeyframes(); c->project->CloseVideo(); };
     EXPECT_FALSE(c->project->CanCloseKeyframes());
     std::filesystem::remove_all(std::filesystem::path(config::path->Decode("?user/scenes").wstring()));
+    int confirmations = 0;
+    int answer = wxID_CANCEL;
+    ProbeModal confirm([&](wxDialog* dialog) -> int {
+        if (!dynamic_cast<wxMessageDialog*>(dialog)) return wxID_NONE;
+        EXPECT_EQ(_("Detect Scene Changes"), dialog->GetTitle());
+        ++confirmations;
+        return answer;
+    });
     cmd::call("keyframe/detect",c.get());
+    EXPECT_EQ(0, confirmations);
     EXPECT_EQ((std::vector<int>{0}),c->project->Keyframes()) << "one plain shot";
     EXPECT_TRUE(c->project->CanCloseKeyframes());
     std::vector<agi::fs::path> cached,measured;
@@ -10274,28 +10284,46 @@ TEST_F(ordinary_edit, detect_scene_changes_loads_them_as_keyframes_and_keeps_the
     }
     ASSERT_EQ(1u,cached.size());
     ASSERT_EQ(1u,measured.size()) << "what reading the video found is kept too";
-    // Found once: the next time is the kept list
+    // Distinct false cuts in both cache layers expose either shortcut.
     agi::keyframe::Save(cached[0],{0,10,20});
-    cmd::call("keyframe/detect",c.get());
-    EXPECT_EQ((std::vector<int>{0,10,20}),c->project->Keyframes());
-    // Another sensitivity: its cuts come from the kept measures, the video
-    // (one plain shot, no cuts in it) not read again
     auto measures=scene_detect::LoadMeasures(measured[0]);
     ASSERT_EQ(250u,measures.diffs.size());
     measures.diffs[100]=0.9;measures.across[100]=1.;
+    scene_detect::SaveMeasures(measured[0],measures);
+    auto const original_row = LiveRead(*c).Events.front().Id;
+    cmd::call("keyframe/detect",c.get());
+    EXPECT_EQ(1, confirmations);
+    EXPECT_EQ(original_row, LiveRead(*c).Events.front().Id);
+    EXPECT_EQ((std::vector<int>{0}), c->project->Keyframes());
+    EXPECT_EQ((std::vector<int>{0,10,20}), agi::keyframe::Load(cached[0]));
+    EXPECT_FLOAT_EQ(0.9f, scene_detect::LoadMeasures(measured[0]).diffs.at(100));
+
+    // The result on disk also requires confirmation after closing the keyframes.
+    c->project->CloseKeyframes();
+    answer = wxID_YES;
+    cmd::call("keyframe/detect",c.get());
+    EXPECT_EQ(2, confirmations);
+    EXPECT_EQ((std::vector<int>{0}), c->project->Keyframes());
+    EXPECT_EQ((std::vector<int>{0}), agi::keyframe::Load(cached[0]));
+    EXPECT_EQ(0., scene_detect::LoadMeasures(measured[0]).diffs.at(100));
+
+    // Without active detected keyframes, an unused setting can still use saved measures.
+    c->project->CloseKeyframes();
     scene_detect::SaveMeasures(measured[0],measures);
     int const sensitivity=OPT_GET("Tool/Scene Detection/Sensitivity")->GetInt();
     BOOST_SCOPE_EXIT_ALL(&){ OPT_SET("Tool/Scene Detection/Sensitivity")->SetInt(sensitivity); };
     OPT_SET("Tool/Scene Detection/Sensitivity")->SetInt(sensitivity==2?0:2);
     cmd::call("keyframe/detect",c.get());
     EXPECT_EQ((std::vector<int>{0,100}),c->project->Keyframes());
+    EXPECT_EQ(2, confirmations);
 
     // Dissolves looked for: from the same measures, the video not read
     // again. One made up in them at frame 200, mixed from 194 to 206.
     measures=scene_detect::LoadMeasures(measured[0]);
     for(int i=200;i<=206;++i){measures.far_difference[i]=0.9;measures.blend[i]=0.;measures.moved[i]=0.9;}
     scene_detect::SaveMeasures(measured[0],measures);
-    // (the cuts already decided from them, before it was made up, forgotten)
+    // Start without a loaded or saved result for either dissolve setting.
+    c->project->CloseKeyframes();
     for(auto const& f:std::filesystem::directory_iterator(std::filesystem::path(config::path->Decode("?user/scenes").wstring())))
         if(f.path().filename().string().ends_with(".key.txt"))std::filesystem::remove(f.path());
     bool const gradual=OPT_GET("Tool/Scene Detection/Gradual")->GetBool();
@@ -10303,6 +10331,7 @@ TEST_F(ordinary_edit, detect_scene_changes_loads_them_as_keyframes_and_keeps_the
     OPT_SET("Tool/Scene Detection/Gradual")->SetBool(false);
     cmd::call("keyframe/detect",c.get());
     EXPECT_EQ((std::vector<int>{0,100}),c->project->Keyframes()) << "dissolves not looked for";
+    c->project->CloseKeyframes();
     OPT_SET("Tool/Scene Detection/Gradual")->SetBool(true);
     cmd::call("keyframe/detect",c.get());
     EXPECT_EQ((std::vector<int>{0,100,197}),c->project->Keyframes()) << "the dissolve, at its middle";
@@ -10313,6 +10342,7 @@ TEST_F(ordinary_edit, detect_scene_changes_loads_them_as_keyframes_and_keeps_the
     BOOST_SCOPE_EXIT_ALL(&){ OPT_SET("Tool/Scene Detection/Subtitle Band")->SetInt(band); };
     OPT_SET("Tool/Scene Detection/Subtitle Band")->SetInt(band==30?10:30);
     cmd::call("keyframe/detect",c.get());
+    EXPECT_EQ(3, confirmations) << "changing settings with active detected cuts also confirms regeneration";
     EXPECT_EQ((std::vector<int>{0}),c->project->Keyframes()) << "read again: one plain shot";
     int kept=0;
     for(auto const& f:std::filesystem::directory_iterator(std::filesystem::path(config::path->Decode("?user/scenes").wstring())))
@@ -10325,7 +10355,7 @@ TEST_F(ordinary_edit, detect_scene_changes_loads_them_as_keyframes_and_keeps_the
     EXPECT_FALSE(c->project->CanCloseKeyframes());
 }
 
-TEST_F(ordinary_edit, detect_scene_changes_times_empty_subtitles_a_line_a_shot) {
+TEST_F(ordinary_edit, detect_scene_changes_and_regenerate_all_subtitles_one_blank_line_per_shot) {
     c->project->LoadVideo("?dummy:25:250:64:48:64:64:64:");
     ASSERT_NE(nullptr,c->project->VideoProvider());
     PumpFirstFrame(c.get(),window);
@@ -10344,28 +10374,68 @@ TEST_F(ordinary_edit, detect_scene_changes_times_empty_subtitles_a_line_a_shot) 
         if(f.path().filename().string().ends_with(".key.txt"))cached=agi::fs::path(f.path().wstring());
     ASSERT_FALSE(cached.empty());
     agi::keyframe::Save(cached,{0,100,200});
-    // Still all empty: timed again, from each cut to the frame before the next
-    cmd::call("keyframe/detect",c.get());
+    c->project->LoadKeyframes(cached);
+    {
+        auto write = c->subtitleAccess->TryWrite();
+        auto& file = LiveWriteForTest(*c);
+        file.Events.front().Text = "translation";
+        auto comment = new AssDialogue;
+        comment->Comment = true;
+        comment->Text = "timing note";
+        file.Events.push_back(*comment);
+        file.Commit("translated timeline", AssFile::COMMIT_DIAG_ADDREM);
+    }
+    // Regenerate from the detected cuts. Declining leaves the entire edit,
+    // including the selection and undo history, untouched.
+    int confirmations = 0;
+    int answer = wxID_NO;
+    ProbeModal confirm([&](wxDialog* dialog) -> int {
+        if (!dynamic_cast<wxMessageDialog*>(dialog)) return wxID_NONE;
+        ++confirmations;
+        return answer;
+    });
+    auto const original_row = LiveRead(*c).Events.front().Id;
+    auto const history = c->subsController->GetUndoDescription();
+    cmd::call("keyframe/timeline",c.get());
+    EXPECT_EQ(1, confirmations);
+    ASSERT_EQ(2u, LiveRead(*c).Events.size());
+    EXPECT_EQ("translation", LiveRead(*c).Events.front().Text.get());
+    EXPECT_EQ("timing note", LiveRead(*c).Events.back().Text.get());
+    EXPECT_EQ(original_row, c->selectionController->ReadActiveLine()->Id);
+    EXPECT_EQ(history, c->subsController->GetUndoDescription());
+    answer = wxID_YES;
+    cmd::call("keyframe/timeline",c.get());
+    EXPECT_EQ(2, confirmations);
     ASSERT_EQ(3u,LiveRead(*c).Events.size());
     std::vector<std::pair<int,int>> times;
-    for(auto const& line:LiveRead(*c).Events){ times.emplace_back(line.Start,line.End); EXPECT_EQ("",line.Text.get()); }
+    for(auto const& line:LiveRead(*c).Events){ times.emplace_back(line.Start,line.End); EXPECT_EQ("",line.Text.get()); EXPECT_FALSE(line.Comment); }
     EXPECT_EQ((std::vector<std::pair<int,int>>{
         {0,fps.TimeAtFrame(99,agi::vfr::END)},
         {fps.TimeAtFrame(100,agi::vfr::START),fps.TimeAtFrame(199,agi::vfr::END)},
         {fps.TimeAtFrame(200,agi::vfr::START),fps.TimeAtFrame(249,agi::vfr::END)}}),times);
     EXPECT_EQ(3u,c->selectionController->ReadSelectedLines().size()) << "the lines made are selected";
-    // One undo step back to the one line
+    // One undo restores the complete original, including IDs and comments.
     c->subsController->Undo();
-    EXPECT_EQ(1u,LiveRead(*c).Events.size());
+    ASSERT_EQ(2u,LiveRead(*c).Events.size());
+    EXPECT_EQ(original_row, LiveRead(*c).Events.front().Id);
+    EXPECT_EQ("translation", LiveRead(*c).Events.front().Text.get());
+    EXPECT_TRUE(LiveRead(*c).Events.back().Comment);
+    EXPECT_EQ("timing note", LiveRead(*c).Events.back().Text.get());
     c->subsController->Redo();
     ASSERT_EQ(3u,LiveRead(*c).Events.size());
 
-    // Something written: the lines are left as they are
+    // Confirmed re-detection scans the plain video and rebuilds even written rows.
     { auto write=c->subtitleAccess->TryWrite(); LiveWriteForTest(*c).Events.front().Text="hello"; LiveWriteForTest(*c).Commit("type",AssFile::COMMIT_DIAG_TEXT); }
-    agi::keyframe::Save(cached,{0,50});
     cmd::call("keyframe/detect",c.get());
-    EXPECT_EQ(3u,LiveRead(*c).Events.size());
-    EXPECT_EQ((std::vector<int>{0,50}),c->project->Keyframes()) << "the keyframes are still loaded";
+    EXPECT_EQ(3, confirmations);
+    ASSERT_EQ(1u,LiveRead(*c).Events.size());
+    EXPECT_EQ((std::vector<int>{0}),c->project->Keyframes());
+    EXPECT_EQ("", LiveRead(*c).Events.front().Text.get());
+    EXPECT_EQ(0, int(LiveRead(*c).Events.front().Start));
+    EXPECT_EQ(fps.TimeAtFrame(249,agi::vfr::END), int(LiveRead(*c).Events.front().End));
+    c->subsController->Undo();
+    ASSERT_EQ(3u, LiveRead(*c).Events.size());
+    EXPECT_EQ("hello", LiveRead(*c).Events.front().Text.get());
 }
 
 TEST_F(ordinary_edit, timeline_from_scene_changes_gives_the_shots_with_no_line_one_and_keeps_the_rest) {

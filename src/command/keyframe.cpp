@@ -154,8 +154,7 @@ std::string SceneArea(int subtitle_band) {
 	return std::string(scene_method) + "|band" + std::to_string(subtitle_band);
 }
 
-/// Where a video's cuts found with some settings are kept, so that they
-/// are found once
+/// The keyframe list a saved project can reload for these detection settings.
 agi::fs::path SceneCachePath(agi::fs::path const& video, int sensitivity, bool gradual, int subtitle_band) {
 	auto key = SceneCacheKey(video);
 	return SceneCacheFile(key + "|" + SceneArea(subtitle_band) + "|" + std::to_string(sensitivity) + (gradual ? "|gradual" : ""), ".key.txt");
@@ -168,26 +167,31 @@ agi::fs::path SceneMeasuresPath(agi::fs::path const& video, int subtitle_band) {
 	return SceneCacheFile(SceneCacheKey(video) + "|" + SceneArea(subtitle_band), ".measures");
 }
 
-/// Whether the subtitles hold nothing yet: no lines, or only lines with no
-/// text, as a new file's one empty line
+bool UsingDetectedScenes(Project const& project) {
+	return project.KeyframesName().parent_path() == config::path->Decode("?user/scenes");
+}
+
+bool ConfirmRegeneration(wxWindow *parent, wxString const& title, wxString const& question) {
+	wxMessageDialog dialog(parent, question, title, wxYES_NO | wxNO_DEFAULT | wxICON_QUESTION);
+	dialog.SetYesNoLabels(_("Regenerate"), wxID_CANCEL);
+	return dialog.ShowModal() == wxID_YES;
+}
+
 bool NothingWritten(agi::Context *c) {
 	for (auto const& line : c->subtitleAccess->Read().Events)
 		if (line.Text.get().find_first_not_of(" \t\r\n") != std::string::npos) return false;
 	return true;
 }
 
-/// A blank line for each shot found: from its first frame to the frame
-/// before the next cut, in one undo step. With nothing written yet, the
-/// lines there were, all empty, make way for them; otherwise every line is
-/// kept and only the shots no line is shown in get one, among the others by
-/// time. @p always false does nothing unless nothing is written.
-/// @return How many lines were added
-size_t TimelineFromCuts(agi::Context *c, std::vector<int> const& cuts, bool always) {
+enum class TimelineMode { OnlyIfEmpty, FillGaps, Regenerate };
+
+/// Regeneration replaces all rows with one blank line per shot, in one undo step.
+size_t TimelineFromCuts(agi::Context *c, std::vector<int> const& cuts, TimelineMode mode) {
 	auto provider = c->project->VideoProvider();
 	auto const& fps = c->project->Timecodes();
 	if (!provider || !fps.IsLoaded()) return 0;
-	bool const replace = NothingWritten(c);
-	if (!replace && !always) return 0;
+	bool const replace = mode == TimelineMode::Regenerate || NothingWritten(c);
+	if (!replace && mode == TimelineMode::OnlyIfEmpty) return 0;
 	int const frames = provider->GetFrameCount();
 	if (frames <= 0) return 0;
 	std::vector<int> starts;
@@ -246,7 +250,11 @@ struct keyframe_timeline final : public Command {
 
 	void operator()(agi::Context *c) override {
 		if (!Validate(c)) return;
-		size_t const lines = TimelineFromCuts(c, c->project->Keyframes(), true);
+		bool const detected = UsingDetectedScenes(*c->project);
+		if (detected && !ConfirmRegeneration(c->parent, StrDisplay(c),
+			_("Regenerate the timeline from the detected scene changes? All subtitle lines, including text and comments, will be replaced with one blank line per shot.")))
+			return;
+		size_t const lines = TimelineFromCuts(c, c->project->Keyframes(), detected ? TimelineMode::Regenerate : TimelineMode::FillGaps);
 		if (!c->frame) return;
 		if (lines)
 			c->frame->StatusTimeout(fmt_plural(lines, "Added an empty line for %d shot", "Added an empty line for each of %d shots", static_cast<int>(lines)));
@@ -275,63 +283,63 @@ struct keyframe_detect final : public Command {
 		int const band = std::clamp(static_cast<int>(OPT_GET("Tool/Scene Detection/Subtitle Band")->GetInt()), 0, 50);
 		auto cache = SceneCachePath(video, sensitivity, params.gradual, band);
 
-		std::vector<int> cuts;
-		try { if (agi::fs::FileExists(cache)) cuts = agi::keyframe::Load(cache); }
-		catch (agi::Exception const&) { cuts.clear(); }
+		bool const regenerate = UsingDetectedScenes(*c->project) || agi::fs::FileExists(cache);
+		if (regenerate && !ConfirmRegeneration(c->parent, StrDisplay(c),
+			_("Scan every frame again and regenerate the timeline? This will update the scene changes and replace all subtitle lines, including text and comments, with one blank line per shot.")))
+			return;
 
-		if (cuts.empty()) {
-			auto measures_file = SceneMeasuresPath(video, band);
-			auto measures = scene_detect::LoadMeasures(measures_file);
-			if (measures.flash_span != params.flash_span) measures = {};
-			bool const read_video = measures.empty();
-			if (read_video) {
-				// A provider of its own, read through from the start, so the
-				// video shown is not moved about; with no frames kept for
-				// going back, and the frames small
-				DialogProgress progress(c->parent, _("Detect Scene Changes"), _("Reading every frame of the video..."));
-				try {
-					auto matrix = c->subtitleAccess->Read().GetYCbCrMatrix();
-					// A long video in parts, each read by a decoder of its
-					// own; a core is left to the decoders' own threads
-					std::vector<std::unique_ptr<VideoProvider>> providers;
-					std::vector<VideoProvider*> readers;
-					auto open = [&] {
-						providers.push_back(VideoProviderFactory::GetProvider(video, matrix, &progress, false));
-						providers.back()->ScaleDownForAnalysis(scene_detect::analysis_width);
-						readers.push_back(providers.back().get());
-					};
-					open();
-					int const cores = static_cast<int>(std::thread::hardware_concurrency());
-					int const length = readers[0]->GetFrameCount();
-					int const parts = std::clamp(std::min(cores - 1, length / scene_detect::min_part_frames), 1, 4);
-					while (static_cast<int>(readers.size()) < parts) open();
-					progress.Run([&](agi::ProgressSink *ps) {
-						// The picture within its black bars, a few frames
-						// looked at first, without where subtitles are burnt in
-						auto area = scene_detect::WithoutSubtitles(scene_detect::FindPicture(*readers[0]), band);
-						measures = scene_detect::Measure(readers, ps, params.flash_span, area);
-					});
-				}
-				catch (agi::UserCancelException const&) { return; }
-				catch (agi::Exception const& e) {
-					wxMessageBox(to_wx(e.GetMessage()), _("Detect Scene Changes"), wxOK | wxICON_ERROR, c->parent);
-					return;
-				}
-				if (measures.empty()) return;
-			}
-			cuts = scene_detect::Cuts(measures, params);
+		auto measures_file = SceneMeasuresPath(video, band);
+		scene_detect::Measures measures;
+		if (!regenerate) measures = scene_detect::LoadMeasures(measures_file);
+		if (measures.flash_span != params.flash_span) measures = {};
+		bool const read_video = measures.empty();
+		if (read_video) {
+			// A provider of its own, read through from the start, so the
+			// video shown is not moved about; with no frames kept for
+			// going back, and the frames small
+			DialogProgress progress(c->parent, _("Detect Scene Changes"), _("Reading every frame of the video..."));
 			try {
-				agi::fs::CreateDirectory(cache.parent_path());
-				if (read_video) scene_detect::SaveMeasures(measures_file, measures);
-				agi::keyframe::Save(cache, cuts);
+				auto matrix = c->subtitleAccess->Read().GetYCbCrMatrix();
+				// A long video in parts, each read by a decoder of its
+				// own; a core is left to the decoders' own threads
+				std::vector<std::unique_ptr<VideoProvider>> providers;
+				std::vector<VideoProvider*> readers;
+				auto open = [&] {
+					providers.push_back(VideoProviderFactory::GetProvider(video, matrix, &progress, false));
+					providers.back()->ScaleDownForAnalysis(scene_detect::analysis_width);
+					readers.push_back(providers.back().get());
+				};
+				open();
+				int const cores = static_cast<int>(std::thread::hardware_concurrency());
+				int const length = readers[0]->GetFrameCount();
+				int const parts = std::clamp(std::min(cores - 1, length / scene_detect::min_part_frames), 1, 4);
+				while (static_cast<int>(readers.size()) < parts) open();
+				progress.Run([&](agi::ProgressSink *ps) {
+					// The picture within its black bars, a few frames
+					// looked at first, without where subtitles are burnt in
+					auto area = scene_detect::WithoutSubtitles(scene_detect::FindPicture(*readers[0]), band);
+					measures = scene_detect::Measure(readers, ps, params.flash_span, area);
+				});
 			}
+			catch (agi::UserCancelException const&) { return; }
 			catch (agi::Exception const& e) {
 				wxMessageBox(to_wx(e.GetMessage()), _("Detect Scene Changes"), wxOK | wxICON_ERROR, c->parent);
 				return;
 			}
+			if (measures.empty()) return;
 		}
-		c->project->LoadKeyframes(cache);
-		size_t const lines = TimelineFromCuts(c, c->project->Keyframes(), false);
+		auto cuts = scene_detect::Cuts(measures, params);
+		try {
+			agi::fs::CreateDirectory(cache.parent_path());
+			if (read_video) scene_detect::SaveMeasures(measures_file, measures);
+			agi::keyframe::Save(cache, cuts);
+		}
+		catch (agi::Exception const& e) {
+			wxMessageBox(to_wx(e.GetMessage()), _("Detect Scene Changes"), wxOK | wxICON_ERROR, c->parent);
+			return;
+		}
+		if (!c->project->LoadKeyframes(cache)) return;
+		size_t const lines = TimelineFromCuts(c, c->project->Keyframes(), regenerate ? TimelineMode::Regenerate : TimelineMode::OnlyIfEmpty);
 		if (!c->frame) return;
 		if (lines)
 			c->frame->StatusTimeout(fmt_plural(lines, "Found %d shot and added an empty line for each", "Found %d shots and added an empty line for each", static_cast<int>(lines)));

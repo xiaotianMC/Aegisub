@@ -7712,3 +7712,23 @@ msgstr "重新整理以再次查看系列進度。"
 #: src/workbench_series.cpp
 msgid "Back to Workbench"
 msgstr "返回工作台"
+
+#: ../src/command/keyframe.cpp
+msgid "Detect Scene Changes"
+msgstr "偵測場景切換"
+
+#: ../src/command/keyframe.cpp
+msgid "Timeline from Scene Changes"
+msgstr "依場景切換產生時間軸"
+
+#: ../src/command/keyframe.cpp
+msgid "Regenerate"
+msgstr "重新產生"
+
+#: ../src/command/keyframe.cpp
+msgid "Scan every frame again and regenerate the timeline? This will update the scene changes and replace all subtitle lines, including text and comments, with one blank line per shot."
+msgstr "要重新逐格掃描影片並產生時間軸嗎？場景切換點將更新，所有現有字幕列（含文字和註解）都將被取代，每個鏡頭產生一列空字幕。"
+
+#: ../src/command/keyframe.cpp
+msgid "Regenerate the timeline from the detected scene changes? All subtitle lines, including text and comments, will be replaced with one blank line per shot."
+msgstr "要依照已偵測到的場景切換重新產生時間軸嗎？所有現有字幕列（含文字和註解）都將被取代，每個鏡頭產生一列空字幕。"

@@ -615,12 +615,10 @@ void TimingPage::BuildScene() {
 		note->SetText(_("The video's own keyframes are not always scene changes"));
 		card_body->Add(note, 0, wxEXPAND | wxTOP, FromDIP(3));
 	}
-	if (!have || own) {
-		auto detect = Add<TextButton>("scene.detect", cmd::get("keyframe/detect")->StrDisplay(c), cmd::get("keyframe/detect")->StrHelp());
-		detect->on_click = [this] { cmd::call("keyframe/detect", c); };
-		detect->Enable(HasVideo());
-		card_body->Add(detect, 0, wxEXPAND | wxTOP, FromDIP(3));
-	}
+	auto detect = Add<TextButton>("scene.detect", cmd::get("keyframe/detect")->StrDisplay(c), cmd::get("keyframe/detect")->StrHelp());
+	detect->on_click = [this] { cmd::call("keyframe/detect", c); };
+	detect->Enable(HasVideo());
+	card_body->Add(detect, 0, wxEXPAND | wxTOP, FromDIP(3));
 }
 
 void TimingPage::BuildLead() {
