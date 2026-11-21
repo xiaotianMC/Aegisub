@@ -86,3 +86,5 @@ src/workbench_home.cpp
 src/workbench_activity.cpp
 src/workbench_metadata.cpp
 src/workbench_series.cpp
+src/workbench_trash.cpp
+src/workbench_trash_win.cpp

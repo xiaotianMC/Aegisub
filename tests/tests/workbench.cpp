@@ -8,6 +8,9 @@
 #include "../../src/libresrc/libresrc.h"
 #include "../../src/main.h"
 #include "../../src/options.h"
+#include "../../src/project.h"
+#include "../../src/subs_controller.h"
+#include "../../src/ass_exporter.h"
 
 #include <libaegisub/cajun/writer.h>
 #include <libaegisub/json.h>
@@ -28,6 +31,7 @@
 #include <wx/listbox.h>
 #include <wx/log.h>
 #include <wx/modalhook.h>
+#include <wx/msgdlg.h>
 #include <wx/mstream.h>
 #include <wx/statbmp.h>
 #include <wx/stattext.h>
@@ -157,7 +161,8 @@ TEST_F(workbench_storage, a_shared_template_round_trips_and_does_not_replace_unr
 }
 
 TEST_F(workbench_storage, invalid_templates_and_names_fail_before_creating_a_project) {
-	for (std::string bad : {"../outside", ".aeg/elsewhere", "one//two", "/tmp", "AUX.txt", "audio", "a\\b", ""}) {
+	for (std::string bad : {"../outside", ".aeg/elsewhere", "one//two", "one/two/", "one///two",
+	                        "/tmp", "C:/temp", "AUX.txt", "audio", "a\\b", ""}) {
 		auto invalid = folders;
 		invalid["video"] = bad;
 		EXPECT_ANY_THROW(Create(root, "bad", Kind::Project, invalid)) << bad;
@@ -376,7 +381,7 @@ TEST_F(workbench_storage, upgrading_a_v1_database_keeps_locations_and_a_readable
 	Index migrated(file);
 	SqlFixture current(file);
 	EXPECT_EQ("existing", current.Query("SELECT name FROM locations"));
-	EXPECT_EQ("2", current.Query("PRAGMA user_version"));
+	EXPECT_EQ("5", current.Query("PRAGMA user_version"));
 	EXPECT_EQ("0", current.Query("SELECT count(*) FROM tasks"));
 	EXPECT_EQ("ok", current.Query("PRAGMA quick_check"));
 	int backups = 0;
@@ -396,6 +401,110 @@ bool DecodesCover(std::string const& bytes) {
 	wxMemoryInputStream stream(bytes.data(), bytes.size());
 	wxImage image;
 	return image.LoadFile(stream);
+}
+
+TEST_F(workbench_storage, v2_upgrade_preserves_queued_work_and_recent_visits_are_user_actions) {
+	auto database = root / "library.sqlite";
+	auto project = Create(root, "project", Kind::Project, folders);
+	auto series = Create(root, "中文", Kind::Series, DefaultFolders(Kind::Series));
+	Put(project.root / "subtitles/sample.srt", "contents");
+	std::string task;
+	{
+		Index index(database);
+		index.Remember(project); index.Remember(series);
+		task = index.QueueRegistration(project, {Path("subtitles/sample.srt")});
+	}
+	SqlFixture(database).Exec("DROP TABLE folder_removals; DROP TABLE paused_tasks; DROP TABLE visits; "
+	                          "DROP TABLE recent_files; DROP TABLE status_hints; DROP TABLE reviewed_downloads; PRAGMA user_version=2");
+	Index index(database);
+	EXPECT_EQ(task, index.Registrations().at(0).id);
+	EXPECT_EQ(2u, index.List().size());
+	EXPECT_TRUE(index.List(0, 50, LibraryView::Recent).empty());
+	index.Visit(series, "series"); index.Visit(project, "dashboard"); index.Remember(series);
+	Index reopened(database);
+	EXPECT_EQ(project.id, reopened.List(0, 1, LibraryView::Recent).at(0).id);
+	EXPECT_EQ("dashboard", reopened.List(0, 1, LibraryView::Recent).at(0).page);
+	EXPECT_EQ(series.id, reopened.List(0, 1, LibraryView::Series, "中文").at(0).id);
+	EXPECT_TRUE(reopened.List(0, 50, LibraryView::All, "%").empty());
+	for (auto const& folder : fs::directory_iterator(root / "backups"))
+		EXPECT_EQ("2", SqlFixture(Path(folder.path()) / "workbench.sqlite3").Query("PRAGMA user_version"));
+}
+
+TEST_F(workbench_storage, v4_upgrade_preserves_a_detached_project_and_its_paused_work) {
+	auto database = root / "library.sqlite";
+	auto project = Create(root, "project", Kind::Project, folders);
+	Path subtitle = "subtitles/retained.srt";
+	Put(project.root / subtitle, "retained");
+	std::string task;
+	{
+		Index index(database);
+		index.Remember(project);
+		task = index.QueueRegistration(project, {subtitle});
+		index.Unmanage(index.RegisteredLocation(project.id));
+	}
+	SqlFixture(database).Exec("DROP TABLE folder_removals; PRAGMA user_version=4");
+	Index index(database);
+	EXPECT_TRUE(index.List().empty());
+	EXPECT_EQ("paused_project", index.Registrations().at(0).state);
+	EXPECT_EQ(task, index.Registrations().at(0).id);
+	EXPECT_EQ(project.id, index.Registrations().at(0).project_id);
+	EXPECT_TRUE(index.UncertainFolderRemovals().empty());
+	index.RegisterExisting(project);
+	EXPECT_EQ("queued", index.Registrations().at(0).state);
+	EXPECT_EQ(subtitle, index.Outputs(task).at(0).relative);
+	for (auto const& folder : fs::directory_iterator(root / "backups"))
+		EXPECT_EQ("4", SqlFixture(Path(folder.path()) / "workbench.sqlite3").Query("PRAGMA user_version"));
+}
+
+TEST_F(workbench_storage, dashboard_filters_actual_files_and_suggestions_require_a_current_explicit_decision) {
+	auto database = root / "library.sqlite";
+	auto project = Create(root, "example", Kind::Project, folders);
+	Index index(database); index.Visit(project, "dashboard");
+	Path sub = "subtitles/一.SRT", video = "video/source.MP4";
+	Put(project.root / sub, "sub"); Put(project.root / video, "video");
+	index.RebuildFiles(project);
+	EXPECT_EQ(sub, index.Files(project.id, 0, 1, FileView::Subtitles).at(0).relative);
+	EXPECT_EQ(video, index.Files(project.id, 0, 1, FileView::Video).at(0).relative);
+	EXPECT_TRUE(index.Files(project.id, 0, 1, FileView::Recent).empty());
+	index.RecordFile(project, sub, FileEvent::Opened);
+	EXPECT_FALSE(index.SuggestedStatus(project));
+	EXPECT_ANY_THROW(ResolveProjectFile(project, "../other.srt"));
+	index.RecordFile(project, sub, FileEvent::Saved);
+	auto saved = index.SuggestedStatus(project).value();
+	EXPECT_EQ("doing", saved.status); EXPECT_EQ("todo", Open(project.root).metadata.status);
+	index.RecordFile(project, sub, FileEvent::Exported);
+	EXPECT_ANY_THROW(index.ResolveSuggestion(project, saved, true));
+	auto exported = index.SuggestedStatus(project).value();
+	EXPECT_EQ("review", exported.status);
+	auto dismissed = index.ResolveSuggestion(project, exported, false);
+	EXPECT_EQ(project.bytes, dismissed.bytes);
+	EXPECT_FALSE(Index(database).SuggestedStatus(dismissed));
+	index.RecordFile(project, sub, FileEvent::Saved);
+	auto changed = index.ResolveSuggestion(project, *index.SuggestedStatus(project), true);
+	EXPECT_EQ("doing", Open(project.root).metadata.status);
+	EXPECT_FALSE(index.SuggestedStatus(changed));
+	EXPECT_EQ(sub, Index(database).Files(project.id, 0, 1, FileView::Recent).at(0).relative);
+	fs::rename(project.root, root / "offline");
+	EXPECT_ANY_THROW(ResolveProjectFile(changed, sub));
+}
+
+TEST_F(workbench_storage, only_a_verified_download_offers_a_dismissible_status_change) {
+	auto database = root / "library.sqlite";
+	auto project = Create(root, "example", Kind::Project, folders);
+	Index index(database); index.Visit(project, "dashboard");
+	SqlFixture sql(database);
+	auto insert = "INSERT INTO tasks(task_id,project_id,name,source_kind,auth_mode,state,created_at,updated_at) VALUES('web','"
+	    + project.id + "','clip','web','anonymous','succeeded',1," + std::to_string(project.updated_at) + ")";
+	sql.Exec(insert.c_str());
+	EXPECT_FALSE(index.SuggestedStatus(project));
+	sql.Exec("INSERT INTO outputs VALUES('output','web','asset','video/sample.mp4',1,'hash','id','registered')");
+	auto hint = index.SuggestedStatus(project).value();
+	EXPECT_TRUE(hint.download);
+	EXPECT_EQ("todo", Open(project.root).metadata.status);
+	EXPECT_EQ(project.bytes, index.ResolveSuggestion(project, hint, false).bytes);
+	EXPECT_FALSE(Index(database).SuggestedStatus(project));
+	EXPECT_EQ(1u, index.Tasks(TaskView::Downloads, 0, 50, project.id).size());
+	EXPECT_TRUE(index.Tasks(TaskView::Downloads, 0, 50, "another").empty());
 }
 
 TEST_F(workbench_storage, metadata_preserves_other_fields_and_stale_edits_cannot_replace_the_latest_revision) {
@@ -829,6 +938,286 @@ TEST_F(workbench_storage, retry_after_series_publication_recovers_local_position
 	EXPECT_EQ("{}", Bytes(unrelated.root / ".aeg/series.json"));
 }
 
+TEST_F(workbench_storage, removing_an_offline_episode_preserves_its_files_registration_and_pending_task) {
+	auto database = root / "workbench.sqlite";
+	Index index(database);
+	auto series = Create(root, "season", Kind::Series, DefaultFolders(Kind::Series));
+	auto ten = CreateEpisodeProject(series, "ten", folders);
+	auto two = CreateEpisodeProject(series, "two", folders);
+	series = index.AddEpisode(series, ten, "10");
+	series = index.AddEpisode(series, two, "02");
+	auto media = Path("subtitles/script.srt");
+	Put(two.root / media, "existing source");
+	auto task = index.QueueRegistration(two, {media});
+	index.RebuildFiles(two);
+	auto renamed = Rename(series, "Season A");
+	EXPECT_ANY_THROW(RemoveEpisode(series, two.id));
+	EXPECT_EQ(renamed.bytes, Open(series.root).bytes);
+	fs::rename(two.root, root / "offline");
+	auto updated = RemoveEpisode(renamed, two.id);
+	EXPECT_EQ(renamed.revision + 1, updated.revision);
+	EXPECT_EQ(renamed.bytes, Bytes(series.root / ".aeg/backups/config" / ("series-r" + std::to_string(renamed.revision) + ".json")));
+	auto reopened = Open(series.root);
+	ASSERT_EQ(1u, reopened.episodes.size());
+	EXPECT_EQ(ten.id, reopened.episodes.front().project_id);
+	EXPECT_EQ(updated.bytes, RemoveEpisode(renamed, two.id).bytes);
+	EXPECT_FALSE(fs::exists(two.root));
+	EXPECT_EQ(two.bytes, Open(root / "offline").bytes);
+	EXPECT_EQ("existing source", Bytes(root / "offline" / media));
+	Index fresh(database);
+	EXPECT_EQ(3u, fresh.List().size());
+	EXPECT_EQ(task, fresh.Registrations().at(0).id);
+	EXPECT_EQ("queued", fresh.Registrations().at(0).state);
+	EXPECT_EQ(media, fresh.Files(two.id).at(0).relative);
+	fs::rename(root / "offline", two.root);
+	fresh.RebuildFiles(two);
+	EXPECT_EQ(1u, InspectSeries(reopened).states.size());
+	auto added = fresh.AddEpisode(reopened, Open(two.root), "02");
+	ASSERT_EQ(2u, added.episodes.size());
+	EXPECT_ANY_THROW(RemoveEpisode(renamed, two.id));
+	EXPECT_EQ(added.bytes, Open(series.root).bytes);
+}
+
+TEST_F(workbench_storage, trashing_a_project_preserves_its_identity_and_finished_and_pending_task_results) {
+	auto database = root / "workbench.sqlite";
+	auto project = Create(root, "project", Kind::Project, folders);
+	auto other = Create(root, "other", Kind::Project, folders);
+	Path finished_file = "subtitles/finished.srt", pending_file = "subtitles/pending.srt";
+	Put(project.root / finished_file, "finished subtitle");
+	Put(project.root / pending_file, "pending subtitle");
+	Put(other.root / "keep.srt", "unrelated subtitle");
+	Index index(database);
+	index.Visit(project, "dashboard"); index.Visit(other, "dashboard");
+	index.RebuildFiles(project); index.RebuildFiles(other);
+	index.RecordFile(project, finished_file, FileEvent::Opened);
+	auto finished = index.QueueRegistration(project, {finished_file});
+	index.RunRegistration(finished);
+	project = Open(project.root);
+	auto pending = index.QueueRegistration(project, {pending_file});
+	Put(project.root / "unindexed.txt", "also part of the folder");
+	auto finished_output = index.Outputs(finished).at(0);
+	auto pending_output = index.Outputs(pending).at(0);
+	auto location = index.RegisteredLocation(project.id);
+	auto preview = index.PreviewFolderRemoval(location);
+	EXPECT_EQ(project.bytes, preview.project.bytes);
+	EXPECT_FALSE(preview.series);
+	EXPECT_GE(preview.files, 4);
+	EXPECT_EQ(1, preview.tasks);
+
+	auto trash = root / "trash";
+	index.RemoveFolder(preview, FolderDisposition::Trash, [&](Path const& path) {
+		EXPECT_EQ(project.root, path);
+		fs::rename(path, trash);
+	});
+	EXPECT_FALSE(fs::exists(project.root));
+	EXPECT_EQ(project.bytes, Open(trash).bytes);
+	EXPECT_EQ("pending subtitle", Bytes(trash / pending_file));
+	EXPECT_EQ("also part of the folder", Bytes(trash / "unindexed.txt"));
+	Index reopened(database);
+	EXPECT_ANY_THROW(reopened.RegisteredLocation(project.id));
+	EXPECT_EQ(other.id, reopened.List().at(0).id);
+	EXPECT_EQ(other.id, reopened.List(0, 50, LibraryView::Recent).at(0).id);
+	EXPECT_TRUE(reopened.Files(project.id).empty());
+	EXPECT_TRUE(reopened.Files(project.id, 0, 50, FileView::Recent).empty());
+	EXPECT_EQ(0, reopened.Scan(project.id).generation);
+	EXPECT_EQ(1u, reopened.Files(other.id).size());
+	auto tasks = reopened.Tasks(TaskView::Registrations, 0, 50, project.id);
+	ASSERT_EQ(2u, tasks.size());
+	for (auto const& task : tasks) {
+		EXPECT_EQ(project.id, task.project_id);
+		if (task.id == finished) {
+			EXPECT_EQ("succeeded", task.state);
+			EXPECT_EQ(1, task.registered);
+		}
+		else {
+			EXPECT_EQ(pending, task.id);
+			EXPECT_EQ("paused_project", task.state);
+			EXPECT_EQ(0, task.registered);
+		}
+	}
+	EXPECT_EQ(finished_output.id, reopened.Outputs(finished).at(0).id);
+	EXPECT_EQ("registered", reopened.Outputs(finished).at(0).stage);
+	EXPECT_EQ(pending_output.id, reopened.Outputs(pending).at(0).id);
+	EXPECT_EQ(pending_output.stage, reopened.Outputs(pending).at(0).stage);
+	EXPECT_ANY_THROW(reopened.RunRegistration(pending));
+}
+
+TEST_F(workbench_storage, a_failed_trash_leaves_the_episode_intact_and_explicit_permanent_deletion_removes_only_that_episode) {
+	auto database = root / "workbench.sqlite";
+	auto series = Create(root, "season", Kind::Series, DefaultFolders(Kind::Series));
+	auto episode = CreateEpisodeProject(series, "episode", folders);
+	auto sibling = CreateEpisodeProject(series, "sibling", folders);
+	Index index(database);
+	series = index.AddEpisode(series, episode, "01");
+	series = index.AddEpisode(series, sibling, "02");
+	Path subtitle = "subtitles/keep.srt";
+	Put(episode.root / subtitle, "episode subtitle");
+	Put(sibling.root / subtitle, "sibling subtitle");
+	index.RebuildFiles(episode);
+	auto task = index.QueueRegistration(episode, {subtitle});
+	auto output = index.Outputs(task).at(0);
+	auto location = index.RegisteredLocation(episode.id);
+	auto preview = index.PreviewFolderRemoval(location);
+	ASSERT_TRUE(preview.series);
+	EXPECT_EQ(series.bytes, preview.series->bytes);
+	EXPECT_EQ(1, preview.tasks);
+
+	int disposal_attempts = 0;
+	EXPECT_ANY_THROW(index.RemoveFolder(preview, FolderDisposition::Trash, [&](Path const& path) {
+		++disposal_attempts;
+		EXPECT_EQ(episode.root, path);
+		throw std::runtime_error("Trash is unavailable");
+	}));
+	EXPECT_EQ(1, disposal_attempts);
+	Index reopened(database);
+	EXPECT_EQ(location.generation, reopened.RegisteredLocation(episode.id).generation);
+	EXPECT_EQ(subtitle, reopened.Files(episode.id).at(0).relative);
+	EXPECT_EQ("queued", reopened.Registrations().at(0).state);
+	EXPECT_EQ(series.bytes, Open(series.root).bytes);
+	EXPECT_EQ(episode.bytes, Open(episode.root).bytes);
+	EXPECT_EQ("episode subtitle", Bytes(episode.root / subtitle));
+
+	preview = reopened.PreviewFolderRemoval(reopened.RegisteredLocation(episode.id));
+	EXPECT_ANY_THROW(reopened.RemoveFolder(preview, FolderDisposition::Permanent, [&](Path const& path) {
+		EXPECT_FALSE(fs::exists(episode.root));
+		EXPECT_EQ(episode.id, Open(path).id);
+		throw std::runtime_error("Cannot delete the staged directory");
+	}));
+	EXPECT_EQ(episode.bytes, Open(episode.root).bytes);
+	EXPECT_EQ(series.bytes, Open(series.root).bytes);
+	EXPECT_EQ("queued", reopened.Registrations().at(0).state);
+	EXPECT_TRUE(reopened.UncertainFolderRemovals().empty());
+
+	preview = reopened.PreviewFolderRemoval(reopened.RegisteredLocation(episode.id));
+	reopened.RemoveFolder(preview, FolderDisposition::Permanent, [&](Path const& path) {
+		EXPECT_EQ(episode.id, Open(path).id);
+		EXPECT_EQ("episode subtitle", Bytes(path / subtitle));
+		EXPECT_GT(fs::remove_all(path), 0u);
+	});
+	EXPECT_FALSE(fs::exists(episode.root));
+	EXPECT_EQ("sibling subtitle", Bytes(sibling.root / subtitle));
+	EXPECT_EQ(sibling.bytes, Open(sibling.root).bytes);
+	auto updated = Open(series.root);
+	EXPECT_EQ(series.revision + 1, updated.revision);
+	ASSERT_EQ(1u, updated.episodes.size());
+	EXPECT_EQ(sibling.id, updated.episodes[0].project_id);
+	EXPECT_EQ(series.bytes, Bytes(series.root / ".aeg/backups/config" / ("series-r" + std::to_string(series.revision) + ".json")));
+	Index fresh(database);
+	EXPECT_EQ(2u, fresh.List().size());
+	EXPECT_ANY_THROW(fresh.RegisteredLocation(episode.id));
+	EXPECT_EQ(series.root, fresh.RegisteredLocation(series.id).root);
+	EXPECT_TRUE(fresh.Files(episode.id).empty());
+	EXPECT_EQ("paused_project", fresh.Registrations().at(0).state);
+	EXPECT_EQ(episode.id, fresh.Registrations().at(0).project_id);
+	EXPECT_EQ(task, fresh.Registrations().at(0).id);
+	EXPECT_EQ(output.id, fresh.Outputs(task).at(0).id);
+}
+
+TEST_F(workbench_storage, physical_removal_rejects_stale_series_project_inventory_and_folder_identity) {
+	auto database = root / "workbench.sqlite";
+	auto series = Create(root, "season", Kind::Series, DefaultFolders(Kind::Series));
+	auto project = CreateEpisodeProject(series, "episode", folders);
+	Index index(database);
+	series = index.AddEpisode(series, project, "01");
+	auto location = index.RegisteredLocation(project.id);
+	auto preview = index.PreviewFolderRemoval(location);
+	auto unexpected = [](Path const&) { ADD_FAILURE() << "Disposer called for a stale preview"; };
+	series = Rename(series, "new series revision");
+	EXPECT_ANY_THROW(index.RemoveFolder(preview, FolderDisposition::Trash, unexpected));
+
+	preview = index.PreviewFolderRemoval(location);
+	project = Rename(project, "new project revision");
+	EXPECT_ANY_THROW(index.RemoveFolder(preview, FolderDisposition::Permanent, unexpected));
+
+	preview = index.PreviewFolderRemoval(location);
+	Path added = "subtitles/new.srt";
+	Put(project.root / added, "added after confirmation");
+	EXPECT_ANY_THROW(index.RemoveFolder(preview, FolderDisposition::Trash, unexpected));
+
+	preview = index.PreviewFolderRemoval(location);
+	auto original = root / "original";
+	fs::rename(project.root, original);
+	fs::copy(original, project.root, fs::copy_options::recursive);
+	ASSERT_EQ(project.bytes, Open(project.root).bytes);
+	EXPECT_ANY_THROW(index.RemoveFolder(preview, FolderDisposition::Permanent, unexpected));
+
+	EXPECT_EQ(project.bytes, Open(original).bytes);
+	EXPECT_EQ("added after confirmation", Bytes(project.root / added));
+	EXPECT_EQ(series.bytes, Open(series.root).bytes);
+	EXPECT_EQ(location.generation, index.RegisteredLocation(project.id).generation);
+}
+
+TEST_F(workbench_storage, a_trash_move_with_a_lost_acknowledgement_can_be_confirmed_after_restart) {
+	auto database = root / "workbench.sqlite";
+	auto series = Create(root, "season", Kind::Series, DefaultFolders(Kind::Series));
+	auto episode = CreateEpisodeProject(series, "episode", folders);
+	auto trash = root / "trash";
+	Path subtitle = "subtitles/keep.srt";
+	Put(episode.root / subtitle, "recoverable subtitle");
+	std::string task;
+	{
+		Index index(database);
+		series = index.AddEpisode(series, episode, "01");
+		task = index.QueueRegistration(episode, {subtitle});
+		auto preview = index.PreviewFolderRemoval(index.RegisteredLocation(episode.id));
+		EXPECT_ANY_THROW(index.RemoveFolder(preview, FolderDisposition::Trash, [&](Path const& path) {
+			fs::rename(path, trash);
+			throw std::runtime_error("Trash did not acknowledge the move");
+		}));
+	}
+	ASSERT_FALSE(fs::exists(episode.root));
+	EXPECT_EQ(series.bytes, Open(series.root).bytes);
+	Index reopened(database);
+	auto uncertain = reopened.UncertainFolderRemovals();
+	ASSERT_EQ(1u, uncertain.size());
+	EXPECT_EQ(episode.id, uncertain[0].id);
+	EXPECT_EQ(episode.root, uncertain[0].root);
+	EXPECT_EQ("queued", reopened.Registrations().at(0).state);
+	EXPECT_ANY_THROW(reopened.RunRegistration(task));
+	reopened.ConfirmFolderRemoval(uncertain[0]);
+	EXPECT_TRUE(reopened.UncertainFolderRemovals().empty());
+	EXPECT_TRUE(Open(series.root).episodes.empty());
+	EXPECT_ANY_THROW(reopened.RegisteredLocation(episode.id));
+	EXPECT_EQ(episode.id, reopened.Registrations().at(0).project_id);
+	EXPECT_EQ("paused_project", reopened.Registrations().at(0).state);
+	EXPECT_EQ(task, reopened.Registrations().at(0).id);
+	EXPECT_EQ(episode.bytes, Open(trash).bytes);
+	EXPECT_EQ("recoverable subtitle", Bytes(trash / subtitle));
+}
+
+TEST_F(workbench_storage, recovering_an_interrupted_removal_keeps_a_new_membership_at_the_same_episode_path) {
+	auto database = root / "workbench.sqlite";
+	auto series = Create(root, "season", Kind::Series, DefaultFolders(Kind::Series));
+	auto episode = CreateEpisodeProject(series, "episode", folders);
+	auto trash = root / "trash";
+	{
+		Index index(database);
+		series = index.AddEpisode(series, episode, "01");
+		auto preview = index.PreviewFolderRemoval(index.RegisteredLocation(episode.id));
+		EXPECT_ANY_THROW(index.RemoveFolder(preview, FolderDisposition::Trash, [&](Path const& path) {
+			fs::rename(path, trash);
+			throw std::runtime_error("Trash did not acknowledge the move");
+		}));
+	}
+	// Another installation can update the shared manifest before this one reconciles its journal.
+	auto unlinked = RemoveEpisode(series, episode.id);
+	fs::rename(trash, episode.root);
+	Index other(root / "other/workbench.sqlite");
+	auto rejoined = other.AddEpisode(unlinked, Open(episode.root), "01");
+	auto offline = root / "offline";
+	fs::rename(episode.root, offline);
+
+	Index reopened(database);
+	reopened.RecoverInterrupted();
+	auto uncertain = reopened.UncertainFolderRemovals();
+	ASSERT_EQ(1u, uncertain.size());
+	reopened.ConfirmFolderRemoval(uncertain[0]);
+	EXPECT_TRUE(reopened.UncertainFolderRemovals().empty());
+	EXPECT_ANY_THROW(reopened.RegisteredLocation(episode.id));
+	EXPECT_EQ(rejoined.bytes, Open(series.root).bytes);
+	EXPECT_EQ(episode.id, Open(offline).id);
+}
+
 class workbench_home : public workbench_storage {
 protected:
 	agi::Path paths;
@@ -897,8 +1286,18 @@ struct InputDialogs : wxModalDialogHook {
 	wxString name;
 	int answer = wxID_OK;
 	int directory_count = 0, name_count = 0;
+	std::vector<wxString> removal_dialogs;
+	wxString removal_details;
 	InputDialogs() { Register(); }
 	int Enter(wxDialog *dialog) override {
+		if (auto message = dynamic_cast<wxMessageDialog*>(dialog); message &&
+		    (message->GetCaption() == "Remove from Series" || message->GetCaption() == "Remove from Workbench"
+		     || message->GetCaption() == "Move to Trash" || message->GetCaption() == "Permanently Delete"
+		     || message->GetCaption() == "Restore Remaining Files")) {
+			removal_dialogs.push_back(message->GetCaption());
+			removal_details = message->GetExtendedMessage();
+			return answer;
+		}
 		if (auto picker = dynamic_cast<wxFileDialog*>(dialog)) {
 			picker->SetPath(to_wx(directory));
 			for (int i = 0; i < 250 && picker->GetPath().empty(); ++i) { wxYield(); wxMilliSleep(10); }
@@ -967,9 +1366,22 @@ TEST_F(workbench_home, series_page_creates_adds_opens_and_rechecks_offline_episo
 	ASSERT_TRUE(WaitFor([&] { return summary->GetLabelText().Contains("0 of 2 episodes completed, 1 unknown"); }));
 	SelectItem(list, 1);
 	EXPECT_FALSE(node("series-open")->IsEnabled());
-	SelectItem(list, 0);
-	Click(dialog, "series-open");
-	EXPECT_TRUE(details->GetLabelText().Contains("02"));
+	auto before = Open(series.root);
+	input.answer = wxID_NO;
+	Click(dialog, "series-remove");
+	EXPECT_EQ(before.bytes, Open(series.root).bytes);
+	input.answer = wxID_YES;
+	Click(dialog, "series-remove");
+	ASSERT_TRUE(WaitFor([&] { return list->GetCount() == 1; }));
+	EXPECT_TRUE(summary->GetLabelText().Contains("0 of 1 episodes completed, 0 unknown"));
+	EXPECT_EQ(ten.bytes, Open(root / "offline").bytes);
+	EXPECT_FALSE(node("series-remove")->IsEnabled());
+	Click(dialog, "series-back");
+	fs::rename(root / "offline", ten.root);
+	input.answer = wxID_OK; input.directory = ten.root;
+	Click(frame, "workbench-open-project");
+	EXPECT_TRUE(details->GetLabelText().Contains("ten"));
+	EXPECT_FALSE(frame->FindWindow("workbench-back-series")->IsShown());
 	EXPECT_EQ("todo", Open(series.root).metadata.status);
 }
 
@@ -1045,7 +1457,9 @@ TEST_F(workbench_home, an_unavailable_library_still_allows_reading_a_series_and_
 	ASSERT_TRUE(WaitFor([&] { return list->GetCount() == 1; }));
 	EXPECT_FALSE(page->FindWindow("series-create")->IsEnabled());
 	EXPECT_FALSE(page->FindWindow("series-add")->IsEnabled());
-	SelectItem(list, 0); Click(page, "series-open");
+	SelectItem(list, 0);
+	EXPECT_FALSE(page->FindWindow("series-remove")->IsEnabled());
+	Click(page, "series-open");
 	auto details = dynamic_cast<wxStaticText*>(frame->FindWindow("workbench-project-details"));
 	ASSERT_NE(nullptr, details); EXPECT_TRUE(details->GetLabelText().Contains("episode"));
 	EXPECT_FALSE(frame->FindWindow("workbench-edit-metadata")->IsEnabled());
@@ -1157,6 +1571,8 @@ TEST_F(workbench_home, index_and_queue_from_the_project_page_then_complete_from_
 	auto home_tasks = dynamic_cast<wxButton*>(first->FindWindow("workbench-tasks"));
 	ASSERT_NE(nullptr, home_tasks);
 	ASSERT_TRUE(WaitFor([&] { return home_tasks->GetLabel().Contains("1"); }));
+	auto pending = dynamic_cast<wxStaticText*>(first->FindWindow("workbench-unfinished"));
+	ASSERT_NE(nullptr, pending); EXPECT_TRUE(pending->GetLabelText().Contains(to_wx("字幕.srt")));
 	auto database = Roots::Resolve(paths).database;
 	auto task = Index(database).Registrations().at(0);
 	EXPECT_EQ("queued", task.state);
@@ -1180,6 +1596,214 @@ TEST_F(workbench_home, index_and_queue_from_the_project_page_then_complete_from_
 	EXPECT_EQ("registered", Index(database).Outputs(task.id).at(0).stage);
 	EXPECT_EQ(project.revision + 1, Open(project.root).revision);
 	EXPECT_EQ("local subtitle", Bytes(project.root / "subtitles/字幕.srt"));
+}
+
+TEST_F(workbench_home, resume_dashboard_routes_subtitles_to_the_selected_window_and_records_saves) {
+	auto project = Create(root, "editing", Kind::Project, folders);
+	auto series = Create(root, "season", Kind::Series, DefaultFolders(Kind::Series));
+	auto database = Roots::Resolve(paths).database;
+	Index index(database); index.Visit(series, "series"); index.Visit(project, "dashboard");
+	Path first = project.root / "subtitles/a.srt", second = project.root / "subtitles/b.srt";
+	for (auto const& file : {first, second}) Put(file, "1\n00:00:01,000 --> 00:00:02,000\nTest\n\n");
+	index.RebuildFiles(project);
+	auto frame = Launch();
+	Click(frame, "workbench-nav-series");
+	auto projects = dynamic_cast<wxListBox*>(frame->FindWindow("workbench-projects"));
+	ASSERT_EQ(1u, projects->GetCount()); EXPECT_TRUE(projects->GetString(0).Contains("season"));
+	Click(frame, "workbench-nav-recent");
+	ASSERT_EQ(2u, projects->GetCount()); EXPECT_TRUE(projects->GetString(0).Contains("editing"));
+	auto search = dynamic_cast<wxTextCtrl*>(frame->FindWindow("workbench-project-search"));
+	search->SetValue("not in this library");
+	EXPECT_EQ(0u, projects->GetCount());
+	Click(frame, "workbench-nav-home");
+	Click(frame, "workbench-resume-project");
+	auto dashboard = Activity(frame); ASSERT_NE(nullptr, dashboard);
+	EXPECT_TRUE(dashboard->FindWindow("workbench-dashboard-details")->IsShownOnScreen());
+	Click(dashboard, "dashboard-downloads");
+	EXPECT_EQ(1, dynamic_cast<wxChoice*>(dashboard->FindWindow("workbench-task-view"))->GetSelection());
+	Click(frame, "workbench-files");
+	auto files = dynamic_cast<wxListBox*>(dashboard->FindWindow("workbench-index-files"));
+	ASSERT_EQ(2u, files->GetCount()); SelectItem(files, 0);
+	Click(dashboard, "workbench-open-file");
+	auto& primary = wxGetApp().NewWorkbenchContext();
+	ASSERT_EQ(first, primary.subsController->Filename());
+	primary.subsController->Save(first);
+	primary.frame->ShowHome(); Click(frame, "workbench-dashboard");
+	ASSERT_TRUE(dashboard->FindWindow("workbench-accept-suggestion")->IsEnabled());
+	Click(dashboard, "workbench-dismiss-suggestion");
+	EXPECT_EQ("todo", Open(project.root).metadata.status);
+	Click(frame, "workbench-files"); SelectItem(files, 1);
+	Click(dashboard, "workbench-open-separate");
+	auto other = wxGetApp().ActivateOpenSubtitle(second);
+	ASSERT_NE(nullptr, other); ASSERT_NE(primary.frame, other->frame); frames.emplace_back(other->frame);
+	EXPECT_FALSE(other->frame->HasWorkbench()); EXPECT_EQ(first, primary.subsController->Filename());
+	other->subsController->Save(second);
+	Click(frame, "workbench-dashboard"); Click(dashboard, "workbench-accept-suggestion");
+	EXPECT_EQ("doing", Open(project.root).metadata.status);
+	EXPECT_EQ("subtitles/b.srt", index.Files(project.id, 0, 1, FileView::Recent).at(0).relative.generic_string());
+	AssExporter exporter(other);
+	EXPECT_ANY_THROW(exporter.Export(project.root / "exports/invalid.unknown", "UTF-8"));
+	EXPECT_FALSE(index.SuggestedStatus(Open(project.root)));
+	exporter.Export(project.root / "exports/check.srt", "UTF-8");
+	EXPECT_TRUE(fs::is_regular_file(project.root / "exports/check.srt"));
+	Click(dashboard, "workbench-activity-refresh");
+	EXPECT_EQ("review", index.SuggestedStatus(Open(project.root)).value().status);
+	Click(dashboard, "workbench-accept-suggestion");
+	EXPECT_EQ("review", Open(project.root).metadata.status);
+}
+
+TEST_F(workbench_home, removing_a_project_pauses_its_bound_task_until_the_same_project_is_registered) {
+	auto series = Create(root, "show", Kind::Series, DefaultFolders(Kind::Series));
+	auto ep = CreateEpisodeProject(series, "episode", folders);
+	auto db = Roots::Resolve(paths).database;
+	Index index(db); series = index.AddEpisode(series, ep, "01");
+	Path sub = "subtitles/a.srt"; Put(ep.root / sub, "keep");
+	auto task = index.QueueRegistration(ep, {sub}); index.RebuildFiles(ep);
+	auto frame = Launch();
+	InputDialogs dialogs; dialogs.directory = ep.root;
+	Click(frame, "workbench-open-project");
+	auto before = index.RegisteredLocation(ep.id);
+	dialogs.answer = wxID_NO; Click(frame, "workbench-remove-registration");
+	EXPECT_EQ("queued", index.Registrations().at(0).state);
+	dialogs.answer = wxID_YES; Click(frame, "workbench-remove-registration");
+	Index reopened(db);
+	ASSERT_EQ(1u, reopened.List().size()); EXPECT_EQ(series.id, reopened.List().at(0).id);
+	EXPECT_TRUE(reopened.Files(ep.id).empty());
+	EXPECT_EQ("paused_project", reopened.Registrations().at(0).state);
+	EXPECT_EQ(ep.id, reopened.Registrations().at(0).project_id);
+	EXPECT_ANY_THROW(reopened.RunRegistration(task));
+	EXPECT_ANY_THROW(reopened.Visit(ep, "home"));
+	EXPECT_EQ(ep.bytes, Open(ep.root).bytes); EXPECT_EQ("keep", Bytes(ep.root / sub));
+	EXPECT_EQ(series.bytes, Open(series.root).bytes);
+	fs::rename(ep.root, root / "moved");
+	auto other = Create(ep.root.parent_path(), ep.root.filename().string(), Kind::Project, folders);
+	reopened.RegisterExisting(other);
+	EXPECT_EQ("paused_project", reopened.Registrations().at(0).state);
+	dialogs.answer = wxID_OK; dialogs.directory = root / "moved";
+	Click(frame, "workbench-register-folder");
+	EXPECT_EQ("queued", reopened.Registrations().at(0).state);
+	EXPECT_EQ(ep.id, reopened.Registrations().at(0).project_id);
+	EXPECT_ANY_THROW(reopened.Unmanage(before));
+	reopened.RunRegistration(task);
+	EXPECT_EQ("succeeded", Index(db).Registrations().at(0).state);
+	EXPECT_EQ("keep", Bytes(root / "moved" / sub)); EXPECT_EQ(other.bytes, Open(other.root).bytes);
+}
+
+TEST_F(workbench_home, cancelling_either_physical_removal_keeps_the_episode_selected_and_unchanged) {
+	auto series = Create(root, "season", Kind::Series, DefaultFolders(Kind::Series));
+	auto episode = CreateEpisodeProject(series, "episode", folders);
+	auto db = Roots::Resolve(paths).database;
+	Index index(db);
+	series = index.AddEpisode(series, episode, "01");
+	Path subtitle = "subtitles/keep.srt";
+	Put(episode.root / subtitle, "keep");
+	auto task = index.QueueRegistration(episode, {subtitle});
+	index.RebuildFiles(episode);
+	auto frame = Launch();
+	InputDialogs dialogs;
+	dialogs.directory = episode.root;
+	Click(frame, "workbench-open-project");
+	auto location = index.RegisteredLocation(episode.id);
+	dialogs.answer = wxID_NO;
+	Click(frame, "workbench-delete-folder");
+	Click(frame, "workbench-trash-folder");
+	EXPECT_EQ((std::vector<wxString>{"Permanently Delete", "Move to Trash"}), dialogs.removal_dialogs);
+	Index reopened(db);
+	EXPECT_EQ(location.generation, reopened.RegisteredLocation(episode.id).generation);
+	EXPECT_EQ(subtitle, reopened.Files(episode.id).at(0).relative);
+	EXPECT_EQ(task, reopened.Registrations().at(0).id);
+	EXPECT_EQ("queued", reopened.Registrations().at(0).state);
+	EXPECT_EQ(episode.bytes, Open(episode.root).bytes);
+	EXPECT_EQ("keep", Bytes(episode.root / subtitle));
+	EXPECT_EQ(series.bytes, Open(series.root).bytes);
+}
+
+TEST_F(workbench_home, partial_permanent_deletion_keeps_the_staged_remainder_available_after_restart) {
+	auto database = Roots::Resolve(paths).database;
+	auto series = Create(root, "season", Kind::Series, DefaultFolders(Kind::Series));
+	auto episode = CreateEpisodeProject(series, "episode", folders);
+	Path removed = "subtitles/removed.srt", retained = "subtitles/retained.srt";
+	Put(episode.root / removed, "removed subtitle");
+	Put(episode.root / retained, "surviving subtitle");
+	Path staged;
+	Location location;
+	std::string task;
+	{
+		Index index(database);
+		series = index.AddEpisode(series, episode, "01");
+		task = index.QueueRegistration(episode, {retained});
+		location = index.RegisteredLocation(episode.id);
+		auto preview = index.PreviewFolderRemoval(location);
+		EXPECT_ANY_THROW(index.RemoveFolder(preview, FolderDisposition::Permanent, [&](Path const& path) {
+			staged = path;
+			EXPECT_TRUE(fs::remove(path / removed));
+			throw std::runtime_error("Could not delete the remaining files");
+		}));
+	}
+	ASSERT_FALSE(staged.empty());
+	EXPECT_FALSE(fs::exists(episode.root));
+	Index reopened(database);
+	reopened.RecoverInterrupted();
+	EXPECT_EQ(location.root, reopened.RegisteredLocation(episode.id).root);
+	EXPECT_EQ(series.bytes, Open(series.root).bytes);
+	EXPECT_EQ("queued", reopened.Registrations().at(0).state);
+	EXPECT_ANY_THROW(reopened.RunRegistration(task));
+	auto recovery = reopened.FolderRecovery(location);
+	ASSERT_TRUE(recovery);
+	EXPECT_FALSE(recovery->can_confirm);
+	EXPECT_TRUE(recovery->can_restore);
+	EXPECT_EQ(staged, recovery->staged);
+	EXPECT_EQ("surviving subtitle", Bytes(recovery->staged / retained));
+
+	auto frame = Launch();
+	auto review = frame->FindWindow("workbench-confirm-folder-removal");
+	ASSERT_NE(nullptr, review);
+	EXPECT_TRUE(review->IsShownOnScreen());
+	InputDialogs dialogs;
+	dialogs.answer = wxID_NO;
+	Click(frame, "workbench-confirm-folder-removal");
+	EXPECT_EQ((std::vector<wxString>{"Restore Remaining Files"}), dialogs.removal_dialogs);
+	EXPECT_TRUE(dialogs.removal_details.Contains(to_wx(episode.root)));
+	EXPECT_TRUE(dialogs.removal_details.Contains(to_wx(staged)));
+	EXPECT_FALSE(fs::exists(episode.root));
+	EXPECT_EQ("surviving subtitle", Bytes(staged / retained));
+
+	dialogs.answer = wxID_YES;
+	Click(frame, "workbench-confirm-folder-removal");
+	EXPECT_FALSE(reopened.FolderRecovery(location));
+	EXPECT_FALSE(fs::exists(staged));
+	EXPECT_FALSE(fs::exists(episode.root / removed));
+	EXPECT_EQ("surviving subtitle", Bytes(episode.root / retained));
+	EXPECT_EQ(episode.id, Open(episode.root).id);
+	EXPECT_EQ(series.bytes, Open(series.root).bytes);
+	EXPECT_EQ("queued", reopened.Registrations().at(0).state);
+}
+
+TEST_F(workbench_home, a_subtitle_open_in_another_editor_window_blocks_both_physical_removal_actions) {
+	auto project = Create(root, "project", Kind::Project, folders);
+	auto path = project.root / "subtitles/open.srt";
+	std::string contents = "1\n00:00:01,000 --> 00:00:02,000\nOriginal subtitle\n";
+	Put(path, contents);
+	auto db = Roots::Resolve(paths).database;
+	Index index(db); index.Remember(project);
+	auto frame = Launch();
+	InputDialogs dialogs;
+	dialogs.directory = project.root;
+	Click(frame, "workbench-open-project");
+	auto& editor = wxGetApp().NewProjectContext();
+	frames.emplace_back(editor.frame);
+	editor.project->LoadSubtitles(path, "UTF-8");
+	ASSERT_EQ(path, editor.subsController->Filename());
+	auto status = dynamic_cast<wxStaticText*>(frame->FindWindow("workbench-status"));
+	ASSERT_NE(nullptr, status);
+	dialogs.answer = wxID_NO;
+	for (auto button : {"workbench-delete-folder", "workbench-trash-folder"}) {
+		Click(frame, button);
+		EXPECT_TRUE(status->GetLabelText().Contains("Close the open subtitles"));
+	}
+	EXPECT_TRUE(dialogs.removal_dialogs.empty());
+	EXPECT_EQ(contents, Bytes(path));
+	EXPECT_EQ(project.root, index.RegisteredLocation(project.id).root);
 }
 
 TEST_F(workbench_home, selecting_a_template_library_persists_its_location_and_applies_it_to_new_projects) {

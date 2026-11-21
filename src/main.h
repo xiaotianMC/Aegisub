@@ -73,6 +73,7 @@ public:
 	agi::Context& NewProjectContext();
 	agi::Context& NewWorkbenchContext();
 	agi::Context *ActivateOpenSubtitle(agi::fs::path const& file);
+	bool HasOpenFilesIn(agi::fs::path const& folder) const;
 	void OpenSubtitle(agi::Context *from, agi::fs::path const& file, std::string const& encoding = {});
 	bool CloseAll(bool allow_cancel = true);
 

@@ -32,6 +32,7 @@
 #include "frame_main.h"
 #include "workspace_tabs.h"
 #include "include/aegisub/context.h"
+#include "workbench_editor.h"
 #include "options.h"
 #include "project.h"
 #include "selection_controller.h"
@@ -396,6 +397,7 @@ void SubsController::RunPostCommitPlan() {
         peripheral_errors.push_back(from_wx(name)+": "+error);
     };
     if (plan.kind==PostCommitPlan::Kind::LoadedFile) {
+        RecordWorkbenchFile(context, plan.path, workbench::FileEvent::Opened);
         step(_("Recent files"),[&] {
             config::mru->Add("Subtitle", plan.path);
             OPT_SET("Path/Last/Subtitles")->SetString(plan.path.parent_path().string());
@@ -493,6 +495,7 @@ void SubsController::Save(agi::fs::path const& filename, const char *encoding) {
 	}
 
 	SetFileName(filename);
+	RecordWorkbenchFile(context, filename, workbench::FileEvent::Saved);
 }
 
 void SubsController::Close() {

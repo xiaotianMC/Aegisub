@@ -4,10 +4,12 @@
 #include "workbench_metadata.h"
 #include "workbench_series.h"
 #include "workbench_store.h"
+#include "workbench_trash.h"
 #include "command/command.h"
 #include "compat.h"
 #include "frame_main.h"
 #include "include/aegisub/context.h"
+#include "main.h"
 #include "options.h"
 
 #include <libaegisub/exception.h>
@@ -16,6 +18,8 @@
 #include <wx/button.h>
 #include <wx/choicdlg.h>
 #include <wx/dirdlg.h>
+#include <wx/datetime.h>
+#include <wx/dcclient.h>
 #include <wx/filedlg.h>
 #include <wx/image.h>
 #include <wx/listbox.h>
@@ -24,6 +28,7 @@
 #include <wx/msgdlg.h>
 #include <wx/panel.h>
 #include <wx/sizer.h>
+#include <wx/scrolwin.h>
 #include <wx/statbmp.h>
 #include <wx/stattext.h>
 #include <wx/textdlg.h>
@@ -31,6 +36,7 @@
 #include <wx/wrapsizer.h>
 #include <wx/weakref.h>
 #include <algorithm>
+#include <array>
 #include <optional>
 #include <stdexcept>
 
@@ -47,6 +53,14 @@ class WorkbenchHome final : public wxPanel {
 	std::string child_id;
 	std::vector<Location> locations;
 	wxListBox *list;
+	wxTextCtrl *search;
+	wxStaticText *title, *unfinished;
+	wxButton *resume, *dashboard, *remove_registration, *trash_folder, *delete_folder, *confirm_removal;
+	std::optional<Location> selected_location;
+	std::array<wxButton*, 3> cards{};
+	std::vector<Location> recent;
+	LibraryView view = LibraryView::All;
+	bool home_view = true;
 	wxStaticText *details, *status;
 	wxStaticBitmap *cover;
 	wxButton *previous, *next, *rename, *choose_cover, *edit_metadata, *project_files, *registration_tasks;
@@ -71,19 +85,31 @@ class WorkbenchHome final : public wxPanel {
 		auto count = Database().UnfinishedRegistrations();
 		registration_tasks->SetLabel(count ? wxString::Format(_("Registration Tasks (%lld unfinished)"), static_cast<long long>(count))
 		                                  : _("Registration Tasks"));
+		wxString pending;
+		if (home_view) {
+			for (auto const& task : Database().Tasks(TaskView::Unfinished, 0, 3)) {
+				if (pending.empty()) pending = _("Unfinished Tasks");
+				pending += "\n" + to_wx(task.name);
+				if (!task.project_name.empty()) pending += "  —  " + to_wx(task.project_name);
+			}
+		}
+		unfinished->SetLabelText(pending);
+		unfinished->Show(!pending.empty());
 		landing->Layout();
 		Layout();
 	}
-	void ShowActivity(bool tasks) {
+	void ShowActivity(WorkbenchActivityPage page, bool project_tasks = false) {
 		Database();
-		auto project = current && current->kind == Kind::Project && project_files->IsEnabled() ? current : std::nullopt;
-		ShowWorkbenchActivity(this, Roots::Resolve(*c->path).database, project, tasks, [home=wxWeakRef<WorkbenchHome>(this)] {
+		bool scoped = project_tasks || page == WorkbenchActivityPage::Dashboard || page == WorkbenchActivityPage::Files;
+		auto project = scoped && current && current->kind == Kind::Project && project_files->IsEnabled() ? current : std::nullopt;
+		if (scoped && !project) return;
+		ShowWorkbenchActivity(this, Roots::Resolve(*c->path).database, c, project, page, [home=wxWeakRef<WorkbenchHome>(this)] {
 			if (home && !home->IsBeingDeleted()) home->Run([&] {
 				home->TaskCount();
 				if (!home->current || !home->project_files->IsEnabled()) return;
 				auto latest = workbench::Open(home->current->root);
 				if (latest.id != home->current->id) throw std::runtime_error("The folder now contains a different project.");
-				if (latest.bytes != home->current->bytes) home->Select(std::move(latest));
+				if (latest.bytes != home->current->bytes) home->Select(std::move(latest), "");
 			});
 		});
 	}
@@ -99,8 +125,12 @@ class WorkbenchHome final : public wxPanel {
 		catch (agi::Exception const& e) { SetStatus(to_wx(e.GetMessage())); }
 		catch (std::exception const& e) { SetStatus(to_wx(std::string(e.what()))); }
 	}
+	void RefreshFolderRemovals() {
+		if (confirm_removal->Show(!Database().UncertainFolderRemovals().empty())) landing->Layout();
+	}
 	void RefreshList() {
-		auto page = Database().List(offset, page_size + 1);
+		RefreshFolderRemovals();
+		auto page = Database().List(offset, page_size + 1, view, from_wx(search->GetValue()));
 		bool more = page.size() > page_size;
 		if (more) page.resize(page_size);
 		locations = std::move(page);
@@ -111,21 +141,59 @@ class WorkbenchHome final : public wxPanel {
 		}
 		previous->Enable(offset > 0);
 		next->Enable(more);
+		recent = Database().List(0, cards.size(), LibraryView::Recent);
+		resume->Enable(!recent.empty());
+		bool show_cards = home_view && search->IsEmpty();
+		for (size_t i = 0; i < cards.size(); ++i) {
+			auto card = cards[i];
+			card->Show(show_cards && i < recent.size());
+			if (!card->IsShown()) continue;
+			auto const& item = recent[i];
+			auto path = to_wx(item.root);
+			auto stamp = wxDateTime(static_cast<time_t>(item.updated_at)).Format("%Y-%m-%d %H:%M");
+			wxClientDC dc(card);
+			auto short_text = [&](wxString const& text) { return wxControl::Ellipsize(text, dc, wxELLIPSIZE_MIDDLE, FromDIP(175)); };
+			card->SetLabelText(short_text(to_wx(item.name)) + "\n" + WorkbenchStatusLabel(item.status) + "\n" + stamp + "\n" + short_text(path));
+			card->SetToolTip(to_wx(item.name) + "\n" + path);
+			Manifest cached{}; cached.root = item.root; cached.cover = item.cover;
+			card->SetBitmap(CoverBitmap(cached, FromDIP(wxSize(40, 32))));
+		}
 		TaskCount();
+	}
+	void OpenLocation(Location location, bool restore) {
+		current.reset(); details->SetLabelText(to_wx(location.root)); EnableSelectionActions(false); ShowCover();
+		selected_location = location; remove_registration->Enable();
+		auto m = workbench::Open(location.root);
+		if (m.id != location.id || m.root != location.root) throw std::runtime_error("The folder now contains a different project.");
+		Select(std::move(m));
+		if (restore && location.page == "series") ShowEpisodes();
+		if (restore && location.page == "dashboard") ShowActivity(WorkbenchActivityPage::Dashboard);
+		if (restore && location.page == "files") ShowActivity(WorkbenchActivityPage::Files);
+		if (restore && location.page == "tasks") ShowActivity(WorkbenchActivityPage::Tasks, true);
+		if (restore && location.page == "downloads") ShowActivity(WorkbenchActivityPage::Downloads, true);
+	}
+	void Browse(LibraryView filter, bool home, wxString const& heading) {
+		view = filter; home_view = home; offset = 0; search->ChangeValue({});
+		title->SetLabelText(heading); RefreshList();
+	}
+	wxBitmap CoverBitmap(Manifest const& manifest, wxSize size) {
+		wxImage image;
+		try {
+			auto file = CoverFile(manifest);
+			if (!file.empty()) {
+				wxLogNull quiet;
+				image.SetOption(wxIMAGE_OPTION_MAX_WIDTH, size.x);
+				image.SetOption(wxIMAGE_OPTION_MAX_HEIGHT, size.y);
+				image.LoadFile(to_wx(file));
+			}
+		}
+		catch (std::filesystem::filesystem_error const&) { /* An offline cover uses the folder icon. */ }
+		return image.IsOk() ? wxBitmap(image) : wxArtProvider::GetBitmap(wxART_FOLDER, wxART_OTHER, size);
 	}
 	void ShowCover() {
 		cover->Show(current.has_value());
 		if (!current) return;
-		auto size = FromDIP(wxSize(80, 56));
-		wxImage image;
-		auto file = CoverFile(*current);
-		if (!file.empty()) {
-			wxLogNull quiet;
-			image.SetOption(wxIMAGE_OPTION_MAX_WIDTH, size.x);
-			image.SetOption(wxIMAGE_OPTION_MAX_HEIGHT, size.y);
-			image.LoadFile(to_wx(file));
-		}
-		cover->SetBitmap(image.IsOk() ? wxBitmap(image) : wxArtProvider::GetBitmap(wxART_FOLDER, wxART_OTHER, size));
+		cover->SetBitmap(CoverBitmap(*current, FromDIP(wxSize(80, 56))));
 	}
 	void ChooseCover() {
 		if (!current) return;
@@ -149,12 +217,16 @@ class WorkbenchHome final : public wxPanel {
 		choose_cover->Enable(enabled);
 		edit_metadata->Enable(enabled);
 		project_files->Enable(enabled && current && current->kind == Kind::Project);
+		dashboard->Enable(project_files->IsEnabled());
+		trash_folder->Enable(project_files->IsEnabled());
+		delete_folder->Enable(project_files->IsEnabled());
 		episodes->Show(current && current->kind == Kind::Series);
 		episodes->Enable(current && current->kind == Kind::Series);
 		back->Show(parent_series && current && child_id == current->id);
 	}
 	void ShowEpisodes() {
 		if (!current || current->kind != Kind::Series) return;
+		if (edit_metadata->IsEnabled()) Database().Visit(*current, "series");
 		auto page = CreateWorkbenchSeries(this, *current, Roots::Resolve(*c->path).database, edit_metadata->IsEnabled(),
 			[this] { return LoadTemplate(TemplateDirectory(), Kind::Project).folders; },
 			[this](Manifest const& s, Manifest child) {
@@ -163,8 +235,11 @@ class WorkbenchHome final : public wxPanel {
 				Run([&] { Select(std::move(child)); });
 			},
 			[this](Manifest const& series) {
+				if (parent_series && parent_series->id == series.id && parent_series->root == series.root &&
+				    std::none_of(series.episodes.begin(), series.episodes.end(), [this](Episode const& ep) { return ep.project_id == child_id; }))
+					parent_series.reset();
 				if (current && current->id == series.id && current->root == series.root && current->bytes != series.bytes)
-					Select(series);
+					Select(series, "series");
 			}, [this](wxWindow* page) {
 				GetSizer()->Detach(page);
 				page->Hide(); landing->Show(); Layout();
@@ -174,15 +249,18 @@ class WorkbenchHome final : public wxPanel {
 		GetSizer()->Add(page, wxSizerFlags(1).Expand());
 		Layout(); page->SetFocus();
 	}
-	void Select(Manifest manifest) {
+	void Select(Manifest manifest, std::string const& page = "home") {
+		selected_location.reset(); remove_registration->Disable();
 		current = std::move(manifest);
-		details->SetLabelText(to_wx(current->name) + "  —  " + WorkbenchStatusLabel(current->metadata.status) + "\n" + to_wx(current->root));
+		details->SetLabelText(to_wx(current->name) + "  —  " + WorkbenchStatusLabel(current->metadata.status) + "\n" + to_wx(current->root)
+		    + "\n" + _("Last updated") + "  " + wxDateTime(static_cast<time_t>(current->updated_at)).FormatISOCombined(' '));
 		EnableSelectionActions(false);
 		ShowCover();
 		landing->Layout();
 		Layout();
 		// A registration error must leave the real manifest visible.
-		Database().Remember(*current);
+		Database().Visit(*current, page);
+		selected_location = Database().RegisteredLocation(current->id); remove_registration->Enable();
 		EnableSelectionActions(true);
 		RefreshList();
 	}
@@ -199,11 +277,132 @@ class WorkbenchHome final : public wxPanel {
 		wxDirDialog picker(this, _("Register Existing Folder"), {}, wxDD_DEFAULT_STYLE | wxDD_DIR_MUST_EXIST);
 		if (picker.ShowModal() != wxID_OK) return;
 		Path root(from_wx(picker.GetPath()));
+		if (std::filesystem::exists(root / ".aeg")) {
+			auto m = Open(root);
+			Database().RegisterExisting(m);
+			Select(std::move(m)); return;
+		}
 		wxTextEntryDialog confirm(this, _("Add project metadata to this folder. Existing files stay in place."),
 		                          _("Project display name"), to_wx(root.filename()));
 		if (confirm.ShowModal() != wxID_OK) return;
 		Database();
 		Select(RegisterFolder(root, from_wx(confirm.GetValue()), Kind::Project, LoadTemplate(TemplateDirectory(), Kind::Project).folders));
+	}
+	void RemoveRegistration() {
+		if (!selected_location) return;
+		auto target = *selected_location;
+		auto pending = Database().PendingTasks(target.id);
+		wxMessageDialog confirm(this, wxString::Format(_("Remove %s from this workbench?"), to_wx(target.name)),
+		                        _("Remove from Workbench"), wxYES_NO | wxNO_DEFAULT | wxICON_QUESTION);
+		confirm.SetExtendedMessage(to_wx(target.root) + "\n" + _("Files and series membership are kept.")
+		    + "\n" + wxString::Format(_("%lld unfinished tasks will pause until this project is registered again."), static_cast<long long>(pending)));
+		confirm.SetYesNoLabels(wxID_REMOVE, wxID_CANCEL);
+		if (confirm.ShowModal() != wxID_YES) return;
+		Database().Unmanage(target);
+		RefreshAfterFolderChange(target);
+	}
+	void RefreshAfterFolderChange(Location const& target) {
+		CloseWorkbenchProjectActivity(Roots::Resolve(*c->path).database, target);
+		if ((selected_location && selected_location->id == target.id && selected_location->root == target.root) ||
+		    (current && current->id == target.id && current->root == target.root)) {
+			current.reset(); selected_location.reset(); parent_series.reset(); child_id.clear();
+			remove_registration->Disable(); EnableSelectionActions(false); details->SetLabelText({}); ShowCover();
+		}
+		offset = 0; RefreshList();
+	}
+	bool CheckEditor(Path const& folder) {
+		if (!wxGetApp().HasOpenFilesIn(folder)) return true;
+		SetStatus(_("Close the open subtitles, audio or video from this folder before removing it."));
+		return false;
+	}
+	void RemoveFolder(FolderDisposition mode) {
+		if (!selected_location || !current || current->kind != Kind::Project || !project_files->IsEnabled()) return;
+		if (!CheckEditor(selected_location->root)) return;
+		auto preview = Database().PreviewFolderRemoval(*selected_location);
+		bool trash = mode == FolderDisposition::Trash;
+		auto action = trash ? _("Move to Trash") : _("Permanently Delete");
+		wxMessageDialog confirm(this,
+			trash ? wxString::Format(_("Move the folder for %s to the system Trash?"), to_wx(preview.project.name))
+			      : wxString::Format(_("Permanently delete the folder for %s?"), to_wx(preview.project.name)),
+			action, wxYES_NO | wxNO_DEFAULT | wxICON_WARNING);
+		auto details = to_wx(preview.project.root) + "\n\n"
+			+ _("File count") + wxString::Format("  %lld\n", static_cast<long long>(preview.files))
+			+ wxString::Format(_("%lld unfinished tasks will pause until this project is registered again."),
+				static_cast<long long>(preview.tasks)) + "\n";
+		if (preview.series) {
+			auto const& episodes = preview.series->episodes;
+			auto episode = std::find_if(episodes.begin(), episodes.end(), [&](Episode const& item) {
+				return item.project_id == preview.project.id;
+			});
+			if (episode == episodes.end()) throw std::runtime_error("The series episode changed.");
+			details += wxString::Format(_("Episode %s will be removed from the series %s."),
+				to_wx(episode->label), to_wx(preview.series->name));
+		}
+		else details += _("This is an independent project.");
+		if (!trash) details += "\n\n" + _("Permanent deletion is irreversible.");
+		confirm.SetExtendedMessage(details);
+		confirm.SetYesNoLabels(action, wxID_CANCEL);
+		if (confirm.ShowModal() != wxID_YES || !CheckEditor(preview.project.root)) return;
+		try {
+			Database().RemoveFolder(preview, mode, [trash](Path const& path) {
+				if (trash) TrashFolder(path);
+				else std::filesystem::remove_all(path);
+			});
+		}
+		catch (...) {
+			RefreshFolderRemovals();
+			throw;
+		}
+		RefreshAfterFolderChange(preview.location);
+	}
+	void ConfirmRemovedFolder() {
+		auto pending = Database().UncertainFolderRemovals();
+		if (pending.empty()) { RefreshFolderRemovals(); return; }
+		size_t choice = 0;
+		if (pending.size() > 1) {
+			wxArrayString labels;
+			for (auto const& location : pending) labels.Add(to_wx(location.name) + "  —  " + to_wx(location.root));
+			wxSingleChoiceDialog select(this, _("Choose a folder to verify."), _("Confirm Folder Removal"), labels);
+			if (select.ShowModal() != wxID_OK) return;
+			choice = select.GetSelection();
+		}
+		auto const& target = pending.at(choice);
+		auto recovery = Database().FolderRecovery(target);
+		if (!recovery) { RefreshFolderRemovals(); return; }
+		auto paths = _("Original project folder") + "\n" + to_wx(target.root);
+		if (!recovery->staged.empty())
+			paths += "\n\n" + _("Staging folder") + "\n" + to_wx(recovery->staged);
+		if (recovery->can_restore) {
+			auto action = _("Restore Remaining Files");
+			wxMessageDialog restore(this, _("Return the remaining files to the original project folder?"),
+				action, wxYES_NO | wxNO_DEFAULT | wxICON_WARNING);
+			restore.SetExtendedMessage(paths + "\n\n" + _("Restoring recovers only the files still in the staging folder."));
+			restore.SetYesNoLabels(action, wxID_CANCEL);
+			if (restore.ShowModal() != wxID_YES) return;
+			Database().RestoreFolderRemainder(target);
+			RefreshAfterFolderChange(target);
+			SetStatus(_("Remaining files restored to the original project folder."));
+			return;
+		}
+		if (!recovery->can_confirm) {
+			wxMessageDialog repair(this, _("Check these paths to resolve the interrupted folder removal."),
+				_("Interrupted Folder Removal"), wxOK | wxICON_WARNING);
+			repair.SetExtendedMessage(paths);
+			repair.ShowModal();
+			return;
+		}
+		bool trash = recovery->staged.empty();
+		wxMessageDialog confirm(this,
+			trash ? _("Confirm that this folder was moved to the system Trash.")
+			      : _("Confirm that the permanent deletion is complete."),
+			_("Confirm Folder Removal"), wxYES_NO | wxNO_DEFAULT | wxICON_WARNING);
+		if (trash) paths += "\n\n" + _("Check the system Trash for this folder before confirming.");
+		confirm.SetExtendedMessage(paths + "\n\n"
+			+ _("Confirmation updates the workbench, pauses unfinished tasks, and updates the series episode list if applicable."));
+		confirm.SetYesNoLabels(_("Confirm Removal"), wxID_CANCEL);
+		if (confirm.ShowModal() != wxID_YES) return;
+		Database().ConfirmFolderRemoval(target);
+		RefreshAfterFolderChange(target);
 	}
 	void OpenFolder() {
 		wxDirDialog picker(this, _("Open Project or Series"), {}, wxDD_DEFAULT_STYLE | wxDD_DIR_MUST_EXIST);
@@ -289,9 +488,11 @@ public:
 	WorkbenchHome(wxWindow *parent, agi::Context *context, wxWindow *&editor_button)
 	: wxPanel(parent), c(context) {
 		SetName("workbench-home");
-		landing = new wxPanel(this);
+		auto scroller = new wxScrolledWindow(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxVSCROLL | wxTAB_TRAVERSAL);
+		scroller->SetScrollRate(0, FromDIP(12));
+		landing = scroller;
 		auto layout = new wxBoxSizer(wxVERTICAL);
-		auto title = new wxStaticText(landing, wxID_ANY, _("Workbench"));
+		title = new wxStaticText(landing, wxID_ANY, _("Workbench"));
 		title->SetFont(title->GetFont().Larger().Bold());
 		layout->Add(title, wxSizerFlags().Border(wxBOTTOM, FromDIP(12)));
 		auto add = [&](wxSizer *row, wxString const& label, auto action) {
@@ -301,11 +502,18 @@ public:
 			return button;
 		};
 		auto projects = new wxWrapSizer(wxHORIZONTAL);
+		auto sidebar = new wxBoxSizer(wxVERTICAL);
+		add(sidebar, _("Home"), [this] { Browse(LibraryView::All, true, _("Workbench")); })->SetName("workbench-nav-home");
+		add(sidebar, _("All Projects"), [this] { Browse(LibraryView::All, false, _("All Projects")); })->SetName("workbench-nav-all");
+		add(sidebar, _("Series Projects"), [this] { Browse(LibraryView::Series, false, _("Series Projects")); })->SetName("workbench-nav-series");
+		add(sidebar, _("Recently Opened"), [this] { Browse(LibraryView::Recent, false, _("Recently Opened")); })->SetName("workbench-nav-recent");
+		add(sidebar, _("Download Center"), [this] { ShowActivity(WorkbenchActivityPage::Downloads); })->SetName("workbench-nav-downloads");
+		add(sidebar, _("Settings"), [this] { cmd::call("app/options", c); });
 		add(projects, _("New Project"), [this] { CreateNew(Kind::Project); })->SetName("workbench-create-project");
 		add(projects, _("New Series"), [this] { CreateNew(Kind::Series); })->SetName("workbench-create-series");
 		add(projects, _("Open Project or Series"), [this] { OpenFolder(); })->SetName("workbench-open-project");
 		add(projects, _("Register Existing Folder"), [this] { RegisterExisting(); })->SetName("workbench-register-folder");
-		add(projects, _("Directory Templates"), [this] { EditTemplate(); })->SetName("workbench-templates");
+		add(sidebar, _("Directory Templates"), [this] { EditTemplate(); })->SetName("workbench-templates");
 		add(projects, _("Choose Template Library Folder"), [this] {
 			wxDirDialog picker(this, _("Choose Template Library Folder"), to_wx(TemplateDirectory()), wxDD_DEFAULT_STYLE | wxDD_DIR_MUST_EXIST);
 			if (picker.ShowModal() == wxID_OK) {
@@ -323,20 +531,35 @@ public:
 			}
 		})->SetName("workbench-template-library");
 		layout->Add(projects, wxSizerFlags().Expand().Border(wxBOTTOM, FromDIP(8)));
+		auto visits = new wxWrapSizer;
+		resume = add(visits, _("Continue Last Project"), [this] {
+			auto last = Database().List(0, 1, LibraryView::Recent);
+			if (!last.empty()) OpenLocation(last.front(), true);
+		});
+		resume->SetName("workbench-resume-project"); resume->Disable();
+		layout->Add(visits, wxSizerFlags().Expand());
+		auto strip = new wxBoxSizer(wxHORIZONTAL);
+		for (size_t i = 0; i < cards.size(); ++i) {
+			auto card = cards[i] = new wxButton(landing, wxID_ANY, {});
+			card->SetMinSize(FromDIP(wxSize(1, 86)));
+			card->Bind(wxEVT_BUTTON, [this, i](wxCommandEvent&) { Run([&] { if (i < recent.size()) OpenLocation(recent[i], true); }); });
+			strip->Add(card, wxSizerFlags(1).Expand().Border(wxRIGHT, FromDIP(4)));
+			card->Hide();
+		}
+		layout->Add(strip, wxSizerFlags().Expand());
+		unfinished = new wxStaticText(landing, wxID_ANY, {}); unfinished->SetName("workbench-unfinished");
+		layout->Add(unfinished, wxSizerFlags().Expand().Border(wxTOP, FromDIP(4)));
+		search = new wxTextCtrl(landing, wxID_ANY);
+		search->SetName("workbench-project-search"); search->SetHint(_("Search by project name or folder"));
+		search->Bind(wxEVT_TEXT, [this](wxCommandEvent&) { Run([&] { offset = 0; RefreshList(); }); });
+		layout->Add(search, wxSizerFlags().Expand().Border(wxTOP | wxBOTTOM, FromDIP(4)));
 		list = new wxListBox(landing, wxID_ANY);
+		list->SetMinSize(FromDIP(wxSize(-1, 100)));
 		list->SetName("workbench-projects");
 		list->Bind(wxEVT_LISTBOX, [this](wxCommandEvent& event) {
 			auto item = event.GetSelection();
 			if (item >= 0 && static_cast<size_t>(item) < locations.size())
-				Run([&] {
-					current.reset();
-					details->SetLabelText({});
-					EnableSelectionActions(false);
-					ShowCover();
-					auto manifest = workbench::Open(locations[item].root);
-					if (locations[item].id != manifest.id) throw std::runtime_error("The folder now contains a different project.");
-					Select(std::move(manifest));
-				});
+				Run([&] { OpenLocation(locations[item], false); });
 		});
 		layout->Add(list, wxSizerFlags(1).Expand());
 		auto pages = new wxWrapSizer(wxHORIZONTAL);
@@ -358,7 +581,9 @@ public:
 		edit_metadata->SetName("workbench-edit-metadata");
 		choose_cover = add(pages, _("Choose Cover…"), [this] { ChooseCover(); });
 		choose_cover->SetName("workbench-choose-cover");
-		project_files = add(pages, _("Project Files"), [this] { ShowActivity(false); });
+		dashboard = add(pages, _("Project Dashboard"), [this] { ShowActivity(WorkbenchActivityPage::Dashboard); });
+		dashboard->SetName("workbench-dashboard");
+		project_files = add(pages, _("Project Files"), [this] { ShowActivity(WorkbenchActivityPage::Files); });
 		project_files->SetName("workbench-files");
 		episodes = add(pages, _("Series Episodes"), [this] { ShowEpisodes(); });
 		episodes->SetName("workbench-episodes");
@@ -370,10 +595,20 @@ public:
 			ShowEpisodes();
 		});
 		back->SetName("workbench-back-series");
-		registration_tasks = add(pages, _("Registration Tasks"), [this] { ShowActivity(true); });
+		registration_tasks = add(pages, _("Registration Tasks"), [this] { ShowActivity(WorkbenchActivityPage::Tasks); });
 		registration_tasks->SetName("workbench-tasks");
-		previous->Disable(); next->Disable(); EnableSelectionActions(false);
 		layout->Add(pages, wxSizerFlags().Expand().Border(wxTOP, FromDIP(6)));
+		auto removal = new wxWrapSizer(wxHORIZONTAL);
+		remove_registration = add(removal, _("Remove from Workbench"), [this] { RemoveRegistration(); });
+		remove_registration->SetName("workbench-remove-registration"); remove_registration->Disable();
+		trash_folder = add(removal, _("Move Project Folder to Trash…"), [this] { RemoveFolder(FolderDisposition::Trash); });
+		trash_folder->SetName("workbench-trash-folder");
+		delete_folder = add(removal, _("Permanently Delete Project Folder…"), [this] { RemoveFolder(FolderDisposition::Permanent); });
+		delete_folder->SetName("workbench-delete-folder");
+		confirm_removal = add(removal, _("Review Interrupted Folder Removal…"), [this] { ConfirmRemovedFolder(); });
+		confirm_removal->SetName("workbench-confirm-folder-removal"); confirm_removal->Hide();
+		previous->Disable(); next->Disable(); EnableSelectionActions(false);
+		layout->Add(removal, wxSizerFlags().Expand().Border(wxTOP, FromDIP(6)));
 		details = new wxStaticText(landing, wxID_ANY, {});
 		status = new wxStaticText(landing, wxID_ANY, {});
 		details->SetName("workbench-project-details");
@@ -392,7 +627,8 @@ public:
 		add(editors, _("New Window"), [this] { cmd::call("app/new_window", c); });
 		add(editors, _("Import Editor Preferences"), [this] { ImportEditorPreferences(); })->SetName("workbench-import-preferences");
 		layout->Add(editors, wxSizerFlags().Expand());
-		auto outer = new wxBoxSizer(wxVERTICAL);
+		auto outer = new wxBoxSizer(wxHORIZONTAL);
+		outer->Add(sidebar, wxSizerFlags().Border(wxTOP | wxLEFT, FromDIP(12)));
 		outer->Add(layout, wxSizerFlags(1).Expand().Border(wxALL, FromDIP(20)));
 		landing->SetSizer(outer);
 		auto pages_layout = new wxBoxSizer(wxVERTICAL);

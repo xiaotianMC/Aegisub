@@ -198,6 +198,7 @@ aegisub_src = files(
     'video_zoom_control.cpp',
     'workspace_tabs.cpp',
     'workbench_home.cpp',
+    'workbench_editor.cpp',
     'workbench_activity.cpp',
     'workbench_metadata.cpp',
     'workbench_series.cpp',
@@ -231,6 +232,7 @@ elif host_machine.system() == 'windows'
         'crash_writer_minidump.cpp',
         'font_file_lister_gdi.cpp',
         'video_provider_avs.cpp',
+        'workbench_trash_win.cpp',
     )
 
     if cc.has_header('wingdi.h')
@@ -274,6 +276,13 @@ elif host_machine.system() == 'windows'
 endif
 
 if host_machine.system() != 'windows'
+    aegisub_src += files('workbench_trash.cpp')
+    if host_machine.system() == 'linux' and not use_bundled_wx and wx_dep.version().version_compare('<3.3.3')
+        if not is_variable('gtk3_dep') or not gtk3_dep.found()
+            deps += dependency('gio-2.0')
+        endif
+    endif
+
     aegisub_src += files(
         'crash_writer.cpp'
     )

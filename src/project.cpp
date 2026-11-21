@@ -30,6 +30,7 @@
 #include "dialogs.h"
 #include "format.h"
 #include "include/aegisub/context.h"
+#include "workbench_editor.h"
 #include "include/aegisub/video_provider.h"
 #include "mkv_wrap.h"
 #include "options.h"
@@ -503,6 +504,7 @@ bool Project::DoLoadVideo(agi::fs::path const& path) {
 	timecodes_file.clear();
 	keyframes_file.clear();
 	SetPath(video_file, "?video", "Video", path);
+	RecordWorkbenchFile(context, path, workbench::FileEvent::Opened);
 
 	std::string warning = video_provider->GetWarning();
 	if (!warning.empty())

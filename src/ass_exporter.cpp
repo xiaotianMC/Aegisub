@@ -33,6 +33,8 @@
 ///
 
 #include "ass_exporter.h"
+#include "subs_controller.h"
+#include "workbench_editor.h"
 
 #include "ass_export_filter.h"
 #include "ass_file.h"
@@ -80,6 +82,7 @@ std::vector<std::string> AssExporter::GetAllFilterNames() const {
 }
 
 void AssExporter::Export(agi::fs::path const& filename, const char *charset, wxWindow *export_dialog) {
+	auto source = c->subsController ? c->subsController->Filename() : agi::fs::path{};
 	AssFile subs(c->subtitleAccess->Read());
 
 	for (auto filter : filters) {
@@ -92,6 +95,7 @@ void AssExporter::Export(agi::fs::path const& filename, const char *charset, wxW
 		throw agi::InvalidInputException("Unknown file type.");
 
 	writer->ExportFile(&subs, filename, c->project->Timecodes(), charset);
+	RecordWorkbenchFile(c, source, workbench::FileEvent::Exported, filename);
 }
 
 wxSizer *AssExporter::GetSettingsSizer(std::string const& name) {

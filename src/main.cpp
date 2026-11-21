@@ -446,6 +446,30 @@ agi::Context *AegisubApp::ActivateOpenSubtitle(agi::fs::path const& file) {
 	return nullptr;
 }
 
+bool AegisubApp::HasOpenFilesIn(agi::fs::path const& folder) const {
+	auto includes = [&](agi::fs::path const& file) {
+		if (!file.is_absolute()) return false;
+		for (auto part = file.lexically_normal(); !part.empty(); part = part.parent_path()) {
+			std::error_code error;
+			if (part == folder || std::filesystem::equivalent(part, folder, error)) return true;
+			if (part == part.root_path()) break;
+		}
+		// A file opened through an alias outside the project can also resolve inside it.
+		std::error_code error;
+		auto resolved = std::filesystem::weakly_canonical(file, error);
+		if (error) return false;
+		auto relative = resolved.lexically_relative(folder);
+		return !relative.empty() && *relative.begin() != "..";
+	};
+	for (auto frame : frames) {
+		auto const& context = *frame->context;
+		if ((context.subsController->HasFile() && includes(context.subsController->Filename())) ||
+		    includes(context.project->AudioName()) || includes(context.project->VideoName()))
+			return true;
+	}
+	return false;
+}
+
 void AegisubApp::OpenSubtitle(agi::Context *from, agi::fs::path const& file, std::string const& encoding) {
 	if (auto existing = ActivateOpenSubtitle(file)) {
 		if (encoding.empty()) return;

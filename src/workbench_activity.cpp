@@ -1,9 +1,16 @@
 // SPDX-License-Identifier: ISC
 #include "workbench_activity.h"
 #include "compat.h"
+#include "workbench_metadata.h"
+#include "include/aegisub/context.h"
+#include "frame_main.h"
+#include "main.h"
+#include "project.h"
+#include "subs_controller.h"
 
 #include <libaegisub/exception.h>
 #include <wx/button.h>
+#include <wx/choice.h>
 #include <wx/dialog.h>
 #include <wx/listbox.h>
 #include <wx/notebook.h>
@@ -12,6 +19,7 @@
 #include <wx/stattext.h>
 #include <wx/timer.h>
 #include <wx/wrapsizer.h>
+#include <wx/utils.h>
 #include <algorithm>
 #include <chrono>
 #include <future>
@@ -23,6 +31,7 @@ constexpr int page_size = 50;
 
 wxString StateLabel(std::string const& value) {
 	if (value == "queued") return _("Queued");
+	if (value == "paused_project") return _("Paused until the project is registered again");
 	if (value == "registering") return _("Registering");
 	if (value == "interrupted") return _("Interrupted");
 	if (value == "needs_attention") return _("Needs attention");
@@ -36,11 +45,16 @@ wxString StateLabel(std::string const& value) {
 
 class Activity final : public wxDialog {
 	Path database;
+	agi::Context* context;
 	std::optional<Manifest> project;
 	std::function<void()> notify_home;
 	Index reader;
 	wxNotebook* pages;
 	wxPanel *file_page, *task_page;
+	wxChoice *file_view, *task_view;
+	wxStaticText *overview = nullptr, *suggestion = nullptr;
+	wxButton *accept = nullptr, *ignore = nullptr, *open_file, *new_window, *reveal;
+	std::optional<StatusHint> hint;
 	wxListBox *files, *tasks, *outputs;
 	wxStaticText *scan_status, *task_status, *message;
 	wxButton *file_prev, *file_next, *rebuild, *queue, *task_prev, *task_next, *run, *cancel, *out_prev, *out_next, *stop;
@@ -73,13 +87,14 @@ class Activity final : public wxDialog {
 		file_rows.clear();
 		rebuild->Enable(project.has_value() && !Busy());
 		queue->Disable();
+		open_file->Disable(); new_window->Disable(); reveal->Disable();
 		file_prev->Enable(project.has_value() && file_offset > 0);
 		file_next->Disable();
 		if (!project) { scan_status->SetLabelText(_("Choose a project on the home page to view its files.")); return; }
 		auto state = reader.Scan(project->id);
 		scan_status->SetLabelText(!state.generation ? _("This project has not been scanned yet.")
 		        : wxString::Format(_("%lld indexed files"), static_cast<long long>(state.files)));
-		file_rows = reader.Files(project->id, file_offset, page_size + 1);
+		file_rows = reader.Files(project->id, file_offset, page_size + 1, static_cast<FileView>(file_view->GetSelection()));
 		file_next->Enable(file_rows.size() > page_size);
 		if (file_rows.size() > page_size) file_rows.resize(page_size);
 		for (auto const& row : file_rows) files->Append(to_wx(row.relative.generic_string()));
@@ -89,7 +104,7 @@ class Activity final : public wxDialog {
 		run->Disable(); cancel->Disable(); out_prev->Disable(); out_next->Disable();
 		auto it = std::find_if(task_rows.begin(), task_rows.end(), [&](auto const& task) { return task.id == selected; });
 		if (it == task_rows.end()) { selected.clear(); return; }
-		bool active = it->state != "succeeded" && it->state != "cancelled";
+		bool active = task_view->GetSelection() == 0 && it->state != "paused_project" && it->state != "succeeded" && it->state != "cancelled";
 		run->Enable(active && !Busy());
 		cancel->Enable(active);
 		task_status->SetLabelText(to_wx(it->reason));
@@ -100,7 +115,9 @@ class Activity final : public wxDialog {
 		for (auto const& out : page) outputs->Append(to_wx(out.relative.generic_string()) + "  —  " + StateLabel(out.stage));
 	}
 	void RefreshTasks() {
-		task_rows = reader.Registrations(task_offset, page_size + 1);
+		auto scope = task_view->GetSelection() == 1 ? TaskView::Downloads : TaskView::Registrations;
+		pages->SetPageText(1, task_view->GetStringSelection());
+		task_rows = reader.Tasks(scope, task_offset, page_size + 1, project ? project->id : "");
 		task_prev->Enable(task_offset > 0);
 		task_next->Enable(task_rows.size() > page_size);
 		if (task_rows.size() > page_size) task_rows.resize(page_size);
@@ -111,6 +128,7 @@ class Activity final : public wxDialog {
 			if (task.id == selected) tasks->SetSelection(row);
 		}
 		RefreshOutputs();
+		if (task_rows.empty() && task_view->GetSelection() == 1) task_status->SetLabelText(_("No download tasks."));
 	}
 	void Start(wxString label, std::function<std::string(Index&, std::stop_token)> action) {
 		if (Busy()) return;
@@ -137,12 +155,17 @@ class Activity final : public wxDialog {
 				pages->SetSelection(1);
 			}
 		});
-		if (!closing) Report([&] { RefreshFiles(); RefreshTasks(); });
+		if (!closing) Report([&] { RefreshFiles(); RefreshTasks(); RefreshOverview(); });
 		notify_home();
 		if (closing) Destroy();
 	}
 	void BuildFiles() {
 		auto layout = new wxBoxSizer(wxVERTICAL);
+		file_view = new wxChoice(file_page, wxID_ANY);
+		for (auto label : {_("All files"), _("Recent files"), _("Video files"), _("Subtitle files")}) file_view->Append(label);
+		file_view->SetName("workbench-file-view"); file_view->SetSelection(0);
+		layout->Add(file_view, wxSizerFlags().Border(wxALL, FromDIP(4)));
+		file_view->Bind(wxEVT_CHOICE, [this](wxCommandEvent&) { Report([&] { file_offset = 0; RefreshFiles(); }); });
 		scan_status = new wxStaticText(file_page, wxID_ANY, {});
 		files = new wxListBox(file_page, wxID_ANY, wxDefaultPosition, wxDefaultSize, 0, nullptr, wxLB_EXTENDED | wxLB_HSCROLL);
 		files->SetName("workbench-index-files");
@@ -167,15 +190,34 @@ class Activity final : public wxDialog {
 				return index.QueueRegistration(p, paths, token);
 			});
 		});
+		auto open_actions = new wxWrapSizer;
+		open_file = Button(file_page, open_actions, _("Open in Editor"), "workbench-open-file", [this] { OpenSelected(false); });
+		new_window = Button(file_page, open_actions, _("Open in Independent Editor"), "workbench-open-separate", [this] { OpenSelected(true); });
+		reveal = Button(file_page, open_actions, _("Open Containing Folder"), "workbench-reveal-file", [this] {
+			wxArrayInt rows;
+			if (!project || files->GetSelections(rows) != 1) return;
+			auto path = ResolveProjectFile(*project, file_rows.at(rows[0]).relative);
+			if (!wxLaunchDefaultApplication(to_wx(path.parent_path()))) throw std::runtime_error("Could not open folder: " + path.parent_path().string());
+		});
 		files->Bind(wxEVT_LISTBOX, [this](wxCommandEvent&) {
 			wxArrayInt selection;
-			queue->Enable(!Busy() && files->GetSelections(selection) > 0);
+			auto count = files->GetSelections(selection);
+			auto kind = count == 1 ? MediaKind(file_rows.at(selection[0]).relative.string()) : FileView::All;
+			queue->Enable(!Busy() && count > 0);
+			open_file->Enable(kind == FileView::Subtitles || kind == FileView::Video);
+			new_window->Enable(kind == FileView::Subtitles); reveal->Enable(count == 1);
 		});
 		layout->Add(actions, wxSizerFlags().Expand().Border(wxTOP | wxBOTTOM, FromDIP(6)));
+		layout->Add(open_actions, wxSizerFlags().Expand());
 		file_page->SetSizer(layout);
 	}
 	void BuildTasks() {
 		auto layout = new wxBoxSizer(wxVERTICAL);
+		task_view = new wxChoice(task_page, wxID_ANY);
+		task_view->Append(_("Registration Tasks")); task_view->Append(_("Download Tasks")); task_view->SetSelection(0);
+		task_view->SetName("workbench-task-view");
+		task_view->Bind(wxEVT_CHOICE, [this](wxCommandEvent&) { Report([&] { task_offset = output_offset = 0; selected.clear(); RefreshTasks(); RememberPage(); }); });
+		layout->Add(task_view, wxSizerFlags().Border(wxALL, FromDIP(4)));
 		tasks = new wxListBox(task_page, wxID_ANY);
 		tasks->SetName("workbench-registration-list");
 		layout->Add(tasks, wxSizerFlags(1).Expand());
@@ -205,23 +247,112 @@ class Activity final : public wxDialog {
 		});
 		task_page->SetSizer(layout);
 	}
+	void OpenSelected(bool separate) {
+		wxArrayInt selection;
+		if (!project || files->GetSelections(selection) != 1) return;
+		auto path = ResolveProjectFile(*project, file_rows.at(selection[0]).relative);
+		auto kind = MediaKind(path.string());
+		if (kind == FileView::Subtitles) {
+			auto destination = wxGetApp().ActivateOpenSubtitle(path);
+			if (!destination) {
+				destination = separate ? &wxGetApp().NewProjectContext() : context;
+				if (separate) destination->project->LoadSubtitles(path);
+				else wxGetApp().OpenSubtitle(destination, path);
+			}
+			std::error_code error;
+			if (destination->subsController->HasFile() && std::filesystem::equivalent(path, destination->subsController->Filename(), error)) {
+				Hide(); destination->frame->Raise();
+			}
+		}
+		else if (!separate && kind == FileView::Video) {
+			context->project->LoadVideo(path);
+			if (context->project->VideoName() == path) { Hide(); context->frame->Raise(); }
+		}
+	}
+	void RefreshOverview() {
+		if (!overview || !project) return;
+		auto latest = Open(project->root);
+		if (latest.id != project->id || latest.root != project->root) throw std::runtime_error("The project at this location changed.");
+		project = std::move(latest);
+		auto const& m = project->metadata;
+		wxString info = to_wx(project->name) + "  —  " + WorkbenchStatusLabel(m.status) + "\n" + to_wx(project->root);
+		if (!m.description.empty()) info += "\n" + to_wx(m.description);
+		if (!m.source.empty()) info += "\n" + to_wx(m.source);
+		if (!m.source_language.empty() || !m.target_language.empty()) info += "\n" + to_wx(m.source_language) + " → " + to_wx(m.target_language);
+		if (!m.owner.empty()) info += "\n" + _("Owner") + "  " + to_wx(m.owner);
+		for (auto const& tag : m.tags) info += "  #" + to_wx(tag);
+		overview->SetLabelText(info);
+		hint = reader.SuggestedStatus(*project);
+		wxString reason = _("No status suggestion.");
+		if (hint) {
+			if (hint->download) reason = _("Downloaded files were registered. Mark this project in progress?");
+			else if (hint->status == "review") reason = _("Subtitles were exported. Mark this project ready for review?");
+			else reason = _("Subtitles were saved. Mark this project in progress?");
+		}
+		suggestion->SetLabelText(reason);
+		accept->Enable(hint.has_value()); ignore->Enable(hint.has_value());
+		overview->GetParent()->Layout();
+	}
+	void ResolveHint(bool apply) {
+		if (hint && project) project = reader.ResolveSuggestion(*project, *hint, apply);
+		RefreshOverview(); notify_home();
+	}
+	void RememberPage() {
+		auto tab = pages->GetSelection();
+		auto caption = pages->GetPageText(tab);
+		SetTitle(project ? caption + " — " + to_wx(project->name) : caption);
+		if (!project) return;
+		auto page = tab == 2 ? "dashboard" : tab == 0 ? "files" : task_view->GetSelection() == 1 ? "downloads" : "tasks";
+		reader.Visit(*project, page);
+	}
+	void BuildOverview() {
+		auto panel = new wxPanel(pages);
+		auto layout = new wxBoxSizer(wxVERTICAL);
+		overview = new wxStaticText(panel, wxID_ANY, {}); overview->SetName("workbench-dashboard-details");
+		layout->Add(overview, wxSizerFlags().Expand().Border(wxALL, FromDIP(8)));
+		suggestion = new wxStaticText(panel, wxID_ANY, {}); suggestion->SetName("workbench-status-suggestion");
+		layout->Add(suggestion, wxSizerFlags().Expand().Border(wxALL, FromDIP(8)));
+		auto actions = new wxWrapSizer;
+		accept = Button(panel, actions, _("Apply Suggestion"), "workbench-accept-suggestion", [this] { ResolveHint(true); });
+		ignore = Button(panel, actions, _("Dismiss Suggestion"), "workbench-dismiss-suggestion", [this] { ResolveHint(false); });
+		Button(panel, actions, _("Project Details"), "dashboard-metadata", [this] {
+			if (auto changed = EditWorkbenchMetadata(this, *project)) { project = std::move(changed); RefreshOverview(); notify_home(); }
+		});
+		Button(panel, actions, _("Open Project Folder"), "dashboard-folder", [this] {
+			RefreshOverview();
+			if (!wxLaunchDefaultApplication(to_wx(project->root))) throw std::runtime_error("Could not open folder: " + project->root.string());
+		});
+		layout->Add(actions, wxSizerFlags().Expand().Border(wxALL, FromDIP(6)));
+		auto links = new wxWrapSizer;
+		for (auto [label, view] : {std::pair{_("Recent files"), FileView::Recent}, {_("Video files"), FileView::Video}, {_("Subtitle files"), FileView::Subtitles}})
+			Button(panel, links, label, "", [this, view] { file_view->SetSelection(static_cast<int>(view)); file_offset = 0; pages->SetSelection(0); RefreshFiles(); });
+		Button(panel, links, _("Download Tasks"), "dashboard-downloads", [this] { Display(WorkbenchActivityPage::Downloads); });
+		Button(panel, links, _("Open Editor"), "dashboard-editor", [this] { Hide(); context->frame->ShowEditor(); context->frame->Raise(); });
+		layout->Add(links, wxSizerFlags().Expand().Border(wxALL, FromDIP(6)));
+		panel->SetSizer(layout); pages->AddPage(panel, _("Project Dashboard"));
+	}
 public:
-	Activity(wxWindow* parent, Path const& path, std::optional<Manifest> p, std::function<void()> notify)
+	Activity(wxWindow* parent, Path const& path, agi::Context* c, std::optional<Manifest> p, std::function<void()> notify)
 	: wxDialog(parent, wxID_ANY, p ? _("Project Files and Registration") + " — " + to_wx(p->name) : _("Registration Tasks"),
 	           wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER),
-	  database(path), project(std::move(p)), notify_home(std::move(notify)), reader(path), timer(this) {
+	  database(path), context(c), project(std::move(p)), notify_home(std::move(notify)), reader(path), timer(this) {
 		SetName("workbench-activity");
 		auto outer = new wxBoxSizer(wxVERTICAL);
 		pages = new wxNotebook(this, wxID_ANY);
 		file_page = new wxPanel(pages); task_page = new wxPanel(pages);
 		BuildFiles(); BuildTasks();
 		pages->AddPage(file_page, _("Project Files")); pages->AddPage(task_page, _("Registration Tasks"));
+		if (project) BuildOverview();
+		pages->Bind(wxEVT_NOTEBOOK_PAGE_CHANGED, [this](wxBookCtrlEvent& e) {
+			Report([&] { if (e.GetSelection() == 2) RefreshOverview(); RememberPage(); });
+			e.Skip();
+		});
 		outer->Add(pages, wxSizerFlags(1).Expand().Border(wxALL, FromDIP(8)));
 		message = new wxStaticText(this, wxID_ANY, {});
 		message->SetName("workbench-activity-status");
 		outer->Add(message, wxSizerFlags().Expand().Border(wxLEFT | wxRIGHT, FromDIP(8)));
 		auto bottom = new wxWrapSizer;
-		Button(this, bottom, _("Refresh"), "workbench-activity-refresh", [this] { RefreshFiles(); RefreshTasks(); });
+		Button(this, bottom, _("Refresh"), "workbench-activity-refresh", [this] { RefreshFiles(); RefreshTasks(); RefreshOverview(); });
 		stop = Button(this, bottom, _("Stop Current Operation"), "workbench-stop-operation", [this] {
 			worker.request_stop(); stop->Disable();
 		});
@@ -238,20 +369,35 @@ public:
 		return !closing && !IsBeingDeleted() && database == path &&
 		       ((!project && !p) || (project && p && project->id == p->id && project->root == p->root));
 	}
-	void Display(bool show_tasks) {
-		pages->SetSelection(show_tasks ? 1 : 0);
-		Report([this] { RefreshFiles(); RefreshTasks(); });
+	bool ShowsProject(Path const& path, Location const& location) const {
+		return !closing && !IsBeingDeleted() && database == path &&
+		       project && project->id == location.id && project->root == location.root;
+	}
+	void Display(WorkbenchActivityPage page) {
+		bool downloads = page == WorkbenchActivityPage::Downloads;
+		if (task_view->GetSelection() != int(downloads)) { selected.clear(); task_offset = output_offset = 0; }
+		task_view->SetSelection(downloads ? 1 : 0);
+		pages->ChangeSelection(page == WorkbenchActivityPage::Dashboard && project ? 2 : page == WorkbenchActivityPage::Files ? 0 : 1);
+		Report([this] { RefreshFiles(); RefreshTasks(); RefreshOverview(); RememberPage(); });
 		Show(); Raise();
 	}
 };
 }
 
-void ShowWorkbenchActivity(wxWindow* parent, workbench::Path const& database, std::optional<workbench::Manifest> const& project,
-                           bool show_tasks, std::function<void()> notify_home) {
+void ShowWorkbenchActivity(wxWindow* parent, workbench::Path const& database, agi::Context* context, std::optional<workbench::Manifest> const& project,
+                           WorkbenchActivityPage page, std::function<void()> notify_home) {
 	for (auto window : parent->GetChildren()) {
 		if (auto existing = dynamic_cast<Activity*>(window); existing && existing->Matches(database, project)) {
-			existing->Display(show_tasks); return;
+			existing->Display(page); return;
 		}
 	}
-	(new Activity(parent, database, project, std::move(notify_home)))->Display(show_tasks);
+	(new Activity(parent, database, context, project, std::move(notify_home)))->Display(page);
+}
+
+void CloseWorkbenchProjectActivity(workbench::Path const& database, workbench::Location const& project) {
+	for (auto node = wxTopLevelWindows.GetFirst(); node;) {
+		auto activity = dynamic_cast<Activity*>(node->GetData());
+		node = node->GetNext();
+		if (activity && activity->ShowsProject(database, project)) activity->Close();
+	}
 }

@@ -8,6 +8,7 @@
 #include <wx/panel.h>
 #include <wx/dirdlg.h>
 #include <wx/listbox.h>
+#include <wx/msgdlg.h>
 #include <wx/sizer.h>
 #include <wx/stattext.h>
 #include <wx/textdlg.h>
@@ -34,7 +35,7 @@ class SeriesPage final : public wxPanel {
 	std::function<void(wxWindow*)> leave;
 	wxStaticText *title, *summary, *message;
 	wxListBox* list;
-	wxButton *create, *attach, *open, *refresh, *back;
+	wxButton *create, *attach, *open, *remove, *refresh, *back;
 	std::vector<EpisodeState> states;
 	wxTimer timer;
 	std::future<Result> result;
@@ -55,6 +56,7 @@ class SeriesPage final : public wxPanel {
 		auto i = list->GetSelection();
 		bool selected = i != wxNOT_FOUND && size_t(i) < states.size();
 		open->Enable(selected && !worker.joinable() && states[i].error.empty());
+		remove->Enable(selected && writable && !worker.joinable());
 		message->SetLabelText(selected ? to_wx(states[i].error) : wxString{});
 	}
 	void ShowRows(Result loaded) {
@@ -82,7 +84,7 @@ class SeriesPage final : public wxPanel {
 		std::packaged_task<Result(std::stop_token)> work(std::move(action));
 		result = work.get_future();
 		worker = std::jthread(std::move(work));
-		create->Disable(); attach->Disable(); open->Disable(); refresh->Disable(); list->Disable();
+		create->Disable(); attach->Disable(); open->Disable(); remove->Disable(); refresh->Disable(); list->Disable();
 		message->SetLabelText(_("Reading series episodes…"));
 		timer.Start(60);
 	}
@@ -136,6 +138,26 @@ class SeriesPage final : public wxPanel {
 		open_child(series, std::move(project));
 		Leave();
 	}
+	void RemoveSelected() {
+		if (closing || !remove->IsEnabled()) return;
+		auto i = list->GetSelection();
+		auto const& episode = series.episodes.at(i);
+		auto question = wxString::Format(_("Remove %s from the series %s?"),
+		                                 to_wx(episode.label) + " — " + to_wx(states.at(i).name), to_wx(series.name));
+		wxMessageDialog confirm(this, question, _("Remove from Series"), wxYES_NO | wxNO_DEFAULT | wxICON_QUESTION);
+		confirm.SetExtendedMessage(_("The project folder, its workbench registration and its tasks are kept.") +
+		                           "\n" + to_wx(series.root / episode.relative));
+		confirm.SetYesNoLabels(wxID_REMOVE, wxID_CANCEL);
+		if (confirm.ShowModal() != wxID_YES) return;
+		back->Disable();
+		Start([s=series, id=episode.project_id](std::stop_token stop) {
+			std::string notice;
+			try { RemoveEpisode(s, id); }
+			catch (agi::Exception const& e) { notice = e.GetMessage(); }
+			catch (std::exception const& e) { notice = e.what(); }
+			return Result{InspectSeries(s, stop), id, std::move(notice)};
+		});
+	}
 public:
 	SeriesPage(wxWindow* parent, Manifest const& s, Path const& db, bool writable, std::function<Folders()> tpl, std::function<void(Manifest const&, Manifest)> select,
 	             std::function<void(Manifest const&)> notify, std::function<void(wxWindow*)> on_leave)
@@ -160,6 +182,7 @@ public:
 		create = button(_("New Episode"), "series-create", [this] { Add(true); });
 		attach = button(_("Add Existing Episode"), "series-add", [this] { Add(false); });
 		open = button(_("Open Episode"), "series-open", [this] { OpenSelected(); });
+		remove = button(_("Remove from Series"), "series-remove", [this] { RemoveSelected(); });
 		refresh = button(_("Refresh"), "series-refresh", [this] { ReloadSeries(); });
 		box->Add(buttons, wxSizerFlags().Expand().Border(wxALL, FromDIP(8)));
 		message = new wxStaticText(this, wxID_ANY, {}); message->SetName("series-status");
@@ -174,7 +197,7 @@ public:
 			back->Enable(); create->Enable(this->writable); attach->Enable(this->writable); refresh->Enable(); list->Enable();
 			Selection();
 			if (!Report([&] { ShowRows(result.get()); })) {
-				list->Clear(); states.clear(); open->Disable();
+				list->Clear(); states.clear(); open->Disable(); remove->Disable();
 				summary->SetLabelText(_("Refresh to check series progress."));
 			}
 		}, timer.GetId());

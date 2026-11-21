@@ -14,6 +14,7 @@
 #include <cerrno>
 #include <cctype>
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <functional>
 #include <limits>
@@ -30,6 +31,11 @@
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#if defined(__linux__)
+#include <linux/fs.h>
+#include <linux/stat.h>
+#include <sys/syscall.h>
+#endif
 #endif
 
 namespace workbench {
@@ -43,6 +49,152 @@ bool detail::Linked(Path const& path) {
 #else
 	return fs::is_symlink(path);
 #endif
+}
+
+bool detail::PathOccupied(Path const& path) {
+	return fs::exists(fs::symlink_status(path)) || Linked(path);
+}
+
+bool detail::ContainsPath(Path const& parent, Path const& child) {
+	if (parent.empty() || child.empty()) return false;
+	return std::mismatch(parent.begin(), parent.end(), child.begin(), child.end(),
+	                     [](auto const& left, auto const& right) {
+#ifdef _WIN32
+		                     return CompareStringOrdinal(left.c_str(), -1, right.c_str(), -1, TRUE) == CSTR_EQUAL;
+#else
+		                     return left == right;
+#endif
+	                     }).first == parent.end();
+}
+
+namespace {
+struct RemovalEntry {
+	std::string volume, mount, identity, change;
+	bool directory;
+};
+
+RemovalEntry InspectRemovalEntry(Path const& path) {
+	if (Linked(path)) throw Error("Linked file or directory in the removal scope: " + path.string());
+#ifdef _WIN32
+	auto native = CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+	                          nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+	if (native == INVALID_HANDLE_VALUE) throw Error("Cannot inspect " + path.string());
+	BY_HANDLE_FILE_INFORMATION info{};
+	FILE_BASIC_INFO times{};
+	bool valid = GetFileType(native) == FILE_TYPE_DISK && GetFileInformationByHandle(native, &info) &&
+	             GetFileInformationByHandleEx(native, FileBasicInfo, &times, sizeof(times));
+	CloseHandle(native);
+	if (!valid || (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) throw Error("Cannot inspect " + path.string());
+	auto value = [](DWORD high, DWORD low) { return std::to_string((uint64_t(high) << 32) | low); };
+	return {std::to_string(info.dwVolumeSerialNumber), {},
+	        value(info.nFileIndexHigh, info.nFileIndexLow) + "/" + std::to_string(times.CreationTime.QuadPart),
+	        value(info.nFileSizeHigh, info.nFileSizeLow) + "/" +
+	        std::to_string(times.LastWriteTime.QuadPart) + "/" + std::to_string(times.ChangeTime.QuadPart),
+	        (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0};
+#else
+	struct stat info{};
+	if (::lstat(path.c_str(), &info) != 0 || (!S_ISREG(info.st_mode) && !S_ISDIR(info.st_mode)))
+		throw Error("Expected an ordinary file or directory: " + path.string());
+	auto volume = std::to_string(info.st_dev);
+	std::string mount_id;
+	auto identity = std::to_string(info.st_ino);
+#if defined(__linux__) && defined(SYS_statx) && defined(STATX_MNT_ID)
+	// Bind mounts can have the same device and inode as their source.
+	struct statx mount{};
+	if (::syscall(SYS_statx, AT_FDCWD, path.c_str(), AT_SYMLINK_NOFOLLOW, STATX_MNT_ID | STATX_BTIME, &mount) == 0) {
+		if (mount.stx_mask & STATX_MNT_ID) mount_id = std::to_string(mount.stx_mnt_id);
+		if (mount.stx_mask & STATX_BTIME) identity += "/" + std::to_string(mount.stx_btime.tv_sec) + "/" + std::to_string(mount.stx_btime.tv_nsec);
+	}
+#endif
+#if defined(__APPLE__) || defined(__NetBSD__)
+	auto modified = info.st_mtimespec, changed = info.st_ctimespec;
+	identity += "/" + std::to_string(info.st_birthtimespec.tv_sec) + "/" + std::to_string(info.st_birthtimespec.tv_nsec);
+#else
+	auto modified = info.st_mtim, changed = info.st_ctim;
+#endif
+	return {std::move(volume), std::move(mount_id), std::move(identity), std::to_string(info.st_size) + "/" +
+	        std::to_string(modified.tv_sec) + "/" + std::to_string(modified.tv_nsec) + "/" +
+	        std::to_string(changed.tv_sec) + "/" + std::to_string(changed.tv_nsec), S_ISDIR(info.st_mode)};
+#endif
+}
+bool SameRemovalMount(RemovalEntry const& left, RemovalEntry const& right) {
+	return left.volume == right.volume && left.mount == right.mount;
+}
+void CheckUnlinkedRemovalPath(Path const& root) {
+	for (auto part = root; part != part.root_path(); part = part.parent_path())
+		if (Linked(part)) throw Error("Linked project removal directory: " + part.string());
+}
+RemovalEntry InspectRemovalRoot(Path const& root) {
+	if (!root.is_absolute() || root == root.root_path() || root != root.lexically_normal() || root.filename().empty())
+		throw Error("Invalid project removal directory: " + root.string());
+	CheckUnlinkedRemovalPath(root);
+	auto folder = InspectRemovalEntry(root);
+	if (!folder.directory || !SameRemovalMount(folder, InspectRemovalEntry(root.parent_path())))
+		throw Error("The project directory crosses a filesystem boundary: " + root.string());
+	return folder;
+}
+}
+
+std::string detail::InspectRemovalIdentity(Path const& root) {
+	auto folder = InspectRemovalRoot(root);
+	return folder.volume + ":" + folder.identity;
+}
+
+detail::RemovalScope detail::InspectRemovalScope(Path const& root) {
+	auto folder = InspectRemovalRoot(root);
+	RemovalScope result{0, folder.volume + ":" + folder.identity, {}};
+	std::map<std::string, std::string> entries;
+	for (auto const& item : fs::recursive_directory_iterator(root)) {
+		Path path(item.path());
+		Path relative(path.lexically_relative(root));
+		if (InternalDirectoryName(path.filename()) && path != root / ".aeg")
+			throw Error("The project contains nested managed metadata: " + path.parent_path().string());
+#ifdef _WIN32
+		if (relative == Path(".aeg/write.lock")) {
+			if (Linked(path) || !fs::is_regular_file(item.symlink_status())) throw Error("Invalid project write lock: " + path.string());
+			continue;
+		}
+#endif
+		auto entry = InspectRemovalEntry(path);
+		if (!SameRemovalMount(entry, folder)) throw Error("The project crosses a filesystem boundary: " + path.string());
+		if (relative == Path(".aeg/write.lock")) {
+			if (entry.directory) throw Error("Invalid project write lock: " + path.string());
+			continue;
+		}
+		if (!entry.directory) ++result.files;
+		entries.emplace(relative.generic_string(), (entry.directory ? "d" : "f") + entry.identity + "/" +
+		                                            (entry.directory ? "" : entry.change));
+	}
+	auto current = InspectRemovalEntry(root);
+	if (!SameRemovalMount(current, folder) || current.identity != folder.identity)
+		throw Error("The project removal directory changed.");
+	agi::Sha256 hash;
+	for (auto const& [path, stamp] : entries) {
+		hash.Update(path.data(), path.size() + 1);
+		hash.Update(stamp.data(), stamp.size() + 1);
+	}
+	result.digest = hash.HexDigest();
+	return result;
+}
+
+void detail::CreateRemovalStage(Path const& directory) {
+#ifdef _WIN32
+	if (CreateDirectoryW(directory.c_str(), nullptr)) return;
+#else
+	if (::mkdir(directory.c_str(), 0700) == 0) return;
+#endif
+	throw Error("Cannot reserve a directory for project removal: " + directory.string());
+}
+
+void detail::MoveRemovalFolder(Path const& source, Path const& destination) {
+#ifdef _WIN32
+	if (MoveFileW(source.c_str(), destination.c_str())) return;
+#elif defined(__linux__) && defined(SYS_renameat2) && defined(RENAME_NOREPLACE)
+	if (::syscall(SYS_renameat2, AT_FDCWD, source.c_str(), AT_FDCWD, destination.c_str(), RENAME_NOREPLACE) == 0) return;
+#elif defined(__APPLE__)
+	if (::renamex_np(source.c_str(), destination.c_str(), RENAME_EXCL) == 0) return;
+#endif
+	throw Error("Cannot move the project directory from " + source.string() + " to " + destination.string());
 }
 static char const *KindName(Kind kind) { return kind == Kind::Project ? "project" : "series"; }
 static Path Filename(Kind kind) { return std::string(KindName(kind)) + ".json"; }
@@ -103,8 +255,11 @@ json::Object CheckedFolders(Kind kind, Folders const& folders) {
 	json::Object result;
 	for (auto const& [role, value] : folders) {
 		if (!roles.contains(role)) throw Error("Unknown template folder role: " + role);
+		// Native path iterators can skip empty components between separators.
+		if (value.empty() || value.starts_with('/') || value.ends_with('/') || value.find("//") != value.npos)
+			throw Error("Empty folder name in template path: " + value);
 		Path relative(value);
-		if (value.empty() || relative.is_absolute() || relative.generic_string() != value)
+		if (relative.is_absolute() || relative.generic_string() != value)
 			throw Error("Expected a relative folder path: " + value);
 		for (auto const& part : relative) CheckComponent(Path(part).string());
 		std::string folded = value;
@@ -484,7 +639,17 @@ Manifest Open(Path const& directory) {
 			CheckComponent(cover.filename().string());
 		}
 	}
-	return {root, kind, id, name, revision, std::move(folders), std::move(bytes), std::move(cover), std::move(metadata_values), std::move(episodes)};
+	return {root, kind, id, name, revision, std::move(folders), std::move(bytes), std::move(cover), std::move(metadata_values), std::move(episodes),
+	        static_cast<json::Integer const&>(fields.at("updated_at"))};
+}
+
+Path ResolveProjectFile(Manifest const& expected, Path const& relative) {
+	auto current = Open(expected.root);
+	if (current.id != expected.id || current.root != expected.root || Linked(expected.root))
+		throw Error("The project at this location has changed");
+	auto path = ProjectFile(current, relative);
+	if (!fs::is_regular_file(path)) throw Error("Missing project file: " + path.string());
+	return path;
 }
 
 namespace {
@@ -551,7 +716,7 @@ Manifest RegisterFolder(Path const& directory, std::string const& name, Kind kin
 }
 
 namespace {
-void CommitChange(Manifest const& current, json::Object& fields, json::Object history, std::function<void()> verify = {}) {
+std::unique_ptr<agi::io::Save> PrepareChange(Manifest const& current, json::Object& fields, json::Object history) {
 	if (current.revision == (std::numeric_limits<int64_t>::max)()) throw Error("Manifest revision limit reached");
 	auto metadata = current.root / ".aeg";
 	auto now = Now();
@@ -576,12 +741,19 @@ void CommitChange(Manifest const& current, json::Object& fields, json::Object hi
 		out.Commit();
 	}
 	auto file = ManifestPath(current.root, current.kind);
-	agi::io::Save out(file, true);
-	agi::JsonWriter::Write(fields, out.Get());
+	auto out = std::make_unique<agi::io::Save>(file, true);
+	std::ostream& stream = out->Get();
+	agi::JsonWriter::Write(fields, stream);
+	if (!stream.flush()) throw Error("Cannot prepare manifest update: " + file.string());
+	return out;
+}
+void CommitChange(Manifest const& current, json::Object& fields, json::Object history, std::function<void()> verify = {}) {
+	auto out = PrepareChange(current, fields, std::move(history));
 	if (verify) verify();
 	if (Open(current.root).bytes != current.bytes) throw Error("The manifest changed while saving.");
-	out.Commit();
+	out->Commit();
 }
+
 Path LockPath(Path const& root) {
 	auto metadata = root / ".aeg";
 	if (!fs::is_directory(metadata) || Linked(metadata)) throw Error("Invalid project metadata directory");
@@ -612,6 +784,11 @@ bool FindOutput(json::Array const& assets, std::string const& task, Registration
 	}
 	return found;
 }
+}
+
+Path detail::ProjectWriteLock(Path const& root) {
+	CheckUnlinkedRemovalPath(root);
+	return LockPath(root);
 }
 
 namespace {
@@ -693,6 +870,92 @@ Manifest detail::LinkEpisode(Manifest const& expected, Manifest const& child, st
 	json::Object history;
 	history["operation"] = "add_episode"; history["project_id"] = ep.project_id; history["label"] = label;
 	CommitChange(current, fields, std::move(history), [&] { ReadChild(current, ep); });
+	return Open(current.root);
+}
+
+std::unique_ptr<agi::io::Save> detail::PrepareEpisodeRemoval(Manifest const& current, std::string const& project_id, Path const& relative) {
+	auto json = Parse(current.bytes);
+	auto& fields = static_cast<json::Object&>(json);
+	auto& episodes = static_cast<json::Array&>(fields.at("episodes"));
+	auto row = std::find_if(episodes.begin(), episodes.end(), [&](json::Object const& entry) {
+		return static_cast<json::String const&>(entry.at("project_id")) == project_id;
+	});
+	if (row == episodes.end()) return {};
+	auto const& member = static_cast<json::Object const&>(*row);
+	auto path = static_cast<json::String const&>(member.at("path"));
+	if (Path(path) != relative) throw Error("The episode membership changed. Refresh the series.");
+	json::Object history;
+	history["operation"] = "remove_episode";
+	history["project_id"] = project_id;
+	history["label"] = static_cast<json::String const&>(member.at("label"));
+	history["path"] = path;
+	episodes.erase(row);
+	return PrepareChange(current, fields, std::move(history));
+}
+
+void detail::CommitEpisodeRemoval(Manifest const& series, agi::io::Save& output) {
+	if (CurrentSeries(series).bytes != series.bytes) throw Error("The series changed while removing the episode.");
+	output.Commit();
+}
+
+std::string detail::EpisodeMembership(Manifest const& series, std::string const& project_id, Path const& relative) {
+	auto member = std::find_if(series.episodes.begin(), series.episodes.end(), [&](Episode const& episode) {
+		return episode.project_id == project_id && episode.relative == relative;
+	});
+	if (member == series.episodes.end()) return {};
+	auto json = Parse(series.bytes);
+	auto const& history = static_cast<json::Array const&>(static_cast<json::Object const&>(json).at("history"));
+	std::string event;
+	for (auto row = history.rbegin(); row != history.rend(); ++row) {
+		try {
+			auto const& fields = static_cast<json::Object const&>(*row);
+			if (AssetString(fields, "project_id") != project_id) continue;
+			auto operation = AssetString(fields, "operation");
+			if (operation != "add_episode" && operation != "remove_episode") continue;
+			if (operation == "add_episode") event = AssetString(fields, "event_id");
+			break;
+		}
+		catch (json::Exception const&) { /* History from older manifests can contain unrelated entries. */ }
+	}
+	// A fresh add_episode event distinguishes a re-added member at the same path.
+	// For a manually authored manifest, use the actual member fields.
+	agi::Sha256 hash;
+	for (auto const& field : {event, member->label, member->name}) hash.Update(field.data(), field.size() + 1);
+	return hash.HexDigest();
+}
+
+std::optional<Manifest> detail::ParentSeries(Manifest const& project) {
+	std::optional<Manifest> parent;
+	for (auto root = project.root.parent_path(); !root.empty(); root = root.parent_path()) {
+		auto metadata = root / ".aeg";
+		if (Linked(metadata)) throw Error("Linked ancestor project metadata: " + metadata.string());
+		if (PathOccupied(metadata / "series.json")) {
+			auto series = Open(root);
+			Path relative(project.root.lexically_relative(root));
+			for (auto const& member : series.episodes) {
+				bool match_id = member.project_id == project.id;
+				bool match_path = member.relative == relative;
+				if (!match_id && !match_path) continue;
+				if (!match_id || !match_path || parent) throw Error("Conflicting parent series membership for " + project.root.string());
+				parent = std::move(series);
+				break;
+			}
+		}
+		if (root == root.root_path()) break;
+	}
+	return parent;
+}
+
+Manifest RemoveEpisode(Manifest const& expected, std::string const& project_id) {
+	WriteLock lock(LockPath(expected.root));
+	auto current = CurrentSeries(expected);
+	auto member = std::find_if(current.episodes.begin(), current.episodes.end(), [&](Episode const& ep) {
+		return ep.project_id == project_id;
+	});
+	if (member == current.episodes.end()) return current;
+	if (current.bytes != expected.bytes) throw Error("The series changed. Refresh it before removing an episode.");
+	auto output = PrepareEpisodeRemoval(current, project_id, member->relative);
+	CommitEpisodeRemoval(current, *output);
 	return Open(current.root);
 }
 

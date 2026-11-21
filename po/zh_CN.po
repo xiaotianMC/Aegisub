@@ -12315,3 +12315,257 @@ msgstr "刷新以重新查看系列进度。"
 #: src/workbench_series.cpp
 msgid "Back to Workbench"
 msgstr "返回工作台"
+
+#: src/workbench_series.cpp
+msgid "Remove from Series"
+msgstr "从系列移除"
+
+#: src/workbench_series.cpp
+#, c-format
+msgid "Remove %s from the series %s?"
+msgstr "将分集“%s”从系列“%s”中移除？"
+
+#: src/workbench_series.cpp
+msgid "The project folder, its workbench registration and its tasks are kept."
+msgstr "项目文件夹、工作台登记和已有任务都会保留。"
+
+#: src/workbench_home.cpp
+msgid "All Projects"
+msgstr "所有项目"
+
+#: src/workbench_activity.cpp
+msgid "All files"
+msgstr "所有文件"
+
+#: src/workbench_activity.cpp
+msgid "Apply Suggestion"
+msgstr "采纳建议"
+
+#: src/workbench_home.cpp
+msgid "Continue Last Project"
+msgstr "继续上次工作"
+
+#: src/workbench_activity.cpp
+msgid "Dismiss Suggestion"
+msgstr "忽略建议"
+
+#: src/workbench_home.cpp
+msgid "Download Center"
+msgstr "下载中心"
+
+#: src/workbench_activity.cpp
+msgid "Download Tasks"
+msgstr "下载任务"
+
+#: src/workbench_activity.cpp
+msgid "Downloaded files were registered. Mark this project in progress?"
+msgstr "下载的文件已登记。将项目标为进行中？"
+
+#: src/workbench_home.cpp
+msgid "Home"
+msgstr "首页"
+
+#: src/workbench_home.cpp
+msgid "Last updated"
+msgstr "最近更新"
+
+#: src/workbench_activity.cpp
+msgid "No download tasks."
+msgstr "暂无下载任务。"
+
+#: src/workbench_activity.cpp
+msgid "No status suggestion."
+msgstr "暂无状态建议。"
+
+#: src/workbench_activity.cpp
+msgid "Open Containing Folder"
+msgstr "打开所在文件夹"
+
+#: src/workbench_activity.cpp
+msgid "Open Project Folder"
+msgstr "打开项目文件夹"
+
+#: src/workbench_activity.cpp
+msgid "Open in Editor"
+msgstr "在编辑器中打开"
+
+#: src/workbench_activity.cpp
+msgid "Open in Independent Editor"
+msgstr "在独立编辑窗中打开"
+
+#: src/workbench_activity.cpp
+msgid "Owner"
+msgstr "负责人"
+
+#: src/workbench_activity.cpp src/workbench_home.cpp
+msgid "Project Dashboard"
+msgstr "项目仪表盘"
+
+#: src/workbench_home.cpp
+msgid "Recently Opened"
+msgstr "最近打开"
+
+#: src/workbench_home.cpp
+msgid "Search by project name or folder"
+msgstr "搜索项目名称或文件夹"
+
+#: src/workbench_home.cpp
+msgid "Series Projects"
+msgstr "系列项目"
+
+#: src/workbench_activity.cpp
+msgid "Subtitle files"
+msgstr "字幕文件"
+
+#: src/workbench_activity.cpp
+msgid "Subtitles were exported. Mark this project ready for review?"
+msgstr "字幕已导出。将项目标为待校对？"
+
+#: src/workbench_activity.cpp
+msgid "Subtitles were saved. Mark this project in progress?"
+msgstr "字幕已保存。将项目标为进行中？"
+
+#: src/workbench_activity.cpp
+msgid "Video files"
+msgstr "视频文件"
+
+#: src/workbench_home.cpp
+msgid "Unfinished Tasks"
+msgstr "未完成任务"
+
+#: src/workbench_activity.cpp
+msgid "Paused until the project is registered again"
+msgstr "已暂停，等待重新登记原项目"
+
+#: src/workbench_home.cpp
+msgid "Remove from Workbench"
+msgstr "移出本机管理"
+
+#: src/workbench_home.cpp
+#, c-format
+msgid "Remove %s from this workbench?"
+msgstr "将「%s」移出本机工作台？"
+
+#: src/workbench_home.cpp
+msgid "Files and series membership are kept."
+msgstr "保留文件和系列成员关系。"
+
+#: src/workbench_home.cpp
+#, c-format
+msgid "%lld unfinished tasks will pause until this project is registered again."
+msgstr "%lld 项未完成任务将暂停，重新登记同一项目后可继续。"
+
+#: src/workbench_home.cpp
+msgid "Move Project Folder to Trash…"
+msgstr "将项目文件夹移至回收站…"
+
+#: src/workbench_home.cpp
+msgid "Permanently Delete Project Folder…"
+msgstr "永久删除项目文件夹…"
+
+#: src/workbench_home.cpp
+msgid "Move to Trash"
+msgstr "移至回收站"
+
+#: src/workbench_home.cpp
+msgid "Permanently Delete"
+msgstr "永久删除"
+
+#: src/workbench_home.cpp
+#, c-format
+msgid "Move the folder for %s to the system Trash?"
+msgstr "将「%s」的文件夹移至系统回收站？"
+
+#: src/workbench_home.cpp
+#, c-format
+msgid "Permanently delete the folder for %s?"
+msgstr "永久删除「%s」的文件夹？"
+
+#: src/workbench_home.cpp
+msgid "File count"
+msgstr "文件数"
+
+#: src/workbench_home.cpp
+#, c-format
+msgid "Episode %s will be removed from the series %s."
+msgstr "分集「%s」将从系列「%s」的分集清单中移除。"
+
+#: src/workbench_home.cpp
+msgid "This is an independent project."
+msgstr "这是一个独立项目。"
+
+#: src/workbench_home.cpp
+msgid "Permanent deletion is irreversible."
+msgstr "永久删除无法撤销。"
+
+#: src/workbench_home.cpp
+msgid "Close the open subtitles, audio or video from this folder before removing it."
+msgstr "请先关闭此文件夹中已打开的字幕、音频或视频。"
+
+#: src/workbench_trash.cpp src/workbench_trash_win.cpp
+msgid "The system could not move the folder to Trash."
+msgstr "系统无法将文件夹移至回收站。"
+
+#: src/workbench_home.cpp
+msgid "Review Interrupted Folder Removal…"
+msgstr "核查中断的文件夹移除…"
+
+#: src/workbench_home.cpp
+msgid "Choose a folder to verify."
+msgstr "选择要核实的文件夹。"
+
+#: src/workbench_home.cpp
+msgid "Confirm Folder Removal"
+msgstr "确认文件夹已移除"
+
+#: src/workbench_home.cpp
+msgid "Confirm that this folder was moved to the system Trash."
+msgstr "请确认此文件夹已经移至系统回收站。"
+
+#: src/workbench_home.cpp
+msgid "Check the system Trash for this folder before confirming."
+msgstr "请先在系统回收站中核对此文件夹。"
+
+#: src/workbench_home.cpp
+msgid "Confirmation updates the workbench, pauses unfinished tasks, and updates the series episode list if applicable."
+msgstr "确认后将更新工作台，暂停未完成任务，并在适用时更新系列分集清单。"
+
+#: src/workbench_home.cpp
+msgid "Confirm Removal"
+msgstr "确认移除"
+
+#: src/workbench_home.cpp
+msgid "Original project folder"
+msgstr "原项目文件夹"
+
+#: src/workbench_home.cpp
+msgid "Staging folder"
+msgstr "暂存文件夹"
+
+#: src/workbench_home.cpp
+msgid "Restore Remaining Files"
+msgstr "还原剩余文件"
+
+#: src/workbench_home.cpp
+msgid "Return the remaining files to the original project folder?"
+msgstr "将剩余文件还原至原项目文件夹？"
+
+#: src/workbench_home.cpp
+msgid "Restoring recovers only the files still in the staging folder."
+msgstr "只能还原暂存文件夹中剩余的文件。"
+
+#: src/workbench_home.cpp
+msgid "Remaining files restored to the original project folder."
+msgstr "剩余文件已还原至原项目文件夹。"
+
+#: src/workbench_home.cpp
+msgid "Check these paths to resolve the interrupted folder removal."
+msgstr "请检查以下路径，以处理被中断的文件夹移除。"
+
+#: src/workbench_home.cpp
+msgid "Interrupted Folder Removal"
+msgstr "文件夹移除已中断"
+
+#: src/workbench_home.cpp
+msgid "Confirm that the permanent deletion is complete."
+msgstr "请确认永久删除已完成。"

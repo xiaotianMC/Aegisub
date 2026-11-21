@@ -7713,6 +7713,19 @@ msgstr "重新整理以再次查看系列進度。"
 msgid "Back to Workbench"
 msgstr "返回工作台"
 
+#: src/workbench_series.cpp
+msgid "Remove from Series"
+msgstr "從系列移除"
+
+#: src/workbench_series.cpp
+#, c-format
+msgid "Remove %s from the series %s?"
+msgstr "將分集「%s」從系列「%s」中移除？"
+
+#: src/workbench_series.cpp
+msgid "The project folder, its workbench registration and its tasks are kept."
+msgstr "專案資料夾、工作台登錄與現有工作都會保留。"
+
 #: ../src/command/keyframe.cpp
 msgid "Detect Scene Changes"
 msgstr "偵測場景切換"
@@ -7732,3 +7745,252 @@ msgstr "要重新逐格掃描影片並產生時間軸嗎？場景切換點將更
 #: ../src/command/keyframe.cpp
 msgid "Regenerate the timeline from the detected scene changes? All subtitle lines, including text and comments, will be replaced with one blank line per shot."
 msgstr "要依照已偵測到的場景切換重新產生時間軸嗎？所有現有字幕列（含文字和註解）都將被取代，每個鏡頭產生一列空字幕。"
+
+#: src/workbench_home.cpp
+msgid "All Projects"
+msgstr "所有專案"
+
+#: src/workbench_activity.cpp
+msgid "All files"
+msgstr "所有檔案"
+
+#: src/workbench_activity.cpp
+msgid "Apply Suggestion"
+msgstr "採納建議"
+
+#: src/workbench_home.cpp
+msgid "Continue Last Project"
+msgstr "繼續上次工作"
+
+#: src/workbench_activity.cpp
+msgid "Dismiss Suggestion"
+msgstr "忽略建議"
+
+#: src/workbench_home.cpp
+msgid "Download Center"
+msgstr "下載中心"
+
+#: src/workbench_activity.cpp
+msgid "Download Tasks"
+msgstr "下載工作"
+
+#: src/workbench_activity.cpp
+msgid "Downloaded files were registered. Mark this project in progress?"
+msgstr "下載的檔案已登錄。將專案標為進行中？"
+
+#: src/workbench_home.cpp
+msgid "Home"
+msgstr "首頁"
+
+#: src/workbench_home.cpp
+msgid "Last updated"
+msgstr "上次更新"
+
+#: src/workbench_activity.cpp
+msgid "No download tasks."
+msgstr "目前沒有下載工作。"
+
+#: src/workbench_activity.cpp
+msgid "No status suggestion."
+msgstr "目前沒有狀態建議。"
+
+#: src/workbench_activity.cpp
+msgid "Open Containing Folder"
+msgstr "開啟所在資料夾"
+
+#: src/workbench_activity.cpp
+msgid "Open Project Folder"
+msgstr "開啟專案資料夾"
+
+#: src/workbench_activity.cpp
+msgid "Open in Editor"
+msgstr "在編輯器中開啟"
+
+#: src/workbench_activity.cpp
+msgid "Open in Independent Editor"
+msgstr "在獨立編輯視窗開啟"
+
+#: src/workbench_activity.cpp
+msgid "Owner"
+msgstr "負責人"
+
+#: src/workbench_activity.cpp src/workbench_home.cpp
+msgid "Project Dashboard"
+msgstr "專案儀表板"
+
+#: src/workbench_home.cpp
+msgid "Recently Opened"
+msgstr "最近開啟"
+
+#: src/workbench_activity.cpp
+msgid "Recent files"
+msgstr "最近檔案"
+
+#: src/workbench_home.cpp
+msgid "Search by project name or folder"
+msgstr "搜尋專案名稱或資料夾"
+
+#: src/workbench_home.cpp
+msgid "Series Projects"
+msgstr "系列專案"
+
+#: src/workbench_home.cpp
+msgid "Settings"
+msgstr "設定"
+
+#: src/workbench_activity.cpp
+msgid "Subtitle files"
+msgstr "字幕檔案"
+
+#: src/workbench_activity.cpp
+msgid "Subtitles were exported. Mark this project ready for review?"
+msgstr "字幕已匯出。將專案標為待校對？"
+
+#: src/workbench_activity.cpp
+msgid "Subtitles were saved. Mark this project in progress?"
+msgstr "字幕已儲存。將專案標為進行中？"
+
+#: src/workbench_activity.cpp
+msgid "Video files"
+msgstr "影片檔案"
+
+#: src/workbench_home.cpp
+msgid "Unfinished Tasks"
+msgstr "未完成工作"
+
+#: src/workbench_activity.cpp
+msgid "Paused until the project is registered again"
+msgstr "已暫停，等待重新登錄原專案"
+
+#: src/workbench_home.cpp
+msgid "Remove from Workbench"
+msgstr "從本機管理移除"
+
+#: src/workbench_home.cpp
+#, c-format
+msgid "Remove %s from this workbench?"
+msgstr "將「%s」從本機工作台移除？"
+
+#: src/workbench_home.cpp
+msgid "Files and series membership are kept."
+msgstr "保留檔案和系列成員關係。"
+
+#: src/workbench_home.cpp
+#, c-format
+msgid "%lld unfinished tasks will pause until this project is registered again."
+msgstr "%lld 項未完成工作將暫停，重新登錄同一專案後可繼續。"
+
+#: src/workbench_home.cpp
+msgid "Move Project Folder to Trash…"
+msgstr "將專案資料夾移至垃圾桶…"
+
+#: src/workbench_home.cpp
+msgid "Permanently Delete Project Folder…"
+msgstr "永久刪除專案資料夾…"
+
+#: src/workbench_home.cpp
+msgid "Move to Trash"
+msgstr "移至垃圾桶"
+
+#: src/workbench_home.cpp
+msgid "Permanently Delete"
+msgstr "永久刪除"
+
+#: src/workbench_home.cpp
+#, c-format
+msgid "Move the folder for %s to the system Trash?"
+msgstr "將「%s」的資料夾移至系統垃圾桶？"
+
+#: src/workbench_home.cpp
+#, c-format
+msgid "Permanently delete the folder for %s?"
+msgstr "永久刪除「%s」的資料夾？"
+
+#: src/workbench_home.cpp
+msgid "File count"
+msgstr "檔案數"
+
+#: src/workbench_home.cpp
+#, c-format
+msgid "Episode %s will be removed from the series %s."
+msgstr "分集「%s」將從系列「%s」的分集清單中移除。"
+
+#: src/workbench_home.cpp
+msgid "This is an independent project."
+msgstr "這是獨立專案。"
+
+#: src/workbench_home.cpp
+msgid "Permanent deletion is irreversible."
+msgstr "永久刪除無法復原。"
+
+#: src/workbench_home.cpp
+msgid "Close the open subtitles, audio or video from this folder before removing it."
+msgstr "請先關閉此資料夾中已開啟的字幕、音訊或影片。"
+
+#: src/workbench_trash.cpp src/workbench_trash_win.cpp
+msgid "The system could not move the folder to Trash."
+msgstr "系統無法將資料夾移至垃圾桶。"
+
+#: src/workbench_home.cpp
+msgid "Review Interrupted Folder Removal…"
+msgstr "核查中斷的資料夾移除…"
+
+#: src/workbench_home.cpp
+msgid "Choose a folder to verify."
+msgstr "選擇要核實的資料夾。"
+
+#: src/workbench_home.cpp
+msgid "Confirm Folder Removal"
+msgstr "確認資料夾已移除"
+
+#: src/workbench_home.cpp
+msgid "Confirm that this folder was moved to the system Trash."
+msgstr "請確認此資料夾已移至系統垃圾桶。"
+
+#: src/workbench_home.cpp
+msgid "Check the system Trash for this folder before confirming."
+msgstr "請先在系統垃圾桶中核對此資料夾。"
+
+#: src/workbench_home.cpp
+msgid "Confirmation updates the workbench, pauses unfinished tasks, and updates the series episode list if applicable."
+msgstr "確認後將更新工作台，暫停未完成的工作，並在適用時更新系列分集清單。"
+
+#: src/workbench_home.cpp
+msgid "Confirm Removal"
+msgstr "確認移除"
+
+#: src/workbench_home.cpp
+msgid "Original project folder"
+msgstr "原專案資料夾"
+
+#: src/workbench_home.cpp
+msgid "Staging folder"
+msgstr "暫存資料夾"
+
+#: src/workbench_home.cpp
+msgid "Restore Remaining Files"
+msgstr "還原剩餘檔案"
+
+#: src/workbench_home.cpp
+msgid "Return the remaining files to the original project folder?"
+msgstr "將剩餘檔案還原至原專案資料夾？"
+
+#: src/workbench_home.cpp
+msgid "Restoring recovers only the files still in the staging folder."
+msgstr "只能還原暫存資料夾中剩餘的檔案。"
+
+#: src/workbench_home.cpp
+msgid "Remaining files restored to the original project folder."
+msgstr "剩餘檔案已還原至原專案資料夾。"
+
+#: src/workbench_home.cpp
+msgid "Check these paths to resolve the interrupted folder removal."
+msgstr "請檢查以下路徑，以處理中斷的資料夾移除。"
+
+#: src/workbench_home.cpp
+msgid "Interrupted Folder Removal"
+msgstr "資料夾移除已中斷"
+
+#: src/workbench_home.cpp
+msgid "Confirm that the permanent deletion is complete."
+msgstr "請確認永久刪除已完成。"
